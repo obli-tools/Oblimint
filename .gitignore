@@ -1,0 +1,34 @@
+# ══════════════════════════════════════════════════════════════════════
+#  Oblimint — the repository only carries what is needed to BUILD the tool.
+#  Docs, notes and helper scripts stay on the workstation.
+# ══════════════════════════════════════════════════════════════════════
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.cache/
+
+# Docs may contain customer data: never commit them.
+docs/
+*.md
+!**/README.md
+# Our own scripts (build/deploy helpers, handoffs, notes)
+*.bat
+*.cmd
+*.ps1
+HANDOFF*
+NOTES*
+TODO*
+*.lock
+!package-lock.json
+
+# Go build outputs
+hostd/bin/

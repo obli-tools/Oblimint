@@ -1,0 +1,22 @@
+# Development PostgreSQL for the Oblimint server (DATABASE_URL in .env.example).
+#   docker compose -f docker-compose.dev.yml up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: oblimint-dev-postgres
+    environment:
+      POSTGRES_USER: oblimint
+      POSTGRES_PASSWORD: oblimint-dev
+      POSTGRES_DB: oblimint
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - oblimint-dev-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oblimint -d oblimint"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  oblimint-dev-pg:
