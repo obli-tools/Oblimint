@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { Check, Pencil, Plus, RefreshCw, Route as RouteIcon, ShieldCheck, Trash2, X, Settings2 } from 'lucide-react';
+import { Asterisk, Check, Network, Pencil, Plus, RefreshCw, Route as RouteIcon, ShieldCheck, Trash2, X, Settings2 } from 'lucide-react';
 import type {
   CertificateDetail, Domain, DomainKind, DomainUpdate, Site, SiteRoute, SiteRuntime, TlsMode,
 } from '@oblimint/shared';
@@ -21,6 +21,9 @@ import {
   useHostingEvents,
 } from './hostingUi';
 import { DOMAIN_KINDS, domainKindLabel, tlsModeLabel } from './DomainCreateModal';
+import { VerificationBadge, ZoneKindBadge } from '@/components/dns/DnsBadges';
+import { DomainOwnershipCard } from '@/components/dns/DomainOwnershipCard';
+import { toastOwnershipError } from '@/components/dns/dnsErrors';
 import { domainRoutesSite, followServerValues } from './hostingFormat';
 
 /** Detail of a domain: route table, settings, certificate, deletion. */
@@ -49,8 +52,13 @@ export function DomainPanel({ domainId, onChanged, onDeleted }: {
 
   useEffect(() => { setDomain(null); void load(); }, [load]);
   // CERTIFICATE_UPDATED too: the TLS badge of the header comes from domain.certificate.
-  useHostingEvents([HostingSocketEvents.HOSTING_CHANGED, HostingSocketEvents.CERTIFICATE_UPDATED], () => { void load(); }, (e, p) => {
-    if (e === HostingSocketEvents.CERTIFICATE_UPDATED) return payloadNumber(p, 'domainId') === domainId;
+  // P2: the verification badge and the zone link come from the domain row too.
+  useHostingEvents([
+    HostingSocketEvents.HOSTING_CHANGED, HostingSocketEvents.CERTIFICATE_UPDATED,
+    HostingSocketEvents.DOMAIN_VERIFICATION_UPDATED, HostingSocketEvents.DNS_ZONE_UPDATED,
+  ], () => { void load(); }, (e, p) => {
+    if (e === HostingSocketEvents.CERTIFICATE_UPDATED || e === HostingSocketEvents.DOMAIN_VERIFICATION_UPDATED
+      || e === HostingSocketEvents.DNS_ZONE_UPDATED) return payloadNumber(p, 'domainId') === domainId;
     const entity = (p as { entity?: string } | null)?.entity;
     if (entity === 'domain') return payloadNumber(p, 'id') === domainId;
     // A site event only matters for a site routed by this domain (status of the routes).
@@ -84,12 +92,27 @@ export function DomainPanel({ domainId, onChanged, onDeleted }: {
         <span className="break-all font-mono text-base font-semibold text-text-primary">{domain.name}</span>
         <Pill>{domainKindLabel(t, domain.kind)}</Pill>
         <TlsBadge tlsMode={domain.tlsMode} certificate={domain.certificate} />
+        <VerificationBadge verification={domain.verification} />
+        {domain.wildcard && <Pill tone="blue"><Asterisk size={10} />{t('dns.wildcard.badge') || 'wildcard'}</Pill>}
         <span className="w-full text-xs text-text-muted">
           {t('domains.col.account') || 'Account'}:{' '}
           <Link to={`/accounts/${domain.accountId}`} className="font-mono text-text-secondary hover:text-accent">{domain.accountUsername}</Link>
         </span>
+        <span className="flex w-full flex-wrap items-center gap-1.5 text-xs text-text-muted">
+          <Network size={12} className="shrink-0" />
+          {t('dns.zone.label') || 'DNS zone'}:{' '}
+          {domain.zone ? (
+            <>
+              <Link to={`/dns/zones/${domain.zone.id}`} className="font-mono text-text-secondary hover:text-accent">{domain.zone.name}</Link>
+              <ZoneKindBadge kind={domain.zone.kind} />
+            </>
+          ) : (
+            <span>{t('dns.zone.none') || 'none'}</span>
+          )}
+        </span>
       </div>
 
+      <DomainOwnershipCard domain={domain} onVerified={() => { void load(); }} />
       <RoutesCard domain={domain} manage={manage} onChanged={() => { void load(); }} />
       <SettingsCard domain={domain} manage={manage} onSaved={(d) => { setDomain(d); onChanged?.(d); }} />
       <CertificateCard domain={domain} manage={manage} />
@@ -291,24 +314,30 @@ function RoutesCard({ domain, manage, onChanged }: { domain: Domain; manage: boo
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
-interface SettingsForm { kind: DomainKind; includeWww: boolean; tlsMode: TlsMode; forceHttps: boolean }
+interface SettingsForm { kind: DomainKind; includeWww: boolean; tlsMode: TlsMode; forceHttps: boolean; wildcard: boolean }
 
 function SettingsCard({ domain, manage, onSaved }: { domain: Domain; manage: boolean; onSaved: (d: Domain) => void }) {
   const { t } = useTranslation();
-  const server: SettingsForm = { kind: domain.kind, includeWww: domain.includeWww, tlsMode: domain.tlsMode, forceHttps: domain.forceHttps };
+  const server: SettingsForm = {
+    kind: domain.kind, includeWww: domain.includeWww, tlsMode: domain.tlsMode, forceHttps: domain.forceHttps, wildcard: domain.wildcard,
+  };
   const [form, setForm] = useState<SettingsForm>(server);
   const [saving, setSaving] = useState(false);
-  const { kind, includeWww, tlsMode, forceHttps } = form;
+  const { kind, includeWww, tlsMode, forceHttps, wildcard } = form;
   const setKind = (v: DomainKind) => setForm((f) => ({ ...f, kind: v }));
   const setIncludeWww = (v: boolean) => setForm((f) => ({ ...f, includeWww: v }));
   const setTlsMode = (v: TlsMode) => setForm((f) => ({ ...f, tlsMode: v }));
   const setForceHttps = (v: boolean) => setForm((f) => ({ ...f, forceHttps: v }));
+  const setWildcard = (v: boolean) => setForm((f) => ({ ...f, wildcard: v }));
+  // Wildcard certificate = DNS-01: a zone hosted here is required (server: wildcardNeedsHostedZone).
+  const wildcardBlocked = !domain.wildcard && domain.zone?.kind !== 'hosted';
 
   // A reload (socket event, other tab) must not wipe unsaved edits: follow the
   // server values field by field, only where the field is still untouched.
   const [lastServer, setLastServer] = useState<SettingsForm>(server);
   if (server.kind !== lastServer.kind || server.includeWww !== lastServer.includeWww
-    || server.tlsMode !== lastServer.tlsMode || server.forceHttps !== lastServer.forceHttps) {
+    || server.tlsMode !== lastServer.tlsMode || server.forceHttps !== lastServer.forceHttps
+    || server.wildcard !== lastServer.wildcard) {
     setLastServer(server);
     setForm((f) => followServerValues(f, lastServer, server));
   }
@@ -319,6 +348,7 @@ function SettingsCard({ domain, manage, onSaved }: { domain: Domain; manage: boo
   if (tlsMode !== domain.tlsMode) patch.tlsMode = tlsMode;
   const effForce = tlsMode === 'none' ? false : forceHttps;
   if (effForce !== domain.forceHttps) patch.forceHttps = effForce;
+  if (wildcard !== domain.wildcard) patch.wildcard = wildcard;
   const dirty = Object.keys(patch).length > 0;
 
   const save = async () => {
@@ -327,7 +357,7 @@ function SettingsCard({ domain, manage, onSaved }: { domain: Domain; manage: boo
       onSaved(await domainsApi.update(domain.id, patch));
       toast.success(t('domains.saved') || 'Domain saved');
     } catch (err) {
-      toastHostingError(t, err, t('domains.saveFailed') || 'Failed to save the domain');
+      toastOwnershipError(t, err, t('domains.saveFailed') || 'Failed to save the domain');
     } finally {
       setSaving(false);
     }
@@ -358,6 +388,15 @@ function SettingsCard({ domain, manage, onSaved }: { domain: Domain; manage: boo
           onChange={setForceHttps}
           label={t('domains.forceHttps') || 'Force HTTPS'}
           description={t('domains.form.forceHttpsHint') || 'Redirect HTTP to HTTPS once the certificate is valid.'}
+        />
+        <ToggleSwitch
+          checked={wildcard}
+          disabled={!manage || (wildcardBlocked && !wildcard)}
+          onChange={setWildcard}
+          label={t('dns.wildcard.label') || 'Wildcard (*.domain)'}
+          description={wildcardBlocked
+            ? (t('dns.wildcard.needsHosted') || 'Needs a DNS zone hosted here (certificate through DNS-01).')
+            : `*.${domain.name}`}
         />
       </div>
       {manage && (

@@ -1,0 +1,55 @@
+import { Router } from 'express';
+import { MASTER_TENANT_ID, type HostingSettingsUpdate } from '@oblimint/shared';
+import { validate } from '../middleware/validate';
+import { auditService } from '../services/audit.service';
+import { hostingSettingsUpdateSchema, platformSettings } from '../services/platformSettings';
+import { logger } from '../utils/logger';
+
+// /api/system/hosting-settings — P2 platform settings (docs/P2-PLAN.md §Réglages).
+// ARCHITECT FILE. Platform admin only (mounted behind requireAuth + requireRole('admin')).
+//   GET /  → HostingSettings
+//   PUT /  HostingSettingsUpdate → HostingSettings
+// A change of dns / preview / dbAdmin / access settings is announced to the
+// owning modules through settingsChanged() (lazy imports, never throws).
+
+const router = Router();
+
+router.get('/', async (_req, res, next) => {
+  try {
+    res.json({ success: true, data: await platformSettings.get() });
+  } catch (err) { next(err); }
+});
+
+router.put('/', validate(hostingSettingsUpdateSchema), async (req, res, next) => {
+  try {
+    const patch = req.body as HostingSettingsUpdate;
+    const data = await platformSettings.update(patch);
+    await auditService.logReqAs(req, MASTER_TENANT_ID, 'settings.hosting', {
+      resourceType: 'settings', resourcePath: 'hosting', details: { sections: Object.keys(patch) },
+    });
+    void settingsChanged(Object.keys(patch));
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+/** Lets the modules react to a settings change (edge resync, DNS resync, firewall resync). */
+async function settingsChanged(sections: string[]): Promise<void> {
+  try {
+    if (sections.some((s) => s === 'preview' || s === 'dbAdmin' || s === 'access')) {
+      const { edgeService } = await import('../services/edge/edge.service');
+      edgeService.scheduleSync('hosting-settings');
+    }
+    if (sections.includes('dns')) {
+      const { dnsService } = await import('../services/dns/dns.service');
+      dnsService.requestSyncAll('hosting-settings');
+    }
+    if (sections.includes('access')) {
+      const { firewallService } = await import('../services/firewall/firewall.service');
+      firewallService.requestSyncAll('hosting-settings');
+    }
+  } catch (err) {
+    logger.warn({ err }, 'hosting settings change hooks failed');
+  }
+}
+
+export default router;

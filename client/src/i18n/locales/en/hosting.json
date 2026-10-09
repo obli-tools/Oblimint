@@ -5,13 +5,17 @@
       "domains_manage": "Manage domains",
       "domains_manage_hint": "Add domains and edit their routes.",
       "files_manage": "Manage file access",
-      "files_manage_hint": "Open the SFTP access, set its password and SSH keys.",
+      "files_manage_hint": "Open the SFTP access, set its password and SSH keys, and the access allow-list.",
       "releases_approve": "Approve releases",
       "releases_approve_hint": "Approve or reject releases waiting for approval.",
       "releases_publish": "Publish releases",
       "releases_publish_hint": "Publish the staging and roll back releases.",
       "sites_manage": "Manage sites",
-      "sites_manage_hint": "Create, configure and delete the sites of the account."
+      "sites_manage_hint": "Create, configure and delete the sites of the account.",
+      "databases_manage": "Manage databases",
+      "databases_manage_hint": "Create database instances, databases and users, open phpMyAdmin / Adminer.",
+      "dns_manage": "Manage DNS zones",
+      "dns_manage_hint": "Edit the DNS records of the account zones."
     },
     "changePlan": "Change plan",
     "changePlanFailed": "Failed to change the plan",
@@ -407,7 +411,9 @@
       "tlsDisabled": "HTTPS is disabled for this domain: enable it before requesting a certificate.",
       "unknownNode": "This node does not exist.",
       "usernameTaken": "This user name is already taken.",
-      "validation": "Some fields are invalid."
+      "validation": "Some fields are invalid.",
+      "notFound": "This item no longer exists (it may have been deleted in the meantime). Refresh the page.",
+      "rateLimited": "Too many requests: wait a minute, then try again."
     },
     "generate": "Generate",
     "hide": "Hide",

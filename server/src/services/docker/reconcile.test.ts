@@ -107,10 +107,17 @@ test('new account: network + attachments, hostd tree, storage, config, pull, cre
     'create-network oblimint-acct-3',
     'connect oblimint oblimint-acct-3 alias=oblimint-panel',
     'connect oblimint-edge oblimint-acct-3',
+    // P2: database network (instances + sites), never joined by the edge nor the panel.
+    'create-network oblimint-acct-3-db',
     'pull meejay/oblimint-apache-php8.3:latest',
     'create oblimint-site-7',
+    'connect oblimint-site-7 oblimint-acct-3-db',
     'start oblimint-site-7',
   ]);
+  assert.deepEqual(d.networks.get('oblimint-acct-3-db')!.labels, { 'oblimint.internal': 'true', 'oblimint.db-network': '3' },
+    'never labelled oblimint.account (the edge joins those)');
+  assert.ok(!d.containers.get('oblimint-edge')!.networks.has('oblimint-acct-3-db'));
+  assert.ok(!d.containers.get('oblimint')!.networks.has('oblimint-acct-3-db'));
   assert.deepEqual(hostdCalls, ['ensureAccount 3 5120', 'ensureSite 7 blog', 'ensureDataPaths 7 wp-content/uploads']);
   assert.deepEqual(storageCalls, ['ensure 7']);
   const cfg = JSON.parse(fs.readFileSync(path.join(dataRoot, 'accounts', '3', 'sites', '7', 'runtime', 'primary.json'), 'utf-8'));
@@ -238,6 +245,7 @@ test('destroyAccount removes site containers, file server, network attachments, 
   assert.ok(!d.containers.has('oblimint-site-7'));
   assert.ok(!d.containers.has('oblimint-files-3'));
   assert.ok(!d.networks.has('oblimint-acct-3'));
+  assert.ok(!d.networks.has('oblimint-acct-3-db'), 'the account database network is removed too');
   assert.ok(d.calls.includes('disconnect oblimint oblimint-acct-3'));
   assert.ok(d.calls.includes('disconnect oblimint-edge oblimint-acct-3'));
   assert.deepEqual(hostdCalls, ['removeSite 3 7 blog purge=true', 'removeAccount 3 purge=true']);
@@ -324,4 +332,19 @@ test('hostd busy (409) or cancelled (503) → transient: no status change, retri
   } finally {
     (fakeHostd as { ensureAccount: unknown }).ensureAccount = original;
   }
+});
+
+test('P2 upgrade: a running site container joins the new account database network live (no recreation)', async () => {
+  reset();
+  const d = freshDocker();
+  d.images.add('meejay/oblimint-apache-php8.3:latest');
+  await mod.runPass(state({ status: 'active', siteStatus: 'active' }), d.asDocker(), t0, PANEL_ID.slice(0, 12));
+  // As before P2: no database network, the site only on the account network.
+  d.containers.get('oblimint-site-7')!.networks.delete('oblimint-acct-3-db');
+  d.networks.delete('oblimint-acct-3-db');
+  d.calls.length = 0;
+  const out = await mod.runPass(state({ status: 'active', siteStatus: 'active' }), d.asDocker(), t0, PANEL_ID.slice(0, 12));
+  assert.equal(out.report.ok, true, out.report.errors.join('\n'));
+  assert.deepEqual(d.calls.filter((c) => !c.startsWith('stop ')), ['create-network oblimint-acct-3-db', 'connect oblimint-site-7 oblimint-acct-3-db']);
+  assert.ok(!d.containers.get('oblimint-edge')!.networks.has('oblimint-acct-3-db'));
 });

@@ -4,7 +4,7 @@ import type Docker from 'dockerode';
 import type { InfraComponentStatus, InfraStatus, QuotaMode } from '@oblimint/shared';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
-import { EDGE_CONTAINER, HOSTD_CONTAINER, LABELS, PANEL_ALIAS, PANEL_NETWORK } from '../hosting/naming';
+import { accountNetwork, EDGE_CONTAINER, HOSTD_CONTAINER, LABELS, PANEL_ALIAS, PANEL_NETWORK } from '../hosting/naming';
 import { localPaths } from '../hosting/paths';
 import { errText, selfContainerRef, withTimeout } from '../setup/docker';
 import { hostd, scheduleEdgeSync } from './backends';
@@ -92,6 +92,9 @@ export const infraService = {
       const nets = await withTimeout(docker.listNetworks({ filters: { label: [LABELS.account] } }), 30_000, 'list networks');
       let attached = 0;
       for (const n of nets) {
+        // Only the account network proper (oblimint-acct-<id>): never an account
+        // DATABASE network, even mislabelled (ARCHITECTURE §3.6).
+        if (n.Name !== accountNetwork(Number(n.Labels?.[LABELS.account]))) continue;
         try {
           if (await connectNetwork(docker, n.Name, EDGE_CONTAINER)) attached++;
         } catch (err) {
@@ -152,7 +155,10 @@ export const infraService = {
     } catch (err) {
       if (hostdComp.running) hostdComp.detail = `API: ${errText(err)}`;
     }
-    return { nodeId, components: [edge, hostdComp], quotaMode };
+    // P2: PowerDNS + DB admin UIs (docs/P2-PLAN.md §7).
+    const { extraInfraComponents } = await import('./extensions');
+    const extra = await Promise.all((await extraInfraComponents()).map((c) => c.status(docker, dockerError)));
+    return { nodeId, components: [edge, hostdComp, ...extra], quotaMode };
   },
 
   /**

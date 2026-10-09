@@ -229,7 +229,10 @@ export class FakeDocker {
         const [k, v] = l.split('=');
         return v === undefined ? k in c.labels : c.labels[k] === v;
       }))
-      .map((c) => ({ Id: c.id, Names: [`/${c.name}`], Image: c.image, State: c.state, Labels: c.labels }) as unknown as Docker.ContainerInfo);
+      .map((c) => ({
+        Id: c.id, Names: [`/${c.name}`], Image: c.image, State: c.state, Labels: c.labels,
+        NetworkSettings: { Networks: Object.fromEntries([...c.networks].map(([n, ep]) => [n, { Aliases: ep.Aliases }])) },
+      }) as unknown as Docker.ContainerInfo);
   }
 
   getNetwork(name: string) {

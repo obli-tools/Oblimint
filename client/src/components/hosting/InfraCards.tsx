@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, Globe, HardDrive, Network, RefreshCw, Rocket, ShieldCheck, Workflow } from 'lucide-react';
-import type { EdgeStatus, InfraComponentStatus, InfraStatus } from '@oblimint/shared';
+import { AlertTriangle, BrickWall, Globe, HardDrive, Network, RefreshCw, Rocket, Server, ShieldCheck, Workflow } from 'lucide-react';
+import type { DnsServerStatus, EdgeStatus, FirewallStatus, InfraComponentId, InfraComponentStatus, InfraStatus } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
 import { infraApi } from '@/api/infra.api';
+import { firewallApi } from '@/api/firewall.api';
+// Owned by module ui-dns-db: read-only use (status + resync of the zones).
+import { dnsApi } from '@/api/dns.api';
+import { opsErrorMessage, toastOpsError } from '@/components/usage/opsErrors';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
@@ -40,21 +44,25 @@ export function InfraCards() {
     }
   };
 
-  const deploy = async (component: 'edge' | 'hostd', deployed: boolean) => {
+  const deploy = async (component: InfraComponentId, deployed: boolean) => {
     // Redeploying recreates a running shared container: the edge serves every
     // tenant's sites and the panel vhost, hostd carries quota/provisioning calls.
     if (deployed && !(await confirm({
       title: t('infra.redeployTitle', { component, defaultValue: 'Redeploy {{component}}' }),
       message: component === 'edge'
         ? (t('infra.redeployEdgeConfirm') || 'The edge container (nginx) is recreated: every site of every workspace and the panel itself are briefly unreachable.')
-        : (t('infra.redeployHostdConfirm') || 'The hostd container is recreated: quota and provisioning operations in progress are interrupted.'),
+        : component === 'dns'
+          ? (t('platformSettings.infra.redeployDnsConfirm') || 'The PowerDNS container is recreated: the hosted zones do not answer for a few seconds (secondary servers keep answering).')
+          : component === 'dbadmin'
+            ? (t('platformSettings.infra.redeployDbAdminConfirm') || 'The phpMyAdmin and Adminer containers are recreated: open database admin sessions are closed.')
+            : (t('infra.redeployHostdConfirm') || 'The hostd container is recreated: quota and provisioning operations in progress are interrupted.'),
       confirmLabel: t('infra.redeploy') || 'Redeploy',
       danger: true,
     }))) return;
     await runDeploy(component);
   };
 
-  const runDeploy = (component: 'edge' | 'hostd') => run(`deploy-${component}`, async () => {
+  const runDeploy = (component: InfraComponentId) => run(`deploy-${component}`, async () => {
     try {
       setInfra({ data: await infraApi.deploy(component), error: null });
       toast.success(t('infra.deployed', { component, defaultValue: '{{component}} deployed' }));
@@ -112,15 +120,168 @@ export function InfraCards() {
       </Card>
 
       <EdgeCard edge={edge} onChanged={(s) => setEdge({ data: s, error: null })} onReload={() => { void load(); }} />
+      <FirewallCard />
+      <DnsServerCard />
     </div>
+  );
+}
+
+// ── P2: firewall (hostd + nftables) ─────────────────────────────────────────
+
+function FirewallCard() {
+  const { t, i18n } = useTranslation();
+  const [status, setStatus] = useState<Loaded<FirewallStatus> | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setStatus({ data: await firewallApi.status(), error: null });
+    } catch (err) {
+      setStatus({ data: null, error: opsErrorMessage(t, err, 'security', t('platformSettings.firewall.loadFailed') || 'Failed to load the firewall status') });
+    }
+  }, [t]);
+  useEffect(() => { void load(); }, [load]);
+
+  const sync = async () => {
+    setBusy(true);
+    try {
+      setStatus({ data: await firewallApi.syncAll(), error: null });
+      toast.success(t('platformSettings.firewall.synced') || 'Firewall state pushed again to the host');
+    } catch (err) {
+      toastOpsError(t, err, 'security', t('platformSettings.firewall.syncFailed') || 'Failed to synchronise the firewall');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const s = status?.data ?? null;
+  const egressLabel = (f: FirewallStatus['egressFilter']) => t(`platformSettings.access.egress.${f}`) || f;
+  return (
+    <Card
+      title={t('platformSettings.firewall.title') || 'Firewall'}
+      icon={<BrickWall size={14} className="text-accent" />}
+      actions={s ? (
+        <Button size="sm" variant="secondary" loading={busy} onClick={() => { void sync(); }}>
+          <RefreshCw size={13} className="mr-1.5" />{t('infra.edge.sync') || 'Synchronise'}
+        </Button>
+      ) : undefined}
+    >
+      {status === null ? (
+        <div className="flex justify-center py-4"><LoadingSpinner /></div>
+      ) : s === null ? (
+        <p className="text-xs text-text-muted">{status.error}</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <InfoRow label={t('infra.edge.state') || 'State'}>
+              {s.enabled && s.backend === 'nftables'
+                ? <Pill tone="green">nftables</Pill>
+                : <Pill tone="amber">{t('platformSettings.firewall.disabled') || 'inactive'}</Pill>}
+            </InfoRow>
+            <InfoRow label={t('platformSettings.firewall.listeners') || 'Gateway listeners'} mono>{s.gatewayListeners}</InfoRow>
+            <InfoRow label={t('platformSettings.firewall.egress') || 'Egress filter'}>{egressLabel(s.egressFilter)}</InfoRow>
+            <InfoRow label={t('platformSettings.firewall.lastApply') || 'Last applied'} mono>{s.lastApplyAt ? new Date(s.lastApplyAt).toLocaleString(i18n.language) : '—'}</InfoRow>
+          </div>
+          {s.lastApplyError && (
+            <div>
+              <div className="mb-1 text-xs text-text-muted">{t('infra.edge.lastError') || 'Last error'}</div>
+              <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-status-down/5 p-2 font-mono text-[11px] text-status-down">{s.lastApplyError}</pre>
+            </div>
+          )}
+          <p className="text-xs text-text-muted">{t('platformSettings.firewall.hint') || 'Allow-lists and bans of the account ports are applied by hostd (nftables) before Docker. The gateway listens on the SFTP ports and starts the file servers on connection.'}</p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── P2: DNS server (PowerDNS) ───────────────────────────────────────────────
+
+function DnsServerCard() {
+  const { t, i18n } = useTranslation();
+  const [status, setStatus] = useState<Loaded<DnsServerStatus> | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setStatus({ data: await dnsApi.serverStatus(), error: null });
+    } catch (err) {
+      setStatus({ data: null, error: hostingErrorMessage(t, err, t('platformSettings.dnsServer.loadFailed') || 'Failed to load the DNS server status') });
+    }
+  }, [t]);
+  useEffect(() => { void load(); }, [load]);
+  useHostingEvents([HostingSocketEvents.DNS_ZONE_UPDATED], () => { void load(); }, undefined, 3000);
+
+  const sync = async () => {
+    setBusy(true);
+    try {
+      setStatus({ data: await dnsApi.syncAll(), error: null });
+      toast.success(t('platformSettings.dnsServer.synced') || 'Zones synchronised');
+    } catch (err) {
+      toastHostingError(t, err, t('platformSettings.dnsServer.syncFailed') || 'Failed to synchronise the zones');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const s = status?.data ?? null;
+  return (
+    <Card
+      title={t('platformSettings.dnsServer.title') || 'DNS server'}
+      icon={<Server size={14} className="text-accent" />}
+      actions={s && s.enabled ? (
+        <Button size="sm" variant="secondary" loading={busy} onClick={() => { void sync(); }}>
+          <RefreshCw size={13} className="mr-1.5" />{t('infra.edge.sync') || 'Synchronise'}
+        </Button>
+      ) : undefined}
+    >
+      {status === null ? (
+        <div className="flex justify-center py-4"><LoadingSpinner /></div>
+      ) : s === null ? (
+        <p className="text-xs text-text-muted">{status.error}</p>
+      ) : !s.enabled ? (
+        <p className="text-xs text-text-muted">{t('platformSettings.dnsServer.disabled') || 'The DNS server is disabled in the settings: every zone is hosted elsewhere.'}</p>
+      ) : (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <InfoRow label={t('infra.edge.state') || 'State'}>
+              {!s.deployed
+                ? <Pill tone="red">{t('infra.notDeployed') || 'not deployed'}</Pill>
+                : s.running
+                  ? <Pill tone={s.apiReachable ? 'green' : 'amber'}>{s.apiReachable ? (t('infra.running') || 'running') : (t('platformSettings.dnsServer.apiDown') || 'API unreachable')}</Pill>
+                  : <Pill tone="amber">{t('infra.stopped') || 'stopped'}</Pill>}
+            </InfoRow>
+            <InfoRow label={t('infra.version') || 'Version'} mono>{s.version ?? '—'}</InfoRow>
+            <InfoRow label={t('infra.edge.lastSync') || 'Last sync'} mono>{s.lastSyncAt ? new Date(s.lastSyncAt).toLocaleString(i18n.language) : '—'}</InfoRow>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Pill tone="muted">{t('platformSettings.dnsServer.zones', { count: s.zones.total, defaultValue: '{{count}} zones' })}</Pill>
+            <Pill tone="green">{t('platformSettings.dnsServer.active', { count: s.zones.active, defaultValue: '{{count}} published' })}</Pill>
+            <Pill tone={s.zones.pending > 0 ? 'blue' : 'muted'}>{t('platformSettings.dnsServer.pending', { count: s.zones.pending, defaultValue: '{{count}} pending' })}</Pill>
+            <Pill tone={s.zones.error > 0 ? 'red' : 'muted'}>{t('platformSettings.dnsServer.error', { count: s.zones.error, defaultValue: '{{count}} in error' })}</Pill>
+          </div>
+          {s.lastSyncError && (
+            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-status-down/5 p-2 font-mono text-[11px] text-status-down">{s.lastSyncError}</pre>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 
 function ComponentRow({ c, busy, onDeploy }: { c: InfraComponentStatus; busy: string | null; onDeploy: () => void }) {
   const { t } = useTranslation();
-  const name = c.id === 'edge'
-    ? (t('infra.component.edge') || "Edge (nginx + Let's Encrypt)")
-    : (t('infra.component.hostd') || 'hostd (host daemon)');
+  const name = ({
+    edge: t('infra.component.edge') || "Edge (nginx + Let's Encrypt)",
+    hostd: t('infra.component.hostd') || 'hostd (host daemon)',
+    dns: t('platformSettings.infra.dns') || 'DNS server (PowerDNS)',
+    dbadmin: t('platformSettings.infra.dbadmin') || 'Database admin (phpMyAdmin + Adminer)',
+  } as Record<InfraComponentId, string>)[c.id] ?? c.id;
+  const description = c.id === 'dns'
+    ? (t('platformSettings.infra.dnsHint') || 'Authoritative DNS of the hosted zones, on port 53 (TCP + UDP) of the host. Its API stays on the internal network.')
+    : c.id === 'dbadmin'
+      ? (t('platformSettings.infra.dbadminHint') || 'Shared phpMyAdmin and Adminer, opened from the panel with single sign-on, on the host name of the settings.')
+      : null;
   return (
     <div className="rounded-lg bg-bg-primary p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -134,6 +295,7 @@ function ComponentRow({ c, busy, onDeploy }: { c: InfraComponentStatus; busy: st
           <Rocket size={13} className="mr-1.5" />{c.deployed ? (t('infra.redeploy') || 'Redeploy') : (t('infra.deploy') || 'Deploy')}
         </Button>
       </div>
+      {description && <p className="mt-1.5 text-xs text-text-muted">{description}</p>}
       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <InfoRow label={t('infra.image') || 'Image'} mono>{c.image ?? '—'}</InfoRow>
         <InfoRow label={t('infra.version') || 'Version'} mono>{c.version ?? '—'}</InfoRow>

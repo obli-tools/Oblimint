@@ -8,11 +8,15 @@ import {
   type DomainCreateBody, type DomainUpdateBody, type RouteInputBody,
 } from '../validators/hosting.schema';
 
-// /api/domains — OWNED BY MODULE `hosting-api` (docs/P1-PLAN.md §API).
+// /api/domains — OWNED BY MODULE `edge-ownership` in P2 (docs/P1-PLAN.md §API, P2-PLAN §6.2).
+// The ownership routes (/claims, /:id/verification*) are in domainOwnership.routes.ts,
+// mounted BEFORE this router.
 // NO catch-all middleware: /api/domains/:id/certificate* is served by
 // certificates.routes.ts (module edge), mounted after this router.
 //   GET    /                    ?accountId=&search= → Domain[]
 //   POST   /                    DomainCreate → Domain (domains.manage on the account)
+//        409 domainTaken { name, claimable } (claimable: held by another account, never named — A2),
+//        409 wildcardNeedsHostedZone, 400 domainReserved (panel / preview domain / DB admin / probe hosts)
 //   GET    /:id                 → Domain
 //   PUT    /:id                 DomainUpdate → Domain (domains.manage)
 //   DELETE /:id                 → { deleted: true } (domains.manage)

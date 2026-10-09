@@ -5,6 +5,10 @@
 # Environment (set by the panel, module orchestration — fileServerContainerSpec):
 #   OBLIMINT_HOOK_BASE   http://oblimint-panel:8081/internal/filesrv/<accountId>/<token>
 #   OBLIMINT_ACCOUNT_ID  <accountId>
+#   OBLIMINT_PROXY_PROTOCOL  1 = behind the hostd port gateway (P2, default
+#                        when OBLIMINT_PORT_GATEWAY is on): no host port is
+#                        published; hostd relays the clients and writes a PROXY
+#                        protocol v2 header first (real client address).
 #
 # Renders the SFTPGo configuration into /tmp (tmpfs; the root is read-only)
 # and execs SFTPGo:
@@ -29,6 +33,20 @@
 #     denied": SFTPGo checks the permission before setstat_mode). Never
 #     change it to 0 without removing chmod from the panel user (F1);
 #   - defender (anti brute force) on, idle timeout 15 min, logs on stdout.
+#   - OBLIMINT_PROXY_PROTOCOL=1 (port gateway): common.proxy_protocol = 2
+#     (header REQUIRED) and proxy_allowed = ONLY the default gateway of the
+#     container (the host side of the account bridge, i.e. the address hostd
+#     connects from): no other peer can forge a client address (R-PROXY).
+#     CAUTION: for a peer outside proxy_allowed SFTPGo applies the
+#     go-proxyproto REJECT policy, which refuses a connection that CARRIES a
+#     header but accepts a header-less one with the peer's own address. A
+#     site container of the account network reaching :2022 directly is
+#     stopped by hostd instead (nftables forward drop of every forwarded flow
+#     to a PROXY-mode gateway backend), and the SFTPGo defender STAYS ON
+#     (it sees the real client address from the header): a direct peer can
+#     never guess passwords without limit even if that drop were missing.
+#     The panel's bans (nftables + gateway accept check, fed by the auth
+#     hook) come on top.
 # State (host keys, generated at the first start then kept): /var/lib/sftpgo
 # (mounted rw). Visible tree: /srv/files/{staging,data} (mounted rw).
 # Runs as the account uid:gid (no passwd entry needed, no capability).
@@ -68,6 +86,39 @@ done
 umask 077
 mkdir -p "$CONF_DIR" || die "/tmp must be a writable tmpfs"
 
+# Default IPv4 gateway of the container (/proc/net/route: little-endian hex).
+default_gateway() {
+	awk '
+		function hex(s,   i, n) {
+			n = 0
+			for (i = 1; i <= length(s); i++) n = n * 16 + index("0123456789ABCDEF", toupper(substr(s, i, 1))) - 1
+			return n
+		}
+		NR > 1 && $2 == "00000000" && $3 != "00000000" {
+			g = $3
+			printf "%d.%d.%d.%d\n", hex(substr(g, 7, 2)), hex(substr(g, 5, 2)), hex(substr(g, 3, 2)), hex(substr(g, 1, 2))
+			exit
+		}
+	' /proc/net/route
+}
+
+PROXY_PROTOCOL=0
+PROXY_ALLOWED=""
+DEFENDER=true
+case "${OBLIMINT_PROXY_PROTOCOL:-0}" in
+	1)
+		GW=$(default_gateway)
+		# Written verbatim into JSON: a dotted quad only.
+		printf '%s' "$GW" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' ||
+			die "OBLIMINT_PROXY_PROTOCOL=1 but no default gateway found (needed to restrict proxy_allowed)"
+		PROXY_PROTOCOL=2
+		PROXY_ALLOWED="\"$GW\""
+		log "PROXY protocol v2 required, accepted only from the gateway $GW (hostd)"
+		;;
+	0) ;;
+	*) die "OBLIMINT_PROXY_PROTOCOL must be 0 or 1" ;;
+esac
+
 cat >"$CONF_DIR/sftpgo.json" <<EOF
 {
   "common": {
@@ -75,7 +126,8 @@ cat >"$CONF_DIR/sftpgo.json" <<EOF
     "upload_mode": 1,
     "setstat_mode": 1,
     "temp_path": "",
-    "proxy_protocol": 0,
+    "proxy_protocol": $PROXY_PROTOCOL,
+    "proxy_allowed": [$PROXY_ALLOWED],
     "max_total_connections": 0,
     "max_per_host_connections": 20,
     "actions": {
@@ -84,7 +136,7 @@ cat >"$CONF_DIR/sftpgo.json" <<EOF
       "hook": "$HOOK_BASE/event"
     },
     "defender": {
-      "enabled": true,
+      "enabled": $DEFENDER,
       "driver": "memory",
       "ban_time": 30,
       "ban_time_increment": 50,

@@ -11,7 +11,8 @@ export const dashboardService = {
    *   - tenant staff: the tenant's objects, 1 tenant, its members, the nodes;
    *   - client: its own accounts / sites / domains only (tenants, users,
    *     nodes are not theirs to know: 0).
-   * Mailboxes and databases arrive in later phases: 0.
+   * databases = database instances visible to the caller (P2, module usage);
+   * mailboxes arrive with P4: 0.
    */
   async summary(actor: HostingActor): Promise<DashboardSummary> {
     // Staff without 'read' (no hosting capability, no overview.read — §8)
@@ -19,13 +20,14 @@ export const dashboardService = {
     const canRead = actor.kind === 'client' || actorHasNeedSomewhere(actor, 'read');
     const scoped = (table: string, alias: string, accountCol: string) => !canRead ? Promise.resolve(0) :
       count(scopeToActor(actor, db(`${table} as ${alias}`), { tenant: `${alias}.tenant_id`, account: `${alias}.${accountCol}` }));
-    const [accounts, sites, domains] = await Promise.all([
+    const [accounts, sites, domains, databases] = await Promise.all([
       scoped('hosting_accounts', 'a', 'id'),
       scoped('sites', 's', 'account_id'),
       scoped('domains', 'd', 'account_id'),
+      scoped('db_instances', 'i', 'account_id'),
     ]);
     if (actor.kind === 'client') {
-      return { accounts, sites, domains, mailboxes: 0, databases: 0, tenants: 0, users: 0, nodes: 0 };
+      return { accounts, sites, domains, mailboxes: 0, databases, tenants: 0, users: 0, nodes: 0 };
     }
     const god = actor.globalView;
     const [tenants, users, nodes] = await Promise.all([
@@ -33,7 +35,7 @@ export const dashboardService = {
       god ? count(db('users')) : count(db('user_tenants').where({ tenant_id: actor.tenantId })),
       count(db('nodes')),
     ]);
-    return { accounts, sites, domains, mailboxes: 0, databases: 0, tenants, users, nodes };
+    return { accounts, sites, domains, mailboxes: 0, databases, tenants, users, nodes };
   },
 
   /** Platform-wide counters (Obligate dashboard-stats). */

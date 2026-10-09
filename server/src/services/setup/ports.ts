@@ -6,12 +6,47 @@
 // (docs/ARCHITECTURE.md §phases): a listener there (systemd-resolved's stub
 // on 127.0.0.53:53 on every stock Ubuntu, a local MTA) is only a warning —
 // it must be freed before those modules are enabled, never before the install.
+// With OBLIMINT_PDNS_BIND (PowerDNS published on given host addresses only),
+// a DNS listener on ANOTHER specific address (the stub on 127.0.0.53) is no
+// conflict: only one on a bound address or on the wildcard is reported.
 
 export const REQUIRED_PORTS = [80, 443] as const;
 export const LATER_PORTS = [
   { port: 53, service: 'DNS' },
   { port: 25, service: 'mail' },
 ] as const;
+
+export interface PortsOptions {
+  /** Host addresses PowerDNS will publish on (config.hosting.pdnsBind; [] = every address). */
+  dnsBind?: readonly string[];
+  /** Host port of PowerDNS (config.hosting.pdnsPort, default 53). */
+  dnsPort?: number;
+}
+
+const WILDCARDS = new Set(['0.0.0.0', '::', '*', '']);
+
+/** Host part of a netstat local address ("127.0.0.53:53" → 127.0.0.53, ":::53" → ::). */
+function localHost(col: string): string {
+  return col.slice(0, col.lastIndexOf(':')).replace(/^\[(.*)\]$/, '$1').toLowerCase();
+}
+
+/**
+ * Drops the DNS-port listeners that cannot collide with PowerDNS published
+ * on `bind` only: a listener on another specific address. Wildcard listeners
+ * (and every listener when `bind` is empty) are kept.
+ */
+export function dropNonConflictingDns(output: string, bind: readonly string[], port: number): string {
+  if (bind.length === 0) return output;
+  const wanted = new Set(bind.map((a) => a.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1')));
+  return output.split('\n').filter((line) => {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 4 || !/^(tcp|udp)6?$/.test(cols[0])) return true;
+    const col = cols[3];
+    if (Number(col.slice(col.lastIndexOf(':') + 1)) !== port) return true;
+    const host = localHost(col);
+    return WILDCARDS.has(host) || wanted.has(host) || wanted.has(host.replace(/^::ffff:/, ''));
+  }).join('\n');
+}
 
 export interface PortsVerdict {
   status: 'ok' | 'warn' | 'fail';
@@ -37,14 +72,19 @@ export function parseListeners(output: string, watched: readonly number[]): Map<
 const fmt = (busy: Map<number, Set<string>>, ports: readonly number[]): string =>
   ports.filter((p) => busy.has(p)).map((p) => `${p}/${[...busy.get(p)!].sort().join('+')}`).join(', ');
 
-export function evaluatePorts(netstatOutput: string): PortsVerdict {
-  const later = LATER_PORTS.map((l) => l.port);
-  const busy = parseListeners(netstatOutput, [...REQUIRED_PORTS, ...later]);
+export function evaluatePorts(netstatOutput: string, opts: PortsOptions = {}): PortsVerdict {
+  const dnsPort = opts.dnsPort ?? 53;
+  const laterPorts = LATER_PORTS.map((l) => (l.service === 'DNS' ? { ...l, port: dnsPort } : l));
+  const later = laterPorts.map((l) => l.port);
+  const busy = parseListeners(dropNonConflictingDns(netstatOutput, opts.dnsBind ?? [], dnsPort), [...REQUIRED_PORTS, ...later]);
   const busyRequired = REQUIRED_PORTS.filter((p) => busy.has(p));
-  const busyLater = LATER_PORTS.filter((l) => busy.has(l.port));
+  const busyLater = laterPorts.filter((l) => busy.has(l.port));
   const fixes: string[] = [];
   if (busyRequired.length) fixes.push('sudo systemctl disable --now nginx apache2 httpd 2>/dev/null');
-  if (busy.has(53)) fixes.push("sudo sed -i 's/^#\\?DNSStubListener=.*/DNSStubListener=no/' /etc/systemd/resolved.conf && sudo systemctl restart systemd-resolved");
+  if (busy.has(dnsPort) && !opts.dnsBind?.length) {
+    fixes.push('# DNS: publish PowerDNS on the host address only (OBLIMINT_PDNS_BIND=<host IP> on the panel container), or disable the resolved stub:');
+  }
+  if (busy.has(dnsPort)) fixes.push("sudo sed -i 's/^#\\?DNSStubListener=.*/DNSStubListener=no/' /etc/systemd/resolved.conf && sudo systemctl restart systemd-resolved");
   if (busy.has(25)) fixes.push('sudo systemctl disable --now postfix exim4 2>/dev/null');
   const fixCommand = fixes.join('\n') || undefined;
   const laterNote = busyLater.length

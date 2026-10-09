@@ -1,5 +1,5 @@
 import type { EnvelopeDimension, EnvelopeViolation, PlanLimits, TenantEnvelopeUsage, TenantLimits } from '@oblimint/shared';
-import { DEFAULT_TENANT_LIMITS } from '@oblimint/shared';
+import { DB_PROFILE_MEMORY_MB, DEFAULT_TENANT_LIMITS } from '@oblimint/shared';
 import type { Knex } from 'knex';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -20,6 +20,36 @@ export const PLAN_ENVELOPE_DIMENSIONS = [
   'diskMb', 'trafficMbPerMonth', 'maxSites', 'maxDomains', 'maxMailboxes', 'maxDatabases', 'cpuCores', 'memoryMb',
 ] as const satisfies ReadonlyArray<EnvelopeDimension & keyof PlanLimits>;
 
+type PlanDimension = typeof PLAN_ENVELOPE_DIMENSIONS[number];
+
+/**
+ * Database memory one account of the plan may run (P2): every database
+ * instance is its own container whose memory limit is the profile's
+ * (DB_PROFILE_MEMORY_MB), outside the site containers' memoryMb. Without
+ * counting it a reseller could hand out unlimited L instances and exhaust the
+ * node. null = unlimited (maxDbInstances null). The profile ceiling of an
+ * instance is the plan's dbProfile (only the platform admin may go above it,
+ * databases.service).
+ */
+export function planDbMemoryMb(p: Pick<PlanLimits, 'maxDbInstances' | 'dbProfile'>): number | null {
+  if (p.maxDbInstances === null || p.maxDbInstances === undefined) return null;
+  const perInstance = DB_PROFILE_MEMORY_MB[p.dbProfile] ?? DB_PROFILE_MEMORY_MB.L;
+  return Math.max(0, p.maxDbInstances) * perInstance;
+}
+
+/**
+ * Value of one envelope dimension for a plan (null = unlimited). memoryMb is
+ * the memory of the account's site containers PLUS its database instances
+ * (planDbMemoryMb): the tenant memory envelope covers both.
+ */
+export function planDimensionValue(p: PlanLimits, dim: PlanDimension): number | null {
+  const v = p[dim];
+  if (v === null || v === undefined) return null;
+  if (dim !== 'memoryMb') return v;
+  const dbMem = planDbMemoryMb(p);
+  return dbMem === null ? null : v + dbMem;
+}
+
 export interface AllocationChange {
   /** Plan(s) being allocated (a new account, the new plan of N accounts…). */
   add?: PlanLimits | PlanLimits[];
@@ -30,11 +60,11 @@ export interface AllocationChange {
 const list = (v: PlanLimits | PlanLimits[] | undefined): PlanLimits[] => (v === undefined ? [] : Array.isArray(v) ? v : [v]);
 
 /** Finite sum and number of unlimited (null) values of one dimension. */
-function tally(plans: readonly PlanLimits[], dim: typeof PLAN_ENVELOPE_DIMENSIONS[number]): { sum: number; unlimited: number } {
+function tally(plans: readonly PlanLimits[], dim: PlanDimension): { sum: number; unlimited: number } {
   let sum = 0;
   let unlimited = 0;
   for (const p of plans) {
-    const v = p[dim];
+    const v = planDimensionValue(p, dim);
     if (v === null || v === undefined) unlimited++;
     else sum += v;
   }
@@ -42,7 +72,7 @@ function tally(plans: readonly PlanLimits[], dim: typeof PLAN_ENVELOPE_DIMENSION
 }
 
 /** Sum of one dimension, Infinity when any plan is unlimited (null). */
-function total(plans: readonly PlanLimits[], dim: typeof PLAN_ENVELOPE_DIMENSIONS[number]): number {
+function total(plans: readonly PlanLimits[], dim: PlanDimension): number {
   const t = tally(plans, dim);
   return t.unlimited > 0 ? Infinity : t.sum;
 }

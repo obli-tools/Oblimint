@@ -23,6 +23,14 @@ import (
 //         repo.git/                              (created by the panel)
 //         releases/                              root:root 0755
 //         runtime/                               root:root 0755
+//     dbsock/                                    root:gid  0750  (P2: parent of the socket dirs, bind source)
+//       mysql/                                   root:gid  0750  → /run/mysqld (RO) in every site; symlink
+//                                                                mysqld.sock -> /run/oblimint-db/i-<id>/mysqld.sock
+//       postgresql/                              root:gid  0750  → /run/postgresql (RO); symlink
+//                                                                .s.PGSQL.5432 -> /run/oblimint-db/i-<id>/.s.PGSQL.5432
+//       i-<instanceId>/                          uid:gid   0750  socket dir of one instance
+//     databases/                                 root:root 0711  (P2)
+//       <instanceId>/                            uid:gid   0700  data dir of one instance (in the XFS project)
 //
 // hostd never takes an absolute path from the panel (except GET /v1/fs and
 // GET /v1/du, checked by RelFromAbs): every path is computed here from ids,
@@ -101,6 +109,70 @@ func (l Layout) RuntimeRel(accountID, siteID int64) []string {
 	return append(l.SiteRel(accountID, siteID), "runtime")
 }
 
+// ── P2: database sockets and data (docs/P2-PLAN.md §4) ──
+
+// DbFamily is a socket family of the default instance links.
+type DbFamily string
+
+const (
+	dbFamilyMySQL      DbFamily = "mysql"
+	dbFamilyPostgreSQL DbFamily = "postgresql"
+	// dbSocketsInContainer is where the site containers see dbsock/ (CONTAINER_PATHS.dbSocketsAll):
+	// the default links point there (container-side, never followed by hostd). Never under
+	// /run/oblimint (OBLIMINT_RUN of the site images): Docker would create that parent root-owned.
+	dbSocketsInContainer = "/run/oblimint-db"
+)
+
+// SocketName is the socket file name of a family inside an instance socket dir.
+func (f DbFamily) SocketName() string {
+	if f == dbFamilyPostgreSQL {
+		return ".s.PGSQL.5432"
+	}
+	return "mysqld.sock"
+}
+
+func parseDbFamily(s string) (DbFamily, error) {
+	switch DbFamily(s) {
+	case dbFamilyMySQL, dbFamilyPostgreSQL:
+		return DbFamily(s), nil
+	}
+	return "", badRequest("invalid socket family %q", s)
+}
+
+// DbSocketLinkTarget is the (absolute, container-side) target of the default link.
+func DbSocketLinkTarget(f DbFamily, instanceID int64) string {
+	return path.Join(dbSocketsInContainer, dbInstanceDirName(instanceID), f.SocketName())
+}
+
+func dbInstanceDirName(instanceID int64) string { return "i-" + id(instanceID) }
+
+func (l Layout) DbSocketsRel(accountID int64) []string {
+	return append(l.AccountRel(accountID), "dbsock")
+}
+func (l Layout) DbSocketDefaultRel(accountID int64, f DbFamily) []string {
+	return append(l.DbSocketsRel(accountID), string(f))
+}
+func (l Layout) DbSocketInstanceRel(accountID, instanceID int64) []string {
+	return append(l.DbSocketsRel(accountID), dbInstanceDirName(instanceID))
+}
+func (l Layout) DatabasesRel(accountID int64) []string {
+	return append(l.AccountRel(accountID), "databases")
+}
+func (l Layout) DbDataRel(accountID, instanceID int64) []string {
+	return append(l.DatabasesRel(accountID), id(instanceID))
+}
+
+func (l Layout) DbSockets(accountID int64) string { return l.abs(l.DbSocketsRel(accountID)) }
+func (l Layout) DbSocketDefault(accountID int64, f DbFamily) string {
+	return l.abs(l.DbSocketDefaultRel(accountID, f))
+}
+func (l Layout) DbSocketInstance(accountID, instanceID int64) string {
+	return l.abs(l.DbSocketInstanceRel(accountID, instanceID))
+}
+func (l Layout) DbData(accountID, instanceID int64) string {
+	return l.abs(l.DbDataRel(accountID, instanceID))
+}
+
 func (l Layout) AccountsRoot() string           { return l.abs([]string{"accounts"}) }
 func (l Layout) Account(accountID int64) string { return l.abs(l.AccountRel(accountID)) }
 func (l Layout) Staging(accountID int64) string { return l.abs(l.StagingRel(accountID)) }
@@ -146,6 +218,20 @@ func (l Layout) accountDirs(accountID int64, o Owner) []dirSpec {
 		{l.DataRel(accountID), dataOwner(o), 0o750},
 		{l.FileServerStateRel(accountID), o, 0o700},
 		{l.SitesRel(accountID), rootOwner, 0o711},
+		// P2: dbsock/ and its default dirs are bind sources of every site
+		// container (R5 extended, B1): root-owned so the uid cannot swap them.
+		{l.DbSocketsRel(accountID), dataOwner(o), 0o750},
+		{l.DbSocketDefaultRel(accountID, dbFamilyMySQL), dataOwner(o), 0o750},
+		{l.DbSocketDefaultRel(accountID, dbFamilyPostgreSQL), dataOwner(o), 0o750},
+		{l.DatabasesRel(accountID), rootOwner, 0o711},
+	}
+}
+
+// dbInstanceDirs is the tree of one database instance (below an existing account tree).
+func (l Layout) dbInstanceDirs(accountID, instanceID int64, o Owner) []dirSpec {
+	return []dirSpec{
+		{l.DbSocketInstanceRel(accountID, instanceID), o, 0o750},
+		{l.DbDataRel(accountID, instanceID), o, 0o700},
 	}
 }
 

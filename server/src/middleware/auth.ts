@@ -20,6 +20,12 @@ declare module 'express-session' {
     pendingTotpSecret?: string;
     pendingTotpExpiresAt?: number;
     pendingTotpReplaces?: boolean;
+    /**
+     * P2: epoch ms of the sign-in when it passed a second factor (password +
+     * TOTP; SSO when Obligate asserts MFA). Drives the auto-2fa allow-list
+     * grants (services/firewall). Absent = no 2FA on this session.
+     */
+    mfaVerifiedAt?: number;
   }
 }
 

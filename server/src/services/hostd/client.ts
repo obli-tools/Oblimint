@@ -1,5 +1,5 @@
 import http from 'http';
-import type { QuotaMode } from '@oblimint/shared';
+import type { AccessMode, QuotaMode } from '@oblimint/shared';
 import { config } from '../../config';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,6 +56,79 @@ export interface HostdUsage {
   measuredAt: string;
 }
 
+// ─── P2 (docs/P2-PLAN.md §hostd) ─────────────────────────────────────────────
+
+/** Database instance dirs: dbsock/i-<id> (uid:gid 0750) + databases/<id> (uid:gid 0700) under the account tree. */
+export interface HostdDbInstanceSpec {
+  accountId: number;
+  instanceId: number;
+  uid: number;
+  gid: number;
+}
+
+/**
+ * Full allow-list state of ONE account, rendered by hostd into the nftables
+ * table `inet oblimint` (atomic `nft -f`) and used by the gateway listeners.
+ * Addresses are validated by hostd again (IP / CIDR, v4 or v6).
+ */
+export interface HostdFirewallAccountState {
+  accountId: number;
+  mode: AccessMode;
+  /** Host ports owned by the hostd gateway (file server): filtered on the INPUT hook. */
+  gatewayPorts: number[];
+  /** Host ports published by Docker (external SQL): filtered on FORWARD with `ct original proto-dst`. */
+  publishedPorts: number[];
+  /** Manual rules + auto-2fa grants (allowlist / auto-2fa modes; ignored in open mode). */
+  allow: Array<{ cidr: string; expiresAt: string | null }>;
+  /** Active bans (every mode). */
+  bans: Array<{ ip: string; expiresAt: string }>;
+}
+
+/** Platform-wide part: egress filter of the account networks (audit R-EGRESS). */
+export interface HostdFirewallGlobal {
+  egress: 'off' | 'metadata' | 'strict';
+  /** Subnets of every account network (from Docker): sources the egress rules apply to. */
+  accountSubnets: string[];
+  /** Destinations always allowed from the account networks (panel network, DNS resolvers…). */
+  egressAllow: string[];
+}
+
+export interface HostdFirewallStatus {
+  backend: 'nftables' | 'none';
+  accounts: number;
+  lastApplyAt: string | null;
+  lastApplyError: string | null;
+  gatewayListeners: number;
+  /** Accounts hostd holds a firewall / gateway state for (hostd ≥ 0.3.0): the panel drops those of deleted accounts. */
+  accountIds?: number[];
+  gatewayAccountIds?: number[];
+}
+
+/** Port gateway of an account's file server (socket activation + PROXY protocol v2). */
+export interface HostdGatewaySpec {
+  accountId: number;
+  /** Host port hostd listens on (IPv4 + IPv6). */
+  port: number;
+  /** Current backend (file server container IP on the account network : 2022), null = stopped (hold + activate). */
+  target: { ip: string; port: number } | null;
+  /** Send a PROXY protocol v2 header to the backend (SFTPGo proxy_protocol). */
+  proxyProtocol: boolean;
+  /** No connection for this long → 'idle' event, repeated every 5 min while still idle (0 = never). */
+  idleTimeoutSec: number;
+  /** How long an accepted connection waits for a target after an 'activate' event (s). */
+  activationWaitSec: number;
+}
+
+export type HostdGatewayEventKind = 'activate' | 'idle' | 'refused';
+
+export interface HostdGatewayEvent {
+  accountId: number;
+  kind: HostdGatewayEventKind;
+  at: string;
+  /** activate / refused: the client address. */
+  remoteIp: string | null;
+}
+
 export class HostdError extends Error {
   constructor(public status: number, message: string, public code?: string) {
     super(message);
@@ -83,6 +156,24 @@ export interface HostdClient {
   clearDataPaths(spec: HostdSiteSpec, paths: string[]): Promise<void>;
   /** Bytes used under an absolute path INSIDE hostd's root. */
   du(path: string): Promise<number>;
+
+  // ── P2 — databases (module databases consumes, hostd-firewall implements in Go) ──
+  /** Idempotent: dbsock/i-<id> (uid:gid 0750) and databases/<id> (uid:gid 0700); ensureAccount creates dbsock/{mysql,postgresql} (root:gid 0750). */
+  ensureDbInstance(spec: HostdDbInstanceSpec): Promise<void>;
+  /** purge=false keeps databases/<id> (data) — only the socket dir and its default symlinks go. */
+  removeDbInstance(accountId: number, instanceId: number, opts: { purge: boolean }): Promise<void>;
+  /** (Re)points dbsock/<family>/<socket name> to /run/oblimint-db/i-<id>/<socket name>; null removes the symlink. */
+  setDefaultDbSocket(accountId: number, family: 'mysql' | 'postgresql', instanceId: number | null): Promise<void>;
+
+  // ── P2 — firewall + port gateway (module hostd-firewall) ──
+  applyFirewall(state: HostdFirewallAccountState): Promise<void>;
+  removeFirewall(accountId: number): Promise<void>;
+  setFirewallGlobal(global: HostdFirewallGlobal): Promise<void>;
+  firewallStatus(): Promise<HostdFirewallStatus>;
+  setGateway(spec: HostdGatewaySpec): Promise<void>;
+  removeGateway(accountId: number): Promise<void>;
+  /** Long poll: returns as soon as events exist, or [] after waitSec (≤ 55). */
+  gatewayEvents(waitSec: number): Promise<HostdGatewayEvent[]>;
 }
 
 // ─── Transport ───────────────────────────────────────────────────────────────
@@ -94,6 +185,8 @@ export const HOSTD_TIMEOUTS = {
   usage: 120_000,
   du: 120_000,
   seed: 10 * 60_000,
+  /** P2: long poll of the gateway events (waitSec + margin). */
+  events: 70_000,
 } as const;
 
 export interface HostdClientOptions {
@@ -234,6 +327,51 @@ export function createHostdClient(opts: HostdClientOptions): HostdClient {
       const r = await call<{ path: string; bytes: number }>('GET', `/v1/du?path=${encodeURIComponent(path)}`, undefined, t.du);
       return r.bytes;
     },
+
+    // ── P2 ──
+    ensureDbInstance: async (spec) => {
+      await call('PUT', `/v1/accounts/${id(spec.accountId, 'account id')}/db-instances/${id(spec.instanceId, 'instance id')}`,
+        { uid: spec.uid, gid: spec.gid });
+    },
+
+    removeDbInstance: async (accountId, instanceId, { purge }) => {
+      await call('DELETE', `/v1/accounts/${id(accountId, 'account id')}/db-instances/${id(instanceId, 'instance id')}?purge=${purge ? 1 : 0}`,
+        undefined, purge ? t.seed : t.default);
+    },
+
+    setDefaultDbSocket: async (accountId, family, instanceId) => {
+      if (family !== 'mysql' && family !== 'postgresql') throw new HostdError(400, `hostd: invalid socket family ${String(family)}`, 'invalid');
+      await call('PUT', `/v1/accounts/${id(accountId, 'account id')}/db-default/${family}`,
+        { instanceId: instanceId === null ? null : id(instanceId, 'instance id') });
+    },
+
+    applyFirewall: async (state) => {
+      await call('PUT', `/v1/firewall/accounts/${id(state.accountId, 'account id')}`, state);
+    },
+
+    removeFirewall: async (accountId) => {
+      await call('DELETE', `/v1/firewall/accounts/${id(accountId, 'account id')}`);
+    },
+
+    setFirewallGlobal: async (global) => {
+      await call('PUT', '/v1/firewall/global', global);
+    },
+
+    firewallStatus: () => call<HostdFirewallStatus>('GET', '/v1/firewall'),
+
+    setGateway: async (spec) => {
+      await call('PUT', `/v1/gateway/accounts/${id(spec.accountId, 'account id')}`, spec);
+    },
+
+    removeGateway: async (accountId) => {
+      await call('DELETE', `/v1/gateway/accounts/${id(accountId, 'account id')}`);
+    },
+
+    gatewayEvents: async (waitSec) => {
+      const w = Math.max(0, Math.min(55, Math.floor(waitSec)));
+      const r = await call<{ events: HostdGatewayEvent[] }>('GET', `/v1/gateway/events?wait=${w}`, undefined, t.events);
+      return Array.isArray(r.events) ? r.events : [];
+    },
   };
 }
 
@@ -301,5 +439,15 @@ export function hostdFor(nodeId: number): HostdClient {
     seedDataPath: async (spec, path) => (await target()).seedDataPath(spec, path),
     clearDataPaths: async (spec, paths) => (await target()).clearDataPaths(spec, paths),
     du: async (path) => (await target()).du(path),
+    ensureDbInstance: async (spec) => (await target()).ensureDbInstance(spec),
+    removeDbInstance: async (accountId, instanceId, opts) => (await target()).removeDbInstance(accountId, instanceId, opts),
+    setDefaultDbSocket: async (accountId, family, instanceId) => (await target()).setDefaultDbSocket(accountId, family, instanceId),
+    applyFirewall: async (state) => (await target()).applyFirewall(state),
+    removeFirewall: async (accountId) => (await target()).removeFirewall(accountId),
+    setFirewallGlobal: async (global) => (await target()).setFirewallGlobal(global),
+    firewallStatus: async () => (await target()).firewallStatus(),
+    setGateway: async (spec) => (await target()).setGateway(spec),
+    removeGateway: async (accountId) => (await target()).removeGateway(accountId),
+    gatewayEvents: async (waitSec) => (await target()).gatewayEvents(waitSec),
   };
 }

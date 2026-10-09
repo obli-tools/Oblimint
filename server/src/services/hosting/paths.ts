@@ -21,12 +21,35 @@ import { config, dataDir } from '../../config';
 //         runtime/                               root:root 0755  (→ /etc/oblimint/site, READ-ONLY)
 //           <role>[-<runtimeId>].json            SiteRuntimeConfig per container
 //
+//     dbsock/                                    root:gid  0750  (P2: parent of the socket dirs, root-owned: bind sources)
+//       mysql/                                   root:gid  0750  → /run/mysqld (RO) in EVERY site container; holds the symlink
+//                                                                mysqld.sock -> /run/oblimint-db/i-<default id>/mysqld.sock (hostd)
+//       postgresql/                              root:gid  0750  → /run/postgresql (RO) in every site container; symlink
+//                                                                .s.PGSQL.5432 -> /run/oblimint-db/i-<default id>/.s.PGSQL.5432
+//       i-<instanceId>/                          uid:gid   0750  socket dir of one instance (rw in the DB container;
+//                                                                sites see it under /run/oblimint-db/i-<id>, RO bind of dbsock/)
+//     databases/                                 root:root 0711  (P2)
+//       <instanceId>/                            uid:gid   0700  data dir of one instance (counted in the XFS project)
+//
 //   <root>/edge/conf.d/  edge/certs/  edge/acme/   (edge module)
+//   <root>/dns/                                     (P2: PowerDNS state, panel only)
+//   <root>/logs/<accountId>/<siteId>/              (P2: persisted access logs, panel only)
 //   <root>/run/hostd.sock                           (never mounted in tenant containers)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Container-side mount points (images/ contract). */
 export const CONTAINER_PATHS = {
+  /** P2 — site containers: default socket dirs + every instance socket dir (read-write: clients connect()). */
+  dbSocketMysql: '/run/mysqld',
+  dbSocketPostgresql: '/run/postgresql',
+  /**
+   * NEVER under /run/oblimint (OBLIMINT_RUN of the site images, written by the
+   * account uid): Docker would create the missing parent of the bind as
+   * root:root 0755 on the /run tmpfs and every site container would crash-loop
+   * (images/*: prepare_dirs). Same value in shared DB_SOCKET_PATHS.instancesDir
+   * and hostd/layout.go dbSocketsInContainer.
+   */
+  dbSocketsAll: '/run/oblimint-db',
   /** Site containers: the releases/ directory, READ-ONLY. Docroot = /srv/releases/current/<docroot>. */
   releases: '/srv/releases',
   /** Site containers: data/<siteSlug>, read-write, never executed. */
@@ -72,6 +95,14 @@ export function hostingLayout(root: string) {
     release: (accountId: number, siteId: number, n: number) => joinPosix(site(accountId, siteId), 'releases', n),
     currentLink: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'releases', 'current'),
     runtime: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'runtime'),
+    // P2 — database sockets / data (hostd creates them; see the tree above).
+    dbSockets: (accountId: number) => joinPosix(account(accountId), 'dbsock'),
+    dbSocketDefault: (accountId: number, family: 'mysql' | 'postgresql') => joinPosix(account(accountId), 'dbsock', family),
+    dbSocketInstance: (accountId: number, instanceId: number) => joinPosix(account(accountId), 'dbsock', `i-${instanceId}`),
+    dbData: (accountId: number, instanceId: number) => joinPosix(account(accountId), 'databases', instanceId),
+    dnsDir: () => joinPosix(r, 'dns'),
+    logsDir: () => joinPosix(r, 'logs'),
+    siteLogs: (accountId: number, siteId: number) => joinPosix(r, 'logs', accountId, siteId),
     edge: () => joinPosix(r, 'edge'),
     edgeConfD: () => joinPosix(r, 'edge', 'conf.d'),
     edgeCerts: () => joinPosix(r, 'edge', 'certs'),

@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  EdgeConfigError, edgeCertPaths, isValidServerName, isValidUpstream, renderVhost, sanitizeForNginx, sortLocations,
+  EdgeConfigError, edgeCertPaths, isValidServerName, isValidUpstream, renderVhost, sanitizeForNginx, selfSignedCertPaths, sortLocations,
   validateVhost, vhostFileName, type EdgeVhost,
 } from './nginxConfig';
 
 function vhost(over: Partial<EdgeVhost> = {}): EdgeVhost {
   return {
     id: 'd-1',
+    kind: 'site',
     serverNames: ['example.com', 'www.example.com'],
     tls: null,
     forceHttps: false,
@@ -15,6 +16,8 @@ function vhost(over: Partial<EdgeVhost> = {}): EdgeVhost {
     locations: [{ pathPrefix: '/', upstream: 'http://oblimint-site-1:8080', kind: 'site', siteId: 1 }],
     extraHeaders: {},
     clientMaxBodyMb: 512,
+    accountId: 3,
+    tenantId: 2,
     ...over,
   };
 }
@@ -85,8 +88,8 @@ test('locations: longest prefix first, variable proxy_pass, `= /prefix` redirect
   assert.match(conf, /set \$up_1 http:\/\/oblimint-site-2:8080;\n {8}proxy_pass \$up_1;/);
   assert.match(conf, /set \$up_2 http:\/\/oblimint-site-1:8080;\n {8}proxy_pass \$up_2;/);
   assert.doesNotMatch(conf, /proxy_pass http/, 'never a literal upstream (runtime DNS resolution)');
-  assert.match(conf, /location = \/shop \{\n {8}return 301 \/shop\/\$is_args\$args;/);
-  assert.match(conf, /location = \/shop\/api \{\n {8}return 301 \/shop\/api\/\$is_args\$args;/);
+  assert.match(conf, /location = \/shop \{\n(?: {8}set .*\n)* {8}return 301 \/shop\/\$is_args\$args;/);
+  assert.match(conf, /location = \/shop\/api \{\n(?: {8}set .*\n)* {8}return 301 \/shop\/api\/\$is_args\$args;/);
   assert.doesNotMatch(conf, /location = \/ /);
   for (const h of ['Host $host', 'X-Real-IP $remote_addr', 'X-Forwarded-For $proxy_add_x_forwarded_for',
     'X-Forwarded-Proto $scheme', 'X-Forwarded-Host $host', 'Upgrade $http_upgrade', 'Connection $connection_upgrade']) {
@@ -99,9 +102,9 @@ test('locations: longest prefix first, variable proxy_pass, `= /prefix` redirect
 
 test('only sub-paths routed: everything else is an explicit 404', () => {
   const conf = renderVhost(vhost({ locations: [{ pathPrefix: '/blog/', upstream: 'http://oblimint-site-3:8080', kind: 'site', siteId: 3 }] }));
-  assert.match(conf, /location \/ \{\n {8}return 404;/);
+  assert.match(conf, /location \/ \{\n(?: {8}set .*\n)* {8}return 404;/);
   const none = renderVhost(vhost({ locations: [] }));
-  assert.match(none, /location \/ \{\n {8}return 404;/);
+  assert.match(none, /location \/ \{\n(?: {8}set .*\n)* {8}return 404;/);
   assert.match(none, /acme-challenge/, 'a domain without routes still answers ACME challenges');
 });
 
@@ -136,6 +139,27 @@ test('panel vhost: https upstream without verification, long timeouts for websoc
   assert.match(conf, /location \^~ \/socket\.io\/ \{/);
   const site = renderVhost(vhost());
   assert.doesNotMatch(site, /proxy_ssl_verify/);
+});
+
+test('panel vhost: the database restore route streams unbuffered, 2 GiB, long timeouts (nested in /)', () => {
+  const conf = renderVhost(vhost({
+    id: 'panel', kind: 'panel', accountId: null, tenantId: null, serverNames: ['panel.example.com'],
+    locations: [
+      { pathPrefix: '/', upstream: 'https://oblimint-panel:8443', kind: 'panel', siteId: null },
+      { pathPrefix: '/socket.io/', upstream: 'https://oblimint-panel:8443', kind: 'panel', siteId: null },
+    ],
+  }));
+  const root = conf.indexOf('location ^~ / {');
+  const nested = conf.indexOf('location ~ ^/api/databases/instances/[0-9]+/databases/[0-9]+/restore$ {');
+  assert.ok(root > 0 && nested > root, 'restore location nested inside the panel root location');
+  const block = conf.slice(nested, conf.indexOf('}', nested));
+  for (const re of [/proxy_request_buffering off;/, /client_max_body_size 2048m;/, /proxy_read_timeout 23400s;/,
+    /proxy_pass \$up_\d+;/, /set \$up_\d+ https:\/\/oblimint-panel:8443;/, /proxy_ssl_verify off;/, /set \$oblimint_kind panel;/]) {
+    assert.match(block, re);
+  }
+  // Only the panel gets it.
+  assert.doesNotMatch(renderVhost(vhost()), /restore\$/);
+  assert.doesNotMatch(renderVhost(vhost()), /proxy_request_buffering/);
 });
 
 test('sortLocations orders by prefix length then lexically', () => {
@@ -204,4 +228,129 @@ test('injection attempts are refused (H5): names, prefixes, upstreams, headers, 
     assert.throws(() => renderVhost(vhost(over)), EdgeConfigError, JSON.stringify(over));
   }
   assert.doesNotThrow(() => validateVhost(vhost({ tls, extraHeaders: { 'X-Robots-Tag': 'noindex, nofollow' } })));
+});
+
+// ── P2 (edge-ownership) ──────────────────────────────────────────────────────
+
+/** Every `location … { … }` block of a rendered file: [selector, body]. */
+function locations(conf: string): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const re = /^ {4}location ([^{\n]+)\{\n([\s\S]*?)^ {4}\}/gm;
+  for (let m = re.exec(conf); m; m = re.exec(conf)) out.push([m[1].trim(), m[2]]);
+  return out;
+}
+
+/** Each served location sets the four access-log variables; the internal error-page alias sets none (keeps the caller's). */
+function assertLogVariables(conf: string, label: string): void {
+  const locs = locations(conf);
+  assert.ok(locs.length > 0, label);
+  for (const [sel, body] of locs) {
+    if (sel === '^~ /__oblimint_edge/') {
+      assert.doesNotMatch(body, /set \$oblimint_/, `${label}: ${sel}`);
+      continue;
+    }
+    for (const v of ['$oblimint_kind', '$oblimint_site', '$oblimint_account', '$oblimint_tenant']) {
+      assert.match(body, new RegExp(`set \\${v} [^;]+;`), `${label}: ${sel} sets ${v}`);
+    }
+  }
+}
+
+test('log variables: every location of every kind of vhost sets site / account / tenant / kind (plan §6.8)', () => {
+  const variants: Array<[string, Partial<EdgeVhost>]> = [
+    ['site', {}],
+    ['site tls+redirect', { tls, forceHttps: true }],
+    ['site tls', { tls }],
+    ['sub-paths only', { locations: [{ pathPrefix: '/blog/', upstream: 'http://oblimint-site-3:8080', kind: 'site', siteId: 3 }] }],
+    ['suspended', { suspended: true, tls }],
+    ['placeholder', { kind: 'placeholder', locations: [] }],
+    ['preview', { id: 'p-4', kind: 'preview', locations: [{ pathPrefix: '/', upstream: 'http://oblimint-site-4-preview:8080', kind: 'preview', siteId: 4 }] }],
+    ['panel', { id: 'panel', kind: 'panel', accountId: null, tenantId: null, locations: [{ pathPrefix: '/', upstream: 'https://oblimint-panel:8443', kind: 'panel', siteId: null }] }],
+    ['probe', { id: 'probe-v4', kind: 'probe', accountId: null, tenantId: null, locations: [{ pathPrefix: '/api/ip-probe', exact: true, upstream: 'https://oblimint-panel:8443', kind: 'probe', siteId: null }] }],
+  ];
+  for (const [label, over] of variants) assertLogVariables(renderVhost(vhost(over)), label);
+
+  const conf = renderVhost(vhost({
+    locations: [
+      { pathPrefix: '/', upstream: 'http://oblimint-site-1:8080', kind: 'site', siteId: 1 },
+      { pathPrefix: '/api/', upstream: 'http://oblimint-site-1-rt-9:8080', kind: 'secondary', siteId: 1 },
+    ],
+  }));
+  const byLoc = new Map(locations(conf));
+  assert.match(byLoc.get('^~ /')!, /set \$oblimint_kind site;\n {8}set \$oblimint_site "1";\n {8}set \$oblimint_account "3";\n {8}set \$oblimint_tenant "2";/);
+  assert.match(byLoc.get('^~ /api/')!, /set \$oblimint_kind secondary;/);
+  assert.match(byLoc.get('= /api')!, /set \$oblimint_kind redirect;/);
+  assert.match(byLoc.get('^~ /.well-known/acme-challenge/')!, /set \$oblimint_kind site;\n {8}set \$oblimint_site "";/);
+  // Never at server level (an error_page redirect would reset the site of the failing location).
+  assert.doesNotMatch(conf, /^ {4}set /m);
+  const panel = renderVhost(vhost({ id: 'panel', kind: 'panel', accountId: null, tenantId: null }));
+  assert.match(panel, /set \$oblimint_account "";\n {8}set \$oblimint_tenant "";/);
+  const redirect = renderVhost(vhost({ tls, forceHttps: true }));
+  assert.match(redirect, /set \$oblimint_kind redirect;[\s\S]*return 301 https:\/\/\$host\$request_uri;/);
+});
+
+test('placeholder vhost (unverified domain): static pending page, 200, no proxy, no TLS, no redirect', () => {
+  const conf = renderVhost(vhost({ kind: 'placeholder', locations: [], forceHttps: true }));
+  const [http, https] = servers(conf);
+  assert.equal(https, undefined);
+  assert.doesNotMatch(conf, /proxy_pass|return 301|listen 443/);
+  assert.match(http, /location \^~ \/\.well-known\/acme-challenge\//, 'ACME stays served (harmless, keeps the vhost uniform)');
+  assert.match(http, /location \/ \{\n {8}set \$oblimint_kind placeholder;[\s\S]*root \/usr\/share\/oblimint\/errors;[\s\S]*try_files \/pending\.html =404;/);
+  assert.match(http, /add_header X-Robots-Tag "noindex, nofollow" always;/);
+  // D1: a placeholder can neither route nor carry a certificate.
+  assert.throws(() => renderVhost(vhost({ kind: 'placeholder' })), EdgeConfigError);
+  assert.throws(() => renderVhost(vhost({ kind: 'placeholder', locations: [], tls })), EdgeConfigError);
+});
+
+test('wildcard server name: `*.name` accepted, anything else with a star refused (H5)', () => {
+  const conf = renderVhost(vhost({ serverNames: ['example.com', '*.example.com'] }));
+  assert.match(conf, /server_name example\.com \*\.example\.com;/);
+  for (const bad of ['*example.com', '*.', '*.*.example.com', 'a.*.example.com', '*.com;', '**.example.com', '*.Example.com']) {
+    assert.throws(() => renderVhost(vhost({ serverNames: [bad] })), EdgeConfigError, bad);
+  }
+});
+
+test('exact location (probe): `location = /path`, no bare redirect, everything else 404', () => {
+  const conf = renderVhost(vhost({
+    id: 'probe-v6', kind: 'probe', accountId: null, tenantId: null, serverNames: ['v6.panel.example.com'],
+    locations: [{ pathPrefix: '/api/ip-probe', exact: true, upstream: 'https://oblimint-panel:8443', kind: 'probe', siteId: null }],
+  }));
+  assert.match(conf, /location = \/api\/ip-probe \{\n(?: {8}set .*\n)* {8}set \$up_0 https:\/\/oblimint-panel:8443;/);
+  assert.match(conf, /location \/ \{\n(?: {8}set .*\n)* {8}return 404;/);
+  assert.doesNotMatch(conf, /return 301/);
+  for (const bad of ['/api/ip-probe/', 'api', '/a b', '/a;b', '/.well-known/acme-challenge', '/__oblimint_edge']) {
+    assert.throws(() => renderVhost(vhost({ locations: [{ pathPrefix: bad, exact: true, upstream: 'http://a:1', kind: 'probe', siteId: null }] })), EdgeConfigError, bad);
+  }
+});
+
+test('vhost kind / ids are validated', () => {
+  assert.throws(() => renderVhost(vhost({ kind: 'evil' as never })), EdgeConfigError);
+  assert.throws(() => renderVhost(vhost({ accountId: -1 })), EdgeConfigError);
+  assert.throws(() => renderVhost(vhost({ tenantId: 1.5 })), EdgeConfigError);
+  assert.throws(() => renderVhost(vhost({ locations: [{ pathPrefix: '/', upstream: 'http://a:1', kind: 'site', siteId: 0 }] })), EdgeConfigError);
+  assert.throws(() => renderVhost(vhost({ locations: [{ pathPrefix: '/', upstream: 'http://a:1', kind: 'mail' as never, siteId: 1 }] })), EdgeConfigError);
+  assert.doesNotThrow(() => renderVhost(vhost({ id: 'dbadmin', kind: 'dbadmin', accountId: null, tenantId: null,
+    locations: [{ pathPrefix: '/phpmyadmin/', upstream: 'http://oblimint-phpmyadmin:8080', kind: 'dbadmin', siteId: null }] })));
+});
+
+test('self-signed fallback certificate: platform vhosts only, flag consistent with the path, no HSTS', () => {
+  const fallback = selfSignedCertPaths();
+  assert.equal(fallback.certPath, '/etc/nginx/oblimint/certs/_selfsigned/fullchain.pem');
+  const panel: EdgeVhost = {
+    id: 'panel', kind: 'panel', serverNames: ['panel.oblimint.test'], tls: fallback, forceHttps: true, selfSigned: true, suspended: false,
+    locations: [{ pathPrefix: '/', upstream: 'https://oblimint-panel:8443', kind: 'panel', siteId: null }],
+    extraHeaders: {}, clientMaxBodyMb: 100, accountId: null, tenantId: null,
+  };
+  const conf = renderVhost(panel);
+  assert.match(conf, /ssl_certificate \/etc\/nginx\/oblimint\/certs\/_selfsigned\/fullchain\.pem;/);
+  assert.match(conf, /return 301 https:\/\/\$host\$request_uri;/);
+  assert.doesNotMatch(conf, /Strict-Transport-Security/);
+  // A tenant domain never gets it, and the flag must match the path.
+  assert.throws(() => renderVhost({
+    ...panel, id: 'd-1', kind: 'site', selfSigned: undefined, accountId: 1, tenantId: 1,
+    locations: [{ pathPrefix: '/', upstream: 'http://oblimint-site-1:8080', kind: 'site', siteId: 1 }],
+  }), EdgeConfigError);
+  assert.throws(() => renderVhost({ ...panel, selfSigned: false }), EdgeConfigError);
+  assert.throws(() => renderVhost({ ...panel, tls: edgeCertPaths('panel.oblimint.test') }), EdgeConfigError);
+  // Other underscore directories stay refused.
+  assert.throws(() => renderVhost({ ...panel, selfSigned: undefined, tls: { certPath: '/etc/nginx/oblimint/certs/_other/fullchain.pem', keyPath: fallback.keyPath } }), EdgeConfigError);
 });

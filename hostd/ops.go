@@ -75,6 +75,10 @@ type Ops interface {
 	ClearDataPaths(ctx context.Context, s SiteSpec, paths []string) error
 	// Du returns the bytes used below rel (components under the root).
 	Du(ctx context.Context, rel []string) (int64, error)
+	// P2 — database instances (dbops.go).
+	EnsureDbInstance(ctx context.Context, s DbInstanceSpec) error
+	RemoveDbInstance(ctx context.Context, accountID, instanceID int64, purge bool) error
+	SetDefaultDbSocket(ctx context.Context, accountID int64, f DbFamily, instanceID *int64) error
 }
 
 // quickLockWait bounds how long a short operation (ensure*, quota, non purge

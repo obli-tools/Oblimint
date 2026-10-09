@@ -28,6 +28,18 @@ import fileServerRoutes from './filesrv.routes';         // orchestration
 import infraRoutes from './infra.routes';                // orchestration
 import edgeRoutes from './edge.routes';                  // edge
 import certificatesRoutes from './certificates.routes';  // edge
+// P2 — hosting complete (docs/P2-PLAN.md §6). One router file per owning module.
+import hostingSettingsRoutes from './hostingSettings.routes'; // architect (platform settings)
+import dnsRoutes from './dns.routes';                          // dns
+import systemDnsRoutes from './systemDns.routes';              // dns
+import domainOwnershipRoutes from './domainOwnership.routes';  // edge-ownership
+import databasesRoutes from './databases.routes';              // databases
+import { accountAccessRoutes, accessRoutes, systemFirewallRoutes } from './firewall.routes'; // hostd-firewall
+import ipProbeRoutes from './ipProbe.routes';                  // hostd-firewall (public)
+import usageRoutes from './usage.routes';                      // usage
+import notificationsRoutes from './notifications.routes';      // usage
+import cronRoutes from './cron.routes';                        // cron-logs
+import logsRoutes from './logs.routes';                        // cron-logs
 
 const router = Router();
 
@@ -35,8 +47,12 @@ const router = Router();
 router.use('/setup', normalModeSetupRouter());     // { mode: 'normal' }, the rest 404
 router.use('/auth', authRoutes);
 router.use('/auth', obligateCallbackRoutes);       // sso-config, connected-apps, app-info, sso-user-sync…
+router.use('/ip-probe', ipProbeRoutes);            // P2 hostd-firewall: public IP probe (v4-only / v6-only hosts)
 router.use('/system/infra', requireAuth, requireRole('admin'), infraRoutes); // P1 orchestration
 router.use('/system/edge', requireAuth, requireRole('admin'), edgeRoutes);   // P1 edge
+router.use('/system/hosting-settings', requireAuth, requireRole('admin'), hostingSettingsRoutes); // P2 architect
+router.use('/system/dns', requireAuth, requireRole('admin'), systemDnsRoutes);           // P2 dns
+router.use('/system/firewall', requireAuth, requireRole('admin'), systemFirewallRoutes); // P2 hostd-firewall
 router.use('/system', systemRoutes);               // platform admin, no tenant required
 
 // ── Authenticated, no tenant required ───────────────────────────────────────
@@ -64,8 +80,18 @@ tenantRouter.use('/accounts', fileServerRoutes);
 tenantRouter.use('/sites', sitesRoutes);
 tenantRouter.use('/sites', releasesRoutes);
 tenantRouter.use('/sites', runtimeRoutes);
+tenantRouter.use('/domains', domainOwnershipRoutes);  // P2: BEFORE domainsRoutes (/claims vs /:id)
 tenantRouter.use('/domains', domainsRoutes);
 tenantRouter.use('/domains', certificatesRoutes);
+// P2 hosting complete. Shared prefixes: no catch-all in any of these routers.
+tenantRouter.use('/accounts', accountAccessRoutes);     // /:id/access…
+tenantRouter.use('/access', accessRoutes);
+tenantRouter.use('/sites', cronRoutes);                 // /:id/cron…
+tenantRouter.use('/sites', logsRoutes);                 // /:id/logs…
+tenantRouter.use('/dns', dnsRoutes);
+tenantRouter.use('/databases', databasesRoutes);
+tenantRouter.use('/usage', usageRoutes);
+tenantRouter.use('/notifications', notificationsRoutes);
 
 router.use('/', tenantRouter);
 

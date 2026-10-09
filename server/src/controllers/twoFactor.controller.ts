@@ -137,6 +137,8 @@ export const twoFactorController = {
       req.session.username = row.username;
       req.session.role = row.role;
       req.session.currentTenantId = sessionTenantId;
+      // P2: this session passed 2FA (auto-2fa allow-list grants, services/firewall).
+      req.session.mfaVerifiedAt = Date.now();
       await stampCredentialVersion(req);
       await db('users').where({ id: row.id, totp_last_step: step, totp_last_session: preLoginHash })
         .update({ totp_last_session: hashSessionId(req.sessionID) });

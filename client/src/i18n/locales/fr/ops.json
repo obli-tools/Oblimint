@@ -1,0 +1,615 @@
+{
+  "security": {
+    "applied": {
+      "at": "Appliqué par l'hôte le {{date}}.",
+      "error": "Les règles de pare-feu n'ont pas pu être appliquées :",
+      "ok": "appliqué",
+      "pending": "en attente",
+      "pendingHint": "L'hôte n'a pas encore appliqué le dernier état (en cours, ou hostd injoignable)."
+    },
+    "bans": {
+      "empty": "Aucune adresse bannie.",
+      "failures": "{{count}} échec(s)",
+      "hint": "Des échecs d'authentification répétés (SFTP, SQL externe) bannissent l'adresse pour un temps. Une adresse des règles n'est jamais bannie.",
+      "title": "Adresses bannies",
+      "unban": "Débannir",
+      "unbanFailed": "Échec du débannissement",
+      "unbanned": "Adresse débannie",
+      "until": "jusqu'au {{date}}"
+    },
+    "errors": {
+      "backendUnavailable": "Le démon hôte (hostd) est injoignable : la modification est enregistrée mais pas encore appliquée.",
+      "cidrTooWide": "Cette plage est trop large (au moins /8 en IPv4, /32 en IPv6).",
+      "invalidCidr": "Saisissez une adresse IPv4 / IPv6 ou une plage CIDR.",
+      "lockoutRisk": "Aucune règle ni adresse de votre session n'est autorisée : passer en liste blanche bloquerait tout le monde.",
+      "noSessionIp": "Aucune adresse de votre session n'est encore connue : relancez la détection, puis réessayez.",
+      "probeExpired": "La détection d'adresses a expiré : relancez-la.",
+      "rateLimited": "Trop de tentatives : patientez une minute, puis réessayez.",
+      "ruleExists": "Cette adresse figure déjà dans la liste autorisée.",
+      "ruleLimit": "Ce compte a déjà 100 règles : supprimez-en avant d'en ajouter."
+    },
+    "grants": {
+      "empty": "Aucune autorisation active : elles apparaissent quand un utilisateur client de ce compte se connecte avec la 2FA.",
+      "expires": "expire le {{date}}",
+      "revoke": "Révoquer",
+      "revokeConfirm": "Révoquer l'autorisation automatique de {{ip}} ? Elle reviendra à la prochaine activité de sa session 2FA.",
+      "revokeFailed": "Échec de la révocation",
+      "revokeTitle": "Révoquer l'autorisation",
+      "revoked": "Autorisation révoquée",
+      "sourceProbe": "sonde",
+      "sourceSession": "session",
+      "title": "Autorisations automatiques (2FA)"
+    },
+    "loadFailed": "Échec du chargement des réglages d'accès",
+    "lockout": {
+      "confirm": "Basculer quand même",
+      "message": "La liste blanche est vide et aucune de vos adresses n'est autorisée : une fois ce mode appliqué, personne ne pourra joindre les ports SFTP / SQL de ce compte tant qu'une règle n'aura pas été ajoutée. Basculer quand même ?",
+      "title": "Risque de vous bloquer"
+    },
+    "mode": {
+      "allowlist": "Liste blanche",
+      "allowlistHint": "Seules les adresses et plages des règles ci-dessous peuvent se connecter (les bannissements s'appliquent toujours).",
+      "auto2fa": "Auto après 2FA",
+      "auto2faHint": "Les règles, plus les adresses des utilisateurs clients connectés au panel avec la 2FA (autorisation temporaire, renouvelée tant qu'ils utilisent le panel).",
+      "open": "Ouvert",
+      "openHint": "Tout le monde peut se connecter ; les adresses qui échouent trop souvent à s'authentifier sont bannies.",
+      "saveFailed": "Échec du changement de mode d'accès",
+      "saved": "Mode d'accès enregistré",
+      "title": "Mode d'accès"
+    },
+    "myIps": {
+      "allow": "Autoriser mes IP",
+      "allowFailed": "Échec de l'autorisation de vos adresses",
+      "allowed": "Vos adresses ont été ajoutées aux règles",
+      "detect": "Relancer la détection",
+      "inRules": "dans les règles",
+      "loadFailed": "Échec de la lecture de vos adresses.",
+      "mfa": "session avec 2FA",
+      "mfaHint": "En mode « auto après 2FA », les adresses de cette session sont autorisées automatiquement sur les comptes dont vous êtes membre.",
+      "noMfa": "session sans 2FA",
+      "noMfaHint": "Les autorisations automatiques exigent une connexion avec double authentification. Les membres de l'équipe n'en reçoivent pas : utilisez les règles.",
+      "none": "non détectée",
+      "probeFailed": "La détection d'adresses a échoué.",
+      "probeNotConfigured": "hôte de sonde non configuré",
+      "seen": "Vue par le panel",
+      "title": "Mes adresses IP"
+    },
+    "ports": {
+      "hint": "Les règles ne s'appliquent qu'à ces ports : les sites web restent publics.",
+      "none": "Aucun port ouvert pour ce compte (serveur de fichiers désactivé, pas d'accès SQL externe).",
+      "sftp": "SFTP",
+      "sql": "SQL",
+      "title": "Ports protégés"
+    },
+    "readOnly": "Modifier les règles d'accès nécessite la permission « accès aux fichiers » sur ce compte.",
+    "rules": {
+      "add": "Ajouter",
+      "addFailed": "Échec de l'ajout de la règle",
+      "added": "Règle ajoutée",
+      "cidr": "Adresse ou plage",
+      "createdBy": "Ajoutée par",
+      "deleteConfirm": "Retirer {{cidr}} de la liste blanche ? Ses connexions seront refusées dès l'application du changement (sauf en mode ouvert).",
+      "deleteFailed": "Échec de la suppression de la règle",
+      "deleteTitle": "Supprimer la règle",
+      "deleted": "Règle supprimée",
+      "empty": "Aucune règle pour l'instant.",
+      "expires": "Expiration (facultative)",
+      "expiresCol": "Expiration",
+      "expiryTooSoon": "L'expiration doit être dans 5 minutes au moins.",
+      "label": "Libellé (facultatif)",
+      "labelCol": "Libellé",
+      "labelPlaceholder": "Bureau",
+      "openNote": "Le compte est en mode ouvert : ces règles sont conservées mais pas appliquées (elles protègent tout de même leurs adresses des bannissements).",
+      "permanent": "permanente",
+      "title": "Règles de liste blanche",
+      "until": "jusqu'au"
+    },
+    "tab": {
+      "subtitle": "Qui peut joindre les ports SFTP et SQL de ce compte.",
+      "title": "Sécurité"
+    },
+    "ttl": {
+      "hint": "Une adresse reste autorisée {{value}} après la dernière activité de sa session dans le panel.",
+      "label": "Durée d'autorisation (minutes)",
+      "range": "Entre {{min}} et {{max}} minutes.",
+      "saveFailed": "Échec de l'enregistrement de la durée d'autorisation",
+      "saved": "Durée d'autorisation enregistrée"
+    },
+    "units": {
+      "h": "h",
+      "min": "min"
+    }
+  },
+  "usage": {
+    "accountTabs": {
+      "databases": "Bases de données",
+      "usage": "Consommation"
+    },
+    "alerts": {
+      "cleared": "levée",
+      "current": "en cours",
+      "none": "Aucune alerte ouverte.",
+      "title": "Alertes ouvertes",
+      "workspace": "Espace de travail"
+    },
+    "chart": {
+      "noData": "Pas encore de données pour cette période."
+    },
+    "db": {
+      "databases": "Bases",
+      "instances": "Instances BDD",
+      "size": "Taille BDD"
+    },
+    "dimension": {
+      "databases": "Bases de données",
+      "dbSize": "Taille des bases",
+      "disk": "Disque",
+      "traffic": "Trafic"
+    },
+    "disk": {
+      "checked": "Mesuré",
+      "noHistory": "L'historique se remplit à raison d'une mesure par jour.",
+      "quota": "Quota",
+      "title": "Disque",
+      "used": "Utilisé"
+    },
+    "gauge": {
+      "level": "{{level}} % atteint"
+    },
+    "hero": {
+      "accounts": "Comptes d'hébergement",
+      "alerts": "Alertes ouvertes",
+      "alertsCritical": "{{count}} à 100 %",
+      "dbInstances": "Instances BDD",
+      "disk": "Disque utilisé",
+      "noEnvelope": "pas d'enveloppe d'espace de travail",
+      "ofEnvelope": "{{pct}} % de {{value}}",
+      "platformTotal": "tous les espaces de travail",
+      "seeUsage": "Trafic, disque, ressources",
+      "sites_one": "{{count}} site",
+      "sites_other": "{{count}} sites",
+      "traffic": "Trafic du mois"
+    },
+    "loadFailed": "Échec du chargement de la consommation",
+    "month": {
+      "next": "Mois suivant",
+      "previous": "Mois précédent"
+    },
+    "overQuota": {
+      "blocked": "Envois bloqués",
+      "blockedBanner": "Ce compte dépasse son quota : les envois sont bloqués (SFTP en lecture + suppression seulement). Les sites publiés continuent de tourner.",
+      "ok": "Dans le quota",
+      "suspended": "Suspendu (quota)",
+      "suspendedBanner": "Ce compte a été suspendu pour dépassement de quota.",
+      "warn": "Alerte de quota",
+      "warnBanner": "Ce compte a atteint un seuil de quota. Libérez de l'espace ou demandez un plan plus large."
+    },
+    "page": {
+      "oneWorkspace": "Espace de travail affiché :",
+      "oneWorkspaceHint": "choisissez une pastille pour un autre espace de travail.",
+      "oneWorkspaceHintAdmin": "choisissez une pastille pour un autre espace de travail ; les totaux de la plateforme sont plus bas.",
+      "subtitle": "Trafic, disque et ressources des comptes."
+    },
+    "platform": {
+      "accounts": "Comptes",
+      "loadFailed": "Échec du chargement de la consommation de la plateforme",
+      "perTenant": "Par espace de travail",
+      "resources": "Ressources de l'hôte (dernières 24 h)",
+      "sites": "Sites",
+      "tenant": "Espace de travail",
+      "tenants": "Espaces de travail",
+      "title": "Plateforme"
+    },
+    "resources": {
+      "cpu": "CPU",
+      "cpuLegend": "CPU (% d'un cœur)",
+      "hint": "Somme de tous les conteneurs du compte (sites, bases de données, serveur de fichiers).",
+      "memLegend": "Mémoire (hors cache)",
+      "memory": "Mémoire",
+      "none": "Pas encore d'échantillon.",
+      "title": "Ressources (dernières 24 h)"
+    },
+    "top": {
+      "account": "Compte",
+      "empty": "Aucun compte pour l'instant.",
+      "state": "État",
+      "title": "Comptes les plus consommateurs"
+    },
+    "traffic": {
+      "dailyTitle": "Trafic de {{month}}",
+      "hint": "Octets envoyés par l'edge aux visiteurs (jours UTC). Le quota de trafic repart à zéro le 1er de chaque mois.",
+      "none": "Aucun trafic ce mois-ci.",
+      "others": "Autres",
+      "perSite": "Trafic par site",
+      "requests": "{{value}} requêtes",
+      "total": "total"
+    },
+    "units": {
+      "b": "o",
+      "gb": "Go",
+      "kb": "Ko",
+      "mb": "Mo",
+      "tb": "To"
+    }
+  },
+  "cron": {
+    "col": {
+      "enabled": "Active",
+      "last": "Dernière exécution",
+      "name": "Nom",
+      "next": "Prochaine",
+      "schedule": "Planification"
+    },
+    "create": "Nouvelle tâche",
+    "created": "Tâche planifiée créée",
+    "deleteConfirm": "Supprimer « {{name}} » et son historique ?",
+    "deleteFailed": "Échec de la suppression de la tâche",
+    "deleteTitle": "Supprimer la tâche planifiée",
+    "deleted": "Tâche planifiée supprimée",
+    "disabled": "désactivée",
+    "empty": "Aucune tâche planifiée pour l'instant.",
+    "errors": {
+      "backendUnavailable": "Le moteur de conteneurs est injoignable : la tâche ne peut pas s'exécuter pour le moment. Réessayez dans un instant.",
+      "commandTooLong": "La commande est trop longue (1000 caractères au plus).",
+      "cronInvalidSchedule": "Planification invalide : 5 champs (minute heure jour mois jour-de-semaine) ou @hourly / @daily / @weekly / @monthly.",
+      "cronNameTaken": "Une tâche de ce nom existe déjà sur ce site.",
+      "cronRunning": "Cette tâche est déjà en cours : attendez la fin de l'exécution.",
+      "cronTooFrequent": "Cette planification est trop fréquente : le plan impose au moins {{minIntervalMin}} minute(s) entre deux exécutions.",
+      "planLimit": "Le plan de ce compte n'autorise pas davantage de tâches planifiées.",
+      "siteNotRunning": "Le site n'est pas démarré : démarrez-le avant de lancer une tâche."
+    },
+    "form": {
+      "command": "Commande",
+      "commandHint": "Exécutée avec sh -c dans le conteneur du site, sous l'utilisateur du compte, depuis /srv/releases/current (la release publiée, en lecture seule : écrire dans les chemins de données).",
+      "createTitle": "Nouvelle tâche planifiée",
+      "editTitle": "Modifier {{name}}",
+      "enabled": "Active",
+      "name": "Nom",
+      "namePlaceholder": "Cron WordPress",
+      "overlapHint": "Une exécution ne chevauche jamais la précédente : tant qu'elle tourne, l'occurrence suivante est sautée. Au-delà du délai, la commande est tuée.",
+      "schedule": "Planification",
+      "scheduleHint": "minute heure jour-du-mois mois jour-de-semaine — heures en UTC.",
+      "timeout": "Délai maximal (secondes)",
+      "timeoutRange": "Délai : entre {{min}} et {{max}} secondes."
+    },
+    "history": "Historique",
+    "loadFailed": "Échec du chargement des tâches planifiées",
+    "presets": {
+      "daily": "Tous les jours à 03:00",
+      "every15": "Toutes les 15 minutes",
+      "every5": "Toutes les 5 minutes",
+      "hourly": "Toutes les heures",
+      "monthly": "Le 1er du mois à 05:00",
+      "weekly": "Tous les lundis à 04:00"
+    },
+    "runFailed": "Échec du lancement de la tâche",
+    "runNow": "Lancer maintenant",
+    "runs": {
+      "back": "Toutes les exécutions",
+      "count": "{{count}} exécution(s)",
+      "duration": "Durée",
+      "empty": "Cette tâche n'a encore jamais tourné.",
+      "exit": "code {{code}}",
+      "exitCode": "Code de sortie",
+      "loadFailed": "Échec du chargement de l'historique",
+      "manual": "manuelle",
+      "more": "Afficher plus",
+      "noOutput": "(aucune sortie)",
+      "output": "Sortie (stdout + stderr)",
+      "outputFailed": "Échec du chargement de la sortie",
+      "scheduled": "planifiée",
+      "started": "Démarrée",
+      "status": "Statut",
+      "title": "Historique de {{name}}",
+      "trigger": "Déclenchement",
+      "truncated": "La sortie a été tronquée à ses 64 premiers Kio."
+    },
+    "saveFailed": "Échec de l'enregistrement de la tâche",
+    "saved": "Tâche planifiée enregistrée",
+    "siteStopped": "Le site est arrêté : ses tâches sont sautées jusqu'à son redémarrage.",
+    "started": "{{name}} lancée",
+    "status": {
+      "failed": "échec",
+      "never": "jamais lancée",
+      "running": "en cours",
+      "skipped": "sautée",
+      "success": "réussie",
+      "timeout": "délai dépassé"
+    },
+    "tab": {
+      "subtitle": "Commandes planifiées de ce site.",
+      "title": "Cron"
+    },
+    "utcHint": "Les planifications sont évaluées en UTC. Le plan fixe le nombre de tâches et l'intervalle minimal entre deux exécutions."
+  },
+  "logs": {
+    "capped": "{{cap}} lignes gardées en mémoire",
+    "col": {
+      "bytes": "Octets",
+      "duration": "Durée",
+      "ip": "IP",
+      "method": "Méthode",
+      "status": "Statut",
+      "time": "Heure",
+      "uri": "URI"
+    },
+    "count": "{{count}} ligne(s)",
+    "download": {
+      "day": "Télécharger un jour",
+      "failed": "Le téléchargement a échoué",
+      "last24h": "Télécharger (24 h)",
+      "loadFailed": "Échec de la liste des fichiers de logs",
+      "none": "Aucun jour conservé pour l'instant."
+    },
+    "empty": "Aucune ligne pour ces filtres.",
+    "errors": {
+      "backendUnavailable": "Le moteur de conteneurs est injoignable : les journaux ne peuvent pas être lus pour le moment. Réessayez dans un instant.",
+      "logDateInvalid": "Date invalide.",
+      "logSourceInvalid": "Source de logs inconnue.",
+      "notFound": "Aucun log pour ce jour.",
+      "siteNotRunning": "Le site n'a aucun conteneur démarré : pas de log d'erreurs ni de moteur à afficher.",
+      "tooManySubscriptions": "Trop de suivis en direct ouverts dans cette fenêtre (4 au plus) : fermez un autre onglet de logs."
+    },
+    "filters": {
+      "allStatus": "Tous",
+      "apply": "Rechercher",
+      "reset": "Réinitialiser les filtres",
+      "since": "Du",
+      "status": "Statut",
+      "text": "Texte",
+      "textPlaceholder": "/wp-login.php, 404, PHP Fatal…",
+      "until": "Au"
+    },
+    "live": {
+      "failed": "Le suivi en direct n'a pas pu démarrer.",
+      "noSocket": "La connexion temps réel n'est pas disponible.",
+      "pause": "Pause",
+      "paused": "en pause",
+      "resume": "Reprendre",
+      "toggle": "Suivi en direct",
+      "waiting": "En attente de nouvelles lignes…"
+    },
+    "loadFailed": "Échec du chargement des logs",
+    "source": {
+      "access": "Accès",
+      "app": "Moteur",
+      "error": "Erreurs"
+    },
+    "tab": {
+      "subtitle": "Logs d'accès et d'erreurs de ce site.",
+      "title": "Logs"
+    },
+    "toBottom": "Dernières lignes",
+    "truncated": "seulement les {{limit}} dernières correspondances"
+  },
+  "notifications": {
+    "created": "Canal créé",
+    "deleteConfirm": "Supprimer le canal « {{name}} » ? Ses événements ne seront plus envoyés nulle part.",
+    "deleteFailed": "Échec de la suppression du canal",
+    "deleteTitle": "Supprimer le canal",
+    "deleted": "Canal supprimé",
+    "disabled": "désactivé",
+    "empty": "Aucun canal de notification pour l'instant.",
+    "emptyHint": "Ajoutez un canal e-mail, webhook, Discord ou Telegram pour être prévenu quand un compte atteint son quota.",
+    "errors": {
+      "channelInvalid": "La configuration du canal est invalide.",
+      "channelInvalidField": "Valeur invalide pour « {{field}} ».",
+      "channelNameTaken": "Un canal de ce nom existe déjà.",
+      "httpsOnly": "Une URL publique en https:// est requise.",
+      "notificationFailed": "La notification n'a pas pu être envoyée.",
+      "port": "Port invalide.",
+      "rateLimited": "Trop de tests : patientez une minute avant d'en envoyer un autre.",
+      "webhookForbidden": "Cette URL est refusée : seules les adresses https publiques sont acceptées (ni boucle locale, ni adresse privée ou interne)."
+    },
+    "event": {
+      "certificateFailed": "Échec d'un certificat",
+      "cronFailed": "Tâche planifiée en échec",
+      "dbInstanceFailed": "Panne d'une instance de base de données",
+      "dnsSyncFailed": "Échec de synchronisation DNS",
+      "quotaAction": "Envois bloqués / compte suspendu",
+      "quotaExceeded": "Quota dépassé (100 %)",
+      "quotaWarning": "Seuil de quota atteint (80 %)",
+      "securityBanned": "Adresse bannie"
+    },
+    "form": {
+      "botToken": "Jeton du bot",
+      "chatId": "ID de la conversation",
+      "createTitle": "Nouveau canal de notification",
+      "discordHint": "Paramètres du salon → Intégrations → Webhooks → Copier l'URL du webhook.",
+      "discordUrl": "URL du webhook Discord",
+      "editTitle": "Modifier {{name}}",
+      "enabled": "Actif",
+      "events": "Événements",
+      "from": "Expéditeur",
+      "headerName": "En-tête (facultatif)",
+      "headerValue": "Valeur de l'en-tête",
+      "method": "Méthode",
+      "name": "Nom",
+      "namePlaceholder": "Équipe d'exploitation",
+      "noEvent": "Choisissez au moins un événement.",
+      "password": "Mot de passe",
+      "port": "Port",
+      "secretClear": "Supprimer le mot de passe enregistré",
+      "secretKeep": "défini — laisser vide pour le conserver",
+      "secretSet": "défini",
+      "secretWillClear": "supprimé à l'enregistrement",
+      "secure": "TLS implicite (port 465)",
+      "secureHint": "Désactivé : STARTTLS quand le serveur le propose (port 587).",
+      "smtpHost": "Serveur SMTP",
+      "to": "Destinataires",
+      "type": "Type",
+      "url": "URL",
+      "username": "Utilisateur (facultatif)",
+      "webhookHint": "Corps JSON. URL https publiques uniquement : les adresses de boucle locale, privées et internes sont refusées."
+    },
+    "lastFailed": "dernier envoi en échec",
+    "lastSent": "dernier envoi {{date}}",
+    "loadFailed": "Échec du chargement des canaux de notification",
+    "newChannel": "Nouveau canal",
+    "saveFailed": "Échec de l'enregistrement du canal",
+    "sectionDescription": "Où sont envoyées les alertes de quota, les pannes et les bannissements de cet espace de travail.",
+    "sectionTitle": "Notifications",
+    "sendTest": "Envoyer un test",
+    "testFailed": "Le test a échoué",
+    "testFailedWith": "Le test a échoué : {{error}}",
+    "testSent": "Notification de test envoyée",
+    "type": {
+      "discord": "Discord",
+      "smtp": "E-mail (SMTP)",
+      "telegram": "Telegram",
+      "webhook": "Webhook"
+    },
+    "updated": "Canal enregistré"
+  },
+  "platformSettings": {
+    "access": {
+      "banDuration": "Durée du bannissement (min)",
+      "banThreshold": "Échecs avant bannissement",
+      "banWindow": "Sur une fenêtre de (min)",
+      "description": "Sondes d'adresses du mode « auto après 2FA », bannissements après échecs d'authentification, filtrage de sortie des réseaux de compte.",
+      "egress": {
+        "metadata": "Métadonnées",
+        "metadataHint": "Recommandé : les réseaux de compte ne peuvent joindre ni 169.254.0.0/16 (métadonnées du cloud) ni l'hôte en dehors des ports 80/443.",
+        "off": "Désactivé",
+        "offHint": "Aucun filtre : les sites peuvent joindre n'importe quelle adresse, y compris le service de métadonnées du cloud et l'hôte.",
+        "strict": "Strict",
+        "strictHint": "Refuse en plus les plages privées (RFC 1918, ULA, lien local) hors du réseau du compte. Peut casser les sites qui appellent des services internes."
+      },
+      "egressTitle": "Filtrage de sortie des réseaux de compte",
+      "grantTtl": "Durée d'autorisation par défaut (min)",
+      "noIp": "(aucune IP publique de cette famille dans l'installation)",
+      "probeV4": "Hôte de sonde IPv4",
+      "probeV4Hint": "Un nom avec un enregistrement A seulement (pas de AAAA).",
+      "probeV6": "Hôte de sonde IPv6",
+      "probeV6Hint": "Un nom avec un enregistrement AAAA seulement (pas de A).",
+      "records": "Enregistrements DNS à créer (et rien d'autre sur ces noms) :",
+      "recordsHint": "Chaque hôte de sonde doit résoudre dans UNE seule famille, sinon le navigateur choisit la famille et l'autre adresse du client n'est jamais vue. Utilisez des noms hors du domaine du panel.",
+      "title": "Accès"
+    },
+    "chips": {
+      "invalid": "« {{value}} » n'est pas valide.",
+      "remove": "Retirer {{value}}"
+    },
+    "dbAdmin": {
+      "description": "phpMyAdmin et Adminer s'ouvrent depuis le panel en authentification unique, sur leur propre nom d'hôte.",
+      "hint": "Par exemple db.<domaine de préversion>, jamais sous le panel. Vide : les outils d'administration sont désactivés.",
+      "hintSuggest": "Par exemple {{value}}. Vide : les outils d'administration sont désactivés.",
+      "hostname": "Nom d'hôte",
+      "title": "Administration BDD",
+      "underPanel": "Jamais sur le domaine enregistrable du panel (ni un voisin de l'hôte du panel) : utilisez un hôte du domaine de préversion."
+    },
+    "dns": {
+      "alsoNotify": "Serveurs prévenus des changements (NOTIFY)",
+      "alsoNotifyHint": "Adresses IP des serveurs secondaires.",
+      "axfr": "Serveurs secondaires autorisés au transfert (AXFR)",
+      "axfrHint": "Adresses IP ou plages CIDR.",
+      "defaultTtl": "TTL par défaut (secondes)",
+      "description": "Serveur PowerDNS partagé de la plateforme : zones générées depuis les domaines, servies sur le port 53 de cet hôte.",
+      "dnssec": "DNSSEC sur les nouvelles zones",
+      "dnssecHint": "L'enregistrement DS doit alors être publié chez le registraire de chaque domaine.",
+      "enabled": "Héberger les zones DNS",
+      "enabledHint": "Désactivé : pas de PowerDNS, chaque zone est « hébergée ailleurs » et le panel liste seulement les enregistrements à créer chez le fournisseur.",
+      "hostmaster": "E-mail du responsable (hostmaster)",
+      "hostmasterHint": "Contact du SOA. Vide : hostmaster@<zone>.",
+      "nameservers": "Serveurs de noms",
+      "nameserversHint": "Nos serveurs faisant autorité (FQDN), au moins deux recommandés. Ce sont les enregistrements NS de chaque zone hébergée.",
+      "nsProof": "Accepter la délégation NS comme preuve de propriété",
+      "nsProofHint": "Un domaine délégué à nos serveurs de noms est vérifié sans enregistrement TXT. Le TXT reste la preuve forte : un squatteur ayant délégué le premier pourrait être vérifié par NS.",
+      "resolvers": "Résolveurs publics",
+      "resolversHint": "Utilisés pour les vérifications de propriété et de délégation (jamais le DNS de Docker).",
+      "resolversRequired": "Au moins un résolveur.",
+      "title": "DNS"
+    },
+    "dnsServer": {
+      "active": "{{count}} publiée(s)",
+      "apiDown": "API injoignable",
+      "disabled": "Le serveur DNS est désactivé dans les réglages : chaque zone est hébergée ailleurs.",
+      "error": "{{count}} en erreur",
+      "loadFailed": "Échec du chargement de l'état du serveur DNS",
+      "pending": "{{count}} en attente",
+      "syncFailed": "Échec de la synchronisation des zones",
+      "synced": "Zones synchronisées",
+      "title": "Serveur DNS",
+      "zones": "{{count}} zone(s)"
+    },
+    "errors": {
+      "email": "Adresse e-mail invalide.",
+      "hostname": "Saisissez un nom d'hôte complet (FQDN).",
+      "range": "Entre {{min}} et {{max}}."
+    },
+    "firewall": {
+      "disabled": "inactif",
+      "egress": "Filtrage de sortie",
+      "hint": "Les listes blanches et bannissements des ports de compte sont appliqués par hostd (nftables) avant Docker. La passerelle écoute les ports SFTP et démarre les serveurs de fichiers à la connexion.",
+      "lastApply": "Dernière application",
+      "listeners": "Écouteurs de la passerelle",
+      "loadFailed": "Échec du chargement de l'état du pare-feu",
+      "syncFailed": "Échec de la synchronisation du pare-feu",
+      "synced": "État du pare-feu renvoyé à l'hôte",
+      "title": "Pare-feu"
+    },
+    "hostingTitle": "Hébergement",
+    "infra": {
+      "dbadmin": "Administration BDD (phpMyAdmin + Adminer)",
+      "dbadminHint": "phpMyAdmin et Adminer partagés, ouverts depuis le panel en authentification unique, sur le nom d'hôte des réglages.",
+      "dns": "Serveur DNS (PowerDNS)",
+      "dnsHint": "DNS faisant autorité des zones hébergées, sur le port 53 (TCP + UDP) de l'hôte. Son API reste sur le réseau interne.",
+      "redeployDbAdminConfirm": "Les conteneurs phpMyAdmin et Adminer sont recréés : les sessions d'administration BDD ouvertes sont fermées.",
+      "redeployDnsConfirm": "Le conteneur PowerDNS est recréé : les zones hébergées ne répondent plus pendant quelques secondes (les serveurs secondaires continuent de répondre)."
+    },
+    "loadFailed": "Échec du chargement des réglages d'hébergement",
+    "plan": {
+      "allEngines": "Tous les moteurs",
+      "cronIntervalRange": "Intervalle minimal du cron : entre {{min}} et {{max}} minutes.",
+      "cronMinInterval": "Intervalle minimal",
+      "cronMinIntervalHint": "Entre deux exécutions d'une même tâche.",
+      "cronTitle": "Cron",
+      "dbEngines": "Moteurs autorisés",
+      "dbExternal": "Accès SQL externe",
+      "dbExternalHint": "Le compte peut publier une instance sur un port dédié, filtré par sa liste blanche.",
+      "dbMaxSize": "Taille d'une base",
+      "dbProfile": "Profil des instances",
+      "dbProfileMemory": "{{value}} Mo de mémoire par instance",
+      "dbTitle": "Bases de données",
+      "maxCronJobs": "Tâches planifiées",
+      "maxDbInstances": "Instances BDD",
+      "minutes": "min",
+      "noEngine": "Autorisez au moins un moteur de base de données.",
+      "overQuota": {
+        "blockUploads": "Bloquer les envois",
+        "blockUploadsHint": "Le SFTP passe en lecture + suppression jusqu'au retour sous le quota ; les sites continuent de tourner.",
+        "suspend": "Suspendre le compte",
+        "suspendHint": "Le compte est suspendu (une fois par période) ; un membre de l'équipe peut le réactiver.",
+        "warn": "Avertir seulement",
+        "warnHint": "Alertes et notifications uniquement."
+      },
+      "overQuotaTitle": "À 100 % du quota disque ou trafic"
+    },
+    "preview": {
+      "description": "Les préversions blue/green sont servies sur <site>-<id>.<domaine de préversion>.",
+      "domain": "Domaine de préversion",
+      "domainHint": "Vide : les préversions n'ont pas d'URL publique. Faites pointer *.<domaine> (A / AAAA) vers ce serveur.",
+      "invalid": "Saisissez un nom de domaine (par ex. exemple-preview.net).",
+      "placeholder": "exemple-preview.net",
+      "setupHint": "Les préversions blue/green sont servies sur <site>-<id>.<ce domaine>. Utilisez un domaine enregistrable distinct de celui du panel (jamais un sous-domaine), pour qu'une préversion ne puisse jamais lire les cookies du panel. Vide : les préversions n'ont pas d'URL publique tant qu'il n'est pas défini dans les Réglages.",
+      "setupTitle": "Domaine de préversion (facultatif)",
+      "title": "Préversions",
+      "underPanel": "Le domaine de préversion doit être un domaine enregistrable distinct de celui du panel : ni l'hôte du panel, ni l'un de ses parents ou sous-domaines, ni un voisin sur le même domaine (ex. preview.example.com à côté de panel.example.com).",
+      "warning": "Utilisez un domaine enregistrable dédié (par ex. exemple-preview.net), distinct du domaine du panel : une préversion exécute le code d'un client et, sur un sous-domaine du panel, elle pourrait lire ou poser les cookies du panel.",
+      "wildcard": "Certificat générique",
+      "wildcardHint": "Un seul certificat *.<domaine> par DNS-01 : la zone du domaine de préversion doit être hébergée sur notre serveur DNS. Désactivé : un certificat par hôte de préversion."
+    },
+    "saveFailed": "Échec de l'enregistrement des réglages",
+    "saved": "Réglages enregistrés",
+    "usage": {
+      "description": "Alertes de quota et durée de conservation des mesures.",
+      "logRetention": "Logs d'accès conservés (jours)",
+      "resourceRetention": "Échantillons de ressources conservés (jours)",
+      "resourceRetentionHint": "Au-delà, seuls les agrégats horaires restent (90 jours).",
+      "thresholds": "Seuils d'alerte (% d'un quota)",
+      "thresholdsHint": "Jusqu'à 5 valeurs entre 1 et 200. À 100 %, l'action du plan s'applique (avertir, bloquer les envois, suspendre).",
+      "thresholdsRequired": "Au moins un seuil.",
+      "title": "Consommation"
+    }
+  }
+}

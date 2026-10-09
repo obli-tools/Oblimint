@@ -103,13 +103,73 @@ export function normalizeDomainName(input: unknown): string | null {
  * forgery and cookie tossing position) and usually covered by the operator's
  * wildcard DNS. A platform administrator may still attach a name under the
  * panel host (e.g. www.<panel>), never the panel name or the preview zone.
+ * P2: the preview domain (and all its names), the DB admin host and the IP
+ * probe hosts are reserved for everyone.
  */
-export function isPlatformReservedDomain(name: string, panelHostname: string | null | undefined, opts: { platformAdmin?: boolean } = {}): boolean {
-  const panel = (panelHostname ?? '').trim().toLowerCase().replace(/\.$/, '');
-  if (!panel) return false;
-  const preview = `preview.${panel}`;
-  if (name === panel || name === preview || name.endsWith(`.${preview}`)) return true;
-  return !opts.platformAdmin && name.endsWith(`.${panel}`);
+export function isPlatformReservedDomain(
+  name: string,
+  platform: string | PlatformHostNames | null | undefined,
+  opts: { platformAdmin?: boolean } = {},
+): boolean {
+  const hosts: PlatformHostNames = typeof platform === 'object' && platform !== null ? platform : { panelHostname: platform ?? null };
+  const n = hostOf(name);
+  if (!n) return false;
+  const panel = hostOf(hosts.panelHostname);
+  if (panel) {
+    // P1 preview zone (.preview.<panel>): no longer served, never handed to anyone.
+    const legacyPreview = `preview.${panel}`;
+    if (n === panel || n === legacyPreview || n.endsWith(`.${legacyPreview}`)) return true;
+    if (!opts.platformAdmin && n.endsWith(`.${panel}`)) return true;
+  }
+  // P2 (audit R-SAMESITE): the dedicated preview domain and everything under
+  // it, the DB admin host and the IP probe hosts belong to the platform —
+  // for everyone (the edge serves them itself, kind preview / dbadmin / probe).
+  const preview = hostOf(hosts.previewDomain);
+  if (preview && (n === preview || n.endsWith(`.${preview}`))) return true;
+  for (const h of [hosts.dbAdminHostname, ...(hosts.probeHosts ?? [])]) {
+    if (hostOf(h) === n) return true;
+  }
+  return false;
+}
+
+/**
+ * Host names the platform serves itself (settings + app_config panel_hostname).
+ * A plain string = the panel host name only (P1 callers).
+ */
+export interface PlatformHostNames {
+  panelHostname: string | null;
+  /** settings preview.previewDomain */
+  previewDomain?: string | null;
+  /** settings dbAdmin.hostname */
+  dbAdminHostname?: string | null;
+  /** settings access.probeHostV4 / probeHostV6 */
+  probeHosts?: Array<string | null | undefined>;
+}
+
+function hostOf(v: string | null | undefined): string {
+  return (v ?? '').trim().toLowerCase().replace(/\.$/, '');
+}
+
+/** Every platform host name (panel, dbadmin, probes, preview domain), lower case, no empty entry. */
+export function platformHostList(hosts: PlatformHostNames): string[] {
+  return [hosts.panelHostname, hosts.previewDomain, hosts.dbAdminHostname, ...(hosts.probeHosts ?? [])]
+    .map(hostOf).filter((h) => h.length > 0);
+}
+
+/**
+ * A wildcard (*.name) on `name` would also answer for platform host names
+ * below it (e.g. a tenant holding example.com with the panel on
+ * panel.example.com: *.example.com would serve evil.panel.example.com,
+ * same-site with the panel). Refused in that case.
+ */
+export function wildcardCoversPlatform(name: string, hosts: PlatformHostNames): boolean {
+  const n = hostOf(name);
+  return platformHostList(hosts).some((h) => h.endsWith(`.${n}`));
+}
+
+/** True when `name` is `parent` or one of its subdomains. */
+export function isSameOrSubdomain(name: string, parent: string): boolean {
+  return name === parent || name.endsWith(`.${parent}`);
 }
 
 /** Parent names of a host name, nearest first, down to two labels ('a.b.example.com' → b.example.com, example.com). */

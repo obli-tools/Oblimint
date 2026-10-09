@@ -6,7 +6,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { emitHosting } from '../hosting/events';
 import {
-  accountNetwork, EDGE_CONTAINER, fileServerContainer, LABELS, PANEL_ALIAS, previewContainer, secondaryContainer, siteContainer,
+  accountDbNetwork, accountNetwork, EDGE_CONTAINER, fileServerContainer, LABELS, P2_LABELS, PANEL_ALIAS, previewContainer, secondaryContainer, siteContainer,
 } from '../hosting/naming';
 import { localPaths } from '../hosting/paths';
 import { planLimits, type AccountRow, type DataPathRow, type SiteRow, type SiteRuntimeRow } from '../hosting/rows';
@@ -145,6 +145,8 @@ export function failureLabel(a: ReconcileAction): string {
     case 'createNetwork': return `création du réseau ${a.network} impossible`;
     case 'attachPanel': return `connexion du panel au réseau ${a.network} impossible`;
     case 'attachEdge': return `connexion du proxy (edge) au réseau ${a.network} impossible`;
+    case 'createDbNetwork': return `création du réseau des bases de données ${a.network} impossible`;
+    case 'attachNetwork': return `connexion du conteneur ${a.name} au réseau ${a.network} impossible`;
     case 'ensureAccountTree': return 'préparation des dossiers et du quota du compte impossible';
     case 'ensureSite': return 'préparation des dossiers du site impossible';
     case 'ensureStorage': return 'préparation du stockage des releases impossible';
@@ -183,19 +185,26 @@ export interface PassOutcome {
 /** Observes Docker for one account (containers by label, network, panel and edge endpoints). */
 async function observe(docker: Docker, accountId: number, panelRef: string | null): Promise<{ actual: ActualContainer[]; network: ActualNetwork; edgePresent: boolean }> {
   const net = accountNetwork(accountId);
-  const [containers, netInfo, self, edge] = await Promise.all([
+  const [containers, netInfo, self, edge, dbNetInfo] = await Promise.all([
     listByLabel(docker, `${LABELS.account}=${accountId}`),
     inspectNetwork(docker, net),
     panelRef ? inspectContainer(docker, panelRef) : Promise.resolve(null),
     inspectContainer(docker, EDGE_CONTAINER),
+    inspectNetwork(docker, accountDbNetwork(accountId)),
   ]);
   const panelEndpoint = self?.NetworkSettings?.Networks?.[net] as { Aliases?: string[] | null; DNSNames?: string[] | null } | undefined;
   const network: ActualNetwork = {
     exists: !!netInfo,
     panel: !panelEndpoint ? 'absent' : endpointHasAlias(panelEndpoint, PANEL_ALIAS) ? 'aliased' : 'attached',
     edge: edge?.NetworkSettings?.Networks?.[net] ? 'attached' : 'absent',
+    dbExists: !!dbNetInfo,
   };
-  const actual: ActualContainer[] = containers.map((c) => ({ name: cleanName(c.Names?.[0]), state: c.State, labels: c.Labels ?? {} }));
+  const actual: ActualContainer[] = containers.map((c) => ({
+    name: cleanName(c.Names?.[0]),
+    state: c.State,
+    labels: c.Labels ?? {},
+    networks: c.NetworkSettings?.Networks ? Object.keys(c.NetworkSettings.Networks) : undefined,
+  }));
   return { actual, network, edgePresent: !!edge };
 }
 
@@ -256,6 +265,7 @@ export async function runPass(state: AccountState, docker: Docker, now = new Dat
   const sitesById = new Map(state.sites.map((s) => [s.site.id, s]));
   const hostdSpec = (s: SiteRow) => ({ accountId: account.id, siteId: s.id, slug: s.slug, uid: account.uid, gid: account.gid });
   let networkFailed = false;
+  let dbNetworkFailed = false;
   let treeFailed = false;
   const siteFailed = new Set<number>();
   const configChanged = new Set<number>();
@@ -290,6 +300,14 @@ export async function runPass(state: AccountState, docker: Docker, now = new Dat
           break;
         case 'attachEdge':
           await connectNetwork(docker, action.network, EDGE_CONTAINER);
+          break;
+        case 'createDbNetwork':
+          // Never labelled oblimint.account: the edge joins every network carrying it.
+          await createNetwork(docker, action.network, { [LABELS.internal]: 'true', [P2_LABELS.dbNetwork]: String(account.id) });
+          break;
+        case 'attachNetwork':
+          if (dbNetworkFailed || blocked(action)) continue;
+          await connectNetwork(docker, action.network, action.name);
           break;
         case 'ensureAccountTree': {
           const client = await hostd(account.node_id);
@@ -338,7 +356,11 @@ export async function runPass(state: AccountState, docker: Docker, now = new Dat
             out.report.actions.push(`FAILED ${describeAction(action)}`);
             continue;
           }
-          await recreateContainer(docker, action.spec, action.start);
+          // Extra networks (account database network) joined BEFORE the start.
+          const extra = dbNetworkFailed ? [] : action.extraNetworks;
+          await recreateContainer(docker, action.spec, action.start && extra.length === 0);
+          for (const n of extra) await connectNetwork(docker, n, action.name);
+          if (action.start && extra.length > 0) await startContainer(docker, action.name);
           freshContainers.add(action.name);
           touch(action, action.start);
           break;
@@ -378,6 +400,11 @@ export async function runPass(state: AccountState, docker: Docker, now = new Dat
           issue('account', msg, err);
           break;
         case 'attachEdge':
+          issue('account', msg, err);
+          break;
+        case 'createDbNetwork':
+          // Sites still run (sockets), only TCP to the instances is missing: account issue, nothing blocked.
+          dbNetworkFailed = true;
           issue('account', msg, err);
           break;
         case 'ensureAccountTree':
@@ -511,6 +538,11 @@ async function reconcileAccountInner(accountId: number): Promise<ReconcileReport
   }
   const outcome = await runPass(state, docker);
   await persistOutcome(state, outcome);
+  // P2 extension point (docs/P2-PLAN.md §7): databases + firewall, inside the account lock.
+  if (!outcome.unreachable) {
+    const { runAfterAccountPassHooks } = await import('./extensions');
+    await runAfterAccountPassHooks({ state, docker, report: outcome.report });
+  }
   if (outcome.transient) {
     // hostd busy with a long operation on this account: try again later.
     const t = setTimeout(() => reconcileService.requestAccount(accountId, 'hostd-busy'), TRANSIENT_RETRY_MS);
@@ -596,6 +628,13 @@ async function bootPass(): Promise<void> {
   try { await infraService.ensurePanelAlias(); } catch (err) { logger.error({ err: errText(err) }, 'Panel alias check failed'); }
   try { await infraService.ensureHostd((l) => logger.info({ component: 'hostd' }, l)); } catch (err) { logger.error({ err: errText(err) }, 'oblimint-hostd could not be ensured at boot'); }
   try { await infraService.ensureEdge((l) => logger.info({ component: 'edge' }, l)); } catch (err) { logger.error({ err: errText(err) }, 'oblimint-edge could not be ensured at boot'); }
+  // P2 platform components (PowerDNS, DB admin UIs) when the settings want them.
+  const { extraInfraComponents } = await import('./extensions');
+  for (const c of await extraInfraComponents()) {
+    try {
+      if (await c.wantedAtBoot()) await c.ensure((l) => logger.info({ component: c.id }, l));
+    } catch (err) { logger.error({ err: errText(err), component: c.id }, 'P2 infra component could not be ensured at boot'); }
+  }
   reconcileService.requestAll('boot');
 }
 
@@ -679,12 +718,20 @@ export const reconcileService = {
         try { await removeContainer(docker, name); } catch (err) { errors.push(`remove ${name}: ${errText(err)}`); }
       }
       const net = accountNetwork(account.id);
+      const dbNet = accountDbNetwork(account.id);
       const self = selfContainerRef();
       for (const c of [self, EDGE_CONTAINER]) {
         if (!c) continue;
         try { await disconnectNetwork(docker, net, c); } catch (err) { errors.push(`disconnect ${c}: ${errText(err)}`); }
       }
+      // phpMyAdmin / Adminer attached for an SSO session would keep the network
+      // alive (removeNetwork fails → the account comes back in 'error').
+      try {
+        const { detachAccountAdmins } = await import('../databases/sso');
+        await detachAccountAdmins(docker, account.id);
+      } catch (err) { errors.push(`detach db admin: ${errText(err)}`); }
       try { await removeNetwork(docker, net); } catch (err) { errors.push(`remove network ${net}: ${errText(err)}`); }
+      try { await removeNetwork(docker, dbNet); } catch (err) { errors.push(`remove network ${dbNet}: ${errText(err)}`); }
       try {
         await (await hostd(account.nodeId)).removeAccount(account.id, { purge: opts.purge });
       } catch (err) {

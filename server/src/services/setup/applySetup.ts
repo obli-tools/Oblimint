@@ -36,6 +36,8 @@ export const setupApplySchema = z.object({
   nameservers: z.array(hostname).max(8),
   acmeEmail: z.string().trim().email().max(254),
   mailEngine: z.enum(['postfix-dovecot', 'stalwart', 'docker-mailserver', 'maddy', 'external']),
+  // P2: registrable domain dedicated to the previews (never under the panel host).
+  previewDomain: hostname.nullable().optional(),
   admin: z.object({
     username: z.string().trim().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/, 'Only letters, numbers, _, ., -')
       .refine((u) => !u.toLowerCase().startsWith('og_'), 'The og_ prefix is reserved for SSO accounts'),
@@ -52,7 +54,7 @@ export const setupApplySchema = z.object({
 
 const STEP_IDS = ['network', 'postgres', 'attach', 'config', 'migrate', 'admin', 'settings', 'edge', 'hostd', 'dns', 'mail'] as const;
 type StepId = typeof STEP_IDS[number];
-const LATER_STEPS: StepId[] = ['dns', 'mail'];
+const LATER_STEPS: StepId[] = ['mail'];
 
 function freshProgress(): SetupProgress {
   return {
@@ -210,6 +212,21 @@ async function stepHostd(): Promise<void> {
   await infraService.ensureHostd((line) => log('hostd', line));
 }
 
+/** P2: shared PowerDNS (module dns, services/dns/infra.ts). Non-fatal like edge / hostd. */
+async function stepDns(): Promise<void> {
+  const { dnsInfraComponent } = await import('../dns/infra');
+  await dnsInfraComponent.ensure((line) => log('dns', line));
+}
+
+/**
+ * SESSION_SECRET of the normal-mode boot that follows the wizard: the
+ * environment wins over config/oblimint.json (config.ts), else the secret
+ * just written to the file.
+ */
+export function effectiveSessionSecret(written: string, env: string | undefined): string {
+  return env || written;
+}
+
 // ── Runner ───────────────────────────────────────────────────────────────────
 
 export function startApply(req: SetupApplyRequest, opts: { exitOnDone?: boolean } = {}): void {
@@ -223,9 +240,10 @@ export function startApply(req: SetupApplyRequest, opts: { exitOnDone?: boolean 
       await runStep('postgres', async () => { databaseUrl = await stepPostgres(); });
       await runStep('attach', stepAttach);
       await runStep('config', async () => {
+        const sessionSecret = crypto.randomBytes(48).toString('base64url');
         const file = await writePanelConfig({
           databaseUrl,
-          sessionSecret: crypto.randomBytes(48).toString('base64url'),
+          sessionSecret,
           panel: {
             hostname: req.panelHostname,
             publicIpv4: req.publicIpv4,
@@ -237,12 +255,17 @@ export function startApply(req: SetupApplyRequest, opts: { exitOnDone?: boolean 
           createdAt: new Date().toISOString(),
         });
         config.databaseUrl = databaseUrl;
+        // The later steps (edge, hostd, dns) seal values with secretBox: they
+        // must use the secret of the next (normal-mode) boot, never the
+        // empty setup-mode one (which fell back to a public constant).
+        config.sessionSecret = effectiveSessionSecret(sessionSecret, process.env.SESSION_SECRET);
         log('config', `Configuration written to ${file} (0600)`);
       });
       await runPostDeploySteps(req);
       // Non-fatal: the panel works without them; the operator redeploys from the Nodes page.
       await runOptionalStep('edge', stepEdge);
       await runOptionalStep('hostd', stepHostd);
+      await runOptionalStep('dns', stepDns);
       for (const id of LATER_STEPS) {
         stepOf(id).status = 'skipped';
         log(id, 'Deployed in a later phase (P2+)');
@@ -305,6 +328,8 @@ export async function runPostDeploySteps(req: SetupApplyRequest): Promise<void> 
     await appConfigService.set('nameservers', JSON.stringify(req.nameservers));
     await appConfigService.set('acme_email', req.acmeEmail);
     await appConfigService.set('mail_engine', req.mailEngine);
+    // P2: seeds settings preview.previewDomain (services/platformSettings.ts reads it until the section is saved).
+    if (req.previewDomain) await appConfigService.set('preview_domain', req.previewDomain.toLowerCase());
     log('settings', 'Panel settings saved');
     if (req.obligate) {
       await appConfigService.patchObligateConfig({ url: req.obligate.url.replace(/\/+$/, ''), apiKey: req.obligate.apiKey, enabled: true });

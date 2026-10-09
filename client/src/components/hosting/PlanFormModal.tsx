@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Layers, AlertTriangle } from 'lucide-react';
-import type { Plan, PlanInput, PlanLimits, SiteBaseId, SiteEngine } from '@oblimint/shared';
-import { DEFAULT_PLAN_LIMITS, SITE_BASES } from '@oblimint/shared';
+import type { DbEngine, DbTuningProfile, OverQuotaAction, Plan, PlanInput, PlanLimits, SiteBaseId, SiteEngine } from '@oblimint/shared';
+import { DB_ENGINE_VERSIONS, DB_PROFILE_MEMORY_MB, DEFAULT_PLAN_LIMITS, SITE_BASES } from '@oblimint/shared';
 import { plansApi } from '@/api/plans.api';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
+import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { cn } from '@/utils/cn';
 import { inputCls, labelCls, sectionTitleCls, Pill, hostingErrorMessage, isStepUpHandled } from './hostingUi';
 import { limitToField, parseLimitField } from './hostingFormat';
 
-type NumKey = Exclude<keyof PlanLimits, 'allowedBases'>;
+// P2 non-numeric / non-nullable limits are edited separately (module ui-ops).
+type NumKey = Exclude<keyof PlanLimits, 'allowedBases' | 'dbProfile' | 'dbEngines' | 'dbExternalAccess' | 'overQuotaAction' | 'cronMinIntervalMin'>;
 
 interface FieldDef {
   key: NumKey;
@@ -29,6 +31,20 @@ type FieldState = { value: string; none: boolean };
 type FormState = Record<NumKey, FieldState>;
 
 const MIB_PER_GB = 1024;
+
+/** Engines of the database catalog, in catalog order. */
+const DB_ENGINES: DbEngine[] = [...new Set(DB_ENGINE_VERSIONS.map((v) => v.engine))];
+const DB_ENGINE_LABELS: Record<DbEngine, string> = { mariadb: 'MariaDB', mysql: 'MySQL', postgresql: 'PostgreSQL' };
+const DB_PROFILES: DbTuningProfile[] = ['S', 'M', 'L'];
+const OVER_QUOTA_ACTIONS: OverQuotaAction[] = ['warn', 'block-uploads', 'suspend'];
+const OVER_QUOTA_FALLBACK: Record<OverQuotaAction, { label: string; hint: string }> = {
+  warn: { label: 'Warn only', hint: 'Alerts and notifications only.' },
+  'block-uploads': { label: 'Block uploads', hint: 'SFTP becomes read + delete only until the usage is back under the quota; the sites keep running.' },
+  suspend: { label: 'Suspend the account', hint: 'The account is suspended (once per period); a staff member can resume it.' },
+};
+const OVER_QUOTA_KEY: Record<OverQuotaAction, string> = { warn: 'warn', 'block-uploads': 'blockUploads', suspend: 'suspend' };
+const CRON_INTERVAL_MIN = 1;
+const CRON_INTERVAL_MAX = 1440;
 
 function toForm(l: PlanLimits, defs: FieldDef[]): FormState {
   const f = {} as FormState;
@@ -50,7 +66,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
   const { t } = useTranslation();
   const unlimited = t('hostingCommon.unlimited') || 'unlimited';
 
-  const defs: FieldDef[] = [
+  const baseDefs: FieldDef[] = [
     { key: 'diskMb', label: t('plans.limits.disk') || 'Disk', unit: t('units.gb') || 'GB', multiplier: MIB_PER_GB, step: '0.5' },
     { key: 'trafficMbPerMonth', label: t('plans.limits.traffic') || 'Traffic', unit: t('units.gbPerMonth') || 'GB/month', multiplier: MIB_PER_GB },
     { key: 'maxSites', label: t('plans.limits.sites') || 'Sites' },
@@ -61,6 +77,15 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     { key: 'memoryMb', label: t('plans.limits.memory') || 'Memory', unit: t('units.mb') || 'MB', step: '64' },
     { key: 'pidsLimit', label: t('plans.limits.pids') || 'Processes', nullLabel: t('plans.limits.pidsDefault') || 'default (256)' },
   ];
+  // P2 numeric limits (same "unlimited" toggle and unchanged-value logic as above).
+  const dbDefs: FieldDef[] = [
+    { key: 'maxDbInstances', label: t('platformSettings.plan.maxDbInstances') || 'DB instances' },
+    { key: 'dbMaxSizeMb', label: t('platformSettings.plan.dbMaxSize') || 'Size of one database', unit: t('units.gb') || 'GB', multiplier: MIB_PER_GB, step: '0.5' },
+  ];
+  const cronDefs: FieldDef[] = [
+    { key: 'maxCronJobs', label: t('platformSettings.plan.maxCronJobs') || 'Cron jobs' },
+  ];
+  const defs: FieldDef[] = [...baseDefs, ...dbDefs, ...cronDefs];
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -70,6 +95,13 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
   const [initialForm, setInitialForm] = useState<FormState | null>(null);
   const [allBases, setAllBases] = useState(true);
   const [bases, setBases] = useState<Set<SiteBaseId>>(new Set());
+  // P2 non-numeric / non-nullable limits (outside NumKey): separate form state.
+  const [dbProfile, setDbProfile] = useState<DbTuningProfile>(DEFAULT_PLAN_LIMITS.dbProfile);
+  const [allEngines, setAllEngines] = useState(true);
+  const [engines, setEngines] = useState<Set<DbEngine>>(new Set(DB_ENGINES));
+  const [dbExternal, setDbExternal] = useState(DEFAULT_PLAN_LIMITS.dbExternalAccess);
+  const [cronInterval, setCronInterval] = useState(String(DEFAULT_PLAN_LIMITS.cronMinIntervalMin));
+  const [overQuotaAction, setOverQuotaAction] = useState<OverQuotaAction>(DEFAULT_PLAN_LIMITS.overQuotaAction);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -84,6 +116,13 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     setInitialForm(loaded);
     setAllBases(limits.allowedBases == null);
     setBases(new Set(limits.allowedBases ?? SITE_BASES.filter((b) => !b.unmaintained).map((b) => b.id)));
+    const full = { ...DEFAULT_PLAN_LIMITS, ...limits };
+    setDbProfile(full.dbProfile);
+    setAllEngines(full.dbEngines == null);
+    setEngines(new Set(full.dbEngines ?? DB_ENGINES));
+    setDbExternal(full.dbExternalAccess);
+    setCronInterval(String(full.cronMinIntervalMin));
+    setOverQuotaAction(full.overQuotaAction);
     setError('');
   }, [open, plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -115,6 +154,18 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
       limits[d.key] = n;
     }
     if (!allBases && limits.allowedBases!.length === 0) { setError(t('plans.form.noBase') || 'Allow at least one base.'); return; }
+    const interval = Number(cronInterval);
+    if (!Number.isInteger(interval) || interval < CRON_INTERVAL_MIN || interval > CRON_INTERVAL_MAX) {
+      setError(t('platformSettings.plan.cronIntervalRange', { min: CRON_INTERVAL_MIN, max: CRON_INTERVAL_MAX, defaultValue: 'Cron minimum interval: between {{min}} and {{max}} minutes.' }));
+      return;
+    }
+    const engineList = DB_ENGINES.filter((e) => engines.has(e));
+    if (!allEngines && engineList.length === 0) { setError(t('platformSettings.plan.noEngine') || 'Allow at least one database engine.'); return; }
+    limits.dbProfile = dbProfile;
+    limits.dbEngines = allEngines ? null : engineList;
+    limits.dbExternalAccess = dbExternal;
+    limits.cronMinIntervalMin = interval;
+    limits.overQuotaAction = overQuotaAction;
     const input: PlanInput = { name: name.trim(), description: description.trim() || null, limits, isActive };
     setSaving(true);
     setError('');
@@ -128,7 +179,39 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     }
   };
 
-  const engines: SiteEngine[] = ['apache', 'nginx'];
+  const siteEngines: SiteEngine[] = ['apache', 'nginx'];
+
+  const toggleEngine = (e: DbEngine) => setEngines((cur) => {
+    const next = new Set(cur);
+    if (next.has(e)) next.delete(e); else next.add(e);
+    return next;
+  });
+
+  const numField = (d: FieldDef) => {
+    const st = form[d.key];
+    return (
+      <div key={d.key} className="rounded-lg bg-bg-primary p-2.5">
+        <label className={cn(labelCls, 'truncate')} htmlFor={`plan-${d.key}`}>
+          {d.label}{d.unit ? <span className="font-mono text-[10px]"> ({d.unit})</span> : null}
+        </label>
+        <input
+          id={`plan-${d.key}`}
+          type="number"
+          min="0"
+          step={d.step ?? '1'}
+          inputMode="decimal"
+          disabled={st.none}
+          value={st.none ? '' : st.value}
+          placeholder={st.none ? (d.nullLabel ?? unlimited) : ''}
+          onChange={(e) => setField(d.key, { value: e.target.value })}
+          className={cn(inputCls, 'font-mono')}
+        />
+        <div className="mt-2">
+          <ToggleSwitch size="sm" checked={st.none} onChange={(v) => setField(d.key, { none: v })} label={<span className="text-xs">{d.nullLabel ?? unlimited}</span>} />
+        </div>
+      </div>
+    );
+  };
 
   return (
     <Modal
@@ -165,31 +248,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
         <div>
           <div className={cn(sectionTitleCls, 'mb-2')}>{t('plans.form.limitsTitle') || 'Limits per account'}</div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {defs.map((d) => {
-              const st = form[d.key];
-              return (
-                <div key={d.key} className="rounded-lg bg-bg-primary p-2.5">
-                  <label className={cn(labelCls, 'truncate')} htmlFor={`plan-${d.key}`}>
-                    {d.label}{d.unit ? <span className="font-mono text-[10px]"> ({d.unit})</span> : null}
-                  </label>
-                  <input
-                    id={`plan-${d.key}`}
-                    type="number"
-                    min="0"
-                    step={d.step ?? '1'}
-                    inputMode="decimal"
-                    disabled={st.none}
-                    value={st.none ? '' : st.value}
-                    placeholder={st.none ? (d.nullLabel ?? unlimited) : ''}
-                    onChange={(e) => setField(d.key, { value: e.target.value })}
-                    className={cn(inputCls, 'font-mono')}
-                  />
-                  <div className="mt-2">
-                    <ToggleSwitch size="sm" checked={st.none} onChange={(v) => setField(d.key, { none: v })} label={<span className="text-xs">{d.nullLabel ?? unlimited}</span>} />
-                  </div>
-                </div>
-              );
-            })}
+            {baseDefs.map(numField)}
           </div>
           <p className="mt-2 text-xs text-text-muted">{t('plans.form.perContainerHint') || 'CPU, memory and processes apply to each site container of the account.'}</p>
         </div>
@@ -201,7 +260,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
           </div>
           {!allBases && (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {engines.map((engine) => (
+              {siteEngines.map((engine) => (
                 <div key={engine} className="rounded-lg bg-bg-primary p-3">
                   <div className="mb-2 text-xs font-semibold text-text-secondary">{engine === 'apache' ? 'Apache' : 'nginx'}</div>
                   <div className="space-y-1.5">
@@ -221,6 +280,97 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
               ))}
             </div>
           )}
+        </div>
+
+        <div>
+          <div className={cn(sectionTitleCls, 'mb-2')}>{t('platformSettings.plan.dbTitle') || 'Databases'}</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {dbDefs.map(numField)}
+            <div className="rounded-lg bg-bg-primary p-2.5">
+              <div className={labelCls}>{t('platformSettings.plan.dbProfile') || 'Instance profile'}</div>
+              <SegmentedTabs<DbTuningProfile>
+                size="sm"
+                value={dbProfile}
+                onChange={setDbProfile}
+                tabs={DB_PROFILES.map((p) => ({ id: p, label: <span className="font-mono">{p}</span> }))}
+              />
+              <p className="mt-1.5 font-mono text-[11px] text-text-muted">
+                {t('platformSettings.plan.dbProfileMemory', { value: DB_PROFILE_MEMORY_MB[dbProfile], defaultValue: '{{value}} MB of memory per instance' })}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="rounded-lg bg-bg-primary p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-3">
+                <span className="text-xs font-semibold text-text-secondary">{t('platformSettings.plan.dbEngines') || 'Allowed engines'}</span>
+                <ToggleSwitch size="sm" checked={allEngines} onChange={setAllEngines} label={<span className="text-xs">{t('platformSettings.plan.allEngines') || 'All engines'}</span>} />
+              </div>
+              {!allEngines && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                  {DB_ENGINES.map((e) => (
+                    <label key={e} className="flex cursor-pointer items-center gap-2 text-sm text-text-primary coarse:min-h-10">
+                      <input type="checkbox" checked={engines.has(e)} onChange={() => toggleEngine(e)} className="accent-accent" />
+                      {DB_ENGINE_LABELS[e]}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="rounded-lg bg-bg-primary p-3">
+              <ToggleSwitch
+                checked={dbExternal}
+                onChange={setDbExternal}
+                label={t('platformSettings.plan.dbExternal') || 'External SQL access'}
+                description={t('platformSettings.plan.dbExternalHint') || 'The account may publish an instance on a dedicated port, filtered by its allow-list.'}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className={cn(sectionTitleCls, 'mb-2')}>{t('platformSettings.plan.cronTitle') || 'Cron'}</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {cronDefs.map(numField)}
+            <div className="rounded-lg bg-bg-primary p-2.5">
+              <label className={cn(labelCls, 'truncate')} htmlFor="plan-cron-interval">
+                {t('platformSettings.plan.cronMinInterval') || 'Minimum interval'}<span className="font-mono text-[10px]"> ({t('platformSettings.plan.minutes') || 'min'})</span>
+              </label>
+              <input
+                id="plan-cron-interval"
+                type="number"
+                min={CRON_INTERVAL_MIN}
+                max={CRON_INTERVAL_MAX}
+                inputMode="numeric"
+                value={cronInterval}
+                onChange={(e) => setCronInterval(e.target.value)}
+                className={cn(inputCls, 'font-mono')}
+              />
+              <p className="mt-1.5 text-[11px] text-text-muted">{t('platformSettings.plan.cronMinIntervalHint') || 'Between two runs of the same job.'}</p>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className={cn(sectionTitleCls, 'mb-2')}>{t('platformSettings.plan.overQuotaTitle') || 'At 100 % of the disk or traffic quota'}</div>
+          <div role="radiogroup" aria-label={t('platformSettings.plan.overQuotaTitle') || 'At 100 % of the disk or traffic quota'} className="grid grid-cols-1 gap-2 md:grid-cols-3">
+            {OVER_QUOTA_ACTIONS.map((a) => {
+              const selected = overQuotaAction === a;
+              const key = OVER_QUOTA_KEY[a];
+              return (
+                <button
+                  key={a}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setOverQuotaAction(a)}
+                  className={cn('rounded-lg border-2 p-3 text-left transition-all', selected ? 'border-accent bg-accent/5' : 'border-transparent bg-bg-primary hover:border-accent/30')}
+                >
+                  <div className="text-sm font-semibold text-text-primary">{t(`platformSettings.plan.overQuota.${key}`) || OVER_QUOTA_FALLBACK[a].label}</div>
+                  <p className="mt-1 text-xs text-text-secondary">{t(`platformSettings.plan.overQuota.${key}Hint`) || OVER_QUOTA_FALLBACK[a].hint}</p>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {error && <p className="whitespace-pre-line text-xs text-status-down">{error}</p>}

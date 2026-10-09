@@ -62,6 +62,7 @@ export interface TenantLimits {
   maxMailboxes: number | null;
   maxDatabases: number | null;
   cpuCores: number | null;
+  /** Site containers of the accounts PLUS their database instances (plan maxDbInstances × DB_PROFILE_MEMORY_MB[dbProfile]). */
   memoryMb: number | null;
   /** Allow the tenant to allocate more than its envelope through plans. */
   allowOversell: boolean;
@@ -151,6 +152,8 @@ export interface SetupApplyRequest {
   nameservers: string[];
   acmeEmail: string;
   mailEngine: MailEngine;
+  /** P2: registrable domain dedicated to previews (never under the panel host), optional. */
+  previewDomain?: string | null;
   admin: { username: string; password: string; email: string | null };
   obligate: { url: string; apiKey: string } | null;
 }

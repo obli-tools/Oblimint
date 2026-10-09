@@ -11,7 +11,9 @@ import { planLimits, type AccountRow } from './rows';
 // usage_checked_at; over quota in `measured` mode (no XFS project quota to
 // enforce it) → audit `account.quota_exceeded` + logger.warn, once per
 // crossing (the previous measurement was under the quota).
-// OWNED BY MODULE `hosting-api`.
+// P2: owned by module `usage`. Each measurement also writes the daily point
+// usage_disk_daily (largest value of the UTC day) and asks the quota
+// enforcement to re-evaluate the account (alerts, over-quota action).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const USAGE_INTERVAL_MS = 10 * 60 * 1000;
@@ -33,6 +35,25 @@ export function isOverQuota(usedBytes: number | null, quotaBytes: number | null)
 export const USAGE_REFRESH_COOLDOWN_MS = 30 * 1000;
 const onDemandInFlight = new Map<number, Promise<void>>();
 const lastOnDemand = new Map<number, number>();
+
+/** usage_disk_daily point of today (UTC): the largest measurement of the day. Never throws. */
+export async function recordDailyDisk(accountId: number, usedBytes: number, now: Date = new Date()): Promise<void> {
+  try {
+    await db('usage_disk_daily')
+      .insert({ day: now.toISOString().slice(0, 10), account_id: accountId, used_bytes: usedBytes })
+      .onConflict(['day', 'account_id'])
+      .merge({ used_bytes: db.raw('GREATEST(usage_disk_daily.used_bytes, excluded.used_bytes)') } as never);
+  } catch (err) {
+    logger.debug({ err, accountId }, 'Daily disk point not recorded');
+  }
+}
+
+/** Quota enforcement after a measurement (lazy import: the usage module pulls the notification plugins). */
+function requestEvaluate(accountId: number): void {
+  import('../usage/usage.service')
+    .then((m) => m.enforcementService.requestEvaluate(accountId, 'disk-measured'))
+    .catch((err) => logger.debug({ err, accountId }, 'Quota evaluation request failed'));
+}
 
 export const usageService = {
   /**
@@ -71,6 +92,9 @@ export const usageService = {
       quota_mode: usage.mode,
       usage_checked_at: db.fn.now(),
     });
+
+    await recordDailyDisk(row.id, usedBytes);
+    requestEvaluate(row.id);
 
     if (usage.mode !== 'measured') return;
     const diskMb = planLimits(row.plan_limits).diskMb;

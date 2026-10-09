@@ -2,7 +2,7 @@ import type Docker from 'dockerode';
 import type { FileServerMode, HostingAccount, PlanLimits, RuntimeRole, SiteBaseId, SiteStatus } from '@oblimint/shared';
 import { config } from '../../config';
 import {
-  accountNetwork, fileServerContainer, LABELS, PANEL_ALIAS, type ContainerRole,
+  accountDbNetwork, accountNetwork, EXTERNALLY_MANAGED_ROLES, fileServerContainer, LABELS, PANEL_ALIAS, type ContainerRole,
 } from '../hosting/naming';
 import { hostPaths, runtimeConfigFile, type HostingLayout } from '../hosting/paths';
 import { fileServerHookToken } from '../hosting/secrets';
@@ -52,6 +52,8 @@ export interface ActualContainer {
   name: string;
   state: string;
   labels: Record<string, string>;
+  /** Networks the container is attached to (undefined: not observed → assumed converged). */
+  networks?: string[];
 }
 
 export interface ActualNetwork {
@@ -59,6 +61,8 @@ export interface ActualNetwork {
   /** The panel container on the account network: absent, attached without the alias, attached with it. */
   panel: 'absent' | 'attached' | 'aliased';
   edge: 'absent' | 'attached';
+  /** P2: the account DATABASE network exists (undefined: not observed → same as `exists`). */
+  dbExists?: boolean;
 }
 
 export interface PlannerInput {
@@ -87,6 +91,12 @@ export interface DesiredContainer {
   hash: string;
   image: string;
   run: boolean;
+  /**
+   * Networks joined after creation, besides the spec's NetworkMode (Docker
+   * 24 / API 1.43 creates a container on ONE network): the account database
+   * network for the site containers (TCP db-<id>; never the edge's network).
+   */
+  extraNetworks: string[];
 }
 
 interface ContainerRef {
@@ -99,6 +109,8 @@ export type ReconcileAction =
   | { kind: 'createNetwork'; network: string }
   | { kind: 'attachPanel'; network: string; container: string; aliases: string[]; reattach: boolean }
   | { kind: 'attachEdge'; network: string }
+  /** P2: the account database network (instances + sites, never the edge nor the panel). */
+  | { kind: 'createDbNetwork'; network: string }
   | { kind: 'ensureAccountTree'; quotaMb: number | null }
   | { kind: 'ensureSite'; siteId: number }
   | { kind: 'ensureStorage'; siteId: number }
@@ -106,8 +118,10 @@ export type ReconcileAction =
   | { kind: 'writeRuntimeConfig'; siteId: number }
   | (ContainerRef & { kind: 'removeContainer'; reason: 'orphan' | 'disabled' })
   | (ContainerRef & { kind: 'stopContainer' })
-  | (ContainerRef & { kind: 'createContainer'; spec: Docker.ContainerCreateOptions; image: string; start: boolean })
-  | (ContainerRef & { kind: 'recreateContainer'; spec: Docker.ContainerCreateOptions; image: string; start: boolean })
+  | (ContainerRef & { kind: 'createContainer'; spec: Docker.ContainerCreateOptions; image: string; start: boolean; extraNetworks: string[] })
+  | (ContainerRef & { kind: 'recreateContainer'; spec: Docker.ContainerCreateOptions; image: string; start: boolean; extraNetworks: string[] })
+  /** A kept container missing one of its extra networks (observed): connected live. */
+  | (ContainerRef & { kind: 'attachNetwork'; network: string })
   | (ContainerRef & { kind: 'startContainer' })
   | { kind: 'reload'; siteId: number };
 
@@ -158,6 +172,12 @@ export function desiredContainers(input: PlannerInput, notes: string[] = []): De
         releasesDir: layout.releases(account.id, site.id),
         dataDir: layout.siteData(account.id, site.slug),
         runtimeConfigFile: `${layout.runtime(account.id, site.id)}/${runtimeConfigFile(role, runtimeId)}`,
+        // P2: database sockets of the account (dirs created by hostd ensureAccount).
+        dbSockets: {
+          root: layout.dbSockets(account.id),
+          mysql: layout.dbSocketDefault(account.id, 'mysql'),
+          postgresql: layout.dbSocketDefault(account.id, 'postgresql'),
+        },
       });
       out.push({
         name: spec.name!,
@@ -169,6 +189,7 @@ export function desiredContainers(input: PlannerInput, notes: string[] = []): De
         hash: specHashLabel(spec),
         image: spec.Image!,
         run: siteRuns,
+        extraNetworks: [accountDbNetwork(account.id)],
       });
     };
     add('primary', site.base, null);
@@ -190,6 +211,8 @@ export function desiredContainers(input: PlannerInput, notes: string[] = []): De
         dataDir: layout.data(account.id),
         stateDir: layout.fileServerState(account.id),
         hookBaseUrl: (input.hookBaseUrl ?? defaultHookBaseUrl)(account.id),
+        // P2: behind the hostd port gateway unless OBLIMINT_PORT_GATEWAY=off.
+        publishPort: !config.hosting.portGateway,
       });
       out.push({
         name: fileServerContainer(account.id),
@@ -201,6 +224,7 @@ export function desiredContainers(input: PlannerInput, notes: string[] = []): De
         hash: specHashLabel(spec),
         image: spec.Image!,
         run: fsRun,
+        extraNetworks: [],
       });
     }
   }
@@ -230,6 +254,9 @@ export function planAccount(input: PlannerInput): ReconcilePlan {
   if (input.edgePresent && (!input.network.exists || input.network.edge === 'absent')) {
     actions.push({ kind: 'attachEdge', network: net });
   }
+  // P2: database network of the account (instances + sites). The edge is NEVER attached to it.
+  const dbExists = input.network.dbExists ?? input.network.exists;
+  if (!dbExists) actions.push({ kind: 'createDbNetwork', network: accountDbNetwork(account.id) });
 
   // 2. Host tree (hostd) + per-site storage, data dirs and runtime configs.
   actions.push({ kind: 'ensureAccountTree', quotaMb: account.limits.diskMb });
@@ -251,6 +278,8 @@ export function planAccount(input: PlannerInput): ReconcilePlan {
     if (byName.has(a.name)) continue;
     const siteId = a.labels[LABELS.site] ? Number(a.labels[LABELS.site]) : null;
     const role = (a.labels[LABELS.role] ?? null) as ContainerRole | null;
+    // P2: database instances are converged by the databases module, never removed here.
+    if (role && EXTERNALLY_MANAGED_ROLES.includes(role)) continue;
     const disabled = role === 'filesrv' && account.filesrvMode === 'off';
     actions.push({ kind: 'removeContainer', name: a.name, siteId, role, reason: disabled ? 'disabled' : 'orphan' });
   }
@@ -262,11 +291,15 @@ export function planAccount(input: PlannerInput): ReconcilePlan {
     if (!d.run) continue;
     const a = actualByName.get(d.name);
     if (!a) {
-      actions.push({ kind: 'createContainer', ...ref(d), spec: d.spec, image: d.image, start: true });
+      actions.push({ kind: 'createContainer', ...ref(d), spec: d.spec, image: d.image, start: true, extraNetworks: d.extraNetworks });
     } else if ((a.labels[LABELS.specHash] ?? null) !== d.hash) {
-      actions.push({ kind: 'recreateContainer', ...ref(d), spec: d.spec, image: d.image, start: true });
-    } else if (!isRunningState(a.state)) {
-      actions.push({ kind: 'startContainer', ...ref(d) });
+      actions.push({ kind: 'recreateContainer', ...ref(d), spec: d.spec, image: d.image, start: true, extraNetworks: d.extraNetworks });
+    } else {
+      // Kept container: joins the extra networks it lacks (upgrade from P1, network re-created).
+      if (a.networks) {
+        for (const n of d.extraNetworks) if (!a.networks.includes(n)) actions.push({ kind: 'attachNetwork', ...ref(d), network: n });
+      }
+      if (!isRunningState(a.state)) actions.push({ kind: 'startContainer', ...ref(d) });
     }
   }
 
@@ -282,6 +315,8 @@ export function describeAction(a: ReconcileAction): string {
     case 'createNetwork': return `create network ${a.network}`;
     case 'attachPanel': return `${a.reattach ? 're-attach' : 'attach'} panel ${a.container} to ${a.network} (alias ${a.aliases.join(',')})`;
     case 'attachEdge': return `attach edge to ${a.network}`;
+    case 'createDbNetwork': return `create database network ${a.network}`;
+    case 'attachNetwork': return `attach ${a.name} to ${a.network}`;
     case 'ensureAccountTree': return `hostd ensureAccount (quota ${a.quotaMb ?? 'none'} MiB)`;
     case 'ensureSite': return `hostd ensureSite ${a.siteId}`;
     case 'ensureStorage': return `release storage of site ${a.siteId}`;

@@ -32,9 +32,38 @@ export async function startWorkers(): Promise<void> {
     ['certificates', () => certificateService.start()],
     ['usage', () => usageService.start()],
   ];
+  // P2 workers (docs/P2-PLAN.md §Workers): same contract (start returns at once, never throws).
+  const p2 = await p2Workers();
+  for (const [name, w] of p2) starters.push([name, () => w.start()]);
   for (const [name, start] of starters) {
     try { start(); } catch (err) { logger.error({ err, worker: name }, 'Worker failed to start'); }
   }
+}
+
+interface Worker { start(): void; stop(): void }
+
+/** P2 workers, in start order. */
+async function p2Workers(): Promise<Array<[string, Worker]>> {
+  const [dns, ownership, databases, firewall, usage, cron, logs] = await Promise.all([
+    import('../services/dns/dns.service').then((m) => m.dnsService),
+    import('../services/ownership/ownership.service').then((m) => m.ownershipService),
+    import('../services/databases/databases.service').then((m) => m.databaseService),
+    import('../services/firewall/firewall.service').then((m) => m.firewallService),
+    import('../services/usage/usage.service'),
+    import('../services/cron/cron.service').then((m) => m.cronService),
+    import('../services/logs/logs.service').then((m) => m.logsService),
+  ]);
+  const list: Array<[string, Worker]> = [
+    ['dns', dns],
+    ['ownership', ownership],
+    ['databases', databases],
+    ['firewall', firewall],
+    ['cron', cron],
+    ['logs', logs],
+    ['usage-enforcement', usage.enforcementService],
+  ];
+  if (config.hosting.usageCollector) list.push(['usage-collector', usage.usageCollector]);
+  return list;
 }
 
 export async function stopWorkers(): Promise<void> {
@@ -47,6 +76,7 @@ export async function stopWorkers(): Promise<void> {
     import('../services/hosting/usage.service').then((m) => m.usageService),
   ]);
   for (const m of mods) { try { m.stop(); } catch { /* exiting */ } }
+  for (const [, w] of await p2Workers()) { try { w.stop(); } catch { /* exiting */ } }
   const { stopInternalServer } = await import('../internal/internalServer');
   try { stopInternalServer(); } catch { /* exiting */ }
 }

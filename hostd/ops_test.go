@@ -105,6 +105,11 @@ func TestEnsureAccountAndSite(t *testing.T) {
 		"accounts/3/data":    "0:20002 0750", // root-owned: data/<slug> (bind source) cannot be swapped by the uid
 		"accounts/3/filesrv": "20001:20002 0700",
 		"accounts/3/sites":   "0:0 0711",
+		// P2: bind sources of the sites (dbsock) and parent of the instance data: root-owned.
+		"accounts/3/dbsock":            "0:20002 0750",
+		"accounts/3/dbsock/mysql":      "0:20002 0750",
+		"accounts/3/dbsock/postgresql": "0:20002 0750",
+		"accounts/3/databases":         "0:0 0711",
 	}
 	assertOwners(t, rec, want)
 

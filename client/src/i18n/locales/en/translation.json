@@ -182,7 +182,8 @@
     "signOut": "Sign out",
     "sites": "Sites",
     "users": "Users",
-    "workspaces": "Workspaces"
+    "workspaces": "Workspaces",
+    "usage": "Usage"
   },
   "nodes": {
     "col": {

@@ -12,6 +12,9 @@ import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { PageContainer } from '@/components/common/PageContainer';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { MEDIA, matchesMedia } from '@/hooks/useMediaQuery';
+import { HostingSettingsSections } from '@/components/settings/HostingSettingsSections';
+import { NotificationChannelsSection } from '@/components/notifications/NotificationChannelsSection';
+import { useHostingMe } from '@/store/hostingStore';
 import { cn } from '@/utils/cn';
 
 // Invisible ≥40px hit area around small icon toggles (touch only).
@@ -39,13 +42,18 @@ function AboutRow({ label, value }: { label: string; value: string }) {
 
 /**
  * Settings — single scrolling page of sections, like Obliance's
- * (About / system info, Obligate SSO gateway). Admin only (route guard).
+ * (About / system info, Obligate SSO gateway). Route: platform admin, or tenant staff
+ * with the 'settings' capability, who only get the notification channels section.
  */
 export function SettingsPage() {
   const { t } = useTranslation();
   const confirm = useConfirm();
   const { isAdmin } = useAuthStore();
   const admin = isAdmin();
+  // Notification channels (plan §6.5): platform admin, or tenant staff with the 'settings' capability.
+  // The other sections stay platform-admin only.
+  const { me } = useHostingMe();
+  const canNotify = admin || (me?.kind === 'staff' && (me.staffCapabilities === '*' || me.staffCapabilities.includes('settings')));
 
   // ── System info (About section) ──
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
@@ -166,7 +174,7 @@ export function SettingsPage() {
       </div>
 
       {/* ── About ── */}
-      <div>
+      {admin && (<div>
         <div className="flex items-center gap-2 mb-4">
           <Info size={18} className="text-accent" />
           <h2 className="text-lg font-semibold text-text-primary">{t('about.title') || 'About'}</h2>
@@ -237,8 +245,16 @@ export function SettingsPage() {
         </div>
       </div>
 
+      )}
+
+      {/* ── P2: hosting platform settings (DNS, previews, DB admin, access, usage) ── */}
+      {admin && <HostingSettingsSections />}
+
+      {/* ── P2: notification channels of the workspace ── */}
+      {canNotify && <NotificationChannelsSection />}
+
       {/* ── Obligate SSO Gateway ── */}
-      <div>
+      {admin && (<div>
         <div className="flex items-center gap-2 mb-4">
           <ArrowLeftRight size={16} className="text-text-muted" />
           <h2 className="text-lg font-semibold text-text-primary">{t('settings.obligate.title') || 'Obligate SSO Gateway'}</h2>
@@ -391,7 +407,7 @@ export function SettingsPage() {
             </div>
           )}
         </div>
-      </div>
+      </div>)}
     </PageContainer>
   );
 }

@@ -7,8 +7,9 @@ import { X509Certificate, createPrivateKey } from 'crypto';
 import selfsigned from 'selfsigned';
 import type * as acme from 'acme-client';
 import {
-  accountKeyPath, directoryUrl, isPublicAcmeName, issueCertificate, readCertificateDates, type AcmeClientFactory, type AcmeClientLike, type IssueDeps,
+  accountKeyPath, directoryUrl, isHttp01Failure, isPublicAcmeName, issueCertificate, pickChallenge, readCertificateDates, type AcmeClientFactory, type AcmeClientLike, type IssueDeps,
 } from './acmeIssuer';
+import type { Dns01Provider } from '../dns/acmeChallenge';
 
 const DAY = 24 * 3600_000;
 
@@ -169,7 +170,12 @@ test('a failed challenge removes the token file and installs nothing', async (t)
     edgeDir: path.join(root, 'edge'), acmeWebroot: path.join(root, 'edge', 'acme'), certsDir: path.join(root, 'edge', 'certs'),
     createClient: factory, log: () => {},
   };
-  await assert.rejects(issueCertificate({ names: ['fail.example.net'], email: 'ops@example.com', directory: 'staging' }, deps), /404/);
+  await assert.rejects(issueCertificate({ names: ['fail.example.net'], email: 'ops@example.com', directory: 'staging' }, deps), (err: unknown) => {
+    assert.match((err as Error).message, /404/);
+    assert.equal(isHttp01Failure(err), true, 'tagged: the caller may retry with DNS-01');
+    return true;
+  });
+  assert.equal(isHttp01Failure(new Error('404')), false);
   assert.deepEqual(fs.readdirSync(path.join(root, 'edge', 'acme', '.well-known', 'acme-challenge')), []);
   assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'fail.example.net')), false);
 });
@@ -279,4 +285,146 @@ test('non-public names (special-use TLDs, IP literals) never reach the CA', asyn
   );
   assert.equal(called, 0);
   assert.equal(fs.existsSync(path.join(root, 'edge', 'acme-account')), false, 'no ACME account key created either');
+});
+
+// ── P2: DNS-01 (wildcards, through our PowerDNS) ─────────────────────────────
+
+/** Fake DNS-01 solver recording every call. */
+function fakeDns01(opts: { solvable?: (name: string) => boolean; failSet?: boolean } = {}) {
+  const calls: string[] = [];
+  const live = new Set<string>();
+  const provider: Dns01Provider = {
+    async canSolve(name) { calls.push(`can:${name}`); return opts.solvable ? opts.solvable(name) : true; },
+    async setChallenge(name, value) {
+      calls.push(`set:${name}=${value}`);
+      if (opts.failSet) throw new Error('PowerDNS API unreachable');
+      live.add(`${name}=${value}`);
+    },
+    async removeChallenge(name, value) { calls.push(`remove:${name}=${value}`); live.delete(`${name}=${value}`); },
+  };
+  return { provider, calls, live };
+}
+
+function wildcardAuthorizations(): acme.Authorization[] {
+  return [
+    { url: 'a0', status: 'pending', identifier: { type: 'dns', value: 'example.com' },
+      challenges: [
+        { type: 'http-01', url: 'h0', token: 'httpTOKEN0_abcdef', status: 'pending' },
+        { type: 'dns-01', url: 'd0', token: 'dnsTOKEN0_abcdefgh', status: 'pending' },
+      ] },
+    { url: 'a1', status: 'pending', identifier: { type: 'dns', value: 'example.com' }, wildcard: true,
+      challenges: [{ type: 'dns-01', url: 'd1', token: 'dnsTOKEN1_abcdefgh', status: 'pending' }] },
+  ] as unknown as acme.Authorization[];
+}
+
+test('pickChallenge: wildcard → dns-01 only; preferred dns-01 when solvable; http-01 otherwise; dns-01 when http-01 is missing', async () => {
+  const [apex, wild] = wildcardAuthorizations() as Array<acme.Authorization & { wildcard?: boolean }>;
+  const yes = fakeDns01();
+  const no = fakeDns01({ solvable: () => false });
+  assert.equal((await pickChallenge(wild, { preferDns01: false, dns01: yes.provider })).type, 'dns-01');
+  assert.ok(yes.calls.includes('can:*.example.com'), 'a wildcard is asked as *.name');
+  await assert.rejects(pickChallenge(wild, { preferDns01: true, dns01: no.provider }), /No usable DNS-01 challenge for \*\.example\.com/);
+  await assert.rejects(pickChallenge(wild, { preferDns01: true }), /No usable DNS-01/);
+  assert.equal((await pickChallenge(apex, { preferDns01: true, dns01: yes.provider })).type, 'dns-01');
+  assert.equal((await pickChallenge(apex, { preferDns01: true, dns01: no.provider })).type, 'http-01', 'falls back to HTTP-01');
+  assert.equal((await pickChallenge(apex, { preferDns01: false, dns01: yes.provider })).type, 'http-01', 'HTTP-01 stays the default');
+  const dnsOnly = { ...apex, challenges: apex.challenges.filter((c) => c.type === 'dns-01') };
+  assert.equal((await pickChallenge(dnsOnly, { preferDns01: false, dns01: yes.provider })).type, 'dns-01');
+  await assert.rejects(pickChallenge(dnsOnly, { preferDns01: false, dns01: no.provider }), /No HTTP-01 challenge offered/);
+  // A provider that throws on canSolve is "cannot solve".
+  const broken: Dns01Provider = { canSolve: async () => { throw new Error('db down'); }, setChallenge: async () => {}, removeChallenge: async () => {} };
+  assert.equal((await pickChallenge(apex, { preferDns01: true, dns01: broken })).type, 'http-01');
+});
+
+test('DNS-01 wildcard issuance: TXT set → validated → removed for each name, nothing written in the webroot', async (t) => {
+  const root = tempRoot(t);
+  const names = ['example.com', '*.example.com'];
+  const issued = makeCert(names, 90);
+  const dns = fakeDns01();
+  const order: string[] = [];
+  const factory: AcmeClientFactory = () => ({
+    async createAccount() { return {}; },
+    async createOrder(data) {
+      assert.deepEqual(data.identifiers.map((i) => i.value), names);
+      return { url: 'o' } as unknown as acme.Order;
+    },
+    async getAuthorizations() { return wildcardAuthorizations(); },
+    async getChallengeKeyAuthorization(ch) { return `digest-${ch.token}`; },
+    async completeChallenge(ch) {
+      // Let's Encrypt queries the TXT now: it must be published.
+      const label = ch.url === 'd1' ? '*.example.com' : 'example.com';
+      assert.ok(dns.live.has(`${label}=digest-${ch.token}`), `TXT live for ${ch.url}`);
+      order.push(`complete:${ch.url}`);
+      return ch;
+    },
+    async waitForValidStatus(item) { return item; },
+    async finalizeOrder(o, csr) { assert.match(csr.toString(), /BEGIN CERTIFICATE REQUEST/); return o; },
+    async getCertificate() { return issued.cert; },
+  });
+  const lines: string[] = [];
+  const deps: IssueDeps = {
+    edgeDir: path.join(root, 'edge'), acmeWebroot: path.join(root, 'edge', 'acme'), certsDir: path.join(root, 'edge', 'certs'),
+    createClient: factory, createCertificateKey: async () => issued.key, dns01: dns.provider,
+    selfTest: async () => { throw new Error('no HTTP self-test for DNS-01'); },
+    log: (level, message) => { lines.push(`${level}: ${message}`); },
+  };
+  const out = await issueCertificate({ names, email: 'ops@example.com', directory: 'staging', preferDns01: true }, deps);
+  assert.deepEqual(out.names, names);
+  assert.equal(out.primaryName, 'example.com');
+  assert.deepEqual(order, ['complete:d0', 'complete:d1']);
+  assert.deepEqual(dns.calls.filter((c) => !c.startsWith('can:')), [
+    'set:example.com=digest-dnsTOKEN0_abcdefgh', 'remove:example.com=digest-dnsTOKEN0_abcdefgh',
+    'set:*.example.com=digest-dnsTOKEN1_abcdefgh', 'remove:*.example.com=digest-dnsTOKEN1_abcdefgh',
+  ]);
+  assert.equal(dns.live.size, 0);
+  assert.equal(fs.existsSync(path.join(root, 'edge', 'acme', '.well-known', 'acme-challenge')), false, 'no HTTP-01 token');
+  assert.ok(fs.existsSync(path.join(root, 'edge', 'certs', 'example.com', 'fullchain.pem')));
+  assert.ok(lines.some((l) => l.includes('[*.example.com] DNS-01 TXT record published')));
+});
+
+test('DNS-01: the TXT value is removed even when the validation or the publication fails; nothing installed', async (t) => {
+  const root = tempRoot(t);
+  const base = (dns: Dns01Provider, complete: () => Promise<unknown>): IssueDeps => ({
+    edgeDir: path.join(root, 'edge'), acmeWebroot: path.join(root, 'edge', 'acme'), certsDir: path.join(root, 'edge', 'certs'),
+    dns01: dns, log: () => {},
+    createClient: () => ({
+      async createAccount() { return {}; },
+      async createOrder() { return { url: 'o' } as unknown as acme.Order; },
+      async getAuthorizations() { return [wildcardAuthorizations()[1]]; },
+      async getChallengeKeyAuthorization() { return 'digest'; },
+      completeChallenge: complete,
+      async waitForValidStatus(item) { return item; },
+      async finalizeOrder() { throw new Error('must not finalize'); },
+      async getCertificate() { throw new Error('must not download'); },
+    }),
+  });
+  const failing = fakeDns01();
+  await assert.rejects(issueCertificate({ names: ['example.com', '*.example.com'], email: 'ops@example.com', directory: 'staging' },
+    base(failing.provider, async () => { throw new Error('Incorrect TXT record found at _acme-challenge.example.com'); })), (err: unknown) => {
+    assert.match((err as Error).message, /Incorrect TXT/);
+    assert.equal(isHttp01Failure(err), false, 'a DNS-01 failure is never retried as such');
+    return true;
+  });
+  assert.deepEqual(failing.calls.filter((c) => !c.startsWith('can:')), ['set:*.example.com=digest', 'remove:*.example.com=digest']);
+  assert.equal(failing.live.size, 0);
+
+  const unpublished = fakeDns01({ failSet: true });
+  let completed = false;
+  await assert.rejects(issueCertificate({ names: ['example.com', '*.example.com'], email: 'ops@example.com', directory: 'staging' },
+    base(unpublished.provider, async () => { completed = true; return {}; })), /PowerDNS API unreachable/);
+  assert.equal(completed, false, 'Let us Encrypt never asked to validate an unpublished TXT');
+  assert.ok(unpublished.calls.includes('remove:*.example.com=digest'), 'removal attempted anyway');
+  assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'example.com')), false);
+
+  // A wildcard primary name, or a wildcard without any solver: refused.
+  await assert.rejects(issueCertificate({ names: ['*.example.com'], email: 'ops@example.com', directory: 'staging' }, base(failing.provider, async () => ({}))), /invalid certificate names/);
+  const noSolver = base(failing.provider, async () => ({}));
+  delete noSolver.dns01;
+  await assert.rejects(issueCertificate({ names: ['example.com', '*.example.com'], email: 'ops@example.com', directory: 'staging' }, noSolver), /No usable DNS-01/);
+});
+
+test('isPublicAcmeName judges a wildcard on its base name', () => {
+  assert.equal(isPublicAcmeName('*.example.com'), true);
+  assert.equal(isPublicAcmeName('*.lab.test'), false);
+  assert.equal(isPublicAcmeName('*.'), false);
 });

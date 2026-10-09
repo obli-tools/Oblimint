@@ -85,10 +85,26 @@ function hasBody(req: Request): boolean {
   return Number.isFinite(len) && len > 0;
 }
 
+/**
+ * P2 — raw upload endpoints (database restore): the body is a dump, not JSON.
+ * Still origin-checked (1); the type must be one of RAW_UPLOAD_TYPES, which a
+ * form / no-cors request cannot send without a CORS preflight either
+ * (application/octet-stream / application/sql / application/gzip are not
+ * CORS-safelisted types).
+ */
+export const RAW_UPLOAD_PATHS: readonly RegExp[] = [
+  /^\/api\/databases\/instances\/\d+\/databases\/\d+\/restore$/,
+];
+const RAW_UPLOAD_TYPES = ['application/octet-stream', 'application/sql', 'application/gzip', 'application/x-gzip'];
+
 export function originGuard(req: Request, res: Response, next: NextFunction): void {
   if (SAFE_METHODS.has(req.method)) { next(); return; }
   if (isForeignBrowserRequest(req)) {
     res.status(403).json({ success: false, error: 'Cross-origin request refused', code: 'crossOriginRefused' });
+    return;
+  }
+  if (hasBody(req) && RAW_UPLOAD_PATHS.some((re) => re.test(req.path)) && req.is(RAW_UPLOAD_TYPES)) {
+    next();
     return;
   }
   if (hasBody(req) && !req.is('application/json')) {

@@ -40,3 +40,18 @@ test('nothing busy: ok; established (non LISTEN) tcp lines are ignored', () => {
   assert.equal(v.fixCommand, undefined);
   assert.deepEqual([...parseListeners(RESOLVED, [53]).get(53)!].sort(), ['tcp', 'udp']);
 });
+
+test('OBLIMINT_PDNS_BIND: the resolved stub on 127.0.0.53 no longer conflicts with DNS on the LAN address', () => {
+  const v = evaluatePorts(HEADER + SSH + RESOLVED, { dnsBind: ['192.0.2.10'] });
+  assert.equal(v.status, 'ok', v.detail);
+  // a listener on the bound address, or on the wildcard, still does
+  const onLan = evaluatePorts(`${HEADER}udp        0      0 192.0.2.10:53           0.0.0.0:*\n${RESOLVED}`, { dnsBind: ['192.0.2.10'] });
+  assert.equal(onLan.status, 'warn');
+  assert.match(onLan.detail, /53\/udp/);
+  const wild = evaluatePorts(`${HEADER}tcp6       0      0 :::53                   :::*                    LISTEN\n`, { dnsBind: ['192.0.2.10'] });
+  assert.equal(wild.status, 'warn');
+  // without a bind, the fix suggests it
+  assert.match(evaluatePorts(HEADER + RESOLVED).fixCommand ?? '', /OBLIMINT_PDNS_BIND/);
+  // another host port: 53 is no longer watched
+  assert.equal(evaluatePorts(HEADER + RESOLVED, { dnsPort: 5353 }).status, 'ok');
+});

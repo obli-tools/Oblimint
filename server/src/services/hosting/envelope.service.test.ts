@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_PLAN_LIMITS, DEFAULT_TENANT_LIMITS, type PlanLimits, type TenantLimits } from '@oblimint/shared';
-import { checkAllocation } from './envelope.service';
+import { checkAllocation, planDbMemoryMb, planDimensionValue } from './envelope.service';
 
 // Pure envelope rule (ARCHITECTURE §4): sum of the plans of the tenant's
 // accounts ≤ envelope, unless the tenant may oversell.
 
-const plan = (over: Partial<PlanLimits> = {}): PlanLimits => ({ ...DEFAULT_PLAN_LIMITS, ...over });
+// maxDbInstances 0 by default here: the P1 rules below are about the site
+// dimensions alone (database memory has its own tests at the end).
+const plan = (over: Partial<PlanLimits> = {}): PlanLimits => ({ ...DEFAULT_PLAN_LIMITS, maxDbInstances: 0, ...over });
 const tenant = (over: Partial<TenantLimits> = {}): TenantLimits => ({ ...DEFAULT_TENANT_LIMITS, ...over });
 const dims = (v: ReturnType<typeof checkAllocation>) => v.map((x) => x.dimension).sort();
 
@@ -107,4 +109,32 @@ test('plan update over a since-lowered envelope: only a growing dimension is ref
   // Growing past the envelope is still refused.
   assert.deepEqual(checkAllocation(limits, [], { add: plan({ diskMb: 6000, maxMailboxes: null }), remove: before }),
     [{ dimension: 'diskMb', limit: 1000, requested: 6000 }]);
+});
+
+test('database instances count in the memory envelope (maxDbInstances × profile memory)', () => {
+  assert.equal(planDbMemoryMb({ maxDbInstances: 2, dbProfile: 'S' }), 512);
+  assert.equal(planDbMemoryMb({ maxDbInstances: 3, dbProfile: 'L' }), 6144);
+  assert.equal(planDbMemoryMb({ maxDbInstances: 0, dbProfile: 'L' }), 0);
+  assert.equal(planDbMemoryMb({ maxDbInstances: null, dbProfile: 'S' }), null);
+  assert.equal(planDimensionValue(plan({ memoryMb: 512, maxDbInstances: 2, dbProfile: 'M' }), 'memoryMb'), 512 + 1536);
+  assert.equal(planDimensionValue(plan({ memoryMb: null, maxDbInstances: 2 }), 'memoryMb'), null);
+  assert.equal(planDimensionValue(plan({ diskMb: 100, maxDbInstances: null }), 'diskMb'), 100);
+
+  const limits = tenant({ memoryMb: 4096, maxAccounts: 5 });
+  // Unlimited L instances on a finite memory envelope: refused (the reseller scenario).
+  assert.deepEqual(checkAllocation(limits, [], { add: plan({ memoryMb: 256, maxDbInstances: null, dbProfile: 'L' }) }, 1),
+    [{ dimension: 'memoryMb', limit: 4096, requested: null }]);
+  // 512 + 2 × 2048 = 4608 > 4096 for a single account.
+  assert.deepEqual(checkAllocation(limits, [], { add: plan({ memoryMb: 512, maxDbInstances: 2, dbProfile: 'L' }) }, 1),
+    [{ dimension: 'memoryMb', limit: 4096, requested: 4608 }]);
+  // 512 + 2 × 256 = 1024 per account: four fit, a fifth does not.
+  const small = plan({ memoryMb: 512, maxDbInstances: 2, dbProfile: 'S' });
+  assert.deepEqual(checkAllocation(limits, [small, small, small], { add: small }, 1), []);
+  assert.deepEqual(checkAllocation(limits, [small, small, small, small], { add: small }, 1),
+    [{ dimension: 'memoryMb', limit: 4096, requested: 5120 }]);
+  // Raising only the database profile of a plan grows the memory dimension.
+  assert.deepEqual(checkAllocation(limits, [small, small, small], { remove: [small, small, small], add: [1, 2, 3].map(() => ({ ...small, dbProfile: 'M' as const })) }, 0),
+    [{ dimension: 'memoryMb', limit: 4096, requested: 6144 }]);
+  // An unlimited memory envelope never counts it.
+  assert.deepEqual(checkAllocation(tenant(), [], { add: plan({ maxDbInstances: null, dbProfile: 'L' }) }, 1), []);
 });

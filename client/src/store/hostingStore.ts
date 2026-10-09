@@ -14,10 +14,12 @@ import { useTenantStore } from './tenantStore';
  */
 export type HostingNeed =
   | 'read' | 'plans.manage' | 'accounts.manage' | 'sites.manage' | 'domains.manage' | 'files.manage'
-  | 'releases.publish' | 'releases.approve';
+  | 'releases.publish' | 'releases.approve'
+  // P2: cron → sites.manage, allow-list → files.manage, logs / usage → read.
+  | 'databases.manage' | 'dns.manage';
 
 const STAFF_CAPS: Record<HostingNeed, string[]> = {
-  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage'],
+  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage'],
   'plans.manage': ['plans.manage'],
   'accounts.manage': ['accounts.manage'],
   'sites.manage': ['sites.manage'],
@@ -25,6 +27,8 @@ const STAFF_CAPS: Record<HostingNeed, string[]> = {
   'files.manage': ['files.manage'],
   'releases.publish': ['sites.manage'],
   'releases.approve': ['sites.manage'],
+  'databases.manage': ['databases.manage'],
+  'dns.manage': ['dns.manage'],
 };
 
 const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
@@ -36,6 +40,8 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
   'files.manage': 'files.manage',
   'releases.publish': 'releases.publish',
   'releases.approve': 'releases.approve',
+  'databases.manage': 'databases.manage',
+  'dns.manage': 'dns.manage',
 };
 
 /** Pure check (exported for tests / non-hook callers). accountId omitted = "on some account". */

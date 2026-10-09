@@ -99,10 +99,14 @@ RUN set -eux; \
     mkdir -p /usr/share/oblimint/empty /srv/releases /srv/data /etc/oblimint/site; \
     chmod -R a+rX,go-w /usr/local/lib/oblimint /opt/oblimint /usr/share/oblimint /usr/local/etc/php
 
+# PGHOST: libpq clients run from the CLI (cron, docker exec) find the account's
+# default PostgreSQL instance socket (php-fpm gets it from its pool: clear_env).
+# MySQL family: php.ini default_socket = /run/mysqld/mysqld.sock.
 ENV OBLIMINT_ENGINE=${ENGINE} \
     OBLIMINT_PHP=1 \
     OBLIMINT_RUN=/run/oblimint \
     OBLIMINT_SITE_CONFIG=/etc/oblimint/site/primary.json \
+    PGHOST=/run/postgresql \
     HOME=/tmp
 
 # Build-time smoke test (not shipped): render + httpd/nginx/php-fpm -t,

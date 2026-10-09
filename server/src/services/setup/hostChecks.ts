@@ -161,7 +161,7 @@ async function portsCheck(): Promise<HostCheck> {
       await container.remove({ force: true }).catch(() => {});
     }
     // 80/443 busy → fail; 53 (DNS, P2) / 25 (mail, P4) busy → warn only (ports.ts).
-    const v = evaluatePorts(output);
+    const v = evaluatePorts(output, { dnsBind: config.hosting.pdnsBind, dnsPort: config.hosting.pdnsPort });
     return check('ports', v.status, v.detail, { fixCommand: v.fixCommand });
   } catch (err) {
     return check('ports', 'fail', `Host ports not checked: ${errText(err)}`);

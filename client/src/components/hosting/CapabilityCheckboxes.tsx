@@ -11,6 +11,8 @@ export function capabilityLabel(t: TFunction, c: ClientCapability): string {
     'releases.approve': 'Approve releases',
     'domains.manage': 'Manage domains',
     'files.manage': 'Manage file access',
+    'databases.manage': 'Manage databases',
+    'dns.manage': 'Manage DNS zones',
   };
   return t(`accounts.capabilities.${c.replace('.', '_')}`) || fallback[c];
 }
@@ -21,7 +23,9 @@ function capabilityHint(t: TFunction, c: ClientCapability): string {
     'releases.publish': 'Publish the staging and roll back releases.',
     'releases.approve': 'Approve or reject releases waiting for approval.',
     'domains.manage': 'Add domains and edit their routes.',
-    'files.manage': 'Open the SFTP access, set its password and SSH keys.',
+    'files.manage': 'Open the SFTP access, set its password and SSH keys, and the access allow-list.',
+    'databases.manage': 'Create database instances, databases and users, open phpMyAdmin / Adminer.',
+    'dns.manage': 'Edit the DNS records of the account zones.',
   };
   return t(`accounts.capabilities.${c.replace('.', '_')}_hint`) || fallback[c];
 }

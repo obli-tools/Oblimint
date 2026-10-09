@@ -1,3 +1,4 @@
+import type { Knex } from 'knex';
 import type { CertificateDetail, CertificateLogLine, HostingAccount } from '@oblimint/shared';
 import { HostingSocketEvents, MASTER_TENANT_ID } from '@oblimint/shared';
 import { db } from '../../db';
@@ -5,34 +6,49 @@ import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { appConfigService } from '../appConfig.service';
 import { auditService } from '../audit.service';
+import { dns01Provider, type Dns01Provider } from '../dns/acmeChallenge';
 import { localNodeId } from '../docker/engine';
 import { emitHosting } from '../hosting/events';
-import { EDGE_CONTAINER, previewHostname } from '../hosting/naming';
+import { wildcardCoversPlatform } from '../hosting/hostingValidation.service';
+import { EDGE_CONTAINER, previewHost } from '../hosting/naming';
 import { localPaths } from '../hosting/paths';
 import { json, toCertificateSummary, type CertificateRow } from '../hosting/rows';
+import { platformSettings } from '../platformSettings';
 import {
-  defaultAcmeClientFactory, httpSelfTest, isPublicAcmeName, issueCertificate, removeCertificateFiles, type AcmeClientFactory,
+  defaultAcmeClientFactory, httpSelfTest, isHttp01Failure, isPublicAcmeName, issueCertificate, removeCertificateFiles, type AcmeClientFactory,
 } from './acmeIssuer';
 import {
   certificateLogView, certificateSummaryView, clientCertificateError, type CertificateViewer, type StoredCertificateLogLine,
 } from './certificateMessages';
-import { certFilesExist, edgeService } from './edge.service';
+import { certFilesExist, edgeService, loadPlatformHosts } from './edge.service';
 import { isValidServerName } from './nginxConfig';
 import {
   inBackoff, isUsable, issuerFor, issuerOutdated, MANUAL_COOLDOWN_MS, needsIssuance, planRenewals, sameNames, type CertIssuer, type ScheduleRow,
 } from './renewal';
-import { isReservedPlatformName, SERVED_ACCOUNT_STATUSES } from './vhostPlan';
+import { isReservedPlatformName, platformHostNames, SERVED_ACCOUNT_STATUSES, type PlatformHosts } from './vhostPlan';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Let's Encrypt certificates of the edge (docs/P1-PLAN.md §11). OWNED BY
-// MODULE `edge`. The ACME protocol itself is in acmeIssuer.ts (persistent
-// account key, dates read from the certificate, staging option); this file
-// owns the `certificates` rows, the issuance queue and the renewal worker.
+// Let's Encrypt certificates of the edge (docs/P1-PLAN.md §11, P2-PLAN §9.2).
+// OWNED BY MODULE `edge-ownership` (P2). The ACME protocol itself is in
+// acmeIssuer.ts (persistent account key, dates read from the certificate,
+// staging option, HTTP-01 + DNS-01); this file owns the `certificates` rows,
+// the issuance queue and the renewal worker.
 //
 // Three kinds of certificates (one row each, primary_name unique):
-//   domain   domain_id set — names = [name] (+ www.name when include_www);
-//   preview  site_id set, domain_id null — previewHostname(site, panel_hostname);
-//   panel    both null — panel_hostname.
+//   domain    domain_id set — names = [name] (+ www.name when include_www);
+//             a wildcard domain: [name, *.name] by DNS-01 (www is covered by
+//             *.name — Let's Encrypt refuses a name redundant with a wildcard
+//             of the same order); ONLY for a VERIFIED domain (invariant D1:
+//             an unverified domain is never queued, an explicit request is
+//             refused with 409 domainNotVerified);
+//   preview   site_id set, domain_id null — previewHost(site, preview domain);
+//             none when the preview domain is not configured;
+//   platform  both null — the panel, the DB admin host, the IP probe hosts,
+//             and the optional wildcard [previewDomain, *.previewDomain]
+//             (DNS-01, settings preview.wildcardCertificate) which then
+//             replaces the per-preview rows. Never issued to a tenant.
+// Rows no longer wanted (P1 previews under .preview.<panel>, a host name
+// removed from the settings, a preview removed) are swept by the renewal pass.
 // Issuances run ONE AT A TIME (queue), a name already queued is not queued
 // twice. A renewal of a still-valid certificate never downgrades the row: it
 // stays 'valid' (the edge keeps serving it) and only last_error / log /
@@ -53,33 +69,49 @@ const RENEWAL_INTERVAL_MS = 12 * 3600_000;
 /** Overall deadline of ONE issuance: the queue is serial, a hung one would block every tenant's renewals. */
 const ISSUANCE_DEADLINE_MS = 10 * 60_000;
 
-type CertKind = 'domain' | 'preview' | 'panel';
+type CertKind = 'domain' | 'preview' | 'platform';
 
 interface CertTarget {
   kind: CertKind;
   domainId: number | null;
   siteId: number | null;
-  /** names[0] = primary_name. */
+  /** names[0] = primary_name (never a wildcard). */
   names: string[];
+  /** Solve by DNS-01 (wildcard orders). */
+  preferDns01: boolean;
   /** Audit / socket scope. */
   tenantId: number;
   accountId: number | null;
 }
 
-/** Injectable for tests (fake ACME client, no network). */
+/** Injectable for tests (fake ACME client, fake DNS-01 solver, no network). */
 const deps: {
   createClient: AcmeClientFactory;
   selfTest: ReturnType<typeof httpSelfTest> | undefined;
   createCertificateKey: (() => Promise<Buffer | string>) | undefined;
   deadlineMs: number;
+  dns01: Dns01Provider;
 } = {
   createClient: defaultAcmeClientFactory,
   selfTest: httpSelfTest(EDGE_CONTAINER),
   createCertificateKey: undefined,
   deadlineMs: ISSUANCE_DEADLINE_MS,
+  dns01: dns01Provider,
 };
 
-const queue: { chain: Promise<unknown>; byName: Map<string, Promise<void>> } = { chain: Promise.resolve(), byName: new Map() };
+const queue: { chain: Promise<unknown>; byTarget: Map<string, Promise<void>> } = { chain: Promise.resolve(), byTarget: new Map() };
+
+/**
+ * Queue identity of a target: its row (domain / preview site), never its
+ * primary name alone — two rows may share a name across a reclaim (holder's
+ * issuance in flight, claimer's queued after it, each with its own row).
+ */
+function queueKey(t: Pick<CertTarget, 'kind' | 'domainId' | 'siteId' | 'names'>): string {
+  if (t.kind === 'domain') return `domain:${t.domainId}`;
+  if (t.kind === 'preview') return `preview:${t.siteId}`;
+  return `platform:${t.names[0]}`;
+}
+
 const timers: { first: NodeJS.Timeout | null; interval: NodeJS.Timeout | null } = { first: null, interval: null };
 let warnedNonPublicPanel = false;
 
@@ -112,13 +144,20 @@ async function expectedIssuer(): Promise<CertIssuer> {
   return issuerFor(await edgeService.acmeDirectory());
 }
 
-async function panelHostname(): Promise<string | null> {
-  const h = (await appConfigService.get('panel_hostname'))?.trim().toLowerCase() || null;
-  return h && isValidServerName(h) ? h : null;
+/** Platform host names; on a settings read error: the panel only (never used to delete rows). */
+async function platformHostsOrPanel(): Promise<PlatformHosts> {
+  try {
+    return await loadPlatformHosts();
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'certificate: platform settings unreadable, panel host name only');
+    const panel = (await appConfigService.get('panel_hostname'))?.trim().toLowerCase() || null;
+    return { panel: panel && isValidServerName(panel) ? panel : null, previewDomain: null, dbAdmin: null, probeV4: null, probeV6: null };
+  }
 }
 
 /** Why a domain gets no certificate (each one has its own API error code). */
-type SkipReason = 'domain not found' | 'TLS disabled for this domain' | 'account deleting' | 'account not served' | 'reserved platform name' | 'name not public';
+type SkipReason = 'domain not found' | 'TLS disabled for this domain' | 'account deleting' | 'account not served' | 'reserved platform name'
+  | 'name not public' | 'domain not verified';
 
 /** The API error of a skip reason (explicit requests: POST renew). */
 export function skipError(reason: SkipReason): AppError {
@@ -128,34 +167,116 @@ export function skipError(reason: SkipReason): AppError {
     case 'account deleting': return new AppError(409, 'The hosting account is being deleted', 'accountDeleting');
     case 'reserved platform name': return new AppError(409, 'This name belongs to the panel', 'domainReserved');
     case 'name not public': return new AppError(409, "Let's Encrypt does not issue certificates for reserved or private names (.test, .local, .internal…)", 'certificateNameNotPublic');
+    case 'domain not verified': return new AppError(409, 'The ownership of this domain is not verified yet: no certificate before the verification', 'domainNotVerified');
     case 'account not served':
     default: return new AppError(409, 'The hosting account is not online yet (provisioning or in error)', 'accountNotServed');
   }
 }
 
+/**
+ * Names of a domain certificate: a wildcard domain whose zone our PowerDNS
+ * can answer DNS-01 for gets [name, *.name]; otherwise (or without wildcard)
+ * [name] (+ www.name). The wildcard falls back to the plain names while the
+ * zone is not hosted / active (the renewal pass upgrades it later).
+ */
+export async function domainCertificateNames(
+  d: { name: string; include_www: boolean; wildcard?: boolean | null },
+  platform: PlatformHosts,
+  dns01: Pick<Dns01Provider, 'canSolve'> = deps.dns01,
+): Promise<{ names: string[]; preferDns01: boolean }> {
+  const name = d.name.toLowerCase();
+  if (d.wildcard && !wildcardCoversPlatform(name, platformHostNames(platform))) {
+    let solvable = false;
+    try { solvable = await dns01.canSolve(`*.${name}`); } catch { solvable = false; }
+    if (solvable) return { names: [name, `*.${name}`], preferDns01: true };
+  }
+  return { names: d.include_www ? [name, `www.${name}`] : [name], preferDns01: false };
+}
+
 /** Domain → target, or a reason why it has no certificate. */
-async function domainTarget(domainId: number): Promise<CertTarget | { skip: SkipReason }> {
+async function domainTarget(domainId: number, platform?: PlatformHosts): Promise<CertTarget | { skip: SkipReason }> {
   const d = await db('domains as d')
     .join('hosting_accounts as a', 'a.id', 'd.account_id')
     .where('d.id', domainId)
-    .first('d.id', 'd.tenant_id', 'd.account_id', 'd.name', 'd.include_www', 'd.tls_mode', 'a.status as account_status') as
-    { id: number; tenant_id: number; account_id: number; name: string; include_www: boolean; tls_mode: string; account_status: HostingAccount['status'] } | undefined;
+    .first('d.id', 'd.tenant_id', 'd.account_id', 'd.name', 'd.include_www', 'd.tls_mode', 'd.wildcard', 'd.verification_status',
+      'a.status as account_status') as
+    { id: number; tenant_id: number; account_id: number; name: string; include_www: boolean; tls_mode: string; wildcard: boolean | null;
+      verification_status: string | null; account_status: HostingAccount['status'] } | undefined;
   if (!d) return { skip: 'domain not found' };
   if (d.tls_mode !== 'letsencrypt') return { skip: 'TLS disabled for this domain' };
   if (d.account_status === 'deleting') return { skip: 'account deleting' };
   if (!SERVED_ACCOUNT_STATUSES.includes(d.account_status)) return { skip: 'account not served' };
+  // D1: no certificate before the ownership proof.
+  if (d.verification_status !== 'verified') return { skip: 'domain not verified' };
   const name = d.name.toLowerCase();
-  // The panel / preview host names belong to the platform (never served for a tenant).
-  if (isReservedPlatformName(name, await panelHostname())) return { skip: 'reserved platform name' };
+  const hosts = platform ?? await platformHostsOrPanel();
+  // The panel / preview / DB admin / probe host names belong to the platform (never issued for a tenant).
+  if (isReservedPlatformName(name, hosts)) return { skip: 'reserved platform name' };
   // Special-use / private names: the public CA would refuse the order (never sent).
   if (!isPublicAcmeName(name)) return { skip: 'name not public' };
-  return {
-    kind: 'domain', domainId: d.id, siteId: null, names: d.include_www ? [name, `www.${name}`] : [name],
-    tenantId: d.tenant_id, accountId: d.account_id,
-  };
+  const { names, preferDns01 } = await domainCertificateNames(d, hosts);
+  return { kind: 'domain', domainId: d.id, siteId: null, names, preferDns01, tenantId: d.tenant_id, accountId: d.account_id };
 }
 
-/** The row of this target, by kind: a tenant domain row is never taken for a panel / preview one. */
+/**
+ * Wanted platform + preview certificates of the local node: the panel, the DB
+ * admin host, the probe hosts (each when public), the wildcard
+ * *.previewDomain (settings preview.wildcardCertificate, DNS-01 solvable or a
+ * usable row already there) and, until that wildcard is usable with its
+ * files, one certificate per served preview.
+ */
+async function auxiliaryTargets(platform: PlatformHosts): Promise<{ platform: Map<string, CertTarget>; previews: Map<number, CertTarget> }> {
+  const out = { platform: new Map<string, CertTarget>(), previews: new Map<number, CertTarget>() };
+  const add = (names: string[], preferDns01 = false) => {
+    if (!names.every(isPublicAcmeName) || out.platform.has(names[0])) return;
+    out.platform.set(names[0], { kind: 'platform', domainId: null, siteId: null, names, preferDns01, tenantId: MASTER_TENANT_ID, accountId: null });
+  };
+  if (platform.panel) {
+    if (isPublicAcmeName(platform.panel)) add([platform.panel]);
+    else if (!warnedNonPublicPanel) {
+      // Lab / internal install (panel.oblimint.test…): the edge serves its default certificate, Let's Encrypt is never asked.
+      warnedNonPublicPanel = true;
+      logger.warn({ panel: platform.panel }, "certificate: panel_hostname is a reserved / private name: no Let's Encrypt certificate for the panel");
+    }
+  }
+  for (const h of [platform.dbAdmin, platform.probeV4, platform.probeV6]) if (h) add([h]);
+
+  const previewDomain = platform.previewDomain;
+  if (!previewDomain || !isPublicAcmeName(previewDomain)) return out;
+  const preview = await platformSettings.section('preview');
+  if (preview.wildcardCertificate) {
+    let solvable = false;
+    try { solvable = await deps.dns01.canSolve(`*.${previewDomain}`); } catch { solvable = false; }
+    const existing = await db('certificates').where({ primary_name: previewDomain }).whereNull('domain_id').whereNull('site_id')
+      .first() as CertificateRow | undefined;
+    const usableWildcard = !!existing && isUsable(existing, Date.now())
+      && json<string[]>(existing.names, []).includes(`*.${previewDomain}`) && certFilesExist(existing.primary_name);
+    // A usable wildcard row survives a zone momentarily not active (no churn of every preview certificate).
+    if (solvable || usableWildcard) {
+      add([previewDomain, `*.${previewDomain}`], true);
+      // The per-preview certificates are only dropped once the wildcard is
+      // actually served: until then (issuance queued, DNS-01 failing and
+      // backing off) they stay wanted, so the renewal pass never sweeps them
+      // and new previews still get one (the vhost prefers its own cert anyway).
+      if (usableWildcard) return out;
+    }
+  }
+  const nodeId = await localNodeId();
+  const sites = await db('sites as s')
+    .join('hosting_accounts as a', 'a.id', 's.account_id')
+    .where('a.node_id', nodeId)
+    .whereIn('a.status', [...SERVED_ACCOUNT_STATUSES])
+    .whereNotNull('s.preview_base')
+    .select('s.id', 's.slug', 's.tenant_id', 's.account_id') as Array<{ id: number; slug: string; tenant_id: number; account_id: number }>;
+  for (const s of sites) {
+    const host = previewHost(s, previewDomain);
+    if (!isValidServerName(host) || !isPublicAcmeName(host)) continue;
+    out.previews.set(s.id, { kind: 'preview', domainId: null, siteId: s.id, names: [host], preferDns01: false, tenantId: s.tenant_id, accountId: s.account_id });
+  }
+  return out;
+}
+
+/** The row of this target, by kind: a tenant domain row is never taken for a platform / preview one. */
 async function findRow(target: Pick<CertTarget, 'kind' | 'domainId' | 'siteId' | 'names'>): Promise<CertificateRow | undefined> {
   if (target.kind === 'domain') return await db('certificates').where({ domain_id: target.domainId }).first() as CertificateRow | undefined;
   const q = db('certificates').where({ primary_name: target.names[0] }).whereNull('domain_id');
@@ -194,6 +315,20 @@ async function upsertRow(target: CertTarget): Promise<CertificateRow> {
 function usableNow(row: CertificateRow | undefined, names: string[], expected: CertIssuer): boolean {
   return !!row && isUsable(row, Date.now()) && sameNames(json<string[]>(row.names, []), names)
     && !issuerOutdated(row.issuer, expected) && certFilesExist(row.primary_name);
+}
+
+function auditResource(target: CertTarget): { resourceType?: string; resourcePath?: string } {
+  if (target.kind === 'domain') return { resourceType: 'domain', resourcePath: String(target.domainId) };
+  if (target.kind === 'preview') return { resourceType: 'site', resourcePath: String(target.siteId) };
+  return {};
+}
+
+/** Can our PowerDNS answer DNS-01 for every name (fallback when HTTP-01 is impossible)? */
+async function dns01SolvesAll(names: string[]): Promise<boolean> {
+  for (const n of names) {
+    try { if (!(await deps.dns01.canSolve(n))) return false; } catch { return false; }
+  }
+  return names.length > 0;
 }
 
 /** The issuance itself (runs inside the queue). Never throws: the outcome is in the row. */
@@ -259,16 +394,28 @@ async function runIssuance(target: CertTarget): Promise<void> {
       await log('warn', 'The edge configuration could not be fully applied before validation; the challenge may fail (details in the platform logs)');
     }
 
-    const issued = await bounded(issueCertificate({ names: target.names, email, directory }, {
+    const issueWith = (preferDns01: boolean) => bounded(issueCertificate({ names: target.names, email, directory, preferDns01 }, {
       edgeDir: localPaths.edge(),
       acmeWebroot: localPaths.edgeAcme(),
       certsDir: localPaths.edgeCerts(),
       createClient: deps.createClient,
       selfTest: deps.selfTest,
       createCertificateKey: deps.createCertificateKey,
+      dns01: deps.dns01,
       signal: deadline.signal,
       log,
     }));
+    let issued: Awaited<ReturnType<typeof issueCertificate>>;
+    try {
+      issued = await issueWith(target.preferDns01);
+    } catch (err) {
+      // HTTP-01 impossible (port 80 unreachable: NAT, firewall, v6-only path)
+      // but every name in a zone our PowerDNS answers for: ONE new order solved
+      // by DNS-01 (the failed authorization cannot be retried in place).
+      if (target.preferDns01 || deadline.signal.aborted || !isHttp01Failure(err) || !(await dns01SolvesAll(target.names))) throw err;
+      await log('warn', 'HTTP-01 validation failed: retrying with DNS-01 (zone hosted on this platform)');
+      issued = await issueWith(true);
+    }
     clearTimeout(deadlineTimer);
 
     await db('certificates').where({ id: certId }).update({
@@ -291,8 +438,7 @@ async function runIssuance(target: CertTarget): Promise<void> {
     await auditService.log({
       tenantId: target.tenantId,
       action: 'certificate.issued',
-      resourceType: target.kind === 'domain' ? 'domain' : target.kind === 'preview' ? 'site' : undefined,
-      resourcePath: target.domainId ? String(target.domainId) : target.siteId ? String(target.siteId) : undefined,
+      ...auditResource(target),
       details: { names: issued.names, issuer: issued.issuer, notAfter: issued.notAfter.toISOString() },
     });
   } catch (err) {
@@ -317,8 +463,7 @@ async function runIssuance(target: CertTarget): Promise<void> {
       await auditService.log({
         tenantId: target.tenantId,
         action: 'certificate.renewal_failed',
-        resourceType: target.kind === 'domain' ? 'domain' : target.kind === 'preview' ? 'site' : undefined,
-        resourcePath: target.domainId ? String(target.domainId) : target.siteId ? String(target.siteId) : undefined,
+        ...auditResource(target),
         details: { names: target.names, error: message.slice(0, 500), notAfter: current.not_after ? new Date(current.not_after).toISOString() : null },
       });
     }
@@ -326,7 +471,7 @@ async function runIssuance(target: CertTarget): Promise<void> {
   }
 }
 
-/** Queues an issuance (one at a time; a name already queued is not queued twice). */
+/** Queues an issuance (one at a time; a target already queued / running is not queued twice). */
 function enqueue(target: CertTarget): Promise<void> {
   // Never an order the public CA must refuse (reserved / private names: the
   // panel or preview host names of a lab install, rows created before this
@@ -336,13 +481,13 @@ function enqueue(target: CertTarget): Promise<void> {
     logger.info({ names: target.names }, "certificate: non-public name, no Let's Encrypt request");
     return Promise.resolve();
   }
-  const key = target.names[0];
-  const existing = queue.byName.get(key);
+  const key = queueKey(target);
+  const existing = queue.byTarget.get(key);
   if (existing) return existing;
   const p = queue.chain.then(() => runIssuance(target), () => runIssuance(target)).finally(() => {
-    queue.byName.delete(key);
+    queue.byTarget.delete(key);
   });
-  queue.byName.set(key, p);
+  queue.byTarget.set(key, p);
   queue.chain = p.catch(() => undefined);
   return p;
 }
@@ -370,7 +515,10 @@ async function ensureTarget(target: CertTarget): Promise<void> {
 }
 
 export const certificateService = {
-  /** Queue an issuance when tls_mode = letsencrypt and no valid cert covers the names. Never throws. */
+  /**
+   * Queue an issuance when tls_mode = letsencrypt, the domain is VERIFIED (D1)
+   * and no valid cert covers the names. Never throws.
+   */
   ensureForDomain(domainId: number): void {
     void (async () => {
       const t = await domainTarget(domainId);
@@ -380,44 +528,25 @@ export const certificateService = {
   },
 
   /**
-   * Preview / panel host names. siteId set = preview of that site (row
-   * site_id), null = the panel. Never throws.
+   * One platform / preview host name. siteId set = preview of that site (row
+   * site_id), null = a platform host (panel, DB admin, probe). Never throws.
    */
   ensureForHost(host: string, opts: { siteId: number | null; tenantId: number; accountId: number | null }): void {
     void (async () => {
       const name = host.trim().toLowerCase();
       if (!isValidServerName(name) || !isPublicAcmeName(name)) return;
       await ensureTarget({
-        kind: opts.siteId ? 'preview' : 'panel', domainId: null, siteId: opts.siteId, names: [name],
+        kind: opts.siteId ? 'preview' : 'platform', domainId: null, siteId: opts.siteId, names: [name], preferDns01: false,
         tenantId: opts.tenantId, accountId: opts.accountId,
       });
     })().catch((err) => logger.warn({ host, err: (err as Error).message }, 'certificate ensureForHost failed'));
   },
 
-  /** Panel + preview host names of the local node (edge start, renewal pass). Never throws. */
+  /** Platform host names + previews of the local node (edge start, vhost changes, renewal pass). Never throws. */
   ensureAuxiliary(): void {
     void (async () => {
-      const panel = await panelHostname();
-      if (!panel) return;
-      if (!isPublicAcmeName(panel)) {
-        // Lab / internal install (panel.oblimint.test…): the panel and every preview
-        // host name below it are not publicly resolvable — the edge serves its
-        // default certificate, Let's Encrypt is never asked.
-        if (!warnedNonPublicPanel) {
-          warnedNonPublicPanel = true;
-          logger.warn({ panel }, "certificate: panel_hostname is a reserved / private name: no Let's Encrypt certificate for the panel and preview hosts");
-        }
-        return;
-      }
-      certificateService.ensureForHost(panel, { siteId: null, tenantId: MASTER_TENANT_ID, accountId: null });
-      const nodeId = await localNodeId();
-      const sites = await db('sites as s')
-        .join('hosting_accounts as a', 'a.id', 's.account_id')
-        .where('a.node_id', nodeId)
-        .whereIn('a.status', [...SERVED_ACCOUNT_STATUSES])
-        .whereNotNull('s.preview_base')
-        .select('s.id', 's.slug', 's.tenant_id', 's.account_id') as Array<{ id: number; slug: string; tenant_id: number; account_id: number }>;
-      for (const s of sites) certificateService.ensureForHost(previewHostname(s, panel), { siteId: s.id, tenantId: s.tenant_id, accountId: s.account_id });
+      const targets = await auxiliaryTargets(await platformHostsOrPanel());
+      for (const t of [...targets.platform.values(), ...targets.previews.values()]) await ensureTarget(t);
     })().catch((err) => logger.warn({ err: (err as Error).message }, 'certificate ensureAuxiliary failed'));
   },
 
@@ -437,7 +566,8 @@ export const certificateService = {
   /**
    * POST /domains/:id/certificate/renew: validates, creates / prepares the row
    * and starts the issuance in the background; returns the current detail.
-   * Rate limited (one shared queue, one shared Let's Encrypt account):
+   * 409 domainNotVerified before the ownership proof (D1). Rate limited (one
+   * shared queue, one shared Let's Encrypt account):
    *   - 429 certificateRateLimited: last attempt < MANUAL_COOLDOWN_MS ago
    *     (everyone), or failure backoff running (clients only);
    *   - 409 certificateNotDue: client `force` on a certificate that is valid,
@@ -450,7 +580,7 @@ export const certificateService = {
     let row = await findRow(target);
     if (!row) row = await upsertRow(target);
     const viewer: CertificateViewer = opts.staff ? 'staff' : 'client';
-    if (queue.byName.has(target.names[0])) return toDetail(row, viewer); // already queued / running
+    if (queue.byTarget.has(queueKey(target))) return toDetail(row, viewer); // already queued / running
     const now = Date.now();
     const sched = scheduleRow(row);
     const last = row.last_attempt_at ? new Date(row.last_attempt_at).getTime() : NaN;
@@ -469,13 +599,26 @@ export const certificateService = {
     return toDetail(row, viewer);
   },
 
-  /** Deletes the cert row + files of a domain (called BEFORE the domain row is deleted). */
-  async removeForDomain(domainId: number): Promise<void> {
-    const row = await db('certificates').where({ domain_id: domainId }).first() as CertificateRow | undefined;
+  /**
+   * Deletes the cert row + files of a domain (called BEFORE the domain row is
+   * deleted). With `trx` (domain reclaim): the row goes in that transaction
+   * and the files only once it committed.
+   */
+  async removeForDomain(domainId: number, opts: { trx?: Knex.Transaction } = {}): Promise<void> {
+    const conn = opts.trx ?? db;
+    const row = await conn('certificates').where({ domain_id: domainId }).first() as CertificateRow | undefined;
     if (!row) return;
-    removeCertificateFiles(localPaths.edgeCerts(), row.primary_name);
-    await db('certificates').where({ id: row.id }).del();
-    edgeService.scheduleSync('certificate removed');
+    await conn('certificates').where({ id: row.id }).del();
+    const cleanup = () => {
+      removeCertificateFiles(localPaths.edgeCerts(), row.primary_name);
+      edgeService.scheduleSync('certificate removed');
+    };
+    if (opts.trx) {
+      opts.trx.executionPromise.then(cleanup, () => { /* rolled back: row and files kept */ })
+        .catch((err) => logger.warn({ domainId, err: (err as Error).message }, 'certificate: file removal after commit failed'));
+    } else {
+      cleanup();
+    }
   },
 
   /** viewer 'client' (a client user of the account): raw error text replaced (A6). */
@@ -485,44 +628,56 @@ export const certificateService = {
   },
 
   /**
-   * Renewal pass: valid certs expiring in < 30 days are renewed, past ones
-   * marked expired; failed / expired ones retried after their backoff;
-   * letsencrypt domains without any row get one; stale preview / panel rows
-   * (host name no longer served) are removed. Staging certificates are
-   * replaced once the platform is on production (also run right after that
-   * switch, PUT /system/edge/settings); domain rows missing a name (www added,
-   * attempt failed) are retried after their backoff.
+   * Renewal pass: rows no longer wanted are removed first (P1 previews under
+   * .preview.<panel>, platform host names removed from the settings, previews
+   * gone, per-preview rows replaced by the preview wildcard, tenant rows on a
+   * platform name); then valid certs expiring in < 30 days are renewed, past
+   * ones marked expired; failed / expired ones retried after their backoff;
+   * verified letsencrypt domains without any row get one. Staging
+   * certificates are replaced once the platform is on production (also run
+   * right after that switch, PUT /system/edge/settings); domain rows missing
+   * a name (www / wildcard added, attempt failed) are retried after their backoff.
    */
   async checkRenewals(): Promise<void> {
     const now = Date.now();
-    const panel = await panelHostname();
+    let platform: PlatformHosts | null = null;
+    try {
+      platform = await loadPlatformHosts();
+    } catch (err) {
+      // Never sweep rows on a transient settings error: renew what exists, decide the rest next pass.
+      logger.warn({ err: (err as Error).message }, 'certificate renewal: platform settings unreadable, stale-row sweep skipped');
+    }
+    const hosts = platform ?? await platformHostsOrPanel();
+    const wanted = platform ? await auxiliaryTargets(platform) : null;
     const all = await db('certificates').select('*') as CertificateRow[];
 
-    // Tenant domain rows on a platform host name (panel_hostname set or
-    // changed after the domain was added): removed, the platform issues its own.
     const rows: CertificateRow[] = [];
     for (const r of all) {
-      if (r.domain_id !== null && isReservedPlatformName(r.primary_name, panel)) await certificateService.removeRow(r);
+      let stale = false;
+      // Tenant domain rows on a platform host name (set or changed after the domain was added).
+      if (r.domain_id !== null) stale = isReservedPlatformName(r.primary_name, hosts);
+      else if (wanted && r.site_id !== null) stale = wanted.previews.get(r.site_id)?.names[0] !== r.primary_name;
+      else if (wanted) stale = !wanted.platform.has(r.primary_name);
+      if (stale) await certificateService.removeRow(r);
       else rows.push(r);
     }
 
-    // Names each domain row SHOULD cover (www toggled, earlier attempt failed).
+    // Names each domain row SHOULD cover (www / wildcard toggled, earlier attempt failed).
     const desiredByDomain = new Map<number, string[]>();
     const domainIds = rows.filter((r) => r.domain_id !== null).map((r) => r.domain_id as number);
     if (domainIds.length) {
-      const ds = await db('domains').whereIn('id', domainIds).where('tls_mode', 'letsencrypt')
-        .select('id', 'name', 'include_www') as Array<{ id: number; name: string; include_www: boolean }>;
-      for (const d of ds) {
-        const n = d.name.toLowerCase();
-        desiredByDomain.set(d.id, d.include_www ? [n, `www.${n}`] : [n]);
-      }
+      const ds = await db('domains').whereIn('id', domainIds).where('tls_mode', 'letsencrypt').where('verification_status', 'verified')
+        .select('id', 'name', 'include_www', 'wildcard') as Array<{ id: number; name: string; include_www: boolean; wildcard: boolean }>;
+      for (const d of ds) desiredByDomain.set(d.id, (await domainCertificateNames(d, hosts)).names);
     }
     const byId = new Map(rows.map((r) => [r.id, r]));
     const plan = planRenewals(rows.map(scheduleRow), now, {
       expectedIssuer: await expectedIssuer(),
       desiredNames: (id) => {
         const r = byId.get(id);
-        return r?.domain_id ? desiredByDomain.get(r.domain_id) : undefined;
+        if (r?.domain_id) return desiredByDomain.get(r.domain_id);
+        if (r?.site_id) return wanted?.previews.get(r.site_id)?.names;
+        return r ? wanted?.platform.get(r.primary_name)?.names : undefined;
       },
     });
 
@@ -535,31 +690,19 @@ export const certificateService = {
     for (const id of plan.renew) {
       const r = byId.get(id)!;
       if (r.domain_id) {
-        const t = await domainTarget(r.domain_id);
+        const t = await domainTarget(r.domain_id, hosts);
         if (!('skip' in t)) jobs.push(enqueue(t));
         continue;
       }
-      if (r.site_id) {
-        const s = await db('sites').where({ id: r.site_id }).first('id', 'slug', 'tenant_id', 'account_id', 'preview_base') as
-          { id: number; slug: string; tenant_id: number; account_id: number; preview_base: string | null } | undefined;
-        if (!s || !s.preview_base || !panel || previewHostname(s, panel) !== r.primary_name) {
-          await certificateService.removeRow(r);
-          continue;
-        }
-        jobs.push(enqueue({ kind: 'preview', domainId: null, siteId: s.id, names: [r.primary_name], tenantId: s.tenant_id, accountId: s.account_id }));
-        continue;
-      }
-      if (!panel || panel !== r.primary_name) {
-        await certificateService.removeRow(r);
-        continue;
-      }
-      jobs.push(enqueue({ kind: 'panel', domainId: null, siteId: null, names: [panel], tenantId: MASTER_TENANT_ID, accountId: null }));
+      const t = r.site_id ? wanted?.previews.get(r.site_id) : wanted?.platform.get(r.primary_name);
+      if (t) jobs.push(enqueue(t));
     }
 
-    // Domains that never got a row (missed event, panel restarted mid-way).
+    // Verified domains that never got a row (missed event, panel restarted mid-way, verified meanwhile).
     const orphans = await db('domains as d')
       .leftJoin('certificates as c', 'c.domain_id', 'd.id')
       .where('d.tls_mode', 'letsencrypt')
+      .where('d.verification_status', 'verified')
       .whereNull('c.id')
       .select('d.id') as Array<{ id: number }>;
     for (const d of orphans) certificateService.ensureForDomain(d.id);
@@ -567,7 +710,7 @@ export const certificateService = {
     await Promise.allSettled(jobs);
   },
 
-  /** Removes a row and its files (stale preview / panel names). */
+  /** Removes a row and its files (stale preview / platform names). */
   async removeRow(r: CertificateRow): Promise<void> {
     removeCertificateFiles(localPaths.edgeCerts(), r.primary_name);
     await db('certificates').where({ id: r.id }).del();
@@ -594,7 +737,7 @@ export const certificateService = {
     timers.interval = null;
   },
 
-  /** Tests only: replace the ACME client factory / self-test. */
+  /** Tests only: replace the ACME client factory / self-test / DNS-01 solver. */
   _setDeps(d: Partial<typeof deps>): void {
     Object.assign(deps, d);
   },

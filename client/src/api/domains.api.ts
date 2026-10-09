@@ -1,6 +1,7 @@
 import apiClient from './client';
 import type {
-  ApiResponse, CertificateDetail, Domain, DomainCreate, DomainUpdate, SiteRoute, SiteRouteInput,
+  ApiResponse, CertificateDetail, Domain, DomainClaim, DomainClaimCreate, DomainCreate, DomainUpdate, DomainVerification, SiteRoute,
+  SiteRouteInput,
 } from '@oblimint/shared';
 
 // /api/domains (+ /routes, /certificate) — docs/P1-PLAN.md §API.
@@ -54,5 +55,37 @@ export const domainsApi = {
   async renewCertificate(domainId: number, force = false): Promise<CertificateDetail> {
     const res = await apiClient.post<ApiResponse<CertificateDetail>>(`/domains/${domainId}/certificate/renew`, { force });
     return res.data.data!;
+  },
+};
+
+// ── P2 ownership (docs/P2-PLAN.md §6.2) — module ui-dns-db owns this file in P2 ──
+export const domainOwnershipApi = {
+  async verification(domainId: number): Promise<DomainVerification> {
+    const res = await apiClient.get<ApiResponse<DomainVerification>>(`/domains/${domainId}/verification`);
+    return res.data.data!;
+  },
+  async check(domainId: number): Promise<DomainVerification> {
+    const res = await apiClient.post<ApiResponse<DomainVerification>>(`/domains/${domainId}/verification/check`);
+    return res.data.data!;
+  },
+  /** Platform admin only. */
+  async force(domainId: number): Promise<DomainVerification> {
+    const res = await apiClient.post<ApiResponse<DomainVerification>>(`/domains/${domainId}/verification/force`);
+    return res.data.data!;
+  },
+  async listClaims(accountId?: number): Promise<DomainClaim[]> {
+    const res = await apiClient.get<ApiResponse<DomainClaim[]>>('/domains/claims', { params: { accountId } });
+    return res.data.data ?? [];
+  },
+  async createClaim(data: DomainClaimCreate): Promise<DomainClaim> {
+    const res = await apiClient.post<ApiResponse<DomainClaim>>('/domains/claims', data);
+    return res.data.data!;
+  },
+  async checkClaim(claimId: number): Promise<DomainClaim> {
+    const res = await apiClient.post<ApiResponse<DomainClaim>>(`/domains/claims/${claimId}/check`);
+    return res.data.data!;
+  },
+  async cancelClaim(claimId: number): Promise<void> {
+    await apiClient.delete(`/domains/claims/${claimId}`);
   },
 };

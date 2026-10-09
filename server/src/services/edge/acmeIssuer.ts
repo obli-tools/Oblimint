@@ -3,11 +3,12 @@ import http from 'http';
 import path from 'path';
 import { X509Certificate, createPrivateKey } from 'crypto';
 import * as acme from 'acme-client';
+import type { Dns01Provider } from '../dns/acmeChallenge';
 import { clientCertificateError } from './certificateMessages';
 import { isValidServerName } from './nginxConfig';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Let's Encrypt HTTP-01 issuance (acme-client), ported from Oblihub
+// Let's Encrypt issuance (acme-client), ported from Oblihub
 // certificate.service.ts WITH the fixes:
 //   FIX 1  the ACME ACCOUNT KEY is persistent, one per directory, in
 //          edge/acme-account/<production|staging>.key (0600, created once —
@@ -18,6 +19,12 @@ import { isValidServerName } from './nginxConfig';
 //   FIX 2  not_before / not_after are READ FROM THE ISSUED CERTIFICATE
 //          (node:crypto X509Certificate), not assumed to be "now + 90 days".
 //   FIX 3  staging directory option (issuer 'letsencrypt-staging').
+//   P2     DNS-01 through our PowerDNS (services/dns/acmeChallenge.ts
+//          dns01Provider) for wildcard names (*.name: Let's Encrypt only
+//          offers dns-01 for them), for every name of an order that prefers
+//          it (wildcard domains, *.previewDomain) and whenever HTTP-01 is not
+//          offered; the TXT value is ALWAYS removed afterwards, even on
+//          failure. HTTP-01 stays the default (P1 path unchanged).
 // The ACME client is injected (tests use a fake: no network call).
 // Invariant E1: private keys 0600, outside the webroot; the webroot only
 // receives token files under .well-known/acme-challenge/, removed afterwards.
@@ -73,6 +80,10 @@ export interface IssueDeps {
   challengeTimeoutMs?: number;
   /** Hard timeout of every other ACME call (account, order, authorizations, finalize, download; default 120 s). */
   callTimeoutMs?: number;
+  /** DNS-01 solver (our PowerDNS). Absent → HTTP-01 only (a wildcard name then fails). */
+  dns01?: Dns01Provider;
+  /** Hard timeout of publishing / removing one DNS-01 TXT value (default 120 s). */
+  dnsTimeoutMs?: number;
   /**
    * Overall deadline of the issuance (the caller's): once aborted, every
    * pending ACME call is abandoned and nothing more is written (no token, no
@@ -82,10 +93,12 @@ export interface IssueDeps {
 }
 
 export interface IssueParams {
-  /** First = primary name (certificate directory), all covered as SAN. */
+  /** First = primary name (certificate directory, never a wildcard), all covered as SAN; '*.x' allowed after it. */
   names: string[];
   email: string;
   directory: AcmeDirectoryName;
+  /** Solve every name by DNS-01 when the provider can (wildcard orders). Default: HTTP-01 first. */
+  preferDns01?: boolean;
 }
 
 export interface IssuedCertificate {
@@ -112,10 +125,19 @@ const NON_PUBLIC_TLDS = new Set([
   'lan', 'home', 'corp', 'intranet', 'private', 'localdomain',
 ]);
 
-/** True when a public CA (HTTP-01) can issue for this name: a valid DNS name under a public-looking TLD, not an IP literal. */
+/** A certificate name: a valid server name, or '*.' + a valid server name. */
+export function isValidCertificateName(name: string): boolean {
+  return typeof name === 'string' && (name.startsWith('*.') ? isValidServerName(name.slice(2)) : isValidServerName(name));
+}
+
+/**
+ * True when a public CA can issue for this name: a valid DNS name under a
+ * public-looking TLD, not an IP literal ('*.name' is judged on 'name').
+ */
 export function isPublicAcmeName(name: string): boolean {
   if (typeof name !== 'string') return false;
-  const n = name.trim().toLowerCase();
+  let n = name.trim().toLowerCase();
+  if (n.startsWith('*.')) n = n.slice(2);
   if (!isValidServerName(n)) return false;
   const tld = n.slice(n.lastIndexOf('.') + 1);
   if (/^[0-9]+$/.test(tld)) return false; // IPv4 literal (a TLD is never all-numeric)
@@ -250,10 +272,57 @@ export function httpSelfTest(edgeHost: string, timeoutMs = 5000) {
   });
 }
 
-/** Full HTTP-01 issuance. Throws on failure (the caller records it). */
+type AcmeChallenge = acme.Authorization['challenges'][number];
+
+const HTTP01_FAILURE = Symbol('oblimint.http01Failure');
+
+/** Tags an HTTP-01 validation failure (same error, same message). */
+function markHttp01Failure(err: unknown): Error {
+  const e = err instanceof Error ? err : new Error(String(err));
+  (e as Error & { [HTTP01_FAILURE]?: true })[HTTP01_FAILURE] = true;
+  return e;
+}
+
+/**
+ * True when issueCertificate failed while an HTTP-01 challenge was being
+ * validated (port 80 unreachable, wrong address…): the caller may retry
+ * with a NEW order solved by DNS-01 (a failed authorization is final).
+ */
+export function isHttp01Failure(err: unknown): boolean {
+  return !!err && typeof err === 'object' && (err as { [HTTP01_FAILURE]?: true })[HTTP01_FAILURE] === true;
+}
+
+/**
+ * Picks the challenge of an authorization: dns-01 for a wildcard (the only
+ * type offered), dns-01 first when preferred and solvable, else http-01,
+ * else dns-01 when solvable. Throws when none is usable.
+ */
+export async function pickChallenge(
+  auth: Pick<acme.Authorization, 'identifier' | 'challenges'> & { wildcard?: boolean },
+  opts: { preferDns01: boolean; dns01?: Dns01Provider },
+): Promise<AcmeChallenge> {
+  const host = auth.identifier.value;
+  const http = auth.challenges.find((c) => c.type === 'http-01');
+  const dns = auth.challenges.find((c) => c.type === 'dns-01');
+  const label = auth.wildcard ? `*.${host}` : host;
+  const canDns = async (): Promise<boolean> => {
+    if (!dns || !opts.dns01) return false;
+    try { return await opts.dns01.canSolve(label); } catch { return false; }
+  };
+  if (auth.wildcard) {
+    if (dns && await canDns()) return dns;
+    throw new Error(`No usable DNS-01 challenge for ${label}: the zone must be hosted on this platform's DNS servers`);
+  }
+  if (opts.preferDns01 && dns && await canDns()) return dns;
+  if (http) return http;
+  if (dns && await canDns()) return dns;
+  throw new Error(`No HTTP-01 challenge offered for ${host}`);
+}
+
+/** Full issuance (HTTP-01, DNS-01 for wildcards). Throws on failure (the caller records it). */
 export async function issueCertificate(params: IssueParams, deps: IssueDeps): Promise<IssuedCertificate> {
   const names = [...new Set(params.names.map((n) => n.toLowerCase()))];
-  if (!names.length || !names.every(isValidServerName)) throw new Error('invalid certificate names');
+  if (!names.length || !names.every(isValidCertificateName) || names[0].startsWith('*.')) throw new Error('invalid certificate names');
   // Last guard before the CA (callers already skip these names).
   const nonPublic = names.find((n) => !isPublicAcmeName(n));
   if (nonPublic) throw new Error(`${nonPublic} is not publicly resolvable (reserved or private name): Let's Encrypt cannot issue for it`);
@@ -275,15 +344,49 @@ export async function issueCertificate(params: IssueParams, deps: IssueDeps): Pr
   const order = await call(client.createOrder({ identifiers: names.map((value) => ({ type: 'dns' as const, value })) }), 'createOrder');
   const authorizations = await call(client.getAuthorizations(order), 'getAuthorizations');
   const timeoutMs = deps.challengeTimeoutMs ?? 180_000;
+  const dnsMs = deps.dnsTimeoutMs ?? 120_000;
 
-  for (const auth of authorizations) {
-    const host = auth.identifier.value;
+  /** DNS-01: TXT _acme-challenge.<name> published on our PowerDNS, validated, then ALWAYS removed. */
+  const solveDns01 = async (host: string, challenge: AcmeChallenge): Promise<void> => {
+    const dns01 = deps.dns01 as Dns01Provider;
+    // acme-client returns the base64url SHA-256 digest of the key authorization for dns-01.
+    const value = await call(client.getChallengeKeyAuthorization(challenge), 'getChallengeKeyAuthorization');
+    checkAborted();
+    let published = false;
+    try {
+      await withTimeout(dns01.setChallenge(host, value), dnsMs, 'DNS-01 TXT publication', signal);
+      published = true;
+      await log('info', `[${host}] DNS-01 TXT record published`);
+      await log('info', `[${host}] Asking Let's Encrypt to validate the DNS-01 challenge`);
+      await withTimeout(client.completeChallenge(challenge), timeoutMs, 'completeChallenge (dns-01)', signal);
+      await withTimeout(client.waitForValidStatus(challenge), timeoutMs, 'waitForValidStatus (dns-01)', signal);
+      await log('info', `[${host}] Challenge validated`);
+    } catch (err) {
+      const raw = (err as Error)?.message || String(err);
+      await log('error', `[${host}] DNS-01 challenge failed: ${clientCertificateError(`dns-01 ${raw}`)}`, raw);
+      throw err;
+    } finally {
+      // Removed even when the publication failed half-way (never throws by contract; bounded anyway).
+      try {
+        await withTimeout(dns01.removeChallenge(host, value), dnsMs, 'DNS-01 TXT removal');
+        if (published) await log('info', `[${host}] DNS-01 TXT record removed`);
+      } catch (err) {
+        await log('warn', `[${host}] DNS-01 TXT record removal failed`, (err as Error)?.message || String(err));
+      }
+    }
+  };
+
+  for (const auth of authorizations as Array<acme.Authorization & { wildcard?: boolean }>) {
+    const host = auth.wildcard ? `*.${auth.identifier.value}` : auth.identifier.value;
     if (auth.status === 'valid') {
       await log('info', `[${host}] Authorization already valid`);
       continue;
     }
-    const challenge = auth.challenges.find((c) => c.type === 'http-01');
-    if (!challenge) throw new Error(`No HTTP-01 challenge offered for ${host}`);
+    const challenge = await pickChallenge(auth, { preferDns01: !!params.preferDns01, dns01: deps.dns01 });
+    if (challenge.type === 'dns-01') {
+      await solveDns01(host, challenge);
+      continue;
+    }
     const file = challengeFile(deps.acmeWebroot, challenge.token);
     const keyAuthorization = await call(client.getChallengeKeyAuthorization(challenge), 'getChallengeKeyAuthorization');
     checkAborted();
@@ -309,7 +412,7 @@ export async function issueCertificate(params: IssueParams, deps: IssueDeps): Pr
     } catch (err) {
       await log('error', `[${host}] Challenge failed: ${clientCertificateError((err as Error)?.message || String(err))}`, (err as Error)?.message || String(err));
       await log('info', `Check: ${host} resolves to this server, port 80 is open (firewall / NAT), no CDN proxy in front during validation.`);
-      throw err;
+      throw markHttp01Failure(err);
     } finally {
       try { fs.unlinkSync(file); } catch { /* already gone */ }
     }
@@ -325,7 +428,9 @@ export async function issueCertificate(params: IssueParams, deps: IssueDeps): Pr
   const leaf = new X509Certificate(firstCertificate(fullchain));
   if (!leaf.checkPrivateKey(createPrivateKey(certKey))) throw new Error('the issued certificate does not match the private key');
   for (const n of names) {
-    if (!leaf.checkHost(n)) throw new Error(`the issued certificate does not cover ${n}`);
+    // A wildcard is checked on a sample name one label below it.
+    const probe = n.startsWith('*.') ? `oblimint-check.${n.slice(2)}` : n;
+    if (!leaf.checkHost(probe)) throw new Error(`the issued certificate does not cover ${n}`);
   }
   const { notBefore, notAfter } = readCertificateDates(fullchain);
   checkAborted(); // past the deadline: the caller already recorded a failure, install nothing

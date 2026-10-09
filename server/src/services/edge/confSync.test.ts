@@ -10,9 +10,9 @@ const quietLog = { info: () => {}, warn: () => {} };
 
 function vhost(id: string, name: string): EdgeVhost {
   return {
-    id, serverNames: [name], tls: null, forceHttps: false, suspended: false,
+    id, kind: 'site', serverNames: [name], tls: null, forceHttps: false, suspended: false,
     locations: [{ pathPrefix: '/', upstream: 'http://oblimint-site-1:8080', kind: 'site', siteId: 1 }],
-    extraHeaders: {}, clientMaxBodyMb: 512,
+    extraHeaders: {}, clientMaxBodyMb: 512, accountId: 1, tenantId: 1,
   };
 }
 

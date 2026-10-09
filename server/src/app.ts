@@ -13,6 +13,7 @@ import { sessionUserGuard, twoFactorPolicyGuard } from './middleware/sessionUser
 import { originGuard } from './middleware/originGuard';
 import { expressTrustProxy } from './utils/clientIp';
 import { captureStepUpProof } from './middleware/captureStepUpProof';
+import { accessGrantTouch } from './middleware/accessGrantTouch';
 import { serverVersion } from './utils/version';
 import { logger } from './utils/logger';
 
@@ -131,6 +132,8 @@ export function createApp(): express.Express {
   app.use(userApiLimiter);
   // force_2fa: a session without TOTP only reaches the 2FA setup routes.
   app.use(twoFactorPolicyGuard);
+  // P2 (hostd-firewall): sessions that passed 2FA refresh their auto-2fa grants. Never blocks.
+  app.use(accessGrantTouch);
 
   // Obligate SSO browser redirects (NOT under /api), before /api.
   // eslint-disable-next-line @typescript-eslint/no-var-requires

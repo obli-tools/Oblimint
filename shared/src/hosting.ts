@@ -7,6 +7,10 @@
 // =============================================================================
 
 import type { TenantLimits } from './types';
+import type { AccessMode } from './access';
+import type { DbEngine, DbTuningProfile } from './databases';
+import type { DnsZoneKind, DomainVerificationSummary } from './dns';
+import type { OverQuotaAction, OverQuotaState } from './usage';
 
 // ─── SITE BASES (ARCHITECTURE §3.1) ──────────────────────────────────────────
 
@@ -250,6 +254,23 @@ export interface PlanLimits {
   pidsLimit: number | null;
   /** Bases the account may use (null = the whole catalog). */
   allowedBases: SiteBaseId[] | null;
+  // ── P2 (docs/P2-PLAN.md §Plans) ──
+  /** Database instances per account (null = unlimited, 0 = none). */
+  maxDbInstances: number | null;
+  /** Size of ONE database (MiB, measured: alert + no new database/user beyond). */
+  dbMaxSizeMb: number | null;
+  /** Default tuning profile of the account's instances (memory limit of each instance). */
+  dbProfile: DbTuningProfile;
+  /** Engines the account may run (null = all). */
+  dbEngines: DbEngine[] | null;
+  /** External SQL access (dedicated port behind the allow-list) allowed. */
+  dbExternalAccess: boolean;
+  /** Cron jobs per account (null = unlimited, 0 = none). */
+  maxCronJobs: number | null;
+  /** Minimum interval between two runs of a cron job (minutes, ≥ 1). */
+  cronMinIntervalMin: number;
+  /** At 100 % of a quota (disk / traffic): warn only, block uploads (SFTP read-only), or suspend the account. */
+  overQuotaAction: OverQuotaAction;
 }
 
 export const DEFAULT_PLAN_LIMITS: PlanLimits = {
@@ -263,6 +284,14 @@ export const DEFAULT_PLAN_LIMITS: PlanLimits = {
   memoryMb: 512,
   pidsLimit: 256,
   allowedBases: null,
+  maxDbInstances: 2,
+  dbMaxSizeMb: 1024,
+  dbProfile: 'S',
+  dbEngines: null,
+  dbExternalAccess: false,
+  maxCronJobs: 10,
+  cronMinIntervalMin: 5,
+  overQuotaAction: 'warn',
 };
 
 export interface Plan {
@@ -334,6 +363,10 @@ export interface HostingAccount {
   usageCheckedAt: string | null;
   siteCount: number;
   domainCount: number;
+  /** P2: access allow-list mode of the account's ports (SFTP, external SQL). */
+  accessMode: AccessMode;
+  /** P2: quota enforcement state (usage module). */
+  overQuota: OverQuotaState;
   createdAt: string;
   updatedAt: string;
 }
@@ -355,10 +388,16 @@ export interface HostingAccountUpdate {
 
 // ─── CLIENT USERS (users.kind = 'client') ────────────────────────────────────
 
-export type ClientCapability = 'sites.manage' | 'releases.publish' | 'releases.approve' | 'domains.manage' | 'files.manage';
+/**
+ * P2: databases.manage (instances, databases, users, admin UI) and
+ * dns.manage (zone editor). Cron jobs need sites.manage; the account access
+ * allow-list needs files.manage; logs and usage need read (membership).
+ */
+export type ClientCapability = 'sites.manage' | 'releases.publish' | 'releases.approve' | 'domains.manage' | 'files.manage'
+  | 'databases.manage' | 'dns.manage';
 
 export const CLIENT_CAPABILITIES: readonly ClientCapability[] = [
-  'sites.manage', 'releases.publish', 'releases.approve', 'domains.manage', 'files.manage',
+  'sites.manage', 'releases.publish', 'releases.approve', 'domains.manage', 'files.manage', 'databases.manage', 'dns.manage',
 ];
 
 /** One client user of an account (GET /api/accounts/:id/users). */
@@ -633,6 +672,12 @@ export interface Domain {
   forceHttps: boolean;
   certificate: CertificateSummary | null;
   routes: SiteRoute[];
+  /** P2: also serve *.<name> (wildcard certificate through DNS-01: needs a hosted zone). */
+  wildcard: boolean;
+  /** P2: ownership proof (unverified = placeholder page, no certificate). */
+  verification: DomainVerificationSummary;
+  /** P2: DNS zone holding this name (its own or a parent zone of the account), null = none. */
+  zone: { id: number; name: string; kind: DnsZoneKind } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -646,6 +691,10 @@ export interface DomainCreate {
   forceHttps?: boolean;
   /** Creates the '/' route to this site. */
   siteId?: number | null;
+  /** P2 */
+  wildcard?: boolean;
+  /** P2: create the DNS zone (default: hosted when DNS is enabled, for primary / addon / alias kinds). */
+  dnsZone?: DnsZoneKind | 'none';
 }
 
 export interface DomainUpdate {
@@ -653,6 +702,8 @@ export interface DomainUpdate {
   includeWww?: boolean;
   tlsMode?: TlsMode;
   forceHttps?: boolean;
+  /** P2 */
+  wildcard?: boolean;
 }
 
 // ─── RELEASES (ARCHITECTURE §1) ──────────────────────────────────────────────
@@ -838,8 +889,11 @@ export interface SiteRuntimeConfig {
 
 // ─── INFRA / EDGE ────────────────────────────────────────────────────────────
 
+export type InfraComponentId = 'edge' | 'hostd' | 'dns' | 'dbadmin';
+
 export interface InfraComponentStatus {
-  id: 'edge' | 'hostd';
+  /** P2: + dns (PowerDNS), dbadmin (phpMyAdmin + Adminer). */
+  id: InfraComponentId;
   deployed: boolean;
   running: boolean;
   image: string | null;
@@ -885,11 +939,24 @@ export const HostingSocketEvents = {
   CERTIFICATE_UPDATED: 'CERTIFICATE_UPDATED',
   /** { accountId, running } */
   FILESRV_UPDATED: 'FILESRV_UPDATED',
+  // ── P2 (payloads: ids only, clients refetch) ──
+  /** { zoneId, domainId|null, accountId } */
+  DNS_ZONE_UPDATED: 'DNS_ZONE_UPDATED',
+  /** { domainId, status } — ownership verification changed */
+  DOMAIN_VERIFICATION_UPDATED: 'DOMAIN_VERIFICATION_UPDATED',
+  /** { instanceId, accountId, status } */
+  DB_INSTANCE_UPDATED: 'DB_INSTANCE_UPDATED',
+  /** { accountId } — mode / rules / grants / bans / applied state */
+  ACCESS_UPDATED: 'ACCESS_UPDATED',
+  /** { jobId, runId, siteId, status } */
+  CRON_RUN_UPDATED: 'CRON_RUN_UPDATED',
+  /** { alertId, accountId|null, tenantId, level } */
+  USAGE_ALERT: 'USAGE_ALERT',
 } as const;
 export type HostingSocketEventName = typeof HostingSocketEvents[keyof typeof HostingSocketEvents];
 
 export interface HostingChangedPayload {
-  entity: 'plan' | 'account' | 'site' | 'domain';
+  entity: 'plan' | 'account' | 'site' | 'domain' | 'dbInstance' | 'dnsZone' | 'cronJob';
   id: number;
   accountId?: number;
   action: 'created' | 'updated' | 'deleted';

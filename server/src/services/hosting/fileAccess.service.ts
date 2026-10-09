@@ -85,7 +85,10 @@ export const fileAccessService = {
   /**
    * true only when: username === hosting_accounts.username of THIS account,
    * account status 'active', filesrv_mode <> 'off' (on-demand: only while
-   * filesrv_active_until is in the future, even if the stop worker is late),
+   * filesrv_active_until is in the future, even if the stop worker is late —
+   * P2: an activation by the hostd port gateway sets that window BEFORE the
+   * container starts and keeps extending it while connections last, see
+   * fileServerService.activateFromGateway / extendGatewayActivations),
    * and the bcrypt password
    * matches OR the key's fingerprint is one of account_ssh_keys. Exactly one
    * bcrypt compare per call (a dummy one when there is nothing to compare).

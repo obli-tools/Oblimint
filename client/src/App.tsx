@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
-import { Database, Mail, FolderOpen } from 'lucide-react';
+import { Mail, FolderOpen } from 'lucide-react';
 import type { SetupMode } from '@oblimint/shared';
 import { useNativeTopOffset } from '@/hooks/useNativeTopOffset';
 import { useAuthStore } from '@/store/authStore';
@@ -27,6 +27,11 @@ import { PlansPage } from '@/pages/hosting/PlansPage';
 import { DomainsPage } from '@/pages/hosting/DomainsPage';
 import { SitesPage } from '@/pages/sites/SitesPage';
 import { SiteDetailPage } from '@/pages/sites/SiteDetailPage';
+// P2 — hosting complete (docs/P2-PLAN.md §8)
+import { DatabasesPage } from '@/pages/databases/DatabasesPage';     // ui-dns-db
+import { DbInstancePage } from '@/pages/databases/DbInstancePage';   // ui-dns-db
+import { DnsZonePage } from '@/pages/dns/DnsZonePage';               // ui-dns-db
+import { UsagePage } from '@/pages/usage/UsagePage';                 // ui-ops
 import { TwoFactorGate } from '@/components/common/TwoFactorGate';
 import { ConfirmProvider } from '@/components/common/ConfirmDialog';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
@@ -57,7 +62,11 @@ function NormalRoutes() {
           <Route path="/sites" element={<SitesPage />} />
           <Route path="/sites/:id" element={<SiteDetailPage />} />
           <Route path="/domains" element={<DomainsPage />} />
-          <Route path="/databases" element={<ComingSoonPage icon={<Database />} titleKey="nav.databases" titleFallback="Databases" descriptionKey="comingSoon.databases" descriptionFallback="Start MariaDB, MySQL or PostgreSQL instances per account on demand, with their databases and users." />} />
+          {/* P2: Domains & DNS (zone editor under /dns/zones/:id), databases, usage */}
+          <Route path="/dns/zones/:id" element={<DnsZonePage />} />
+          <Route path="/databases" element={<DatabasesPage />} />
+          <Route path="/databases/:id" element={<DbInstancePage />} />
+          <Route path="/usage" element={<UsagePage />} />
           <Route path="/mail" element={<ComingSoonPage icon={<Mail />} titleKey="nav.mail" titleFallback="Mail" descriptionKey="comingSoon.mail" descriptionFallback="Manage mailboxes, aliases, forwards, quotas and DKIM keys on the mail engine chosen at installation." />} />
           <Route path="/files" element={<ComingSoonPage icon={<FolderOpen />} titleKey="nav.files" titleFallback="Files" descriptionKey="comingSoon.files" descriptionFallback="Browse and edit the files of an account, and open an SFTP/FTPS server on demand for it." />} />
 
@@ -74,6 +83,11 @@ function NormalRoutes() {
             <Route path="/manage/users" element={<AdminUsersPage />} />
             <Route path="/manage/nodes" element={<NodesPage />} />
             <Route path="/manage/audit-log" element={<AuditLogPage />} />
+          </Route>
+
+          {/* Settings: platform admin (every section), or tenant staff with the 'settings'
+              capability (notification channels only; SettingsPage gates each section). */}
+          <Route element={<ProtectedRoute requiredCapabilities={['settings']} />}>
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
 

@@ -211,6 +211,8 @@ const KNOWN_CODES = [
   'domainReserved', 'certificateNotDue', 'certificateRateLimited', 'acmeEmailMissing', 'fileServerNoPort', 'noNode',
   'invalidKeyName', 'unknownNode', 'runtimeMismatch', 'runtimePrefixLimit', 'siteDeleting', 'certificateNameTaken', 'nodeNotSupported',
   'accountNotServed', 'tlsDisabled',
+  // Generic codes of every module (a module namespace may still refine them).
+  'notFound', 'rateLimited',
 ] as const;
 
 interface ApiErrorShape {
@@ -224,6 +226,7 @@ export function apiErrorCode(err: unknown): string | null {
   if (typeof code === 'string' && code) return code;
   if (r?.status === 501) return 'notImplemented';
   if (r?.status === 502) return 'backendUnavailable';
+  if (r?.status === 429) return 'rateLimited';
   return null;
 }
 

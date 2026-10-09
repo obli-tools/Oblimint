@@ -85,6 +85,10 @@ export function createSocketServer(server: HttpServer | HttpsServer): SocketIOSe
     }
     if (kind === 'client') for (const id of accountIds) socket.join(`account:${id}`);
     if (role === 'admin') socket.join('role:admin');
+    // P2: per-socket handlers of the modules (cron-logs: live log tail).
+    void import('./services/logs/socketHandlers')
+      .then((m) => m.registerLogSocketHandlers(socket))
+      .catch((err) => logger.error({ err }, 'Log socket handlers failed to register'));
     logger.debug({ userId, tenantId }, 'Socket connected');
   });
 

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_PLAN_LIMITS } from '@oblimint/shared';
+import { config } from '../../config';
 import { LABELS } from '../hosting/naming';
 import { hostingLayout } from '../hosting/paths';
 import {
@@ -50,7 +51,7 @@ const containerOps = (actions: ReconcileAction[]) => kinds(actions.filter((a) =>
 test('new account: network, panel alias, edge, hostd tree, site prep, then containers', () => {
   const plan = planAccount(input({ network: { exists: false, panel: 'absent', edge: 'absent' } }));
   assert.deepEqual(kinds(plan.actions), [
-    'createNetwork', 'attachPanel', 'attachEdge', 'ensureAccountTree',
+    'createNetwork', 'attachPanel', 'attachEdge', 'createDbNetwork', 'ensureAccountTree',
     'ensureSite', 'ensureStorage', 'ensureDataPaths', 'writeRuntimeConfig',
     'createContainer oblimint-site-7',
     'reload',
@@ -58,7 +59,7 @@ test('new account: network, panel alias, edge, hostd tree, site prep, then conta
   const attach = plan.actions[1] as Extract<ReconcileAction, { kind: 'attachPanel' }>;
   assert.deepEqual(attach.aliases, ['oblimint-panel']);
   assert.equal(attach.reattach, false);
-  const tree = plan.actions[3] as Extract<ReconcileAction, { kind: 'ensureAccountTree' }>;
+  const tree = plan.actions.find((a) => a.kind === 'ensureAccountTree') as Extract<ReconcileAction, { kind: 'ensureAccountTree' }>;
   assert.equal(tree.quotaMb, DEFAULT_PLAN_LIMITS.diskMb);
 });
 
@@ -185,7 +186,35 @@ test('file server spec carries the hook base URL and the allocated port (port ch
   const d = desiredContainers(i).find((x) => x.role === 'filesrv')!;
   assert.ok(d.spec.Env!.includes('OBLIMINT_HOOK_BASE=http://oblimint-panel:8081/internal/filesrv/3/tok'));
   const moved = planAccount({ ...i, account: account({ filesrvMode: 'always', filesrvPort: 30099 }), actual: converged(i) });
-  assert.deepEqual(containerOps(moved.actions), ['recreateContainer oblimint-files-3']);
+  // P2 port gateway (default): hostd owns the host port, the container publishes none → a port change
+  // is a gateway update (firewall module), never a recreation. OBLIMINT_PORT_GATEWAY=off keeps P1.
+  if (config.hosting.portGateway) {
+    assert.equal(d.spec.HostConfig?.PortBindings, undefined);
+    assert.ok(d.spec.Env!.includes('OBLIMINT_PROXY_PROTOCOL=1'));
+    assert.deepEqual(containerOps(moved.actions), []);
+  } else {
+    assert.deepEqual(containerOps(moved.actions), ['recreateContainer oblimint-files-3']);
+  }
+});
+
+test('P2: site containers mount the account database socket dirs READ-ONLY; db containers are never orphans', () => {
+  const i = input({ sites: [site()] });
+  const d = desiredContainers(i).find((x) => x.role === 'site')!;
+  const mounts = d.spec.HostConfig!.Mounts!;
+  for (const target of ['/run/oblimint-db', '/run/mysqld', '/run/postgresql']) {
+    const m = mounts.find((x) => x.Target === target);
+    assert.ok(m, `mount ${target}`);
+    assert.equal(m!.ReadOnly, true);
+    assert.ok(String(m!.Source).includes('/dbsock'));
+  }
+  // OBLIMINT_RUN (/run/oblimint) belongs to the account uid inside the image: a
+  // bind below it would make Docker create it root-owned → the site cannot start.
+  for (const m of mounts) assert.ok(!String(m.Target).startsWith('/run/oblimint/') && m.Target !== '/run/oblimint', `mount under OBLIMINT_RUN: ${m.Target}`);
+  const withDb = planAccount({
+    ...i,
+    actual: [...converged(i), { name: 'oblimint-db-9', state: 'running', labels: { 'oblimint.account': '3', 'oblimint.role': 'db' } }],
+  });
+  assert.ok(!withDb.actions.some((a) => a.kind === 'removeContainer' && a.name === 'oblimint-db-9'));
 });
 
 test('a stopped container whose spec drifted is not recreated while it must stay stopped', () => {
@@ -208,4 +237,36 @@ test('desired site specs use the host layout of the account and site', () => {
   assert.equal(m[0].Source, '/srv/oblimint/accounts/3/sites/7/releases');
   assert.equal(m[1].Source, '/srv/oblimint/accounts/3/data/blog');
   assert.equal(m[2].Source, '/srv/oblimint/accounts/3/sites/7/runtime');
+});
+
+test('P2: account database network — created, joined by the site containers, never by the edge', () => {
+  // New account: both networks; the edge / panel are attached to the account network only.
+  const fresh = planAccount(input({ network: { exists: false, panel: 'absent', edge: 'absent' } }));
+  const dbNet = fresh.actions.filter((a) => a.kind === 'createDbNetwork') as Array<Extract<ReconcileAction, { kind: 'createDbNetwork' }>>;
+  assert.deepEqual(dbNet.map((a) => a.network), ['oblimint-acct-3-db']);
+  for (const a of fresh.actions) {
+    if (a.kind === 'attachEdge' || a.kind === 'attachPanel') assert.equal(a.network, 'oblimint-acct-3');
+  }
+  const create = fresh.actions.find((a) => a.kind === 'createContainer' && a.name === 'oblimint-site-7') as Extract<ReconcileAction, { kind: 'createContainer' }>;
+  assert.deepEqual(create.extraNetworks, ['oblimint-acct-3-db']);
+  // The site spec itself stays on the account network (the edge reaches it there).
+  assert.equal(create.spec.HostConfig!.NetworkMode, 'oblimint-acct-3');
+
+  // Account network present, database network missing (upgrade from P1): only the latter is created.
+  const upgrade = planAccount(input({ network: { exists: true, panel: 'aliased', edge: 'attached', dbExists: false } }));
+  assert.deepEqual(kinds(upgrade.actions).filter((k) => /Network|attach/.test(k)), ['createDbNetwork']);
+
+  // Kept site container observed without the database network: attached live, never recreated.
+  const i = input({ network: { exists: true, panel: 'aliased', edge: 'attached', dbExists: true } });
+  const actual = converged(i).map((c) => ({ ...c, networks: ['oblimint-acct-3'] }));
+  const kept = planAccount({ ...i, actual });
+  assert.deepEqual(containerOps(kept.actions), ['attachNetwork oblimint-site-7']);
+  const attach = kept.actions.find((a) => a.kind === 'attachNetwork') as Extract<ReconcileAction, { kind: 'attachNetwork' }>;
+  assert.equal(attach.network, 'oblimint-acct-3-db');
+  // Already on it: nothing; the file server never joins it.
+  const done = planAccount({ ...i, actual: actual.map((c) => ({ ...c, networks: [...c.networks, 'oblimint-acct-3-db'] })) });
+  assert.deepEqual(containerOps(done.actions), []);
+  const fsI = input({ account: account({ filesrvMode: 'always' }), network: { exists: true, panel: 'aliased', edge: 'attached', dbExists: true } });
+  const fsDesired = desiredContainers(fsI).find((d) => d.role === 'filesrv')!;
+  assert.deepEqual(fsDesired.extraNetworks, []);
 });

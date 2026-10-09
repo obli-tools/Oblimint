@@ -10,7 +10,7 @@ import { errText } from '../services/setup/docker';
 // Platform admin only (mounted behind requireAuth + requireRole('admin')).
 //   GET  /                  → InfraStatus
 //   POST /reconcile         → { queued: true }
-//   POST /:component/deploy component = edge | hostd → InfraStatus
+//   POST /:component/deploy component = edge | hostd | dns | dbadmin (P2) → InfraStatus
 
 const router = Router();
 
@@ -31,11 +31,14 @@ router.post('/reconcile', async (req, res, next) => {
 router.post('/:component/deploy', async (req, res, next) => {
   try {
     const component = req.params.component;
-    if (component !== 'edge' && component !== 'hostd') throw new AppError(404, 'Unknown infrastructure component', 'notFound');
+    const { extraInfraComponents } = await import('../services/docker/extensions');
+    const extra = (await extraInfraComponents()).find((c) => c.id === component);
+    if (component !== 'edge' && component !== 'hostd' && !extra) throw new AppError(404, 'Unknown infrastructure component', 'notFound');
     const log: string[] = [];
     try {
       if (component === 'edge') await infraService.ensureEdge((l) => log.push(l));
-      else await infraService.ensureHostd((l) => log.push(l));
+      else if (component === 'hostd') await infraService.ensureHostd((l) => log.push(l));
+      else await extra!.ensure((l) => log.push(l));
     } catch (err) {
       if (err instanceof AppError) throw err;
       throw new AppError(502, `${component}: ${errText(err)}`, 'backendUnavailable', { log: log.slice(-50) });

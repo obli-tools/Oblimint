@@ -239,6 +239,42 @@ test('orchestration routes + reconcile on PostgreSQL (PGlite)', { timeout: 300_0
   await reconcileService.reconcileAccountNow(accountId);
   assert.equal(docker.containers.get(`oblimint-files-${accountId}`)?.state, 'exited');
 
+  // ── gateway activation (P2): persisted, so a panel restart keeps extending it ──
+  const { fileServerService } = await import('./filesrv.service');
+  const cols = async () => await db('hosting_accounts').where({ id: accountId }).first('filesrv_active_until', 'filesrv_gateway_until') as
+    { filesrv_active_until: Date | null; filesrv_gateway_until: Date | null };
+  const ms = (v: Date | string | null) => (v === null ? null : new Date(v).getTime());
+  await fileServerService.activateFromGateway(accountId);
+  let acc = await cols();
+  assert.ok(acc.filesrv_gateway_until, 'gateway origin persisted');
+  assert.equal(ms(acc.filesrv_gateway_until), ms(acc.filesrv_active_until));
+  assert.equal(await fileServerService.isGatewayActivation(accountId), true);
+  // Nothing in memory: a window close to its end is extended from the DB (as after a restart).
+  const later = new Date(ms(acc.filesrv_active_until)! - 60_000);
+  assert.deepEqual(await fileServerService.extendGatewayActivations(later), [accountId]);
+  acc = await cols();
+  assert.equal(ms(acc.filesrv_active_until), later.getTime() + 15 * 60_000);
+  assert.equal(ms(acc.filesrv_gateway_until), ms(acc.filesrv_active_until));
+  assert.deepEqual(await fileServerService.extendGatewayActivations(later), [], 'far from its end: unchanged');
+  // The gateway's idle closes its own window.
+  assert.equal(await fileServerService.endGatewayActivation(accountId), true);
+  acc = await cols();
+  assert.equal(acc.filesrv_active_until, null);
+  assert.equal(acc.filesrv_gateway_until, null);
+  // A manual window is never extended nor stopped by the gateway.
+  await fileServerService.activateFromGateway(accountId);
+  r = await call('POST', `/accounts/${accountId}/filesrv/activate`, asManager, { minutes: 60 });
+  assert.equal(r.status, 200);
+  assert.equal((await cols()).filesrv_gateway_until, null);
+  assert.equal(await fileServerService.isGatewayActivation(accountId), false);
+  assert.deepEqual(await fileServerService.extendGatewayActivations(new Date(Date.now() + 58 * 60_000)), []);
+  assert.equal(await fileServerService.endGatewayActivation(accountId), false);
+  // block-uploads: the open sessions are dropped (restart), a stopped server is left alone.
+  assert.equal(await fileServerService.dropSessions(accountId), true);
+  assert.ok(docker.calls.includes(`restart oblimint-files-${accountId}`));
+  r = await call('POST', `/accounts/${accountId}/filesrv/deactivate`, asManager);
+  assert.equal(r.status, 200);
+
   await db('hosting_accounts').where({ id: accountId }).update({ filesrv_mode: 'off' });
   r = await call('POST', `/accounts/${accountId}/filesrv/activate`, asManager, { minutes: 60 });
   assert.equal(r.status, 409);

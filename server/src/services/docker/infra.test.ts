@@ -45,6 +45,9 @@ test('ensureEdge: dirs, pull, create + start, attach to every account network; i
   d.networks.set('oblimint', { name: 'oblimint', labels: {} });
   d.networks.set('oblimint-acct-1', { name: 'oblimint-acct-1', labels: { 'oblimint.account': '1' } });
   d.networks.set('oblimint-acct-2', { name: 'oblimint-acct-2', labels: { 'oblimint.account': '2' } });
+  // Account DATABASE networks: never joined by the edge (even if mislabelled).
+  d.networks.set('oblimint-acct-1-db', { name: 'oblimint-acct-1-db', labels: { 'oblimint.db-network': '1' } });
+  d.networks.set('oblimint-acct-2-db', { name: 'oblimint-acct-2-db', labels: { 'oblimint.account': '2' } });
   engine.setEngineFactoryForTests(() => d.asDocker(), 1);
   const lines: string[] = [];
   await infra.ensureEdge((l) => lines.push(l));

@@ -42,6 +42,14 @@ export interface SiteContainerInput {
   dataDir: string;
   /** Host path of the runtime config file (hostPaths.runtime(...)/<role>.json): its directory is mounted RO. */
   runtimeConfigFile: string;
+  /**
+   * P2 — host paths of the account's database socket dirs (hostPaths.dbSockets /
+   * dbSocketDefault): mounted READ-ONLY at /run/oblimint-db, /run/mysqld and
+   * /run/postgresql so DB_HOST=localhost reaches the default instance. Always
+   * set by the planner (the dirs exist from hostd ensureAccount on), absent =
+   * no database mounts (P1 behaviour, tests).
+   */
+  dbSockets?: { root: string; mysql: string; postgresql: string } | null;
 }
 
 export interface FileServerContainerInput {
@@ -54,6 +62,14 @@ export interface FileServerContainerInput {
   stateDir: string;
   /** http://oblimint-panel:<internalPort>/internal/filesrv/<accountId>/<token> */
   hookBaseUrl: string;
+  /**
+   * P2 — publish the SFTP port on the host (P1 behaviour). false (port
+   * gateway, config.hosting.portGateway): no host port, hostd listens on
+   * `port`, filters (allow-list, bans), starts the server on demand and
+   * proxies to <container ip>:2022 with the PROXY protocol v2
+   * (env OBLIMINT_PROXY_PROTOCOL=1 → images/filesrv enables it). Default true.
+   */
+  publishPort?: boolean;
 }
 
 export interface InfraContainerInput {
@@ -107,8 +123,8 @@ export const EDGE_PIDS_LIMIT = 1024;
 export const EDGE_NOFILE_LIMIT = 65536;
 
 /** Tenant containers (site, file server) also get the seccomp profile of seccomp.ts (XFS project id, user namespaces…). */
-const NO_NEW_PRIVILEGES = 'no-new-privileges:true';
-const TMPFS_FLAGS = 'rw,noexec,nosuid,nodev';
+export const NO_NEW_PRIVILEGES = 'no-new-privileges:true';
+export const TMPFS_FLAGS = 'rw,noexec,nosuid,nodev';
 /**
  * Tmpfs flags of a directory a NON-ROOT container user must write to. Without
  * an explicit mode=, Docker gives the tmpfs the mode of the image directory it
@@ -116,9 +132,9 @@ const TMPFS_FLAGS = 'rw,noexec,nosuid,nodev';
  * not create /run/oblimint (images/common/lib.sh) and every site crash-looped.
  * 1777 (sticky, world-writable) as for /tmp.
  */
-const TMPFS_SHARED_FLAGS = `${TMPFS_FLAGS},mode=1777`;
+export const TMPFS_SHARED_FLAGS = `${TMPFS_FLAGS},mode=1777`;
 
-const LOG_CONFIG: Docker.HostConfig['LogConfig'] = {
+export const LOG_CONFIG: Docker.HostConfig['LogConfig'] = {
   Type: 'json-file',
   Config: { 'max-size': '10m', 'max-file': '3' },
 };
@@ -139,7 +155,9 @@ export function siteContainerRole(role: RuntimeRole): ContainerRole {
   return role === 'secondary' ? 'site-secondary' : role === 'preview' ? 'site-preview' : 'site';
 }
 
-/** Adds the oblimint.spec-hash label (computed on the spec without it). */
+/** Adds the oblimint.spec-hash label (computed on the spec without it). Exported for the P2 spec builders (databases, dns). */
+export const withSpecHash = (spec: Docker.ContainerCreateOptions): Docker.ContainerCreateOptions => withHash(spec);
+
 function withHash(spec: Docker.ContainerCreateOptions): Docker.ContainerCreateOptions {
   const hash = specHash(spec);
   return { ...spec, Labels: { ...(spec.Labels ?? {}), [LABELS.specHash]: hash } };
@@ -162,6 +180,12 @@ export function siteContainerSpec(input: SiteContainerInput): Docker.ContainerCr
       { Type: 'bind', Source: posix(input.releasesDir), Target: CONTAINER_PATHS.releases, ReadOnly: true },
       { Type: 'bind', Source: posix(input.dataDir), Target: CONTAINER_PATHS.data, ReadOnly: false },
       { Type: 'bind', Source: path.posix.dirname(posix(input.runtimeConfigFile)), Target: CONTAINER_PATHS.siteConfigDir, ReadOnly: true },
+      // P2: database sockets (READ-ONLY binds: connect() on a socket works on a RO mount).
+      ...(input.dbSockets ? [
+        { Type: 'bind' as const, Source: posix(input.dbSockets.root), Target: CONTAINER_PATHS.dbSocketsAll, ReadOnly: true },
+        { Type: 'bind' as const, Source: posix(input.dbSockets.mysql), Target: CONTAINER_PATHS.dbSocketMysql, ReadOnly: true },
+        { Type: 'bind' as const, Source: posix(input.dbSockets.postgresql), Target: CONTAINER_PATHS.dbSocketPostgresql, ReadOnly: true },
+      ] : []),
     ],
     Tmpfs: {
       '/tmp': `${TMPFS_SHARED_FLAGS},size=256m`,
@@ -210,6 +234,8 @@ export function fileServerContainerSpec(input: FileServerContainerInput): Docker
     Env: [
       `OBLIMINT_HOOK_BASE=${input.hookBaseUrl}`,
       `OBLIMINT_ACCOUNT_ID=${input.accountId}`,
+      // P2: behind the hostd port gateway, SFTPGo reads the client address from the PROXY protocol header.
+      ...(input.publishPort === false ? ['OBLIMINT_PROXY_PROTOCOL=1'] : []),
     ],
     Labels: {
       [LABELS.internal]: 'true',
@@ -224,7 +250,8 @@ export function fileServerContainerSpec(input: FileServerContainerInput): Docker
         { Type: 'bind', Source: posix(input.stateDir), Target: CONTAINER_PATHS.filesrvState, ReadOnly: false },
       ],
       // No HostIp: Docker publishes on every IPv4 and IPv6 address of the host.
-      PortBindings: { [portKey]: [{ HostPort: String(input.port) }] },
+      // P2 port gateway: nothing published, hostd owns the host port.
+      ...(input.publishPort === false ? {} : { PortBindings: { [portKey]: [{ HostPort: String(input.port) }] } }),
       Tmpfs: { '/tmp': `${TMPFS_SHARED_FLAGS},size=64m` },
       ReadonlyRootfs: true,
       CapDrop: ['ALL'],

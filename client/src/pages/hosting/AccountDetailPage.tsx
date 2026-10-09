@@ -3,8 +3,8 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  AlertTriangle, ArrowLeft, ChevronRight, FolderOpen, Gauge, Globe, HardDrive, Layers, LayoutGrid, Pause, Play, Plus, RefreshCw,
-  Server, Trash2, Users,
+  AlertTriangle, ArrowLeft, BarChart3, ChevronRight, Database, FolderOpen, Gauge, Globe, HardDrive, Layers, LayoutGrid, Pause, Play, Plus,
+  RefreshCw, Server, ShieldCheck, Trash2, Users,
 } from 'lucide-react';
 import type { Domain, HostingAccount, Plan, Site, SiteStatus } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
@@ -30,13 +30,19 @@ import { AccountUsersTab } from '@/components/hosting/AccountUsersTab';
 import { PlanSummary } from '@/components/hosting/AccountCreateModal';
 import { DomainCreateModal, domainKindLabel } from '@/components/hosting/DomainCreateModal';
 import { DomainPanel } from '@/components/hosting/DomainPanel';
+import { VerificationBadge } from '@/components/dns/DnsBadges';
+import { DomainClaimsCard } from '@/components/dns/DomainClaims';
+import { AccountSecurityTab } from '@/components/security/AccountSecurityTab';
+import { AccountUsageTab } from '@/components/usage/AccountUsageTab';
+import { OverQuotaBanner, OverQuotaPill } from '@/components/usage/usageUi';
+import { AccountDatabasesPanel } from '@/components/databases/AccountDatabasesPanel';
 import {
   AccountStatusBadge, Card, DiskBar, EmptyState, ForceHttpsIcon, InfoRow, Pill, TlsBadge, headerBtnCls,
   hostingErrorMessage, isStepUpHandled, labelCls, payloadNumber, selectCls, thCls, theadRowCls, toastHostingError, useHostingEvents,
 } from '@/components/hosting/hostingUi';
 
-type Tab = 'overview' | 'sites' | 'domains' | 'users' | 'files';
-const TABS: Tab[] = ['overview', 'sites', 'domains', 'users', 'files'];
+type Tab = 'overview' | 'sites' | 'domains' | 'databases' | 'usage' | 'security' | 'users' | 'files';
+const TABS: Tab[] = ['overview', 'sites', 'domains', 'databases', 'usage', 'security', 'users', 'files'];
 
 export function AccountDetailPage() {
   const { t } = useTranslation();
@@ -156,6 +162,9 @@ export function AccountDetailPage() {
     { id: 'overview', label: t('accounts.tabs.overview') || 'Overview', icon: <LayoutGrid size={14} /> },
     { id: 'sites', label: t('accounts.tabs.sites') || 'Sites', icon: <Server size={14} />, badge: <span className="font-mono text-[10px] opacity-70">{account.siteCount}</span> },
     { id: 'domains', label: t('accounts.tabs.domains') || 'Domains', icon: <Globe size={14} />, badge: <span className="font-mono text-[10px] opacity-70">{account.domainCount}</span> },
+    { id: 'databases', label: t('usage.accountTabs.databases') || 'Databases', icon: <Database size={14} /> },
+    { id: 'usage', label: t('usage.accountTabs.usage') || 'Usage', icon: <BarChart3 size={14} /> },
+    { id: 'security', label: t('security.tab.title') || 'Security', icon: <ShieldCheck size={14} /> },
     { id: 'users', label: t('accounts.tabs.users') || 'Users', icon: <Users size={14} />, hidden: !manage },
     { id: 'files', label: t('accounts.tabs.files') || 'File access', icon: <FolderOpen size={14} /> },
   ];
@@ -169,6 +178,7 @@ export function AccountDetailPage() {
         </h1>
         <AccountStatusBadge status={account.status} message={account.statusMessage} />
         {account.planName && <Pill tone="accent" className="normal-case tracking-normal"><Layers size={10} />{account.planName}</Pill>}
+        <OverQuotaPill state={account.overQuota} />
         {isMaster && <TenantBadge tenantId={account.tenantId} tenantName={account.tenantName} size="md" />}
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => { void load(); }} className={headerBtnCls} disabled={busy !== null}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
@@ -190,11 +200,16 @@ export function AccountDetailPage() {
         </div>
       )}
 
+      {account.status !== 'suspended' && tab !== 'usage' && <OverQuotaBanner state={account.overQuota} />}
+
       <SegmentedTabs tabs={tabs} value={tab} onChange={setTab} className="lg:self-start" fill={false} tabClassName="gap-1.5" />
 
       {tab === 'overview' && <OverviewTab account={account} isStaff={isStaff} onRefreshUsage={() => { void act('usage', () => accountsApi.refreshUsage(account.id), 'accounts.usageRefreshed', 'Disk usage refreshed', 'accounts.actionFailed', 'Action failed'); }} refreshing={busy === 'usage'} />}
       {tab === 'sites' && <SitesTab account={account} />}
       {tab === 'domains' && <DomainsTab account={account} />}
+      {tab === 'databases' && <AccountDatabasesPanel accountId={account.id} />}
+      {tab === 'usage' && <AccountUsageTab accountId={account.id} />}
+      {tab === 'security' && <AccountSecurityTab accountId={account.id} />}
       {tab === 'users' && manage && <AccountUsersTab accountId={account.id} tenantId={account.tenantId} />}
       {tab === 'files' && <FileAccessPanel accountId={account.id} />}
 
@@ -386,6 +401,7 @@ function DomainsTab({ account }: { account: HostingAccount }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [claimsKey, setClaimsKey] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -400,7 +416,9 @@ function DomainsTab({ account }: { account: HostingAccount }) {
   }, [account.id, t]);
 
   useEffect(() => { void load(); }, [load]);
-  useHostingEvents([HostingSocketEvents.HOSTING_CHANGED, HostingSocketEvents.CERTIFICATE_UPDATED], () => { void load(); });
+  useHostingEvents([
+    HostingSocketEvents.HOSTING_CHANGED, HostingSocketEvents.CERTIFICATE_UPDATED, HostingSocketEvents.DOMAIN_VERIFICATION_UPDATED,
+  ], () => { void load(); });
 
   const select = (id: number | null) => {
     const p = new URLSearchParams(params);
@@ -416,6 +434,8 @@ function DomainsTab({ account }: { account: HostingAccount }) {
       <div className="flex justify-end">
         {canCreate && <Button size="sm" onClick={() => setCreating(true)}><Plus size={13} className="mr-1.5" />{t('domains.create') || 'Add a domain'}</Button>}
       </div>
+      {/* Claims started from the create modal below are followed here (as on /domains). */}
+      <DomainClaimsCard accountId={account.id} refreshKey={claimsKey} onSucceeded={() => { void load(); }} />
       {loading ? (
         <div className="flex justify-center py-8"><LoadingSpinner /></div>
       ) : error ? (
@@ -434,6 +454,7 @@ function DomainsTab({ account }: { account: HostingAccount }) {
                   <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
+                  <VerificationBadge verification={d.verification} />
                   <span>{domainKindLabel(t, d.kind)}</span>
                   <span className="font-mono">{d.routes.length} {t('domains.col.routes') || 'Routes'}</span>
                   <TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} />
@@ -445,11 +466,12 @@ function DomainsTab({ account }: { account: HostingAccount }) {
         </ul>
         {/* Desktop: table */}
         <TableScroll className="rounded-xl bg-bg-secondary max-md:hidden">
-          <table className="w-full min-w-[620px] text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className={theadRowCls}>
                 <th className={thCls}>{t('domains.col.name') || 'Domain'}</th>
                 <th className={thCls}>{t('domains.col.kind') || 'Kind'}</th>
+                <th className={thCls}>{t('domainOwnership.col') || 'Ownership'}</th>
                 <th className={`${thCls} text-right`}>{t('domains.col.routes') || 'Routes'}</th>
                 <th className={thCls}>{t('domains.col.tls') || 'TLS'}</th>
                 <th className={thCls}>{t('domains.col.https') || 'HTTPS'}</th>
@@ -460,6 +482,7 @@ function DomainsTab({ account }: { account: HostingAccount }) {
                 <tr key={d.id} onClick={() => select(d.id)} className="cursor-pointer transition-colors hover:bg-bg-hover">
                   <td className="px-4 py-3 font-mono font-medium text-text-primary">{d.name}</td>
                   <td className="px-4 py-3 text-text-secondary">{domainKindLabel(t, d.kind)}</td>
+                  <td className="px-4 py-3"><VerificationBadge verification={d.verification} /></td>
                   <td className="px-4 py-3 text-right font-mono tabular-nums">{d.routes.length}</td>
                   <td className="px-4 py-3"><TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} /></td>
                   <td className="px-4 py-3"><ForceHttpsIcon on={d.forceHttps} /></td>
@@ -493,6 +516,7 @@ function DomainsTab({ account }: { account: HostingAccount }) {
         open={creating}
         accountId={account.id}
         onClose={() => setCreating(false)}
+        onClaimCreated={() => setClaimsKey((n) => n + 1)}
         onCreated={(d) => {
           setCreating(false);
           toast.success(t('domains.created', { name: d.name, defaultValue: 'Domain {{name}} added' }));

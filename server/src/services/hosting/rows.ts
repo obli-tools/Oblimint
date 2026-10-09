@@ -1,4 +1,5 @@
 import type {
+  AccessMode, DnsZoneKind, DomainVerificationMethod, DomainVerificationStatus, OverQuotaState,
   AccountSshKey, AppProfileId, CertificateSummary, ClientCapability, DataPathPolicy, Domain, HostingAccount, PhpSettings,
   Plan, PlanLimits, Release, ReleaseDetail, ReleaseLogLine, ScanSummary, Site, SiteBaseId, SiteDataPath, SiteRoute,
 } from '@oblimint/shared';
@@ -22,6 +23,9 @@ export interface AccountRow {
   disk_used_bytes: number | string | null; quota_mode: 'xfs' | 'measured' | null; usage_checked_at: Date | string | null;
   filesrv_mode: 'always' | 'on-demand' | 'off'; filesrv_port: number | null; filesrv_active_until: Date | string | null;
   filesrv_password_hash: string | null;
+  /** P2 (migration 003) */
+  access_mode?: AccessMode; access_grant_ttl_min?: number; access_applied_at?: Date | string | null;
+  access_apply_error?: string | null; over_quota_state?: OverQuotaState; over_quota_since?: Date | string | null;
   created_at: Date | string; updated_at: Date | string;
   /** joined */ tenant_name?: string | null; plan_name?: string | null; plan_limits?: unknown;
   site_count?: number | string | null; domain_count?: number | string | null;
@@ -46,8 +50,15 @@ export interface DataPathRow {
 export interface DomainRow {
   id: number; tenant_id: number; account_id: number; name: string; kind: Domain['kind']; include_www: boolean;
   tls_mode: Domain['tlsMode']; force_https: boolean; created_at: Date | string; updated_at: Date | string;
+  /** P2 (migration 003) */
+  wildcard?: boolean; verification_status?: DomainVerificationStatus; verification_method?: DomainVerificationMethod | null;
+  verification_token?: string; verified_at?: Date | string | null; verification_checked_at?: Date | string | null;
+  verification_next_check_at?: Date | string | null; verification_error?: string | null;
   /** joined */ account_username?: string;
 }
+
+/** DNS zone holding a domain name (toDomain 4th argument). */
+export interface DomainZoneRef { id: number; name: string; kind: DnsZoneKind }
 
 export interface RouteRow {
   id: number; account_id: number; domain_id: number; path_prefix: string; site_id: number; runtime_id: number | null;
@@ -148,6 +159,8 @@ export function toHostingAccount(r: AccountRow): HostingAccount {
     usageCheckedAt: iso(r.usage_checked_at),
     siteCount: num(r.site_count),
     domainCount: num(r.domain_count),
+    accessMode: r.access_mode ?? 'open',
+    overQuota: r.over_quota_state ?? 'ok',
     createdAt: isoReq(r.created_at),
     updatedAt: isoReq(r.updated_at),
   };
@@ -222,7 +235,7 @@ export function toCertificateSummary(r: CertificateRow): CertificateSummary {
   };
 }
 
-export function toDomain(r: DomainRow, routes: SiteRoute[], cert: CertificateSummary | null): Domain {
+export function toDomain(r: DomainRow, routes: SiteRoute[], cert: CertificateSummary | null, zone: DomainZoneRef | null = null): Domain {
   return {
     id: r.id,
     tenantId: r.tenant_id,
@@ -235,6 +248,13 @@ export function toDomain(r: DomainRow, routes: SiteRoute[], cert: CertificateSum
     forceHttps: !!r.force_https,
     certificate: cert,
     routes,
+    wildcard: !!r.wildcard,
+    verification: {
+      status: r.verification_status ?? 'pending',
+      method: r.verification_method ?? null,
+      verifiedAt: iso(r.verified_at),
+    },
+    zone,
     createdAt: isoReq(r.created_at),
     updatedAt: isoReq(r.updated_at),
   };

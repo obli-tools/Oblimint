@@ -75,12 +75,24 @@ func (f *fakeOps) Du(_ context.Context, rel []string) (int64, error) {
 	f.rec("du %s", strings.Join(rel, "/"))
 	return 4096, f.err
 }
+func (f *fakeOps) EnsureDbInstance(_ context.Context, s DbInstanceSpec) error {
+	f.rec("ensureDb %d %d %d:%d", s.AccountID, s.InstanceID, s.Owner.UID, s.Owner.GID)
+	return f.err
+}
+func (f *fakeOps) RemoveDbInstance(_ context.Context, a, i int64, purge bool) error {
+	f.rec("removeDb %d %d %v", a, i, purge)
+	return f.err
+}
+func (f *fakeOps) SetDefaultDbSocket(_ context.Context, a int64, fam DbFamily, i *int64) error {
+	f.rec("dbDefault %d %s %s", a, fam, mb(i))
+	return f.err
+}
 
 func do(t *testing.T, ops Ops, method, target, body string) (int, map[string]any) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
-	newMux(ops, newLayout("/srv/oblimint")).ServeHTTP(rec, req)
+	newMux(ops, newLayout("/srv/oblimint"), nil, nil).ServeHTTP(rec, req)
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("%s %s: non-JSON body %q", method, target, rec.Body)
@@ -117,6 +129,11 @@ func TestHandlersSuccess(t *testing.T) {
 		{"POST", "/v1/accounts/7/sites/9/data-paths/clear", `{"slug":"blog","uid":20007,"gid":20007,"paths":["cache"]}`, "clear 7 9 blog [cache]", `{"ok":true}`},
 		{"GET", "/v1/du?path=/srv/oblimint/accounts/7", "", "du accounts/7", `{"path":"/srv/oblimint/accounts/7","bytes":4096}`},
 		{"GET", "/v1/du?path=/srv/oblimint", "", "du ", ""},
+		{"PUT", "/v1/accounts/7/db-instances/12", `{"uid":20007,"gid":20007}`, "ensureDb 7 12 20007:20007", `{"ok":true}`},
+		{"DELETE", "/v1/accounts/7/db-instances/12", "", "removeDb 7 12 false", `{"ok":true}`},
+		{"DELETE", "/v1/accounts/7/db-instances/12?purge=1", "", "removeDb 7 12 true", ""},
+		{"PUT", "/v1/accounts/7/db-default/mysql", `{"instanceId":12}`, "dbDefault 7 mysql 12", `{"ok":true}`},
+		{"PUT", "/v1/accounts/7/db-default/postgresql", `{"instanceId":null}`, "dbDefault 7 postgresql null", ""},
 	}
 	for _, tt := range tests {
 		f := &fakeOps{}
@@ -175,6 +192,13 @@ func TestHandlersRejectBadInput(t *testing.T) {
 		{"POST", "/v1/accounts/7/sites/9/data-paths/seed", `{"slug":"blog",` + site + `,"path":""}`},
 		{"POST", "/v1/accounts/7/sites/9/data-paths/seed", `{"slug":"blog",` + site + `,"path":"a/../b"}`},
 		{"POST", "/v1/accounts/7/sites/9/data-paths/clear", `{"slug":"blog",` + site + `,"paths":["."]}`},
+		{"PUT", "/v1/accounts/7/db-instances/0", `{"uid":20007,"gid":20007}`},
+		{"PUT", "/v1/accounts/7/db-instances/x", `{"uid":20007,"gid":20007}`},
+		{"PUT", "/v1/accounts/7/db-instances/12", `{"uid":100,"gid":100}`},
+		{"DELETE", "/v1/accounts/7/db-instances/12?purge=maybe", ""},
+		{"PUT", "/v1/accounts/7/db-default/redis", `{"instanceId":12}`},
+		{"PUT", "/v1/accounts/7/db-default/mysql", `{}`},
+		{"PUT", "/v1/accounts/7/db-default/mysql", `{"instanceId":"12"}`},
 	}
 	for _, tt := range tests {
 		f := &fakeOps{}

@@ -19,7 +19,8 @@ import { emitHosting } from './events';
 import {
   MAX_DATA_PATHS_PER_SITE, MAX_RUNTIMES_PER_SITE, customNginxError, dataPathContainsDocroot, dataPathForbiddenError, findDataPathOverlap, isUniqueViolation, phpSettingsError,
 } from './hostingValidation.service';
-import { previewHostname } from './naming';
+import { previewHost } from './naming';
+import { platformSettings } from '../platformSettings';
 import {
   json, planLimits, toSite, toSiteDataPath, toSiteRoute,
   type AccountRow, type DataPathRow, type RouteRow, type SiteRow, type SiteRuntimeRow,
@@ -54,12 +55,13 @@ export function selectRoutes() {
     .select('sr.*', 'd.name as domain_name', 's.name as site_name', 'rt.base as runtime_base');
 }
 
+/** P2: previews live on the dedicated preview domain (settings preview.previewDomain), never under the panel host. */
 async function panelHostname(): Promise<string | null> {
-  try { return (await appConfigService.get('panel_hostname'))?.trim() || null; } catch { return null; }
+  try { return (await platformSettings.section('preview')).previewDomain; } catch { return null; }
 }
 
-function mapSite(row: SiteRow, panel: string | null): Site {
-  const previewUrl = row.preview_base && panel ? `https://${previewHostname(row, panel)}` : null;
+function mapSite(row: SiteRow, previewDomain: string | null): Site {
+  const previewUrl = row.preview_base && previewDomain ? `https://${previewHost(row, previewDomain)}` : null;
   return toSite(row, { previewUrl });
 }
 

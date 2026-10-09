@@ -6,7 +6,7 @@ import { certificateService } from '../services/edge/certificate.service';
 import { viewerOf } from '../services/edge/certificateMessages';
 import { idParam, loadDomain, resolveActor } from '../services/hosting/access';
 
-// /api/domains/:id/certificate* — OWNED BY MODULE `edge` (docs/P1-PLAN.md §API).
+// /api/domains/:id/certificate* — OWNED BY MODULE `edge-ownership` (docs/P1-PLAN.md §API, P2-PLAN §6.2).
 // Mounted on /domains after domains.routes.ts (no catch-all here).
 //   GET  /:id/certificate       → CertificateDetail | null (read)
 //   POST /:id/certificate/renew { force?: boolean } → CertificateDetail (domains.manage)
@@ -14,7 +14,8 @@ import { idParam, loadDomain, resolveActor } from '../services/hosting/access';
 //        the answer is the detail at the time the request was queued.
 //        429 certificateRateLimited (cooldown between requests; failure
 //        backoff for clients), 409 certificateNotDue (client force on a
-//        certificate that does not need renewal).
+//        certificate that does not need renewal), 409 domainNotVerified (ownership not
+//        proven yet: never a certificate before the verification, invariant D1).
 const router = Router();
 
 const renewSchema = z.object({ force: z.boolean().optional() }).strict();

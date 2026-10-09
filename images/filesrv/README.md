@@ -13,8 +13,8 @@ hooks : documentation SFTPGo « External Authentication » et « Custom Actions 
 | Utilisateur | `uid:gid` du compte (quelconque, sans entrée passwd) ; fichiers créés au bon propriétaire |
 | Durcissement | `CapDrop ALL`, `no-new-privileges`, `ReadonlyRootfs`, tmpfs `/tmp` |
 | Montages | `/srv/files/staging` (rw), `/srv/files/data` (rw), `/var/lib/sftpgo` (rw : clés d'hôte `id_rsa`, `id_ecdsa`, `id_ed25519` générées au 1er démarrage puis conservées) |
-| Port | `2022/tcp` (SFTP), publié sur le port hôte du compte |
-| Env | `OBLIMINT_HOOK_BASE=http://oblimint-panel:8081/internal/filesrv/<accountId>/<token>`, `OBLIMINT_ACCOUNT_ID=<accountId>` ; optionnel `SFTPGO_LOG_LEVEL` (`info`) |
+| Port | `2022/tcp` (SFTP). P1 / `OBLIMINT_PORT_GATEWAY=off` : publié sur le port hôte du compte. P2 (défaut) : **rien n'est publié**, la passerelle hostd écoute le port du compte et relaie vers `<IP du conteneur>:2022` |
+| Env | `OBLIMINT_HOOK_BASE=http://oblimint-panel:8081/internal/filesrv/<accountId>/<token>`, `OBLIMINT_ACCOUNT_ID=<accountId>` ; `OBLIMINT_PROXY_PROTOCOL=1` derrière la passerelle (P2) ; optionnel `SFTPGO_LOG_LEVEL` (`info`) |
 
 L'entrypoint (`oblimint-filesrv`) valide les variables (id numérique, URL sans caractère
 spécial contenant `/<accountId>/`), écrit `/tmp/oblimint-filesrv/sftpgo.json` (0600) puis
@@ -41,6 +41,31 @@ Configuration rendue (clés SFTPGo 2.6) :
   (no-op) pour que `sftp put -r` d'OpenSSH, qui termine chaque dossier par un setstat, n'affiche
   plus « remote setstat … Permission denied » ; `chown` reste refusé) ;
 - logs sur stdout (`SFTPGO_LOG_FILE_PATH=""`).
+
+## Derrière la passerelle hostd (P2, `OBLIMINT_PROXY_PROTOCOL=1`)
+
+Avec la passerelle de ports (`OBLIMINT_PORT_GATEWAY`, défaut), le conteneur ne publie aucun port :
+hostd écoute le port SFTP du compte (IPv4 + IPv6), applique la liste blanche et les bans à
+l'acceptation, démarre le serveur à la connexion (mode à la demande) et relaie vers
+`<IP du conteneur sur le réseau du compte>:2022` en écrivant d'abord un en-tête **PROXY v2**.
+L'entrypoint rend alors :
+
+- `common.proxy_protocol = 2` : en-tête **obligatoire** pour la source autorisée ;
+- `common.proxy_allowed = ["<passerelle par défaut du conteneur>"]` : la seule source dont l'en-tête
+  est lu est l'adresse côté hôte du pont du compte (lue dans `/proc/net/route`), c'est-à-dire
+  l'adresse d'où hostd se connecte : aucun autre pair ne peut forger l'adresse d'un client
+  (**R-PROXY** fermé). Sans passerelle détectable, le conteneur refuse de démarrer.
+  **Attention** : pour une source hors `proxy_allowed`, SFTPGo applique la politique go-proxyproto
+  `REJECT`, qui refuse une connexion **portant** un en-tête mais accepte une connexion **sans**
+  en-tête (avec l'adresse du pair). Un conteneur de site du même réseau qui joindrait `:2022`
+  directement est donc arrêté par hostd : règle nftables `forward` qui jette tout flux relayé vers
+  un backend de passerelle en mode PROXY (seul hostd, depuis l'espace réseau de l'hôte, l'atteint) ;
+- `common.defender` **reste actif** (il voit l'IP réelle via l'en-tête) : même sans la règle
+  ci-dessus, un pair direct ne pourrait pas deviner les mots de passe sans limite. Les
+  bannissements du panel (nftables + contrôle à l'acceptation de la passerelle, alimentés par le
+  hook d'authentification qui reçoit l'**IP réelle**) s'y ajoutent.
+
+Sans la variable (ou `=0`) : comportement P1 (`proxy_protocol: 0`), defender actif dans les deux cas.
 
 ## Hook d'authentification — `POST $OBLIMINT_HOOK_BASE/auth`
 
@@ -153,7 +178,7 @@ concerné (`/staging/<slug>/…`).
 - **Format de `public_key`** : SFTPGo envoie la clé au format `authorized_keys`, éventuellement
   suivie d'un retour ligne et sans commentaire : la comparaison côté panel doit porter sur
   `type + base64` (ou l'empreinte SHA256), espaces finaux ignorés.
-- **IP vue par le defender** : avec le proxy userland de Docker (`docker-proxy`, utilisé pour
+- **IP vue par le defender** (P1 / passerelle désactivée seulement ; derrière la passerelle, l'IP vient de l'en-tête PROXY) : avec le proxy userland de Docker (`docker-proxy`, utilisé pour
   IPv6 et pour les connexions locales), toutes les connexions peuvent sembler venir de la
   passerelle du réseau → un bannissement toucherait tout le monde. Avec le DNAT iptables (IPv4
   par défaut), l'IP source réelle est conservée. À contrôler sur la VM (`docker logs` affiche

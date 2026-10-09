@@ -267,6 +267,9 @@ func TestPHPFPMPool(t *testing.T) {
 		"listen = /run/php-fpm.sock",
 		"pid = /run/oblimint/php-fpm.pid",
 		"request_terminate_timeout = 150s",
+		// P2: libpq finds the default PostgreSQL instance socket (clear_env drops the container env).
+		"clear_env = yes",
+		"env[PGHOST] = /run/postgresql",
 	)
 	if strings.Contains(pool, "\nuser =") || strings.Contains(pool, "\ngroup =") {
 		t.Error("the pool must not set user/group (non-root master)")

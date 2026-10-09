@@ -16,6 +16,7 @@ import { Input } from '@/components/common/Input';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { copyText } from '@/utils/clipboard';
 import { cn } from '@/utils/cn';
+import { previewConflictsWithPanel } from '@/components/settings/settingsFormat';
 
 type WizardStep = 'token' | 'checks' | 'form' | 'progress' | 'restarting';
 
@@ -345,6 +346,7 @@ function SetupForm({ onApplied, onBack, onAuthLost }: { onApplied: () => void; o
   const [ipv4, setIpv4] = useState(IPV4_RE.test(host) ? host : '');
   const [ipv6, setIpv6] = useState('');
   const [nameservers, setNameservers] = useState<string[]>(['', '']);
+  const [previewDomain, setPreviewDomain] = useState('');
   const [acmeEmail, setAcmeEmail] = useState('');
   const [mailEngine, setMailEngine] = useState<MailEngine>('postfix-dovecot');
   const [adminUsername, setAdminUsername] = useState('admin');
@@ -368,6 +370,14 @@ function SetupForm({ onApplied, onBack, onAuthLost }: { onApplied: () => void; o
     const ns = nameservers.map((n) => n.trim()).filter(Boolean);
     if (ns.length === 0) e.nameservers = t('setup.form.errors.nsRequired') || 'Enter at least one name server.';
     else if (ns.some((n) => !HOSTNAME_RE.test(n))) e.nameservers = t('setup.form.errors.nsInvalid') || 'Each name server must be a fully qualified host name.';
+    const preview = previewDomain.trim().toLowerCase().replace(/\.$/, '');
+    if (preview) {
+      const panel = panelHostname.trim().toLowerCase();
+      if (!HOSTNAME_RE.test(preview)) e.previewDomain = t('platformSettings.preview.invalid') || 'Enter a domain name (e.g. example-preview.net).';
+      else if (panel && previewConflictsWithPanel(preview, panel)) {
+        e.previewDomain = t('platformSettings.preview.underPanel') || 'The preview domain must be a registrable domain distinct from the panel one: neither the panel host, one of its parents or sub-domains, nor a sibling on the same domain (e.g. preview.example.com next to panel.example.com).';
+      }
+    }
     if (!EMAIL_RE.test(acmeEmail.trim())) e.acmeEmail = t('setup.form.errors.email') || 'Enter a valid e-mail address.';
     if (!adminUsername.trim()) e.adminUsername = required;
     else if (!USERNAME_RE.test(adminUsername.trim())) e.adminUsername = t('setup.form.errors.username') || 'Letters, digits, dot, dash and underscore only.';
@@ -396,6 +406,7 @@ function SetupForm({ onApplied, onBack, onAuthLost }: { onApplied: () => void; o
       nameservers: nameservers.map((n) => n.trim().toLowerCase()).filter(Boolean),
       acmeEmail: acmeEmail.trim(),
       mailEngine,
+      previewDomain: previewDomain.trim().toLowerCase().replace(/\.$/, '') || null,
       admin: { username: adminUsername.trim(), password: adminPassword, email: adminEmail.trim() || null },
       obligate: useObligate ? { url: obligateUrl.trim().replace(/\/+$/, ''), apiKey: obligateKey.trim() } : null,
     };
@@ -492,6 +503,21 @@ function SetupForm({ onApplied, onBack, onAuthLost }: { onApplied: () => void; o
               {t('setup.form.nsAdd') || 'Add a name server'}
             </Button>
           )}
+        </FormSection>
+
+        <FormSection title={t('platformSettings.preview.setupTitle') || 'Preview domain (optional)'}>
+          <Input
+            label={t('platformSettings.preview.domain') || 'Preview domain'}
+            value={previewDomain}
+            onChange={(e) => setPreviewDomain(e.target.value)}
+            placeholder={t('platformSettings.preview.placeholder') || 'example-preview.net'}
+            autoCapitalize="off" autoCorrect="off" spellCheck={false}
+            className="font-mono"
+            error={err('previewDomain')}
+          />
+          <p className="text-xs text-text-muted -mt-1">
+            {t('platformSettings.preview.setupHint') || 'Blue/green previews are served on <site>-<id>.<this domain>. Use a registrable domain distinct from the panel (never a sub-domain of it), so a preview can never read the panel cookies. Leave empty: previews get no public URL until you set it in Settings.'}
+          </p>
         </FormSection>
 
         <FormSection title={t('setup.form.sectionTls') || 'TLS certificates'}>

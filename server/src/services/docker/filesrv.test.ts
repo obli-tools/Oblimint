@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AppError } from '../../middleware/errorHandler';
-import { activationDeadline, fileServerErrors } from './filesrv.service';
+import { activationDeadline, fileServerErrors, gatewayDeadline, GATEWAY_ACTIVATION_MINUTES } from './filesrv.service';
 import { withLock } from './locks';
 
 // File server activation rules (pure) + the account lock that serializes
@@ -54,4 +54,14 @@ test('withLock serializes operations on the same key, not across keys', async ()
   // A failing holder releases the lock.
   await assert.rejects(withLock('a', async () => { throw new Error('boom'); }));
   assert.equal(await withLock('a', async () => 'next'), 'next');
+});
+
+test('gateway activation: 15 min window, never shortens a longer (manual) one', () => {
+  assert.equal(GATEWAY_ACTIVATION_MINUTES, 15);
+  assert.equal(gatewayDeadline(null, now)!.toISOString(), '2026-10-09T12:15:00.000Z');
+  // Expired or shorter window: replaced by the gateway's.
+  assert.equal(gatewayDeadline('2026-10-09T11:00:00Z', now)!.toISOString(), '2026-10-09T12:15:00.000Z');
+  assert.equal(gatewayDeadline(new Date('2026-10-09T12:05:00Z'), now)!.toISOString(), '2026-10-09T12:15:00.000Z');
+  // A manual "2 h" activation stays as is (and stays manual: no idle stop).
+  assert.equal(gatewayDeadline(new Date('2026-10-09T14:00:00Z'), now), null);
 });

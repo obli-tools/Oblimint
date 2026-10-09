@@ -38,6 +38,11 @@ const CATEGORIES: Array<{ re: RegExp; message: string }> = [
     message: "Let's Encrypt does not issue certificates for this name (reserved or non-public name).",
   },
   {
+    // P2: DNS-01 (wildcard certificates) through the platform's DNS servers.
+    re: /dns-01|_acme-challenge|No usable DNS-01/i,
+    message: "Let's Encrypt could not validate the DNS-01 challenge: the zone of the domain must be hosted and delegated to this platform's DNS servers.",
+  },
+  {
     re: /\bdns\b|NXDOMAIN|SERVFAIL|no valid (?:A|AAAA)|no (?:A|AAAA) records?|looking up (?:A|AAAA|CAA)/i,
     message: 'DNS problem: the name does not resolve to this server (check its A / AAAA records).',
   },

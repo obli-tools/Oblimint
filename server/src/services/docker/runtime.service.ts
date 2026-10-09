@@ -8,7 +8,8 @@ import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { appConfigService } from '../appConfig.service';
 import { emitHosting } from '../hosting/events';
-import { previewHostname, siteImage } from '../hosting/naming';
+import { siteImage } from '../hosting/naming';
+import { previewHostFor } from '../platformSettings';
 import { localPaths } from '../hosting/paths';
 import { errText } from '../setup/docker';
 import { scheduleEdgeSync } from './backends';
@@ -92,8 +93,9 @@ function emitRuntime(ctx: SiteContext): void {
 
 async function previewUrlOf(site: { id: number; slug: string; preview_base: SiteBaseId | null }): Promise<string | null> {
   if (!site.preview_base) return null;
-  const host = await appConfigService.get('panel_hostname').catch(() => null);
-  return host ? `https://${previewHostname(site, host)}` : null;
+  // P2: previews live on the dedicated preview domain (settings preview.previewDomain), never under the panel host.
+  const host = await previewHostFor(site);
+  return host ? `https://${host}` : null;
 }
 
 function mapInspect(

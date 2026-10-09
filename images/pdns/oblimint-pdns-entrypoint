@@ -1,0 +1,112 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-pdns entrypoint: initialises the gsqlite3 database on first start,
+# renders pdns.conf into the tmpfs /run/pdns (0600: it holds the API key) from
+# the environment set by the panel, then runs pdns_server in the foreground
+# (tini is PID 1).
+#
+#   oblimint-pdns-entrypoint                 normal start
+#   oblimint-pdns-entrypoint --check-config  renders pdns.conf into a temporary
+#       directory and has pdns_server parse it (--config=check), then exits:
+#       used by the image build so that a setting unknown to the pinned
+#       PowerDNS version fails the BUILD, not the first start.
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+log() {
+	printf '%s oblimint-pdns: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+die() {
+	log "$*"
+	exit 1
+}
+
+MODE=run
+case "${1:-}" in
+	'') ;;
+	--check-config) MODE=check ;;
+	*) die "unknown argument: $1" ;;
+esac
+
+DATA=/var/lib/powerdns
+DB="$DATA/pdns.sqlite3"
+CONF_DIR=/run/pdns
+API_PORT=${PDNS_API_PORT:-8081}
+
+[ -n "${PDNS_API_KEY:-}" ] || die "PDNS_API_KEY is not set"
+[ -n "${PDNS_WEBSERVER_ALLOW_FROM:-}" ] || die "PDNS_WEBSERVER_ALLOW_FROM is not set (the API must stay on the panel network)"
+case "$PDNS_API_KEY$PDNS_WEBSERVER_ALLOW_FROM${PDNS_DEFAULT_SOA_CONTENT:-}" in
+	*'
+'* | *'#'*) die "invalid characters in the environment" ;;
+esac
+case "$API_PORT" in
+	'' | *[!0-9]*) die "invalid PDNS_API_PORT" ;;
+esac
+
+if [ "$MODE" = check ]; then
+	CONF_DIR=$(mktemp -d)
+	trap 'rm -rf "$CONF_DIR"' EXIT
+fi
+
+render_conf() {
+	{
+		echo "# Rendered by oblimint-pdns-entrypoint — do not edit (tmpfs)."
+		echo "launch=gsqlite3"
+		echo "gsqlite3-database=$DB"
+		echo "gsqlite3-dnssec=yes"
+		echo "local-address=0.0.0.0, ::"
+		echo "local-address-nonexist-fail=no"
+		echo "local-port=53"
+		echo "socket-dir=$CONF_DIR"
+		echo "guardian=no"
+		echo "daemon=no"
+		echo "disable-syslog=yes"
+		echo "log-timestamp=no"
+		echo "loglevel=${PDNS_LOGLEVEL:-4}"
+		echo "version-string=anonymous"
+		echo "security-poll-suffix="
+		echo "api=yes"
+		echo "api-key=$PDNS_API_KEY"
+		echo "webserver=yes"
+		echo "webserver-address=0.0.0.0"
+		echo "webserver-port=$API_PORT"
+		echo "webserver-allow-from=$PDNS_WEBSERVER_ALLOW_FROM"
+		# NOTIFY only to the ALSO-NOTIFY metadata of each zone (never to the NS of the zone).
+		echo "primary=yes"
+		echo "only-notify="
+		# AXFR: loopback by default, per zone through ALLOW-AXFR-FROM metadata.
+		echo "allow-axfr-ips=127.0.0.0/8,::1"
+		echo "disable-axfr=no"
+		# No default-soa-edit-api: removed from PowerDNS Auth (4.9 aborts on
+		# it). The panel sets soa_edit_api per zone when creating it
+		# (services/dns/pdnsClient.ts).
+		if [ -n "${PDNS_DEFAULT_SOA_CONTENT:-}" ]; then
+			echo "default-soa-content=$PDNS_DEFAULT_SOA_CONTENT"
+		fi
+	} > "$CONF_DIR/pdns.conf"
+	chmod 0600 "$CONF_DIR/pdns.conf"
+}
+
+if [ "$MODE" = check ]; then
+	render_conf
+	/usr/local/sbin/pdns_server --config-dir="$CONF_DIR" --config=check || die "rendered pdns.conf rejected by $(/usr/local/sbin/pdns_server --version 2>&1 | head -n 1)"
+	log "rendered pdns.conf accepted by pdns_server"
+	exit 0
+fi
+
+[ -d "$DATA" ] && [ -w "$DATA" ] || die "$DATA is not writable by uid $(id -u) (the panel chowns /srv/oblimint/dns to 953)"
+
+if [ ! -s "$DB" ]; then
+	umask 077
+	cp /usr/share/oblimint-pdns/empty.sqlite3 "$DB.tmp"
+	mv "$DB.tmp" "$DB"
+	log "gsqlite3 database initialised"
+fi
+
+umask 077
+mkdir -p "$CONF_DIR"
+render_conf
+
+log "starting PowerDNS (API on :$API_PORT for $PDNS_WEBSERVER_ALLOW_FROM)"
+exec /usr/local/sbin/pdns_server --config-dir="$CONF_DIR"

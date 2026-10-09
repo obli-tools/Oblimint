@@ -155,6 +155,13 @@ export const tenantService = {
   async delete(id: number): Promise<boolean> {
     if (id === MASTER_TENANT_ID) throw new AppError(400, 'Cannot delete the default tenant');
     const n = await db('tenants').where({ id }).delete();
+    if (n > 0) {
+      // Zones / templates of the tenant went with it (CASCADE): PowerDNS follows now.
+      try {
+        const { dnsService } = await import('./dns/dns.service');
+        dnsService.requestSyncAll('tenant-deleted');
+      } catch { /* hook: never blocks the deletion */ }
+    }
     return n > 0;
   },
 

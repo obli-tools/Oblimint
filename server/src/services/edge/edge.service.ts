@@ -5,17 +5,22 @@ import { config } from '../../config';
 import { db } from '../../db';
 import { logger } from '../../utils/logger';
 import { appConfigService } from '../appConfig.service';
+import { platformSettings } from '../platformSettings';
 import { inspectContainer } from '../docker/dockerOps';
 import { engineFor, execInContainer, localNodeId } from '../docker/engine';
 import { EDGE_CONTAINER, PANEL_ALIAS } from '../hosting/naming';
 import { localPaths } from '../hosting/paths';
 import { json } from '../hosting/rows';
 import { createDebouncedRunner, syncConfDir, type ConfSyncDeps } from './confSync';
+import { ensureSelfSignedFallback } from './selfSignedFallback';
 import { isValidServerName, type EdgeVhost } from './nginxConfig';
-import { planVhosts, SERVED_ACCOUNT_STATUSES, type EdgePlanInput, type PlanCertificate, type PlanDomain, type PlanRoute, type PlanSite } from './vhostPlan';
+import {
+  planVhosts, SERVED_ACCOUNT_STATUSES, type EdgePlanInput, type PlanCertificate, type PlanDomain, type PlanRoute, type PlanSite, type PlatformHosts,
+} from './vhostPlan';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// oblimint-edge driver (docs/P1-PLAN.md §11). OWNED BY MODULE `edge`.
+// oblimint-edge driver (docs/P1-PLAN.md §11, P2-PLAN §9.2). OWNED BY MODULE
+// `edge-ownership` (P2).
 // sync = route table from the DB (local node) → EdgeVhost[] (vhostPlan.ts,
 // pure) → conf.d written file by file (confSync.ts: tmp + rename, stale files
 // removed — the bind-mounted directory itself is never replaced) → `nginx -t`
@@ -43,7 +48,12 @@ const state: {
   safetyTimer: NodeJS.Timeout | null;
   /** Serializes syncNow() (manual + scheduled). */
   chain: Promise<unknown>;
-} = { lastSyncAt: null, lastSyncError: null, vhostCount: 0, reloadedOnce: false, firstTimer: null, safetyTimer: null, chain: Promise.resolve() };
+  /** Worker started (start()): only then does a sync trigger certificate checks. */
+  started: boolean;
+} = {
+  lastSyncAt: null, lastSyncError: null, vhostCount: 0, reloadedOnce: false, firstTimer: null, safetyTimer: null, chain: Promise.resolve(),
+  started: false,
+};
 
 /** Upstream of the panel as seen from the edge (alias on the shared networks). */
 export function panelUpstream(): string {
@@ -69,6 +79,28 @@ async function edgeRunning(nodeId: number): Promise<boolean> {
   return !!info?.State?.Running;
 }
 
+const validHost = (v: string | null | undefined): string | null => {
+  const h = (v ?? '').trim().toLowerCase().replace(/\.$/, '');
+  return h && isValidServerName(h) ? h : null;
+};
+
+/**
+ * Platform host names served by the edge: app_config panel_hostname +
+ * platform settings (preview domain, DB admin host, IP probe hosts). Invalid
+ * values read as null. Throws when the settings cannot be read (callers that
+ * DELETE things on this basis must not run on a transient error).
+ */
+export async function loadPlatformHosts(): Promise<PlatformHosts> {
+  const [panel, settings] = await Promise.all([appConfigService.get('panel_hostname'), platformSettings.get()]);
+  return {
+    panel: validHost(panel),
+    previewDomain: validHost(settings.preview.previewDomain),
+    dbAdmin: validHost(settings.dbAdmin.hostname),
+    probeV4: validHost(settings.access.probeHostV4),
+    probeV6: validHost(settings.access.probeHostV6),
+  };
+}
+
 /** Rows of the local node needed by planVhosts(). */
 async function loadPlanInput(): Promise<EdgePlanInput> {
   const nodeId = await localNodeId();
@@ -77,7 +109,8 @@ async function loadPlanInput(): Promise<EdgePlanInput> {
     .join('hosting_accounts as a', 'a.id', 'd.account_id')
     .where('a.node_id', nodeId)
     .whereIn('a.status', statuses)
-    .select('d.id', 'd.name', 'd.include_www', 'd.tls_mode', 'd.force_https', 'a.status as account_status') as PlanDomain[];
+    .select('d.id', 'd.account_id', 'd.tenant_id', 'd.name', 'd.include_www', 'd.tls_mode', 'd.force_https', 'd.wildcard',
+      'd.verification_status', 'a.status as account_status') as PlanDomain[];
   const routes = domains.length
     ? await db('site_routes').whereIn('domain_id', domains.map((d) => d.id))
       .select('domain_id', 'path_prefix', 'site_id', 'runtime_id') as PlanRoute[]
@@ -86,11 +119,22 @@ async function loadPlanInput(): Promise<EdgePlanInput> {
     .join('hosting_accounts as a', 'a.id', 's.account_id')
     .where('a.node_id', nodeId)
     .whereIn('a.status', statuses)
-    .select('s.id', 's.slug', 's.preview_base', 's.php_settings', 'a.status as account_status') as Array<PlanSite & { php_settings: unknown }>;
+    .select('s.id', 's.account_id', 's.tenant_id', 's.slug', 's.preview_base', 's.php_settings', 'a.status as account_status') as
+    Array<PlanSite & { php_settings: unknown }>;
   const sites: PlanSite[] = siteRows.map((s) => ({ ...s, php_settings: json(s.php_settings, null) }));
   const certificates = await db('certificates').select('domain_id', 'site_id', 'primary_name', 'status', 'names') as PlanCertificate[];
-  const panelHostname = (await appConfigService.get('panel_hostname'))?.trim().toLowerCase() || null;
-  return { domains, routes, sites, certificates, panelHostname, panelUpstream: panelUpstream(), certFilesExist };
+  const platform = await loadPlatformHosts();
+  // HTTPS on every platform name, even without an ACME certificate (private name, issuance pending / failed).
+  const selfSignedNames = await ensureSelfSignedFallback(localPaths.edgeCerts(),
+    [platform.panel, platform.dbAdmin, platform.probeV4, platform.probeV6]);
+  return { domains, routes, sites, certificates, platform, panelUpstream: panelUpstream(), certFilesExist, selfSignedNames };
+}
+
+/** A new vhost set may need certificates (preview created, DB admin / probe host set): checked after a sync. */
+function ensureAuxiliaryCertificates(): void {
+  import('./certificate.service')
+    .then(({ certificateService }) => certificateService.ensureAuxiliary())
+    .catch((err) => logger.warn({ err: (err as Error).message }, 'edge: auxiliary certificate check failed'));
 }
 
 async function runSync(force: boolean): Promise<EdgeSyncResult> {
@@ -111,6 +155,7 @@ async function runSync(force: boolean): Promise<EdgeSyncResult> {
     const out = await syncConfDir(vhosts, deps, { force: force || !state.reloadedOnce || state.lastSyncError !== null });
     // A pass that isolated a rejected vhost still reloaded the others (ok=false + error).
     if (out.ok || out.reloaded) state.reloadedOnce = true;
+    if (out.changed > 0 && state.started) ensureAuxiliaryCertificates();
     result = { ok: out.ok, vhostCount: out.vhostCount, error: out.error };
   } catch (err) {
     result = { ok: false, vhostCount: state.vhostCount, error: (err as Error).message };
@@ -195,17 +240,11 @@ export const edgeService = {
   /** First sync ~10 s after boot, then a safety sync every 10 min. */
   start(): void {
     if (state.firstTimer || state.safetyTimer) return;
+    state.started = true;
     state.firstTimer = setTimeout(() => {
       state.firstTimer = null;
-      void enqueueSync(true).finally(async () => {
-        // Panel / preview host names get their certificate once the edge serves them.
-        try {
-          const { certificateService } = await import('./certificate.service');
-          certificateService.ensureAuxiliary();
-        } catch (err) {
-          logger.warn({ err: (err as Error).message }, 'edge: auxiliary certificate check failed');
-        }
-      });
+      // Platform / preview host names get their certificate once the edge serves them.
+      void enqueueSync(true).finally(ensureAuxiliaryCertificates);
     }, FIRST_SYNC_DELAY_MS);
     state.safetyTimer = setInterval(() => edgeService.scheduleSync('safety'), SAFETY_SYNC_INTERVAL_MS);
     state.firstTimer.unref?.();
@@ -217,6 +256,7 @@ export const edgeService = {
     if (state.safetyTimer) clearInterval(state.safetyTimer);
     state.firstTimer = null;
     state.safetyTimer = null;
+    state.started = false;
     debounced.cancel();
   },
 };

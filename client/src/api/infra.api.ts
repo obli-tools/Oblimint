@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ApiResponse, EdgeStatus, EdgeSyncResult, InfraStatus } from '@oblimint/shared';
+import type { ApiResponse, EdgeStatus, EdgeSyncResult, InfraComponentId, InfraStatus } from '@oblimint/shared';
 
 // /api/system/infra + /api/system/edge (platform admin) — docs/P1-PLAN.md §API.
 // OWNED BY MODULE `ui-hosting` (Nodes page).
@@ -9,7 +9,7 @@ export const infraApi = {
     return res.data.data!;
   },
 
-  async deploy(component: 'edge' | 'hostd'): Promise<InfraStatus> {
+  async deploy(component: InfraComponentId): Promise<InfraStatus> {
     const res = await apiClient.post<ApiResponse<InfraStatus>>(`/system/infra/${component}/deploy`);
     return res.data.data!;
   },

@@ -17,6 +17,7 @@ import {
   Globe,
   AtSign,
   Database,
+  BarChart3,
   Mail,
   FolderOpen,
   Package,
@@ -128,6 +129,9 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
   // accounts, sites and domains only (the server scopes every list).
   const isClient = user?.kind === 'client';
   const canPlans = admin || (!isClient && hasCapability('plans.manage'));
+  // Settings: every section for the platform admin; tenant staff with 'settings' see the
+  // notification channels only (SettingsPage gates each section).
+  const canSettings = admin || (!isClient && hasCapability('settings'));
 
   const [adminMenuOpen, setAdminMenuOpen] = usePersisted<boolean>('sidebar:admin-open', true);
   const [navMenuOpen, setNavMenuOpen] = usePersisted<boolean>('sidebar:nav-open', true);
@@ -138,8 +142,10 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     { label: t('nav.accounts') || 'Accounts',            path: '/accounts',  icon: <UserSquare size={18} /> },
     { label: t('nav.sites') || 'Sites',                  path: '/sites',     icon: <Globe size={18} /> },
     { label: t('nav.domains') || 'Domains & DNS',        path: '/domains',   icon: <AtSign size={18} /> },
+    // P2: databases and usage are part of the client space too (the server scopes every list).
+    { label: t('nav.databases') || 'Databases',          path: '/databases', icon: <Database size={18} /> },
+    { label: t('nav.usage') || 'Usage',                  path: '/usage',     icon: <BarChart3 size={18} /> },
     ...(isClient ? [] : [
-      { label: t('nav.databases') || 'Databases',        path: '/databases', icon: <Database size={18} /> },
       { label: t('nav.mail') || 'Mail',                  path: '/mail',      icon: <Mail size={18} /> },
       { label: t('nav.files') || 'Files',                path: '/files',     icon: <FolderOpen size={18} /> },
     ] as NavItem[]),
@@ -153,7 +159,7 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     ...(isMaster ? [{ label: t('nav.workspaces') || 'Workspaces', path: '/manage/tenants', icon: <Building2 size={18} /> } as NavItem] : []),
     ...(admin ? [{ label: t('nav.nodes') || 'Nodes', path: '/manage/nodes', icon: <Server size={18} /> } as NavItem] : []),
     ...(admin ? [{ label: t('nav.auditLog') || 'Audit log', path: '/manage/audit-log', icon: <ScrollText size={18} /> } as NavItem] : []),
-    ...(admin ? [{ label: t('nav.settings') || 'Settings', path: '/settings', icon: <Settings size={18} /> } as NavItem] : []),
+    ...(canSettings ? [{ label: t('nav.settings') || 'Settings', path: '/settings', icon: <Settings size={18} /> } as NavItem] : []),
   ];
 
   const strippedUsername = user?.username?.startsWith('og_') ? user.username.slice(3) : user?.username;

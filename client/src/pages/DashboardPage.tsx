@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { RefreshCw, ArrowRight, Building2, Users, Server, Mail, Database, Globe, FolderOpen, ChevronRight } from 'lucide-react';
+import { RefreshCw, ArrowRight, Building2, Users, Server, Mail, Database, Globe, FolderOpen, ChevronRight, BellRing, BarChart3 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { DashboardSummary, HostingAccount } from '@oblimint/shared';
+import type { DashboardSummary, HostingAccount, TenantUsage, UsageAlert } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
 import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
@@ -11,108 +11,12 @@ import { dashboardApi } from '@/api/dashboard.api';
 import { accountsApi } from '@/api/accounts.api';
 import { PageContainer } from '@/components/common/PageContainer';
 import { AccountStatusBadge, DiskBar, hostingErrorMessage, useHostingEvents } from '@/components/hosting/hostingUi';
+import { usageApi } from '@/api/usage.api';
+import { HeroCard, HeroFeatured, MiniStat } from '@/components/usage/HeroCards';
+import { fillMonthDays, isoMonth, quotaColor, quotaPct } from '@/components/usage/usageFormat';
+import { dayLabel, useByteFormat } from '@/components/usage/usageUi';
 
-// ── Sparkline (filled area + line) — ported from Obliance ───────────────────
-
-function Sparkline({ data, color, height = 36 }: { data: number[]; color: string; height?: number }) {
-  if (data.length < 2) return <div style={{ height }} />;
-  const max = Math.max(...data, 1);
-  const min = Math.min(...data, 0);
-  const range = max - min || 1;
-  const w = 200;
-  const h = height;
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = h - ((v - min) / range) * (h - 4) - 2;
-    return [x, y];
-  });
-  const linePath = pts.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-  const areaPath = `${linePath} L${w},${h} L0,${h} Z`;
-  const id = `sg-${color.replace(/[^a-z0-9]/gi, '')}`;
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height }} className="block">
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor={color} stopOpacity="0.40" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill={`url(#${id})`} />
-      <path d={linePath} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-// ── Hero KPI card (featured: with spark + axis) — ported from Obliance ──────
-
-function HeroFeatured({ label, value, color, series, days }: {
-  label: string; value: number; color: string;
-  series: number[]; days: { short: string; value: number }[];
-}) {
-  return (
-    <div className="h-full flex flex-col rounded-xl p-5 relative overflow-hidden bg-gradient-to-br from-accent/10 via-bg-secondary to-bg-secondary shadow-[0_0_0_1px_rgb(var(--c-accent)/0.18)_inset,_0_6px_28px_-10px_rgb(var(--c-accent)/0.25)]">
-      <div className="text-[11px] font-mono uppercase tracking-[0.14em] text-text-muted mb-3">{label}</div>
-      <div className={`font-display text-[48px] font-semibold leading-none ${color}`}>{value}</div>
-      <div className="mt-3"><Sparkline data={series} color="#ff6868" /></div>
-      <div className="grid grid-cols-4 mt-2 gap-2">
-        {days.map((d, i) => {
-          const isLast = i === days.length - 1;
-          return (
-            <div key={i} className={`flex flex-col items-start ${isLast ? 'text-text-primary' : 'text-text-muted'}`}>
-              <span className="text-[10px] font-mono uppercase tracking-wider">{d.short}</span>
-              <span className={`text-[12px] font-mono ${isLast ? 'text-text-primary font-semibold' : 'text-text-secondary'}`}>{d.value}</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function HeroCard({ label, value, color, deltaText, barPct, barColor }: {
-  label: string; value: number; color: string;
-  deltaText?: string;
-  barPct?: number;
-  barColor?: string;
-}) {
-  return (
-    <div className="h-full flex flex-col rounded-xl p-5 relative overflow-hidden bg-bg-secondary shadow-[0_1px_0_0_rgba(255,255,255,0.03),_0_6px_24px_-8px_rgba(0,0,0,0.45)]">
-      <div className="text-[11px] font-mono uppercase tracking-[0.14em] text-text-muted mb-3">{label}</div>
-      <div className={`font-display text-[36px] font-semibold leading-none ${color}`}>{value}</div>
-      {deltaText && (
-        <div className="text-[12px] font-mono mt-3 text-text-muted">
-          <span className="mr-1">—</span>{deltaText}
-        </div>
-      )}
-      {barPct != null && (
-        <div className="mt-2 h-1 w-full bg-white/[0.04] rounded">
-          <div className="h-full rounded" style={{ width: `${Math.min(100, Math.max(0, barPct))}%`, background: barColor ?? 'rgb(var(--c-accent))' }} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Mini-stat compact card — ported from Obliance ───────────────────────────
-
-function MiniStat({ icon, label, value, sub, color = 'text-text-primary', to }: {
-  icon: React.ReactNode; label: string; value: React.ReactNode; sub?: string;
-  color?: string; to?: string;
-}) {
-  const body = (
-    <div className="flex items-center gap-3 rounded-lg bg-bg-secondary px-3.5 py-2.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03),_0_4px_16px_-8px_rgba(0,0,0,0.35)]">
-      <div className="w-8 h-8 rounded-md bg-bg-hover flex items-center justify-center shrink-0 text-text-muted">
-        {icon}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-[10px] font-mono uppercase tracking-[0.12em] text-text-muted truncate">{label}</div>
-        <div className={`text-[14px] font-semibold leading-tight ${color} truncate`}>{value}</div>
-        {sub && <div className="text-[10px] font-mono text-text-muted truncate">{sub}</div>}
-      </div>
-    </div>
-  );
-  return to ? <Link to={to} className="block hover:opacity-90 transition-opacity">{body}</Link> : body;
-}
+const MIB = 1024 * 1024;
 
 const EMPTY_SUMMARY: DashboardSummary = {
   accounts: 0, sites: 0, domains: 0, mailboxes: 0, databases: 0, tenants: 0, users: 0, nodes: 0,
@@ -240,6 +144,9 @@ function StaffDashboard() {
         </Link>
       </div>
 
+      {/* Usage row (P2) — traffic of the month, disk, DB instances, open alerts. */}
+      <UsageWidgets dbInstances={databases} tenantKey={currentTenantId} platformView={isAdmin && isMaster} />
+
       {/* Mini-stats row — platform figures (admins). */}
       {isAdmin && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -341,6 +248,7 @@ function ClientDashboard() {
       </div>
 
       {error && <p className="text-sm text-text-muted">{error}</p>}
+      <ClientAlertsBanner tenantKey={currentTenantId} />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 items-stretch">
         <Link to={single ? `/accounts/${single.id}` : '/accounts'} className="h-full block hover:opacity-95 transition-opacity">
@@ -385,5 +293,102 @@ function ClientDashboard() {
         </div>
       )}
     </PageContainer>
+  );
+}
+
+// ── Usage widgets (P2) ──────────────────────────────────────────────────────
+// Their own requests: a usage endpoint that fails (module not deployed,
+// no right) leaves dashes, never breaks the P0/P1 counters above.
+
+/** What the widgets show: one workspace (TenantUsage) or, in the god view, the whole platform. */
+type UsageSummary = Pick<TenantUsage, 'month' | 'traffic' | 'envelope'> & { totals: Pick<TenantUsage['totals'], 'trafficBytes' | 'diskUsedBytes' | 'dbInstances'> };
+
+function UsageWidgets({ dbInstances, tenantKey, platformView }: { dbInstances: number; tenantKey: number | null; platformView: boolean }) {
+  const { t } = useTranslation();
+  const bytes = useByteFormat();
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [alerts, setAlerts] = useState<UsageAlert[] | null>(null);
+
+  const load = useCallback(async () => {
+    // God view (platform admin on the master tenant): platform totals, like the P1 counters
+    // around them and the alerts of every workspace — not the master workspace alone.
+    const summary: Promise<UsageSummary> = platformView
+      ? usageApi.platform().then((p) => ({ month: p.month, traffic: p.traffic, totals: p.totals, envelope: { trafficMbPerMonth: null, diskMb: null } }))
+      : usageApi.tenant();
+    const [u, a] = await Promise.allSettled([summary, usageApi.alerts({ open: true })]);
+    setUsage(u.status === 'fulfilled' ? u.value : null);
+    setAlerts(a.status === 'fulfilled' ? a.value : null);
+  }, [platformView]);
+
+  useEffect(() => { void load(); }, [load, tenantKey]);
+  useHostingEvents([HostingSocketEvents.USAGE_ALERT], () => { void load(); }, undefined, 1500);
+
+  const month = usage?.month ?? isoMonth();
+  const days = usage ? fillMonthDays(month, usage.traffic, (p) => p.bytesOut) : [];
+  const diskEnvelope = usage?.envelope.diskMb != null ? usage.envelope.diskMb * MIB : null;
+  const diskPct = usage ? quotaPct(usage.totals.diskUsedBytes, diskEnvelope) : null;
+  const trafficEnvelope = usage?.envelope.trafficMbPerMonth != null ? usage.envelope.trafficMbPerMonth * MIB : null;
+  const trafficPct = usage ? quotaPct(usage.totals.trafficBytes, trafficEnvelope) : null;
+  const critical = (alerts ?? []).filter((a) => a.level >= 100).length;
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 items-stretch">
+      <Link to="/usage" className="h-full block hover:opacity-95 transition-opacity">
+        <HeroFeatured
+          label={t('usage.hero.traffic') || 'Traffic of the month'}
+          value={usage ? bytes(usage.totals.trafficBytes) : '—'}
+          color="text-accent"
+          sub={trafficEnvelope != null ? t('usage.hero.ofEnvelope', { value: bytes(trafficEnvelope), pct: Math.round(trafficPct ?? 0), defaultValue: '{{pct}} % of {{value}}' }) : undefined}
+          series={days.map((d) => d.value)}
+          days={days.slice(-4).map((d) => ({ short: dayLabel(d.day), value: bytes(d.value) }))}
+        />
+      </Link>
+      <Link to="/usage" className="h-full block hover:opacity-95 transition-opacity">
+        <HeroCard
+          label={t('usage.hero.disk') || 'Disk used'}
+          value={usage ? bytes(usage.totals.diskUsedBytes) : '—'}
+          color="text-green-400"
+          deltaText={usage ? (diskEnvelope != null
+            ? t('usage.hero.ofEnvelope', { value: bytes(diskEnvelope), pct: Math.round(diskPct ?? 0), defaultValue: '{{pct}} % of {{value}}' })
+            : platformView ? (t('usage.hero.platformTotal') || 'all workspaces') : (t('usage.hero.noEnvelope') || 'no workspace envelope')) : undefined}
+          barPct={diskPct}
+          barColor={quotaColor(diskPct)}
+        />
+      </Link>
+      <Link to="/databases" className="h-full block hover:opacity-95 transition-opacity">
+        <HeroCard label={t('usage.hero.dbInstances') || 'DB instances'} value={usage?.totals.dbInstances ?? dbInstances} color="text-amber-400" />
+      </Link>
+      <Link to="/usage" className="h-full block hover:opacity-95 transition-opacity">
+        <HeroCard
+          label={t('usage.hero.alerts') || 'Open alerts'}
+          value={alerts ? alerts.length : '—'}
+          color={critical > 0 ? 'text-status-down' : alerts && alerts.length > 0 ? 'text-amber-400' : 'text-text-primary'}
+          deltaText={alerts ? t('usage.hero.alertsCritical', { count: critical, defaultValue: '{{count}} at 100 %' }) : undefined}
+        />
+      </Link>
+    </div>
+  );
+}
+
+/** Client space: open quota alerts of the caller's accounts, with a link to the usage page. */
+function ClientAlertsBanner({ tenantKey }: { tenantKey: number | null }) {
+  const { t } = useTranslation();
+  const [alerts, setAlerts] = useState<UsageAlert[]>([]);
+  const load = useCallback(async () => {
+    try { setAlerts(await usageApi.alerts({ open: true })); } catch { setAlerts([]); }
+  }, []);
+  useEffect(() => { void load(); }, [load, tenantKey]);
+  useHostingEvents([HostingSocketEvents.USAGE_ALERT], () => { void load(); }, undefined, 1500);
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <MiniStat icon={<BarChart3 size={15} />} label={t('nav.usage') || 'Usage'} value={t('usage.hero.seeUsage') || 'Traffic, disk, resources'} to="/usage" />
+      <MiniStat
+        icon={<BellRing size={15} />}
+        label={t('usage.hero.alerts') || 'Open alerts'}
+        value={alerts.length}
+        color={alerts.some((a) => a.level >= 100) ? 'text-status-down' : alerts.length > 0 ? 'text-amber-400' : 'text-text-primary'}
+        to="/usage"
+      />
+    </div>
   );
 }

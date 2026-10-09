@@ -21,7 +21,17 @@ function createServer(app: express.Express): http.Server | https.Server {
   return http.createServer(app);
 }
 
+/**
+ * Node cuts any request whose BODY is still arriving after `requestTimeout`
+ * (300 s by default): a database restore (streamed upload, up to 2 GiB, 6 h
+ * server-side limit) would be cut mid-stream. Bounded to that limit + margin;
+ * slow headers stay bounded by `headersTimeout` (60 s), and in production the
+ * edge's nginx bounds idle bodies (client_body_timeout) before they reach us.
+ */
+const REQUEST_TIMEOUT_MS = 6 * 60 * 60_000 + 30 * 60_000;
+
 function listen(server: http.Server | https.Server, label: string): void {
+  server.requestTimeout = REQUEST_TIMEOUT_MS;
   server.listen(config.port, () => {
     const scheme = server instanceof https.Server ? 'https' : 'http';
     logger.info({ port: config.port, scheme, env: config.nodeEnv, version: serverVersion }, `Oblimint ${label} listening on ${scheme}://0.0.0.0:${config.port}`);

@@ -40,7 +40,10 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
   await db('app_config').insert([
     { key: 'panel_hostname', value: 'panel.host.example' },
     { key: 'acme_email', value: 'ops@host.example' },
+    // P2: previews on the dedicated preview domain (platform settings seed, non-public TLD: never sent to the CA).
+    { key: 'preview_domain', value: 'previews.host.example' },
   ]).onConflict('key').merge();
+  (await import('../platformSettings')).platformSettings.invalidate();
   const [plan] = await db('plans').insert({ tenant_id: 1, name: 'Edge plan', limits: JSON.stringify({}) }).returning('id');
   const [acct] = await db('hosting_accounts').insert({
     tenant_id: 1, node_id: 1, plan_id: plan.id, username: 'edgeacct', uid: 41000, gid: 41000, status: 'active',
@@ -53,10 +56,12 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
     php_settings: JSON.stringify({ postMaxSizeMb: 2048 }),
   }).returning('id');
   const [goneSite] = await db('sites').insert({ tenant_id: 1, account_id: gone.id, name: 'Gone', slug: 'gone', base: 'php-8.3' }).returning('id');
+  // P2: ownership verified (an unverified domain is a placeholder without certificate, D1).
+  const verified = { verification_status: 'verified', verification_method: 'admin' };
   const [dom] = await db('domains').insert({
-    tenant_id: 1, account_id: acct.id, name: 'example.com', include_www: true, tls_mode: 'letsencrypt', force_https: true,
+    tenant_id: 1, account_id: acct.id, name: 'example.com', include_www: true, tls_mode: 'letsencrypt', force_https: true, ...verified,
   }).returning('id');
-  const [goneDom] = await db('domains').insert({ tenant_id: 1, account_id: gone.id, name: 'gone.example' }).returning('id');
+  const [goneDom] = await db('domains').insert({ tenant_id: 1, account_id: gone.id, name: 'gone.example', ...verified }).returning('id');
   await db('site_routes').insert([
     { account_id: acct.id, domain_id: dom.id, path_prefix: '/', site_id: site.id },
     { account_id: gone.id, domain_id: goneDom.id, path_prefix: '/', site_id: goneSite.id },
@@ -69,6 +74,7 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
   const d = vhosts.find((v) => v.id === `d-${dom.id}`)!;
   assert.deepEqual(d.serverNames, ['example.com', 'www.example.com']);
   assert.equal(d.tls, null);
+  assert.deepEqual(vhosts.find((v) => v.id === `p-${site.id}`)?.serverNames, [`main-${site.id}.previews.host.example`]);
   assert.equal(d.clientMaxBodyMb, 2048);
 
   // ── sync without an edge container: files written, error kept ──
@@ -222,24 +228,96 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
   });
   assert.equal((await certificateService.request(dom.id, { force: true })).status, 'valid', 'the queue moved on');
 
+  // ── HTTP-01 impossible (port 80 unreachable) + zone on our PowerDNS: ONE new order solved by DNS-01 ──
+  const { dns01Provider } = await import('../dns/acmeChallenge');
+  const seenChallenges: string[] = [];
+  let orderCount = 0;
+  let solvable = true;
+  const dnsCalls: string[] = [];
+  certificateService._setDeps({
+    dns01: {
+      canSolve: async () => solvable,
+      setChallenge: async (n: string) => { dnsCalls.push(`set:${n}`); },
+      removeChallenge: async (n: string) => { dnsCalls.push(`remove:${n}`); },
+    },
+    createClient: () => ({
+      async createAccount() { return {}; },
+      async createOrder() { orderCount++; return { url: 'o' } as unknown as acme.Order; },
+      async getAuthorizations() {
+        return names.map((value, i) => ({
+          url: `a${i}`, status: 'pending', identifier: { type: 'dns', value },
+          challenges: [
+            { type: 'http-01', url: `h${i}`, token: `httpTOKEN_${i}_000000`, status: 'pending' },
+            { type: 'dns-01', url: `d${i}`, token: `dnsTOKEN_${i}_0000000`, status: 'pending' },
+          ],
+        })) as unknown as acme.Authorization[];
+      },
+      async getChallengeKeyAuthorization() { return 'ka'; },
+      async completeChallenge(c) {
+        seenChallenges.push((c as { type: string }).type);
+        if ((c as { type: string }).type === 'http-01') throw new Error('Timeout during connect (likely firewall problem)');
+        return {};
+      },
+      async waitForValidStatus(item) { return item; },
+      async finalizeOrder(o) { return o; },
+      async getCertificate() { return pems.cert; },
+    }),
+  });
+  await db('certificates').where({ domain_id: dom.id }).update({ status: 'failed', failure_count: 0, last_attempt_at: null });
+  const viaDns = await certificateService.request(dom.id, { force: true });
+  assert.equal(viaDns.status, 'valid', viaDns.lastError ?? '');
+  assert.equal(orderCount, 2, 'a second order after the HTTP-01 failure');
+  assert.deepEqual(seenChallenges, ['http-01', 'dns-01', 'dns-01']);
+  assert.deepEqual(dnsCalls, ['set:example.com', 'remove:example.com', 'set:www.example.com', 'remove:www.example.com']);
+  assert.ok(viaDns.log.some((l) => l.message.includes('retrying with DNS-01')));
+  // Zone not on our DNS: no retry, the HTTP-01 failure is recorded.
+  solvable = false;
+  orderCount = 0;
+  seenChallenges.length = 0;
+  await db('certificates').where({ domain_id: dom.id }).update({ status: 'failed', failure_count: 0, last_attempt_at: null });
+  const noDns = await certificateService.request(dom.id, { force: true });
+  assert.equal(noDns.status, 'failed');
+  assert.equal(orderCount, 1);
+  assert.deepEqual(seenChallenges, ['http-01']);
+  certificateService._setDeps({
+    dns01: dns01Provider,
+    createClient: () => ({
+      async createAccount() { return {}; },
+      async createOrder() { return { url: 'o' } as unknown as acme.Order; },
+      async getAuthorizations() { return [] as acme.Authorization[]; },
+      async getChallengeKeyAuthorization() { return 'ka'; },
+      async completeChallenge() { return {}; },
+      async waitForValidStatus(item) { return item; },
+      async finalizeOrder(o) { return o; },
+      async getCertificate() { return pems.cert; },
+    }),
+  });
+  assert.equal((await certificateService.request(dom.id, { force: true })).status, 'valid');
+
   // ── explicit requests: one error code per reason (never a false "suspended") ──
-  const [offDom] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'notls.example', tls_mode: 'none' }).returning('id');
+  const [offDom] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'notls.example', tls_mode: 'none', ...verified }).returning('id');
   assert.equal(await codeOf(certificateService.startRequest(offDom.id)), '409:tlsDisabled');
-  const [goneLe] = await db('domains').insert({ tenant_id: 1, account_id: gone.id, name: 'gone-le.example', tls_mode: 'letsencrypt' }).returning('id');
+  const [goneLe] = await db('domains').insert({ tenant_id: 1, account_id: gone.id, name: 'gone-le.example', tls_mode: 'letsencrypt', ...verified }).returning('id');
   assert.equal(await codeOf(certificateService.startRequest(goneLe.id)), '409:accountDeleting');
   await db('app_config').insert({ key: 'panel_hostname', value: 'panel.host.example' }).onConflict('key').merge();
-  const [reserved] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'x.preview.panel.host.example', tls_mode: 'letsencrypt' }).returning('id');
+  const [reserved] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'x.preview.panel.host.example', tls_mode: 'letsencrypt', ...verified }).returning('id');
   assert.equal(await codeOf(certificateService.startRequest(reserved.id)), '409:domainReserved');
+  const [onPreview] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'shop-1.previews.host.example', tls_mode: 'letsencrypt', ...verified }).returning('id');
+  assert.equal(await codeOf(certificateService.startRequest(onPreview.id)), '409:domainReserved');
+  // D1: an unverified domain never gets a certificate.
+  const [pendingDom] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'pending.example.org', tls_mode: 'letsencrypt' }).returning('id');
+  assert.equal(await codeOf(certificateService.startRequest(pendingDom.id)), '409:domainNotVerified');
+  assert.equal(await db('certificates').where({ domain_id: pendingDom.id }).first('id'), undefined);
   // A non-public panel name: no ACME order for it nor its preview hosts (no row created).
   certificateService.ensureAuxiliary();
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(await db('certificates').whereNull('domain_id').first('id'), undefined, 'no panel / preview row for panel.host.example');
   await db('app_config').where({ key: 'panel_hostname' }).del();
   // Reserved / private TLD of a tenant domain: refused before the CA is contacted.
-  const [lab] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'shop.lab.test', tls_mode: 'letsencrypt' }).returning('id');
+  const [lab] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'shop.lab.test', tls_mode: 'letsencrypt', ...verified }).returning('id');
   assert.equal(await codeOf(certificateService.startRequest(lab.id)), '409:certificateNameNotPublic');
   assert.equal(await db('certificates').where({ domain_id: lab.id }).first('id'), undefined);
-  await db('domains').whereIn('id', [offDom.id, goneLe.id, reserved.id, lab.id]).del();
+  await db('domains').whereIn('id', [offDom.id, goneLe.id, reserved.id, onPreview.id, pendingDom.id, lab.id]).del();
   assert.equal(await codeOf(certificateService.startRequest(999_999)), '404:notFound');
 
   // ── removal ──

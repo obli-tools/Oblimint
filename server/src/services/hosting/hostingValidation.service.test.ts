@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   customNginxError, dataPathContainsDocroot, dataPathForbiddenError, dataPathsOverlap, findDataPathOverlap, isPlatformReservedDomain, parentDomains, isValidAccountUsername, isValidClientUsername,
-  normalizeDomainName, normalizeExtensions, phpSettingsError,
+  normalizeDomainName, normalizeExtensions, phpSettingsError, isSameOrSubdomain, platformHostList, wildcardCoversPlatform,
 } from './hostingValidation.service';
 import {
   accountCreateSchema, clientUserAddSchema, dataPathInputSchema, domainCreateSchema, planLimitsSchema, routeInputSchema,
@@ -161,4 +161,46 @@ test('data paths: no per-directory config file, never the docroot or an ancestor
   assert.equal(dataPathContainsDocroot('public/img', 'public'), false);
   assert.equal(dataPathContainsDocroot('pub', 'public'), false);
   assert.equal(dataPathContainsDocroot('storage', ''), false);
+});
+
+// ── P2 (edge-ownership): platform names of the settings ─────────────────────
+
+test('P2 reserved names: preview domain and everything under it, DB admin host, probe hosts — for everyone', () => {
+  const hosts = {
+    panelHostname: 'panel.example.com', previewDomain: 'Previews.Example.NET', dbAdminHostname: 'db.tools.example.org',
+    probeHosts: ['v4.example.com', 'v6.example.com', null],
+  };
+  for (const n of ['previews.example.net', 'shop-12.previews.example.net', 'a.b.previews.example.net', 'db.tools.example.org',
+    'v4.example.com', 'v6.example.com', 'panel.example.com', 'x-1.preview.panel.example.com']) {
+    assert.equal(isPlatformReservedDomain(n, hosts), true, n);
+    assert.equal(isPlatformReservedDomain(n, hosts, { platformAdmin: true }), true, `${n} (admin)`);
+  }
+  // The P1 rule stays: the panel zone is reserved for tenants, www.<panel> possible for a platform admin.
+  assert.equal(isPlatformReservedDomain('www.panel.example.com', hosts), true);
+  assert.equal(isPlatformReservedDomain('www.panel.example.com', hosts, { platformAdmin: true }), false);
+  // Parents / siblings of the platform names are ordinary names.
+  for (const n of ['example.net', 'tools.example.org', 'x.tools.example.org', 'example.com', 'v5.example.com', 'xpreviews.example.net']) {
+    assert.equal(isPlatformReservedDomain(n, hosts), false, n);
+  }
+  // Unset settings reserve nothing more than P1.
+  assert.equal(isPlatformReservedDomain('shop-12.previews.example.net', { panelHostname: 'panel.example.com' }), false);
+  assert.deepEqual(platformHostList(hosts), ['panel.example.com', 'previews.example.net', 'db.tools.example.org', 'v4.example.com', 'v6.example.com']);
+});
+
+test('a wildcard never covers a platform host name; sub-domain helper', () => {
+  const hosts = { panelHostname: 'panel.example.com', previewDomain: 'previews.example.net', dbAdminHostname: null, probeHosts: [] };
+  assert.equal(wildcardCoversPlatform('example.com', hosts), true, '*.example.com would serve x.panel.example.com');
+  assert.equal(wildcardCoversPlatform('example.net', hosts), true);
+  assert.equal(wildcardCoversPlatform('panel.example.com', hosts), false, 'the name itself is reserved elsewhere');
+  assert.equal(wildcardCoversPlatform('shop.example.com', hosts), false);
+  assert.equal(wildcardCoversPlatform('other.org', hosts), false);
+  assert.equal(isSameOrSubdomain('a.b.example.com', 'example.com'), true);
+  assert.equal(isSameOrSubdomain('example.com', 'example.com'), true);
+  assert.equal(isSameOrSubdomain('xexample.com', 'example.com'), false);
+});
+
+test('domain create schema: wildcard + dnsZone accepted (P2)', () => {
+  assert.equal(domainCreateSchema.safeParse({ accountId: 1, name: 'example.com', wildcard: true, dnsZone: 'hosted' }).success, true);
+  assert.equal(domainCreateSchema.safeParse({ accountId: 1, name: '*.example.com' }).success, false, 'a wildcard is a flag, never a name');
+  assert.equal(domainCreateSchema.safeParse({ accountId: 1, name: 'example.com', dnsZone: 'bind' }).success, false);
 });

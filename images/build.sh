@@ -5,7 +5,8 @@
 #   images/build.sh [--push] [--no-pull] [name…]
 #
 #   name: apache-php7.4 … apache-php8.4, nginx-php8.1 … nginx-php8.4,
-#         nginx-static, edge, filesrv, hostd, or a group: sites | infra | all
+#         nginx-static, edge, filesrv, hostd, pdns, phpmyadmin, adminer (P2),
+#         or a group: sites | infra | all
 #         (default: all).
 #
 # Environment:
@@ -50,7 +51,7 @@ sites=""
 for v in $APACHE_PHP; do sites="$sites apache-php$v"; done
 for v in $NGINX_PHP; do sites="$sites nginx-php$v"; done
 sites="$sites nginx-static"
-infra="edge filesrv hostd"
+infra="edge filesrv hostd pdns phpmyadmin adminer"
 
 expanded=""
 for n in ${names:-all}; do
@@ -98,6 +99,10 @@ for n in $expanded; do
 		edge) build edge "$HERE" -f "$HERE/edge/Dockerfile" ;;
 		filesrv) build filesrv "$HERE" -f "$HERE/filesrv/Dockerfile" ;;
 		hostd) build hostd "$HERE/../hostd" -f "$HERE/../hostd/Dockerfile" ;;
+		# P2: module dns (images/pdns/), module databases (images/dbadmin/)
+		pdns) build pdns "$HERE" -f "$HERE/pdns/Dockerfile" ;;
+		phpmyadmin) build phpmyadmin "$HERE" -f "$HERE/dbadmin/phpmyadmin/Dockerfile" ;;
+		adminer) build adminer "$HERE" -f "$HERE/dbadmin/adminer/Dockerfile" ;;
 		*) echo "unknown image: $n (see --help)" >&2; exit 2 ;;
 	esac
 done

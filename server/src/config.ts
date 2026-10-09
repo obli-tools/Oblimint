@@ -178,6 +178,36 @@ export const config = {
     /** Forwarded to hostd: without XFS project quotas, accept disk limits that
      *  are only measured (not enforced). Off by default: hostd refuses them. */
     allowMeasuredQuota: ['1', 'true', 'yes', 'on'].includes((process.env.OBLIMINT_ALLOW_MEASURED_QUOTA || '').trim().toLowerCase()),
+    // ── P2 (docs/P2-PLAN.md §Configuration) ──
+    /**
+     * Port gateway (hostd): the file servers publish NO host port; hostd
+     * listens on each account's SFTP port, applies the allow-list / bans,
+     * starts the file server on demand (socket activation) and proxies with
+     * the PROXY protocol. 'off' = P1 behaviour (Docker publishes the port).
+     */
+    portGateway: process.env.OBLIMINT_PORT_GATEWAY !== 'off',
+    /** Host ports of the external SQL access of database instances. */
+    dbPortMin: intEnv('OBLIMINT_DB_PORT_MIN', 33000),
+    dbPortMax: intEnv('OBLIMINT_DB_PORT_MAX', 34999),
+    /** Registry prefix of the official database images ('' = Docker Hub): <prefix>mariadb:11.4. */
+    dbImagePrefix: process.env.OBLIMINT_DB_IMAGE_PREFIX || '',
+    /** PowerDNS Authoritative image (module dns). */
+    pdnsImage: process.env.OBLIMINT_PDNS_IMAGE || 'meejay/oblimint-pdns',
+    /**
+     * Host addresses PowerDNS publishes port 53 on (comma / space separated
+     * IPs, e.g. the LAN or public address). Empty = every address, which
+     * Docker cannot do while systemd-resolved's stub holds 127.0.0.53:53.
+     */
+    pdnsBind: (process.env.OBLIMINT_PDNS_BIND || '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
+    /** Host port of PowerDNS (container side always 53). */
+    pdnsPort: intEnv('OBLIMINT_PDNS_PORT', 53),
+    /** phpMyAdmin / Adminer images with the panel single sign-on (module databases). */
+    phpMyAdminImage: process.env.OBLIMINT_PMA_IMAGE || 'meejay/oblimint-phpmyadmin',
+    adminerImage: process.env.OBLIMINT_ADMINER_IMAGE || 'meejay/oblimint-adminer',
+    /** Per-site persisted access logs (module cron-logs): <data>/logs. */
+    logsDir: process.env.OBLIMINT_LOGS_DIR || path.join(dataDir, 'logs'),
+    /** Usage collector + enforcement workers (module usage). 'off' = no collection. */
+    usageCollector: process.env.OBLIMINT_USAGE_COLLECTOR !== 'off',
   },
   /** Static client build served in production. */
   // server/src (tsx) → ../../client/dist ; server/dist/src (compiled) → ../../../client/dist

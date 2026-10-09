@@ -2,8 +2,8 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  ArrowLeft, Cpu, Database, Eye, FolderOpen, Globe, History, LayoutDashboard, Play, RefreshCw, Rocket, Route, Square,
-  Trash2, ExternalLink,
+  ArrowLeft, CalendarClock, Cpu, Database, Eye, FolderOpen, Globe, History, LayoutDashboard, Play, RefreshCw, Rocket, Route, ScrollText,
+  Square, Trash2, ExternalLink,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { HostingSocketEvents, type HostingChangedPayload, type Site } from '@oblimint/shared';
@@ -27,9 +27,11 @@ import { SiteRuntimeTab } from '@/components/sites/tabs/SiteRuntimeTab';
 import { SiteRoutesTab } from '@/components/sites/tabs/SiteRoutesTab';
 import { SiteDataPathsTab } from '@/components/sites/tabs/SiteDataPathsTab';
 import { SiteFilesTab } from '@/components/sites/tabs/SiteFilesTab';
+import { SiteCronTab } from '@/components/cron/SiteCronTab';
+import { SiteLogsTab } from '@/components/logs/SiteLogsTab';
 
-type Tab = 'overview' | 'releases' | 'runtime' | 'routes' | 'data' | 'files';
-const TAB_IDS: readonly Tab[] = ['overview', 'releases', 'runtime', 'routes', 'data', 'files'];
+type Tab = 'overview' | 'releases' | 'runtime' | 'routes' | 'data' | 'files' | 'cron' | 'logs';
+const TAB_IDS: readonly Tab[] = ['overview', 'releases', 'runtime', 'routes', 'data', 'files', 'cron', 'logs'];
 
 function isTab(v: string | null): v is Tab {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
@@ -174,6 +176,8 @@ export function SiteDetailPage() {
     { id: 'routes', label: t('sites.tabs.routes') || 'Routes & domains', icon: <Route size={16} /> },
     { id: 'data', label: t('sites.tabs.data') || 'Data paths', icon: <Database size={16} /> },
     { id: 'files', label: t('sites.tabs.files') || 'File access', icon: <FolderOpen size={16} /> },
+    { id: 'cron', label: t('cron.tab.title') || 'Cron', icon: <CalendarClock size={16} /> },
+    { id: 'logs', label: t('logs.tab.title') || 'Logs', icon: <ScrollText size={16} /> },
   ];
 
   const tabProps = {
@@ -279,6 +283,8 @@ export function SiteDetailPage() {
       {tab === 'routes' && <SiteRoutesTab {...tabProps} />}
       {tab === 'data' && <SiteDataPathsTab {...tabProps} />}
       {tab === 'files' && <SiteFilesTab {...tabProps} />}
+      {tab === 'cron' && <SiteCronTab site={site} />}
+      {tab === 'logs' && <SiteLogsTab site={site} />}
       </Fragment>
 
       <PublishModal

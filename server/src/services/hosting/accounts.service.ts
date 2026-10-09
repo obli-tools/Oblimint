@@ -8,6 +8,7 @@ import type { AccountCreateBody, AccountUpdateBody } from '../../validators/host
 import { auditService } from '../audit.service';
 import { fileServerService } from '../docker/filesrv.service';
 import { reconcileService, type AccountSnapshot, type SiteSnapshot } from '../docker/reconcile.service';
+import { dnsService } from '../dns/dns.service';
 import { certificateService } from '../edge/certificate.service';
 import { edgeService } from '../edge/edge.service';
 import { releaseService } from '../releases/release.service';
@@ -108,6 +109,18 @@ export async function siteSnapshots(account: Pick<AccountRow, 'id' | 'node_id' |
 
 function scheduleEdgeSync(reason: string): void {
   try { edgeService.scheduleSync(reason); } catch (err) { logger.warn({ err, reason }, 'edgeService.scheduleSync failed'); }
+}
+
+/**
+ * DNS follows the account status (rule D1: a 'deleting' account's zones are
+ * unpublished). Hooks never throw nor block; guarded anyway.
+ */
+function dnsAccountChanged(accountId: number, reason: string): void {
+  try { dnsService.accountChanged(accountId, reason); } catch (err) { logger.warn({ err, accountId, reason }, 'dnsService.accountChanged failed'); }
+}
+
+function dnsSyncAll(reason: string): void {
+  try { dnsService.requestSyncAll(reason); } catch (err) { logger.warn({ err, reason }, 'dnsService.requestSyncAll failed'); }
 }
 
 function requestAccount(accountId: number, reason: string): void {
@@ -259,6 +272,7 @@ export const accountsService = {
       });
       emitAccount(row, 'updated');
       requestAccount(row.id, suspended ? 'suspended' : 'unsuspended');
+      dnsAccountChanged(row.id, suspended ? 'suspended' : 'unsuspended');
       scheduleEdgeSync(suspended ? `account ${row.id} suspended` : `account ${row.id} unsuspended`);
       await applyFileServerMode(row.id);
     }
@@ -302,6 +316,7 @@ async function removeAccount(req: Request, actor: HostingActor, row: AccountRow)
   await withTenantLock(row.tenant_id, (trx) => trx('hosting_accounts').where({ id: row.id, tenant_id: row.tenant_id })
     .update({ status: 'deleting', status_message: null, updated_at: db.fn.now() }));
   emitAccount(row, 'updated');
+  dnsAccountChanged(row.id, 'deleting');
 
   const snapshot: AccountSnapshot = { id: row.id, nodeId: row.node_id, uid: row.uid, gid: row.gid, sites: await siteSnapshots(row) };
   // No publication / rollback of its sites may run during the teardown (it
@@ -315,6 +330,7 @@ async function removeAccount(req: Request, actor: HostingActor, row: AccountRow)
     await db('hosting_accounts').where({ id: row.id, tenant_id: row.tenant_id, status: 'deleting' })
       .update({ status: back, updated_at: db.fn.now() });
     emitAccount(row, 'updated');
+    dnsAccountChanged(row.id, 'delete-aborted');
     throw err;
   }
   let domainIds: number[];
@@ -329,6 +345,7 @@ async function removeAccount(req: Request, actor: HostingActor, row: AccountRow)
         resourceType: 'account', resourcePath: String(row.id), details: { username: row.username, error: message.slice(0, 500) },
       });
       emitAccount(row, 'updated');
+      dnsAccountChanged(row.id, 'delete-failed');
       throw backendUnavailable(err, 'The account could not be removed from the host', actor);
     }
 
@@ -347,6 +364,8 @@ async function removeAccount(req: Request, actor: HostingActor, row: AccountRow)
   await db('hosting_accounts').where({ id: row.id, tenant_id: row.tenant_id }).del();
   const deletedUsers = await clientUsersService.deleteOrphans(userIds);
   scheduleEdgeSync(`account ${row.id} deleted`);
+  // Its zones went with the row (CASCADE): the full pass drops them from PowerDNS now.
+  dnsSyncAll('account-deleted');
   await auditService.logReqAs(req, row.tenant_id, 'account.delete', {
     resourceType: 'account', resourcePath: String(row.id),
     details: { username: row.username, sites: snapshot.sites.length, domains: domainIds.length, deletedClientUsers: deletedUsers },

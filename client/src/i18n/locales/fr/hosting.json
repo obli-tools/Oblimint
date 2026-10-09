@@ -5,13 +5,17 @@
       "domains_manage": "Gérer les domaines",
       "domains_manage_hint": "Ajouter des domaines et modifier leurs routes.",
       "files_manage": "Gérer l'accès fichiers",
-      "files_manage_hint": "Ouvrir l'accès SFTP, définir son mot de passe et ses clés SSH.",
+      "files_manage_hint": "Ouvrir l'accès SFTP, définir son mot de passe et ses clés SSH, et la liste blanche d'accès.",
       "releases_approve": "Approuver les releases",
       "releases_approve_hint": "Approuver ou rejeter les releases en attente de validation.",
       "releases_publish": "Publier des releases",
       "releases_publish_hint": "Publier le staging et revenir à une release précédente.",
       "sites_manage": "Gérer les sites",
-      "sites_manage_hint": "Créer, configurer et supprimer les sites du compte."
+      "sites_manage_hint": "Créer, configurer et supprimer les sites du compte.",
+      "databases_manage": "Gérer les bases de données",
+      "databases_manage_hint": "Créer des instances, des bases et des utilisateurs, ouvrir phpMyAdmin / Adminer.",
+      "dns_manage": "Gérer les zones DNS",
+      "dns_manage_hint": "Modifier les enregistrements DNS des zones du compte."
     },
     "changePlan": "Changer de plan",
     "changePlanFailed": "Échec du changement de plan",
@@ -407,7 +411,9 @@
       "tlsDisabled": "Le HTTPS est désactivé pour ce domaine : activez-le avant de demander un certificat.",
       "unknownNode": "Ce nœud n'existe pas.",
       "usernameTaken": "Ce nom d'utilisateur est déjà pris.",
-      "validation": "Certains champs sont invalides."
+      "validation": "Certains champs sont invalides.",
+      "notFound": "Cet élément n'existe plus (il a peut-être été supprimé entre-temps). Actualisez la page.",
+      "rateLimited": "Trop de requêtes : patientez une minute, puis réessayez."
     },
     "generate": "Générer",
     "hide": "Masquer",

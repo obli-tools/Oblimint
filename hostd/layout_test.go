@@ -13,21 +13,28 @@ import (
 func TestLayoutMatchesPanel(t *testing.T) {
 	l := newLayout("")
 	cases := map[string]string{
-		l.Root:                    "/srv/oblimint",
-		l.AccountsRoot():          "/srv/oblimint/accounts",
-		l.Account(7):              "/srv/oblimint/accounts/7",
-		l.Staging(7):              "/srv/oblimint/accounts/7/staging",
-		l.SiteStaging(7, "blog"):  "/srv/oblimint/accounts/7/staging/blog",
-		l.Data(7):                 "/srv/oblimint/accounts/7/data",
-		l.SiteData(7, "blog"):     "/srv/oblimint/accounts/7/data/blog",
-		l.FileServerState(7):      "/srv/oblimint/accounts/7/filesrv",
-		l.Site(7, 42):             "/srv/oblimint/accounts/7/sites/42",
-		l.Releases(7, 42):         "/srv/oblimint/accounts/7/sites/42/releases",
-		l.Runtime(7, 42):          "/srv/oblimint/accounts/7/sites/42/runtime",
-		l.RunDir():                "/srv/oblimint/run",
-		newLayout("/data/").Root:  "/data",
-		newLayout(`C:\x\y`).Root:  "C:/x/y",
-		newLayout("/").Account(1): "/accounts/1",
+		l.Root:                                     "/srv/oblimint",
+		l.AccountsRoot():                           "/srv/oblimint/accounts",
+		l.Account(7):                               "/srv/oblimint/accounts/7",
+		l.Staging(7):                               "/srv/oblimint/accounts/7/staging",
+		l.SiteStaging(7, "blog"):                   "/srv/oblimint/accounts/7/staging/blog",
+		l.Data(7):                                  "/srv/oblimint/accounts/7/data",
+		l.SiteData(7, "blog"):                      "/srv/oblimint/accounts/7/data/blog",
+		l.FileServerState(7):                       "/srv/oblimint/accounts/7/filesrv",
+		l.Site(7, 42):                              "/srv/oblimint/accounts/7/sites/42",
+		l.Releases(7, 42):                          "/srv/oblimint/accounts/7/sites/42/releases",
+		l.Runtime(7, 42):                           "/srv/oblimint/accounts/7/sites/42/runtime",
+		l.RunDir():                                 "/srv/oblimint/run",
+		l.DbSockets(7):                             "/srv/oblimint/accounts/7/dbsock",
+		l.DbSocketDefault(7, dbFamilyMySQL):        "/srv/oblimint/accounts/7/dbsock/mysql",
+		l.DbSocketDefault(7, dbFamilyPostgreSQL):   "/srv/oblimint/accounts/7/dbsock/postgresql",
+		l.DbSocketInstance(7, 12):                  "/srv/oblimint/accounts/7/dbsock/i-12",
+		l.DbData(7, 12):                            "/srv/oblimint/accounts/7/databases/12",
+		DbSocketLinkTarget(dbFamilyMySQL, 12):      "/run/oblimint-db/i-12/mysqld.sock",
+		DbSocketLinkTarget(dbFamilyPostgreSQL, 12): "/run/oblimint-db/i-12/.s.PGSQL.5432",
+		newLayout("/data/").Root:                   "/data",
+		newLayout(`C:\x\y`).Root:                   "C:/x/y",
+		newLayout("/").Account(1):                  "/accounts/1",
 	}
 	for got, want := range cases {
 		if got != want {
@@ -49,17 +56,26 @@ func TestLayoutTrees(t *testing.T) {
 	for _, d := range l.siteDirs(3, 9, "shop", o) {
 		got = append(got, d.String())
 	}
+	for _, d := range l.dbInstanceDirs(3, 12, o) {
+		got = append(got, d.String())
+	}
 	want := []string{
 		"accounts/3 0:0 0711",
 		"accounts/3/staging 20001:20001 0750",
 		"accounts/3/data 0:20001 0750",
 		"accounts/3/filesrv 20001:20001 0700",
 		"accounts/3/sites 0:0 0711",
+		"accounts/3/dbsock 0:20001 0750",
+		"accounts/3/dbsock/mysql 0:20001 0750",
+		"accounts/3/dbsock/postgresql 0:20001 0750",
+		"accounts/3/databases 0:0 0711",
 		"accounts/3/staging/shop 20001:20001 0750",
 		"accounts/3/data/shop 20001:20001 0750",
 		"accounts/3/sites/9 0:0 0755",
 		"accounts/3/sites/9/releases 0:0 0755",
 		"accounts/3/sites/9/runtime 0:0 0755",
+		"accounts/3/dbsock/i-12 20001:20001 0750",
+		"accounts/3/databases/12 20001:20001 0700",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("trees:\n got %q\nwant %q", got, want)

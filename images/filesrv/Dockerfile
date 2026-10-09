@@ -8,8 +8,9 @@
 # Runtime (module orchestration — fileServerContainerSpec): User=<uid>:<gid>
 # of the account, CapDrop ALL, no-new-privileges, ReadonlyRootfs + tmpfs
 # /tmp; mounts /srv/files/staging (rw), /srv/files/data (rw),
-# /var/lib/sftpgo (rw, host keys); host port → 2022/tcp; env
-# OBLIMINT_HOOK_BASE, OBLIMINT_ACCOUNT_ID.
+# /var/lib/sftpgo (rw, host keys); host port → 2022/tcp (P1) or the hostd
+# port gateway (P2, no published port); env OBLIMINT_HOOK_BASE,
+# OBLIMINT_ACCOUNT_ID, OBLIMINT_PROXY_PROTOCOL=1 behind the gateway.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # SFTPGo 2.6.x on Alpine, pinned (tag + manifest digest checked on Docker Hub).

@@ -27,10 +27,13 @@ const maxBodyBytes = 1 << 20
 type api struct {
 	ops    Ops
 	layout Layout
+	// P2 (nil = 501 unsupported: tests of the P1 routes).
+	fw *firewallManager
+	gw *gateway
 }
 
-func newMux(ops Ops, l Layout) *http.ServeMux {
-	a := &api{ops: ops, layout: l}
+func newMux(ops Ops, l Layout, fw *firewallManager, gw *gateway) *http.ServeMux {
+	a := &api{ops: ops, layout: l, fw: fw, gw: gw}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", a.health)
 	mux.HandleFunc("GET /v1/fs", a.fs)
@@ -44,6 +47,17 @@ func newMux(ops Ops, l Layout) *http.ServeMux {
 	mux.HandleFunc("PUT /v1/accounts/{id}/sites/{siteId}/data-paths", a.ensureDataPaths)
 	mux.HandleFunc("POST /v1/accounts/{id}/sites/{siteId}/data-paths/seed", a.seedDataPath)
 	mux.HandleFunc("POST /v1/accounts/{id}/sites/{siteId}/data-paths/clear", a.clearDataPaths)
+	// P2 — databases, firewall, port gateway (api_p2.go).
+	mux.HandleFunc("PUT /v1/accounts/{id}/db-instances/{iid}", a.ensureDbInstance)
+	mux.HandleFunc("DELETE /v1/accounts/{id}/db-instances/{iid}", a.removeDbInstance)
+	mux.HandleFunc("PUT /v1/accounts/{id}/db-default/{family}", a.setDefaultDbSocket)
+	mux.HandleFunc("GET /v1/firewall", a.firewallStatus)
+	mux.HandleFunc("PUT /v1/firewall/global", a.setFirewallGlobal)
+	mux.HandleFunc("PUT /v1/firewall/accounts/{id}", a.applyFirewall)
+	mux.HandleFunc("DELETE /v1/firewall/accounts/{id}", a.removeFirewall)
+	mux.HandleFunc("PUT /v1/gateway/accounts/{id}", a.setGateway)
+	mux.HandleFunc("DELETE /v1/gateway/accounts/{id}", a.removeGateway)
+	mux.HandleFunc("GET /v1/gateway/events", a.gatewayEvents)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, &apiError{http.StatusNotFound, codeNotFound, "no route " + r.Method + " " + r.URL.Path})
 	})

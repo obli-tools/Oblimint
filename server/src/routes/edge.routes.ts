@@ -6,7 +6,7 @@ import { certificateService } from '../services/edge/certificate.service';
 import { edgeService } from '../services/edge/edge.service';
 import { logger } from '../utils/logger';
 
-// /api/system/edge — OWNED BY MODULE `edge` (docs/P1-PLAN.md §API).
+// /api/system/edge — OWNED BY MODULE `edge-ownership` (docs/P1-PLAN.md §API).
 // Platform admin only (mounted behind requireAuth + requireRole('admin')).
 //   GET  /         → EdgeStatus
 //   POST /sync     → EdgeSyncResult

@@ -1,0 +1,615 @@
+{
+  "security": {
+    "applied": {
+      "at": "Applied by the host on {{date}}.",
+      "error": "The firewall rules could not be applied:",
+      "ok": "applied",
+      "pending": "pending",
+      "pendingHint": "The host has not applied the latest state yet (in progress, or hostd unreachable)."
+    },
+    "bans": {
+      "empty": "No banned address.",
+      "failures": "{{count}} failures",
+      "hint": "Repeated authentication failures (SFTP, external SQL) ban the address for a while. An address of the rules is never banned.",
+      "title": "Banned addresses",
+      "unban": "Unban",
+      "unbanFailed": "Failed to unban the address",
+      "unbanned": "Address unbanned",
+      "until": "until {{date}}"
+    },
+    "errors": {
+      "backendUnavailable": "The host daemon (hostd) is unreachable: the change is saved but not applied yet.",
+      "cidrTooWide": "This range is too wide (at least /8 in IPv4, /32 in IPv6).",
+      "invalidCidr": "Enter an IPv4 / IPv6 address or a CIDR range.",
+      "lockoutRisk": "No rule and no address of your session is allowed: switching to the allow-list would lock everybody out.",
+      "noSessionIp": "No address of your session is known yet: run the detection again, then retry.",
+      "probeExpired": "The address detection expired: run it again.",
+      "rateLimited": "Too many attempts: wait a minute, then retry.",
+      "ruleExists": "This address is already in the allow-list.",
+      "ruleLimit": "This account already has 100 rules: delete some before adding new ones."
+    },
+    "grants": {
+      "empty": "No active grant: they appear when a client user of this account signs in with 2FA.",
+      "expires": "expires {{date}}",
+      "revoke": "Revoke",
+      "revokeConfirm": "Revoke the automatic grant of {{ip}}? It comes back at the next activity of its 2FA session.",
+      "revokeFailed": "Failed to revoke the grant",
+      "revokeTitle": "Revoke the grant",
+      "revoked": "Grant revoked",
+      "sourceProbe": "probe",
+      "sourceSession": "session",
+      "title": "Automatic grants (2FA)"
+    },
+    "loadFailed": "Failed to load the access settings",
+    "lockout": {
+      "confirm": "Switch anyway",
+      "message": "The allow-list is empty and none of your addresses is allowed: once this mode is applied, nobody can reach the SFTP / SQL ports of this account until a rule is added. Switch anyway?",
+      "title": "Risk of locking yourself out"
+    },
+    "mode": {
+      "allowlist": "Allow-list",
+      "allowlistHint": "Only the addresses and ranges of the rules below may connect (bans still apply).",
+      "auto2fa": "Auto after 2FA",
+      "auto2faHint": "The rules, plus the addresses of the client users who signed in to the panel with 2FA (temporary grant, renewed while they use the panel).",
+      "open": "Open",
+      "openHint": "Everyone may connect; addresses that fail to authenticate too often are banned.",
+      "saveFailed": "Failed to change the access mode",
+      "saved": "Access mode saved",
+      "title": "Access mode"
+    },
+    "myIps": {
+      "allow": "Allow my IPs",
+      "allowFailed": "Failed to allow your addresses",
+      "allowed": "Your addresses were added to the rules",
+      "detect": "Detect again",
+      "inRules": "in the rules",
+      "loadFailed": "Failed to read your addresses.",
+      "mfa": "session with 2FA",
+      "mfaHint": "In « auto after 2FA » mode, the addresses of this session are allowed automatically on the accounts you belong to.",
+      "noMfa": "session without 2FA",
+      "noMfaHint": "Automatic grants need a sign-in with two-factor authentication. Staff users get no automatic grant: use rules.",
+      "none": "not detected",
+      "probeFailed": "The address detection failed.",
+      "probeNotConfigured": "probe host not configured",
+      "seen": "Seen by the panel",
+      "title": "My IP addresses"
+    },
+    "ports": {
+      "hint": "The rules apply to these ports only: the websites stay public.",
+      "none": "No port open for this account (file server off, no external SQL access).",
+      "sftp": "SFTP",
+      "sql": "SQL",
+      "title": "Protected ports"
+    },
+    "readOnly": "Changing the access rules needs the « file access » permission on this account.",
+    "rules": {
+      "add": "Add",
+      "addFailed": "Failed to add the rule",
+      "added": "Rule added",
+      "cidr": "Address or range",
+      "createdBy": "Added by",
+      "deleteConfirm": "Remove {{cidr}} from the allow-list? Connections from it are refused once the change is applied (except in open mode).",
+      "deleteFailed": "Failed to delete the rule",
+      "deleteTitle": "Delete the rule",
+      "deleted": "Rule deleted",
+      "empty": "No rule yet.",
+      "expires": "Expires (optional)",
+      "expiresCol": "Expires",
+      "expiryTooSoon": "The expiry must be at least 5 minutes from now.",
+      "label": "Label (optional)",
+      "labelCol": "Label",
+      "labelPlaceholder": "Office",
+      "openNote": "The account is in open mode: these rules are kept but not enforced (they still protect their addresses from bans).",
+      "permanent": "permanent",
+      "title": "Allow-list rules",
+      "until": "until"
+    },
+    "tab": {
+      "subtitle": "Who may reach the SFTP and SQL ports of this account.",
+      "title": "Security"
+    },
+    "ttl": {
+      "hint": "An address stays allowed {{value}} after the last activity of its session in the panel.",
+      "label": "Grant lifetime (minutes)",
+      "range": "Between {{min}} and {{max}} minutes.",
+      "saveFailed": "Failed to save the grant lifetime",
+      "saved": "Grant lifetime saved"
+    },
+    "units": {
+      "h": "h",
+      "min": "min"
+    }
+  },
+  "usage": {
+    "accountTabs": {
+      "databases": "Databases",
+      "usage": "Usage"
+    },
+    "alerts": {
+      "cleared": "cleared",
+      "current": "current",
+      "none": "No open alert.",
+      "title": "Open alerts",
+      "workspace": "Workspace"
+    },
+    "chart": {
+      "noData": "No data for this period yet."
+    },
+    "db": {
+      "databases": "Databases",
+      "instances": "DB instances",
+      "size": "DB size"
+    },
+    "dimension": {
+      "databases": "Databases",
+      "dbSize": "Database size",
+      "disk": "Disk",
+      "traffic": "Traffic"
+    },
+    "disk": {
+      "checked": "Measured",
+      "noHistory": "The history fills in with one measure per day.",
+      "quota": "Quota",
+      "title": "Disk",
+      "used": "Used"
+    },
+    "gauge": {
+      "level": "{{level}} % reached"
+    },
+    "hero": {
+      "accounts": "Hosting accounts",
+      "alerts": "Open alerts",
+      "alertsCritical": "{{count}} at 100 %",
+      "dbInstances": "DB instances",
+      "disk": "Disk used",
+      "noEnvelope": "no workspace envelope",
+      "ofEnvelope": "{{pct}} % of {{value}}",
+      "platformTotal": "all workspaces",
+      "seeUsage": "Traffic, disk, resources",
+      "sites_one": "{{count}} site",
+      "sites_other": "{{count}} sites",
+      "traffic": "Traffic of the month"
+    },
+    "loadFailed": "Failed to load the usage",
+    "month": {
+      "next": "Next month",
+      "previous": "Previous month"
+    },
+    "overQuota": {
+      "blocked": "Uploads blocked",
+      "blockedBanner": "This account is over its quota: uploads are blocked (SFTP is read + delete only). Published sites keep running.",
+      "ok": "Within quota",
+      "suspended": "Suspended (quota)",
+      "suspendedBanner": "This account was suspended because it went over its quota.",
+      "warn": "Quota warning",
+      "warnBanner": "This account has reached a quota threshold. Free some space or ask for a larger plan."
+    },
+    "page": {
+      "oneWorkspace": "Workspace shown:",
+      "oneWorkspaceHint": "pick a chip for another workspace.",
+      "oneWorkspaceHintAdmin": "pick a chip for another workspace; the platform totals are below.",
+      "subtitle": "Traffic, disk and resources of the accounts."
+    },
+    "platform": {
+      "accounts": "Accounts",
+      "loadFailed": "Failed to load the platform usage",
+      "perTenant": "Per workspace",
+      "resources": "Host resources (last 24 h)",
+      "sites": "Sites",
+      "tenant": "Workspace",
+      "tenants": "Workspaces",
+      "title": "Platform"
+    },
+    "resources": {
+      "cpu": "CPU",
+      "cpuLegend": "CPU (% of one core)",
+      "hint": "All containers of the account summed (sites, databases, file server).",
+      "memLegend": "Memory (without cache)",
+      "memory": "Memory",
+      "none": "No sample yet.",
+      "title": "Resources (last 24 h)"
+    },
+    "top": {
+      "account": "Account",
+      "empty": "No account yet.",
+      "state": "State",
+      "title": "Top accounts"
+    },
+    "traffic": {
+      "dailyTitle": "Traffic of {{month}}",
+      "hint": "Bytes sent by the edge to the visitors (UTC days). The traffic quota resets on the 1st of each month.",
+      "none": "No traffic this month.",
+      "others": "Others",
+      "perSite": "Traffic per site",
+      "requests": "{{value}} requests",
+      "total": "total"
+    },
+    "units": {
+      "b": "B",
+      "gb": "GB",
+      "kb": "KB",
+      "mb": "MB",
+      "tb": "TB"
+    }
+  },
+  "cron": {
+    "col": {
+      "enabled": "Enabled",
+      "last": "Last run",
+      "name": "Name",
+      "next": "Next",
+      "schedule": "Schedule"
+    },
+    "create": "New cron job",
+    "created": "Cron job created",
+    "deleteConfirm": "Delete « {{name}} » and its history?",
+    "deleteFailed": "Failed to delete the cron job",
+    "deleteTitle": "Delete the cron job",
+    "deleted": "Cron job deleted",
+    "disabled": "disabled",
+    "empty": "No cron job yet.",
+    "errors": {
+      "backendUnavailable": "The container engine is unreachable: the job cannot run right now. Retry in a moment.",
+      "commandTooLong": "The command is too long (1000 characters at most).",
+      "cronInvalidSchedule": "Invalid schedule: 5 fields (minute hour day month weekday) or @hourly / @daily / @weekly / @monthly.",
+      "cronNameTaken": "A cron job with this name already exists on this site.",
+      "cronRunning": "This job is already running: wait for the end of the current run.",
+      "cronTooFrequent": "This schedule runs too often: the plan requires at least {{minIntervalMin}} minute(s) between two runs.",
+      "planLimit": "The plan of this account does not allow more cron jobs.",
+      "siteNotRunning": "The site is not running: start it before running a job."
+    },
+    "form": {
+      "command": "Command",
+      "commandHint": "Run with sh -c in the site container, as the account user, from /srv/releases/current (the published release, read only: write in the data paths).",
+      "createTitle": "New cron job",
+      "editTitle": "Edit {{name}}",
+      "enabled": "Enabled",
+      "name": "Name",
+      "namePlaceholder": "WordPress cron",
+      "overlapHint": "A run never overlaps the previous one: while it is still running, the next occurrence is skipped. Beyond the timeout the command is killed.",
+      "schedule": "Schedule",
+      "scheduleHint": "minute hour day-of-month month day-of-week — times are UTC.",
+      "timeout": "Timeout (seconds)",
+      "timeoutRange": "Timeout: between {{min}} and {{max}} seconds."
+    },
+    "history": "History",
+    "loadFailed": "Failed to load the cron jobs",
+    "presets": {
+      "daily": "Every day at 03:00",
+      "every15": "Every 15 minutes",
+      "every5": "Every 5 minutes",
+      "hourly": "Every hour",
+      "monthly": "The 1st of each month at 05:00",
+      "weekly": "Every Monday at 04:00"
+    },
+    "runFailed": "Failed to start the job",
+    "runNow": "Run now",
+    "runs": {
+      "back": "All runs",
+      "count": "{{count}} run(s)",
+      "duration": "Duration",
+      "empty": "This job has not run yet.",
+      "exit": "exit {{code}}",
+      "exitCode": "Exit code",
+      "loadFailed": "Failed to load the history",
+      "manual": "manual",
+      "more": "Show more",
+      "noOutput": "(no output)",
+      "output": "Output (stdout + stderr)",
+      "outputFailed": "Failed to load the output",
+      "scheduled": "scheduled",
+      "started": "Started",
+      "status": "Status",
+      "title": "History of {{name}}",
+      "trigger": "Trigger",
+      "truncated": "The output was truncated to its first 64 KiB."
+    },
+    "saveFailed": "Failed to save the cron job",
+    "saved": "Cron job saved",
+    "siteStopped": "The site is stopped: its jobs are skipped until it is started again.",
+    "started": "{{name}} started",
+    "status": {
+      "failed": "failed",
+      "never": "never run",
+      "running": "running",
+      "skipped": "skipped",
+      "success": "success",
+      "timeout": "timeout"
+    },
+    "tab": {
+      "subtitle": "Scheduled commands of this site.",
+      "title": "Cron"
+    },
+    "utcHint": "Schedules are evaluated in UTC. The plan sets the number of jobs and the minimum interval between two runs."
+  },
+  "logs": {
+    "capped": "{{cap}} lines kept in memory",
+    "col": {
+      "bytes": "Bytes",
+      "duration": "Duration",
+      "ip": "IP",
+      "method": "Method",
+      "status": "Status",
+      "time": "Time",
+      "uri": "URI"
+    },
+    "count": "{{count}} line(s)",
+    "download": {
+      "day": "Download a day",
+      "failed": "The download failed",
+      "last24h": "Download (24 h)",
+      "loadFailed": "Failed to list the log files",
+      "none": "No persisted day yet."
+    },
+    "empty": "No log line for these filters.",
+    "errors": {
+      "backendUnavailable": "The container engine is unreachable: the logs cannot be read right now. Retry in a moment.",
+      "logDateInvalid": "Invalid date.",
+      "logSourceInvalid": "Unknown log source.",
+      "notFound": "No log for this day.",
+      "siteNotRunning": "The site has no running container: no error or engine log to show.",
+      "tooManySubscriptions": "Too many live tails open in this window (4 at most): close another logs tab."
+    },
+    "filters": {
+      "allStatus": "All",
+      "apply": "Search",
+      "reset": "Reset the filters",
+      "since": "From",
+      "status": "Status",
+      "text": "Text",
+      "textPlaceholder": "/wp-login.php, 404, PHP Fatal…",
+      "until": "To"
+    },
+    "live": {
+      "failed": "The live tail could not start.",
+      "noSocket": "The live connection is not available.",
+      "pause": "Pause",
+      "paused": "paused",
+      "resume": "Resume",
+      "toggle": "Live tail",
+      "waiting": "Waiting for new lines…"
+    },
+    "loadFailed": "Failed to load the logs",
+    "source": {
+      "access": "Access",
+      "app": "Engine",
+      "error": "Errors"
+    },
+    "tab": {
+      "subtitle": "Access and error logs of this site.",
+      "title": "Logs"
+    },
+    "toBottom": "Latest lines",
+    "truncated": "last {{limit}} matches only"
+  },
+  "notifications": {
+    "created": "Channel created",
+    "deleteConfirm": "Delete the channel « {{name}} »? Its events are no longer sent anywhere.",
+    "deleteFailed": "Failed to delete the channel",
+    "deleteTitle": "Delete the channel",
+    "deleted": "Channel deleted",
+    "disabled": "disabled",
+    "empty": "No notification channel yet.",
+    "emptyHint": "Add an e-mail, webhook, Discord or Telegram channel to be told when an account reaches its quota.",
+    "errors": {
+      "channelInvalid": "The channel configuration is invalid.",
+      "channelInvalidField": "Invalid value for « {{field}} ».",
+      "channelNameTaken": "A channel with this name already exists.",
+      "httpsOnly": "A public https:// URL is required.",
+      "notificationFailed": "The notification could not be sent.",
+      "port": "Invalid port.",
+      "rateLimited": "Too many tests: wait a minute before sending another one.",
+      "webhookForbidden": "This URL is refused: only public https addresses are allowed (no loopback, private or internal address)."
+    },
+    "event": {
+      "certificateFailed": "Certificate failure",
+      "cronFailed": "Cron job failing",
+      "dbInstanceFailed": "Database instance failure",
+      "dnsSyncFailed": "DNS synchronisation failure",
+      "quotaAction": "Uploads blocked / account suspended",
+      "quotaExceeded": "Quota exceeded (100 %)",
+      "quotaWarning": "Quota threshold reached (80 %)",
+      "securityBanned": "Address banned"
+    },
+    "form": {
+      "botToken": "Bot token",
+      "chatId": "Chat ID",
+      "createTitle": "New notification channel",
+      "discordHint": "Channel settings → Integrations → Webhooks → Copy webhook URL.",
+      "discordUrl": "Discord webhook URL",
+      "editTitle": "Edit {{name}}",
+      "enabled": "Enabled",
+      "events": "Events",
+      "from": "Sender",
+      "headerName": "Header (optional)",
+      "headerValue": "Header value",
+      "method": "Method",
+      "name": "Name",
+      "namePlaceholder": "Ops team",
+      "noEvent": "Choose at least one event.",
+      "password": "Password",
+      "port": "Port",
+      "secretClear": "Remove the stored password",
+      "secretKeep": "set — leave empty to keep",
+      "secretSet": "set",
+      "secretWillClear": "removed on save",
+      "secure": "Implicit TLS (port 465)",
+      "secureHint": "Off: STARTTLS when the server offers it (port 587).",
+      "smtpHost": "SMTP server",
+      "to": "Recipients",
+      "type": "Type",
+      "url": "URL",
+      "username": "User (optional)",
+      "webhookHint": "JSON body. Public https URLs only: loopback, private and internal addresses are refused."
+    },
+    "lastFailed": "last send failed",
+    "lastSent": "last sent {{date}}",
+    "loadFailed": "Failed to load the notification channels",
+    "newChannel": "New channel",
+    "saveFailed": "Failed to save the channel",
+    "sectionDescription": "Where quota alerts, failures and bans of this workspace are sent.",
+    "sectionTitle": "Notifications",
+    "sendTest": "Send a test",
+    "testFailed": "The test failed",
+    "testFailedWith": "The test failed: {{error}}",
+    "testSent": "Test notification sent",
+    "type": {
+      "discord": "Discord",
+      "smtp": "E-mail (SMTP)",
+      "telegram": "Telegram",
+      "webhook": "Webhook"
+    },
+    "updated": "Channel saved"
+  },
+  "platformSettings": {
+    "access": {
+      "banDuration": "Ban duration (min)",
+      "banThreshold": "Failures before a ban",
+      "banWindow": "Within (min)",
+      "description": "Address probes of the « auto after 2FA » mode, bans after authentication failures, egress filter of the account networks.",
+      "egress": {
+        "metadata": "Metadata",
+        "metadataHint": "Recommended: the account networks cannot reach 169.254.0.0/16 (cloud metadata) nor the host outside ports 80/443.",
+        "off": "Off",
+        "offHint": "No filter: the sites may reach any address, including the cloud metadata service and the host.",
+        "strict": "Strict",
+        "strictHint": "Also refuses the private ranges (RFC 1918, ULA, link-local) outside the account network. May break sites that call internal services."
+      },
+      "egressTitle": "Egress filter of the account networks",
+      "grantTtl": "Default grant lifetime (min)",
+      "noIp": "(no public IP of this family in the setup)",
+      "probeV4": "IPv4 probe host",
+      "probeV4Hint": "A name with an A record only (no AAAA).",
+      "probeV6": "IPv6 probe host",
+      "probeV6Hint": "A name with an AAAA record only (no A).",
+      "records": "DNS records to create (and nothing else on these names):",
+      "recordsHint": "Each probe host must resolve in ONE family only, otherwise the browser picks the family and the other address of the client is never seen. Use host names outside the panel domain.",
+      "title": "Access"
+    },
+    "chips": {
+      "invalid": "« {{value}} » is not valid.",
+      "remove": "Remove {{value}}"
+    },
+    "dbAdmin": {
+      "description": "phpMyAdmin and Adminer are opened from the panel with single sign-on, on their own host name.",
+      "hint": "For instance db.<preview domain>, never under the panel. Empty: the admin tools are off.",
+      "hintSuggest": "For instance {{value}}. Empty: the admin tools are off.",
+      "hostname": "Host name",
+      "title": "Database administration",
+      "underPanel": "Never on the panel registrable domain (nor a sibling of the panel host): use a host of the preview domain."
+    },
+    "dns": {
+      "alsoNotify": "Servers notified of changes (NOTIFY)",
+      "alsoNotifyHint": "IP addresses of the secondary servers.",
+      "axfr": "Secondary servers allowed to transfer (AXFR)",
+      "axfrHint": "IP addresses or CIDR ranges.",
+      "defaultTtl": "Default TTL (seconds)",
+      "description": "Shared PowerDNS server of the platform: zones generated from the domains, served on port 53 of this host.",
+      "dnssec": "DNSSEC on new zones",
+      "dnssecHint": "The DS record must then be published at the registrar of each domain.",
+      "enabled": "Host the DNS zones",
+      "enabledHint": "Off: no PowerDNS, every zone is « hosted elsewhere » and the panel only lists the records to create at the provider.",
+      "hostmaster": "Hostmaster e-mail",
+      "hostmasterHint": "SOA contact. Empty: hostmaster@<zone>.",
+      "nameservers": "Name servers",
+      "nameserversHint": "Our authoritative servers (FQDN), at least two recommended. They are the NS records of every hosted zone.",
+      "nsProof": "Accept the NS delegation as ownership proof",
+      "nsProofHint": "A domain delegated to our name servers is verified without TXT record. The TXT record stays the strong proof: a squatter who delegated first could be verified by NS.",
+      "resolvers": "Public resolvers",
+      "resolversHint": "Used for the ownership and delegation checks (never the Docker DNS).",
+      "resolversRequired": "At least one resolver.",
+      "title": "DNS"
+    },
+    "dnsServer": {
+      "active": "{{count}} published",
+      "apiDown": "API unreachable",
+      "disabled": "The DNS server is disabled in the settings: every zone is hosted elsewhere.",
+      "error": "{{count}} in error",
+      "loadFailed": "Failed to load the DNS server status",
+      "pending": "{{count}} pending",
+      "syncFailed": "Failed to synchronise the zones",
+      "synced": "Zones synchronised",
+      "title": "DNS server",
+      "zones": "{{count}} zones"
+    },
+    "errors": {
+      "email": "Invalid e-mail address.",
+      "hostname": "Enter a fully qualified host name.",
+      "range": "Between {{min}} and {{max}}."
+    },
+    "firewall": {
+      "disabled": "inactive",
+      "egress": "Egress filter",
+      "hint": "Allow-lists and bans of the account ports are applied by hostd (nftables) before Docker. The gateway listens on the SFTP ports and starts the file servers on connection.",
+      "lastApply": "Last applied",
+      "listeners": "Gateway listeners",
+      "loadFailed": "Failed to load the firewall status",
+      "syncFailed": "Failed to synchronise the firewall",
+      "synced": "Firewall state pushed again to the host",
+      "title": "Firewall"
+    },
+    "hostingTitle": "Hosting",
+    "infra": {
+      "dbadmin": "Database admin (phpMyAdmin + Adminer)",
+      "dbadminHint": "Shared phpMyAdmin and Adminer, opened from the panel with single sign-on, on the host name of the settings.",
+      "dns": "DNS server (PowerDNS)",
+      "dnsHint": "Authoritative DNS of the hosted zones, on port 53 (TCP + UDP) of the host. Its API stays on the internal network.",
+      "redeployDbAdminConfirm": "The phpMyAdmin and Adminer containers are recreated: open database admin sessions are closed.",
+      "redeployDnsConfirm": "The PowerDNS container is recreated: the hosted zones do not answer for a few seconds (secondary servers keep answering)."
+    },
+    "loadFailed": "Failed to load the hosting settings",
+    "plan": {
+      "allEngines": "All engines",
+      "cronIntervalRange": "Cron minimum interval: between {{min}} and {{max}} minutes.",
+      "cronMinInterval": "Minimum interval",
+      "cronMinIntervalHint": "Between two runs of the same job.",
+      "cronTitle": "Cron",
+      "dbEngines": "Allowed engines",
+      "dbExternal": "External SQL access",
+      "dbExternalHint": "The account may publish an instance on a dedicated port, filtered by its allow-list.",
+      "dbMaxSize": "Size of one database",
+      "dbProfile": "Instance profile",
+      "dbProfileMemory": "{{value}} MB of memory per instance",
+      "dbTitle": "Databases",
+      "maxCronJobs": "Cron jobs",
+      "maxDbInstances": "DB instances",
+      "minutes": "min",
+      "noEngine": "Allow at least one database engine.",
+      "overQuota": {
+        "blockUploads": "Block uploads",
+        "blockUploadsHint": "SFTP becomes read + delete only until the usage is back under the quota; the sites keep running.",
+        "suspend": "Suspend the account",
+        "suspendHint": "The account is suspended (once per period); a staff member can resume it.",
+        "warn": "Warn only",
+        "warnHint": "Alerts and notifications only."
+      },
+      "overQuotaTitle": "At 100 % of the disk or traffic quota"
+    },
+    "preview": {
+      "description": "Blue/green previews are served on <site>-<id>.<preview domain>.",
+      "domain": "Preview domain",
+      "domainHint": "Empty: previews have no public URL. Point *.<domain> (A / AAAA) to this server.",
+      "invalid": "Enter a domain name (e.g. example-preview.net).",
+      "placeholder": "example-preview.net",
+      "setupHint": "Blue/green previews are served on <site>-<id>.<this domain>. Use a registrable domain distinct from the panel (never a sub-domain of it), so a preview can never read the panel cookies. Leave empty: previews get no public URL until you set it in Settings.",
+      "setupTitle": "Preview domain (optional)",
+      "title": "Previews",
+      "underPanel": "The preview domain must be a registrable domain distinct from the panel one: neither the panel host, one of its parents or sub-domains, nor a sibling on the same domain (e.g. preview.example.com next to panel.example.com).",
+      "warning": "Use a registrable domain of its own (e.g. example-preview.net), distinct from the panel domain: a preview runs tenant code, and on a sub-domain of the panel it could read or set the panel cookies.",
+      "wildcard": "Wildcard certificate",
+      "wildcardHint": "One *.<domain> certificate through DNS-01: the zone of the preview domain must be hosted on our DNS server. Off: one certificate per preview host."
+    },
+    "saveFailed": "Failed to save the settings",
+    "saved": "Settings saved",
+    "usage": {
+      "description": "Quota alerts and retention of the measures.",
+      "logRetention": "Access logs kept (days)",
+      "resourceRetention": "Resource samples kept (days)",
+      "resourceRetentionHint": "Beyond, only the hourly aggregates remain (90 days).",
+      "thresholds": "Alert thresholds (% of a quota)",
+      "thresholdsHint": "Up to 5 values between 1 and 200. At 100 %, the action of the plan applies (warn, block uploads, suspend).",
+      "thresholdsRequired": "At least one threshold.",
+      "title": "Usage"
+    }
+  }
+}

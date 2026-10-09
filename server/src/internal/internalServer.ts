@@ -18,6 +18,12 @@ import { publishScheduler } from '../services/releases/publishScheduler';
 //   GET  /internal/health
 //   POST /internal/filesrv/:accountId/:token/auth    SFTPGo external auth hook
 //   POST /internal/filesrv/:accountId/:token/event   SFTPGo action hook (upload, delete, rename…)
+//   POST /internal/dbadmin/*                         P2: DB admin SSO (module databases, services/databases/internalRoutes.ts)
+//
+// P2 hooks (docs/P2-PLAN.md §7, ARCHITECT edit): a refused SFTP login is
+// reported to the firewall (bans: firewallService.recordAuthFailure), and an
+// account whose uploads are blocked by the quota enforcement (usage:
+// enforcementService.uploadsBlocked) gets a read-only SFTP user.
 //
 // :token = fileServerHookToken(accountId) (services/hosting/secrets.ts),
 // checked in constant time (wrong token → 404, no oracle); rate-limited;
@@ -50,7 +56,11 @@ import { publishScheduler } from '../services/releases/publishScheduler';
 const SETSTAT_ACCEPTED = ['chmod', 'chtimes'] as const;
 const RW_PERMS = ['list', 'download', 'upload', 'overwrite', 'delete', 'rename', 'create_dirs', ...SETSTAT_ACCEPTED] as const;
 
-export function sftpgoUser(username: string): Record<string, unknown> {
+/** Rights of /staging and /data when uploads are blocked (over quota): read + delete only. */
+const BLOCKED_PERMS = ['list', 'download', 'delete', ...SETSTAT_ACCEPTED] as const;
+
+export function sftpgoUser(username: string, opts: { uploadsBlocked?: boolean } = {}): Record<string, unknown> {
+  const perms = opts.uploadsBlocked ? [...BLOCKED_PERMS] : [...RW_PERMS];
   return {
     status: 1,
     username,
@@ -61,8 +71,8 @@ export function sftpgoUser(username: string): Record<string, unknown> {
     permissions: {
       // chmod also on / : `put -r . /staging` ends with a setstat of /staging itself (checked against /).
       '/': ['list', 'download', 'chmod'],
-      '/staging': [...RW_PERMS],
-      '/data': [...RW_PERMS],
+      '/staging': perms,
+      '/data': [...perms],
     },
     filters: { denied_protocols: ['FTP', 'DAV', 'HTTP'] },
   };
@@ -76,6 +86,10 @@ export interface InternalDeps {
   notifyChange(siteId: number): void;
   /** Is this peer address the file server of the account (or loopback)? */
   sourceAllowed(accountId: number, remoteAddress: string | undefined): Promise<boolean>;
+  /** P2: a refused login (firewall bans). Never throws. */
+  onAuthFailure(accountId: number, ip: string | null, username: string | null): void;
+  /** P2: uploads blocked by the quota enforcement → read-only user. Never throws (false). */
+  uploadsBlocked(accountId: number): Promise<boolean>;
 }
 
 const defaultDeps: InternalDeps = {
@@ -91,6 +105,21 @@ const defaultDeps: InternalDeps = {
   },
   notifyChange: (siteId) => publishScheduler.notifyChange(siteId),
   sourceAllowed: config.hosting.hookSourceCheck ? createFileServerSourceCheck() : async () => true,
+  onAuthFailure(accountId, ip, username) {
+    if (!ip) return;
+    void import('../services/firewall/firewall.service')
+      .then((m) => m.firewallService.recordAuthFailure({ accountId, service: 'sftp', ip, username }))
+      .catch((err) => logger.warn({ err, accountId }, 'recordAuthFailure failed'));
+  },
+  async uploadsBlocked(accountId) {
+    try {
+      const { enforcementService } = await import('../services/usage/usage.service');
+      return await enforcementService.uploadsBlocked(accountId);
+    } catch (err) {
+      logger.warn({ err, accountId }, 'uploadsBlocked check failed');
+      return false;
+    }
+  },
 };
 
 const SITE_CACHE_TTL_MS = 5_000;
@@ -173,11 +202,15 @@ export function createInternalApp(over: Partial<InternalDeps> = {}): Express {
       };
       if (!attempt.password && !attempt.publicKey) { res.status(401).end(); return; }
       const result = await deps.verifyLogin(accountId, attempt);
-      if (!result.ok) { res.status(401).end(); return; }
+      if (!result.ok) {
+        deps.onAuthFailure(accountId, attempt.ip ?? null, username);
+        res.status(401).end();
+        return;
+      }
       const accountUsername = await deps.accountUsername(accountId);
       // verifyLogin already enforces it; checked again so a stub can never widen access (F1).
       if (!accountUsername || accountUsername !== username) { res.status(401).end(); return; }
-      res.status(200).json(sftpgoUser(accountUsername));
+      res.status(200).json(sftpgoUser(accountUsername, { uploadsBlocked: await deps.uploadsBlocked(accountId) }));
     } catch (err) {
       logger.warn({ err, accountId }, 'File-server auth hook failed');
       res.status(401).end();
@@ -200,6 +233,13 @@ export function createInternalApp(over: Partial<InternalDeps> = {}): Express {
         .then((siteId) => { if (siteId) deps.notifyChange(siteId); })
         .catch((err) => logger.warn({ err, accountId, slug }, 'File-server event hook: site lookup failed'));
     }
+  });
+
+  // P2: DB admin single sign-on (module databases), lazy so a broken module never takes the hooks down.
+  app.use('/internal/dbadmin', (req, res, next) => {
+    import('../services/databases/internalRoutes')
+      .then((m) => m.dbAdminInternalRouter(req, res, next))
+      .catch(next);
   });
 
   app.use((_req, res) => { res.status(404).end(); });

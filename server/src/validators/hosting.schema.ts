@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  APP_PROFILES, CLIENT_CAPABILITIES, SITE_BASE_IDS, normalizePathPrefix, normalizeRelPath,
+  APP_PROFILES, CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS, SITE_BASE_IDS, normalizePathPrefix, normalizeRelPath,
   type AppProfileId, type ClientCapability, type SiteBaseId,
 } from '@oblimint/shared';
 import {
@@ -45,6 +45,17 @@ export const planLimitsSchema = z.object({
   pidsLimit: z.number().int().min(32).max(4096).nullable(),
   allowedBases: z.array(baseId).min(1).max(SITE_BASE_IDS.length * 2).nullable()
     .transform((v) => (v === null ? null : [...new Set(v)])),
+  // P2 (docs/P2-PLAN.md §Plans): optional on input, the defaults fill what a
+  // P1 client does not send (the update schema is partial: missing = unchanged).
+  maxDbInstances: z.number().int().min(0).max(100).nullable().default(DEFAULT_PLAN_LIMITS.maxDbInstances),
+  dbMaxSizeMb: countLimit.default(DEFAULT_PLAN_LIMITS.dbMaxSizeMb),
+  dbProfile: z.enum(['S', 'M', 'L']).default(DEFAULT_PLAN_LIMITS.dbProfile),
+  dbEngines: z.array(z.enum(['mariadb', 'mysql', 'postgresql'])).min(1).max(3).nullable()
+    .transform((v) => (v === null ? null : [...new Set(v)])).default(DEFAULT_PLAN_LIMITS.dbEngines),
+  dbExternalAccess: z.boolean().default(DEFAULT_PLAN_LIMITS.dbExternalAccess),
+  maxCronJobs: z.number().int().min(0).max(1000).nullable().default(DEFAULT_PLAN_LIMITS.maxCronJobs),
+  cronMinIntervalMin: z.number().int().min(1).max(1440).default(DEFAULT_PLAN_LIMITS.cronMinIntervalMin),
+  overQuotaAction: z.enum(['warn', 'block-uploads', 'suspend']).default(DEFAULT_PLAN_LIMITS.overQuotaAction),
 }).strict();
 
 export const planInputSchema = z.object({
@@ -235,6 +246,9 @@ export const domainCreateSchema = z.object({
   tlsMode: tlsMode.optional(),
   forceHttps: z.boolean().optional(),
   siteId: id.nullable().optional(),
+  // P2
+  wildcard: z.boolean().optional(),
+  dnsZone: z.enum(['hosted', 'external', 'none']).optional(),
 }).strict();
 
 export const domainUpdateSchema = z.object({
@@ -242,6 +256,8 @@ export const domainUpdateSchema = z.object({
   includeWww: z.boolean().optional(),
   tlsMode: tlsMode.optional(),
   forceHttps: z.boolean().optional(),
+  // P2
+  wildcard: z.boolean().optional(),
 }).strict();
 
 export const routeInputSchema = z.object({
