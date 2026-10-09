@@ -6,8 +6,10 @@ import type { SetupApplyRequest, SetupProgress, SetupStep } from '@oblimint/shar
 import { MASTER_TENANT_ID } from '@oblimint/shared';
 import { config, dataDir } from '../../config';
 import { logger } from '../../utils/logger';
+import { obligateUrlError } from '../obligateUrl';
 import { docker, errText, INTERNAL_LABELS, selfContainerRef, withTimeout } from './docker';
 import { attachWithAlias, ensureImage } from '../docker/dockerOps';
+import { PLATFORM_OOM_SCORE_ADJ } from '../docker/specs';
 import { PANEL_ALIAS } from '../hosting/naming';
 import { writeFileAtomic0600, writePanelConfig } from './configFile';
 
@@ -41,7 +43,9 @@ export const setupApplySchema = z.object({
     email: z.string().trim().email().max(254).nullable(),
   }).strict(),
   obligate: z.object({
-    url: z.string().trim().url().max(512).refine((u) => /^https?:\/\//i.test(u), 'an http(s) URL'),
+    url: z.string().trim().url().max(512).refine((u) => /^https?:\/\//i.test(u), 'an http(s) URL')
+      // SSO trust anchor: https, or plain http only on a local / private address.
+      .superRefine((u, ctx) => { const e = obligateUrlError(u); if (e) ctx.addIssue({ code: z.ZodIssueCode.custom, message: e }); }),
     apiKey: z.string().trim().min(16).max(512),
   }).strict().nullable(),
 }).strict();
@@ -166,6 +170,8 @@ async function stepPostgres(): Promise<string> {
     },
     HostConfig: {
       Binds: [`${hostPgDir}:/var/lib/postgresql/data`],
+      // Host memory pressure (a tenant site): the kernel kills tenant processes first (specs.ts).
+      OomScoreAdj: PLATFORM_OOM_SCORE_ADJ,
       RestartPolicy: { Name: 'unless-stopped' },
       NetworkMode: NETWORK_NAME,
     },

@@ -52,7 +52,7 @@ func TestLayoutTrees(t *testing.T) {
 	want := []string{
 		"accounts/3 0:0 0711",
 		"accounts/3/staging 20001:20001 0750",
-		"accounts/3/data 20001:20001 0750",
+		"accounts/3/data 0:20001 0750",
 		"accounts/3/filesrv 20001:20001 0700",
 		"accounts/3/sites 0:0 0711",
 		"accounts/3/staging/shop 20001:20001 0750",

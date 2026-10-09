@@ -1,6 +1,9 @@
 import { db } from '../db';
 import type { AppConfigData, ObligateConfig } from '@oblimint/shared';
 import { AppError } from '../middleware/errorHandler';
+import { obligateUrlError } from './obligateUrl';
+
+export { obligateUrlError };
 
 // Ported from Obliance (Obligate part + generic key/value). Same storage:
 // app_config 'obligate_config' (JSON {url, apiKey, inboundSecret?}) and
@@ -52,9 +55,8 @@ export function obligatePatch(body: Record<string, unknown>): ObligatePatch {
   if ('url' in body) {
     const url = (typeof body.url === 'string' ? body.url.trim().replace(/\/+$/, '') : '') || null;
     if (url) {
-      let u: URL;
-      try { u = new URL(url); } catch { throw new AppError(400, 'url must be an http(s) URL'); }
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new AppError(400, 'url must be an http(s) URL');
+      const error = obligateUrlError(url);
+      if (error) throw new AppError(400, error);
     }
     patch.url = url;
   }
@@ -134,6 +136,13 @@ export const appConfigService = {
 
   async patchObligateConfig(patch: ObligatePatch): Promise<ObligateConfig> {
     const existing = await this.readObligateStored();
+    // A NEW URL never inherits the stored API key: the panel would send it, as
+    // a Bearer token, to whatever server the URL now names. The key must be
+    // entered again with the URL (the inbound secret, which Obligate sends to
+    // the panel, is never sent out and is kept).
+    if ('url' in patch && patch.url && existing.url && patch.url !== existing.url && existing.apiKey && !patch.apiKey) {
+      throw new AppError(400, 'Enter the API key again when changing the Obligate URL', 'obligateApiKeyRequired');
+    }
     const merged: ObligateStored = {
       url: 'url' in patch ? (patch.url ?? null) : existing.url,
       apiKey: ('apiKey' in patch && patch.apiKey) ? patch.apiKey : existing.apiKey,

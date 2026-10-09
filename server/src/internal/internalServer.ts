@@ -5,6 +5,7 @@ import { config } from '../config';
 import { db } from '../db';
 import { logger } from '../utils/logger';
 import { verifyFileServerHookToken } from '../services/hosting/secrets';
+import { createFileServerSourceCheck } from '../services/docker/hookSource';
 import { CONTAINER_PATHS } from '../services/hosting/paths';
 import { fileAccessService, type FileServerLoginAttempt, type FileServerLoginResult } from '../services/hosting/fileAccess.service';
 import { publishScheduler } from '../services/releases/publishScheduler';
@@ -20,7 +21,10 @@ import { publishScheduler } from '../services/releases/publishScheduler';
 //
 // :token = fileServerHookToken(accountId) (services/hosting/secrets.ts),
 // checked in constant time (wrong token → 404, no oracle); rate-limited;
-// JSON body ≤ 64 KiB.
+// JSON body ≤ 64 KiB. The caller must ALSO be the file server of that account
+// (source address = oblimint-files-<accountId>, services/docker/hookSource.ts):
+// the panel shares every account network with the account's site containers,
+// which must not reach these routes even with the token (→ 404 as well).
 //
 // SFTPGo formats (docs.sftpgo.com, "External authentication" + "Custom
 // actions", legacy HTTP hooks):
@@ -70,6 +74,8 @@ export interface InternalDeps {
   accountUsername(accountId: number): Promise<string | null>;
   siteIdBySlug(accountId: number, slug: string): Promise<number | null>;
   notifyChange(siteId: number): void;
+  /** Is this peer address the file server of the account (or loopback)? */
+  sourceAllowed(accountId: number, remoteAddress: string | undefined): Promise<boolean>;
 }
 
 const defaultDeps: InternalDeps = {
@@ -84,6 +90,7 @@ const defaultDeps: InternalDeps = {
     return row ? row.id : null;
   },
   notifyChange: (siteId) => publishScheduler.notifyChange(siteId),
+  sourceAllowed: config.hosting.hookSourceCheck ? createFileServerSourceCheck() : async () => true,
 };
 
 const SITE_CACHE_TTL_MS = 5_000;
@@ -138,14 +145,19 @@ export function createInternalApp(over: Partial<InternalDeps> = {}): Express {
     return value;
   };
 
-  const accountOf = (req: Request): number | null => {
+  const accountOf = async (req: Request): Promise<number | null> => {
     const id = Number(req.params.accountId);
     if (!Number.isInteger(id) || id <= 0 || !deps.verifyToken(id, req.params.token)) return null;
+    try {
+      if (!(await deps.sourceAllowed(id, req.socket.remoteAddress))) return null;
+    } catch {
+      return null;
+    }
     return id;
   };
 
   app.post('/internal/filesrv/:accountId/:token/auth', async (req: Request, res: Response) => {
-    const accountId = accountOf(req);
+    const accountId = await accountOf(req);
     if (!accountId) { res.status(404).end(); return; }
     const b = (req.body ?? {}) as Record<string, unknown>;
     const username = str(b.username);
@@ -172,8 +184,8 @@ export function createInternalApp(over: Partial<InternalDeps> = {}): Express {
     }
   });
 
-  app.post('/internal/filesrv/:accountId/:token/event', (req: Request, res: Response) => {
-    const accountId = accountOf(req);
+  app.post('/internal/filesrv/:accountId/:token/event', async (req: Request, res: Response) => {
+    const accountId = await accountOf(req);
     if (!accountId) { res.status(404).end(); return; }
     res.status(200).json({ ok: true }); // answer first: SFTPGo waits on the hook
     const b = (req.body ?? {}) as Record<string, unknown>;

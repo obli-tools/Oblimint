@@ -6,10 +6,12 @@ import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import fs from 'fs';
 import path from 'path';
-import { config, sessionSecretError } from './config';
+import { config, sessionSecretError, sessionCookieSecure, SESSION_COOKIE_NAME } from './config';
 import { errorHandler } from './middleware/errorHandler';
-import { apiLimiter } from './middleware/rateLimiter';
-import { sessionUserGuard } from './middleware/sessionUserGuard';
+import { apiLimiter, userApiLimiter } from './middleware/rateLimiter';
+import { sessionUserGuard, twoFactorPolicyGuard } from './middleware/sessionUserGuard';
+import { originGuard } from './middleware/originGuard';
+import { expressTrustProxy } from './utils/clientIp';
 import { captureStepUpProof } from './middleware/captureStepUpProof';
 import { serverVersion } from './utils/version';
 import { logger } from './utils/logger';
@@ -27,9 +29,12 @@ export function getSessionMiddleware(): express.RequestHandler | null {
 function baseApp(): express.Express {
   const app = express();
   app.disable('x-powered-by');
-  // The panel is published directly (8443): by default req.ip is the socket
-  // peer (rate-limit key). TRUST_PROXY_HOPS when a reverse proxy fronts it.
-  app.set('trust proxy', config.trustProxyHops > 0 ? config.trustProxyHops : false);
+  // req.ip (rate-limit key) is the socket peer unless that peer is a TRUSTED
+  // proxy: the edge container (addresses read from Docker,
+  // services/proxyTrust.ts) or TRUSTED_PROXIES. Never a bare hop count: port
+  // 8443 stays published, and a hop count would let any direct client choose
+  // its address with X-Forwarded-For.
+  app.set('trust proxy', expressTrustProxy(config.trustProxyHops));
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -54,6 +59,8 @@ function baseApp(): express.Express {
     }),
   );
   app.use(cors({ origin: config.clientOrigin, credentials: true }));
+  // CSRF: state-changing requests only from the panel's origin, JSON bodies only.
+  app.use(originGuard);
   app.use(express.json({ limit: '1mb' }));
   return app;
 }
@@ -98,22 +105,32 @@ export function createApp(): express.Express {
     logger.error(err, 'Session store error — sessions may fail until the database connection recovers');
   });
   sessionMiddleware = session({
+    // `__Host-` prefix when Secure (config.ts): subdomains cannot toss it.
+    name: SESSION_COOKIE_NAME,
     store: sessionStore,
     secret: config.sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
       // HTTPS in production (the container serves TLS itself), HTTP allowed in dev.
-      secure: config.nodeEnv === 'production' ? true : config.forceHttps,
+      secure: sessionCookieSecure,
+      path: '/',
       httpOnly: true,
       maxAge: 7 * 24 * 60 * 60 * 1000,
       sameSite: 'lax',
     },
   });
+  // Static files and the SPA shell first: no session, never counted by the
+  // API limiter (logged-out visitors sharing an address must not lock each
+  // other out of the login page).
+  if (!config.isDev || process.env.SERVE_CLIENT === 'true') serveClient(app);
   app.use(sessionMiddleware);
   app.use(captureStepUpProof);
   app.use(sessionUserGuard);
   app.use(apiLimiter);
+  app.use(userApiLimiter);
+  // force_2fa: a session without TOTP only reaches the 2FA setup routes.
+  app.use(twoFactorPolicyGuard);
 
   // Obligate SSO browser redirects (NOT under /api), before /api.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -125,7 +142,6 @@ export function createApp(): express.Express {
   app.use('/api', routes);
 
   healthRoute(app, 'normal');
-  if (!config.isDev || process.env.SERVE_CLIENT === 'true') serveClient(app);
   app.use(errorHandler);
   return app;
 }

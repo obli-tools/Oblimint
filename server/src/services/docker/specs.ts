@@ -6,6 +6,7 @@ import {
   accountNetwork, EDGE_CONTAINER, edgeImage, fileServerContainer, fileServerImage, HOSTD_CONTAINER, hostdImage,
   LABELS, PANEL_NETWORK, previewContainer, secondaryContainer, siteContainer, siteImage, type ContainerRole,
 } from '../hosting/naming';
+import { config } from '../../config';
 import { CONTAINER_PATHS, hostingLayout, runtimeConfigFile } from '../hosting/paths';
 import { TENANT_SECCOMP_OPT } from './seccomp';
 
@@ -13,7 +14,8 @@ import { TENANT_SECCOMP_OPT } from './seccomp';
 // PURE container spec builders (no I/O → unit-tested in specs.test.ts).
 // Hardening invariants (docs/P1-PLAN.md §14 H1–H4), after Oblihub's runOneShot:
 // CapDrop ALL, no-new-privileges, ReadonlyRootfs, tmpfs /tmp /run
-// (noexec,nosuid,nodev), PidsLimit, Memory (no swap) / NanoCpus from the plan,
+// (noexec,nosuid,nodev), PidsLimit, Memory (no swap) / NanoCpus from the plan
+// capped by the node ceiling (never unlimited), oom_score_adj (tenants first),
 // User = account uid:gid, release dir mounted READ-ONLY, data RW, labels
 // oblimint.*, never the Docker socket, never /srv/oblimint/run or
 // /srv/oblimint/config nor the staging in a site container, no published port
@@ -57,6 +59,36 @@ export interface FileServerContainerInput {
 export interface InfraContainerInput {
   /** Host data root (config.hostDataDir, POSIX). */
   hostDataDir: string;
+  /** hostd only: accept disk limits that are only measured when the data root
+   *  has no XFS project quota (OBLIMINT_ALLOW_MEASURED_QUOTA). Default: hostd
+   *  refuses them (the account is not provisioned). */
+  allowMeasuredQuota?: boolean;
+}
+
+/**
+ * oom_score_adj: under host memory pressure the kernel kills tenant processes
+ * (sites, file servers) before the platform's (edge; the panel's PostgreSQL
+ * gets the same negative value in services/setup/applySetup.ts).
+ */
+export const TENANT_OOM_SCORE_ADJ = 500;
+export const PLATFORM_OOM_SCORE_ADJ = -500;
+
+/**
+ * Memory (MiB) / CPUs a site container really gets: the plan value, capped by
+ * the node ceiling (config.hosting.siteMaxMemoryMb / siteMaxCpus); an
+ * unlimited plan value (null / 0) means the ceiling, never "the whole host".
+ * A ceiling of 0 disables it (null stays unlimited).
+ */
+export function effectiveSiteLimits(
+  limits: Pick<PlanLimits, 'memoryMb' | 'cpuCores'>,
+  ceiling: { memoryMb: number; cpus: number } = { memoryMb: config.hosting.siteMaxMemoryMb, cpus: config.hosting.siteMaxCpus },
+): { memoryMb: number | null; cpus: number | null } {
+  const cap = (value: number | null | undefined, max: number): number | null => {
+    const v = typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+    if (!(max > 0)) return v;
+    return v === null ? max : Math.min(v, max);
+  };
+  return { memoryMb: cap(limits.memoryMb, ceiling.memoryMb), cpus: cap(limits.cpuCores, ceiling.cpus) };
 }
 
 /** Default PidsLimit of a site container when the plan leaves it empty. */
@@ -139,16 +171,20 @@ export function siteContainerSpec(input: SiteContainerInput): Docker.ContainerCr
     CapDrop: ['ALL'],
     SecurityOpt: [NO_NEW_PRIVILEGES, TENANT_SECCOMP_OPT],
     PidsLimit: input.limits.pidsLimit ?? DEFAULT_SITE_PIDS_LIMIT,
+    OomScoreAdj: TENANT_OOM_SCORE_ADJ,
     RestartPolicy: { Name: 'unless-stopped' },
     NetworkMode: net,
     LogConfig: LOG_CONFIG,
   };
-  if (input.limits.memoryMb && input.limits.memoryMb > 0) {
-    hostConfig.Memory = Math.round(input.limits.memoryMb * 1048576);
+  // Plan limits capped by the node ceiling: an "unlimited" plan (null) gets the
+  // ceiling, so one site can never exhaust the host's RAM / CPUs.
+  const eff = effectiveSiteLimits(input.limits);
+  if (eff.memoryMb !== null) {
+    hostConfig.Memory = Math.round(eff.memoryMb * 1048576);
     hostConfig.MemorySwap = hostConfig.Memory; // = Memory → no swap
   }
-  if (input.limits.cpuCores && input.limits.cpuCores > 0) {
-    hostConfig.NanoCpus = Math.round(input.limits.cpuCores * 1e9);
+  if (eff.cpus !== null) {
+    hostConfig.NanoCpus = Math.round(eff.cpus * 1e9);
   }
 
   return withHash({
@@ -196,6 +232,7 @@ export function fileServerContainerSpec(input: FileServerContainerInput): Docker
       Memory: FILESRV_MEMORY_BYTES,
       MemorySwap: FILESRV_MEMORY_BYTES,
       PidsLimit: FILESRV_PIDS_LIMIT,
+      OomScoreAdj: TENANT_OOM_SCORE_ADJ,
       RestartPolicy: { Name: 'unless-stopped' },
       NetworkMode: net,
       LogConfig: LOG_CONFIG,
@@ -232,6 +269,7 @@ export function edgeContainerSpec(input: InfraContainerInput): Docker.ContainerC
       SecurityOpt: [NO_NEW_PRIVILEGES],
       PidsLimit: EDGE_PIDS_LIMIT,
       Ulimits: [{ Name: 'nofile', Soft: EDGE_NOFILE_LIMIT, Hard: EDGE_NOFILE_LIMIT }],
+      OomScoreAdj: PLATFORM_OOM_SCORE_ADJ,
       RestartPolicy: { Name: 'unless-stopped' },
       NetworkMode: PANEL_NETWORK,
       LogConfig: LOG_CONFIG,
@@ -249,6 +287,8 @@ export function hostdContainerSpec(input: InfraContainerInput): Docker.Container
     Env: [
       `OBLIMINT_HOSTD_SOCKET=${path.posix.join(root, 'run', 'hostd.sock')}`,
       `OBLIMINT_ROOT=${root}`,
+      // Only when set: the default spec (and its hash) is unchanged.
+      ...(input.allowMeasuredQuota ? ['OBLIMINT_ALLOW_MEASURED_QUOTA=1'] : []),
     ],
     Labels: { [LABELS.internal]: 'true', [LABELS.role]: 'hostd' },
     HostConfig: {

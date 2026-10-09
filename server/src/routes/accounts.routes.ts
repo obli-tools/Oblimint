@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
 import { validate } from '../middleware/validate';
+import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
 import { accountsService } from '../services/hosting/accounts.service';
 import { assertStaff, idParam, loadAccount, requireStaffActor, resolveActor } from '../services/hosting/access';
@@ -94,7 +95,7 @@ router.post('/:id/unsuspend', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/:id/usage/refresh', async (req, res, next) => {
+router.post('/:id/usage/refresh', heavyOpLimiter, async (req, res, next) => {
   try {
     res.json({ success: true, data: await accountsService.refreshUsage(await resolveActor(req), idParam(req)) });
   } catch (err) { next(err); }

@@ -8,6 +8,7 @@ import { hashPassword } from '../../utils/crypto';
 import { logger } from '../../utils/logger';
 import type { ClientUserAddBody, ClientUserCreateBody } from '../../validators/hosting.schema';
 import { auditService } from '../audit.service';
+import { assertCanGrantClientCapabilities, resolveActor } from './access';
 import { emitHosting } from './events';
 import { isUniqueViolation } from './hostingValidation.service';
 import { clientCapabilities, iso, type AccountRow } from './rows';
@@ -133,6 +134,8 @@ export const clientUsersService = {
 
   /** POST /accounts/:id/users — create a client user, or attach an existing client of the same tenant. */
   async add(req: Request, account: AccountRow, body: ClientUserAddBody): Promise<AccountClientUser> {
+    // accounts.manage alone must not mint a login with hosting rights the caller lacks.
+    assertCanGrantClientCapabilities(await resolveActor(req), body.capabilities);
     let userId: number;
     if (body.mode === 'create') {
       await this.assertCreatable(body);
@@ -164,6 +167,9 @@ export const clientUsersService = {
 
   async updateCapabilities(req: Request, account: AccountRow, userId: number, capabilities: ClientCapability[]): Promise<AccountClientUser> {
     const before = await this.get(account.id, userId);
+    // Only the capabilities ADDED need the caller's equivalents (removing never widens anything).
+    const added = capabilities.filter((c) => !before.capabilities.includes(c));
+    assertCanGrantClientCapabilities(await resolveActor(req), added);
     await db('account_users').where({ user_id: userId, account_id: account.id }).update({ capabilities: JSON.stringify(capabilities) });
     await auditService.logReqAs(req, account.tenant_id, 'account.user_update', {
       resourceType: 'account', resourcePath: String(account.id),
@@ -196,6 +202,7 @@ export const clientUsersService = {
       }
     });
     if (userDeleted) await killSessions(userId);
+    else leaveAccountRoom(userId, account.id);
     await auditService.logReqAs(req, account.tenant_id, 'account.user_remove', {
       resourceType: 'account', resourcePath: String(account.id),
       details: { username: account.username, user: user.username, userId, userDeleted },
@@ -219,6 +226,17 @@ export const clientUsersService = {
     return orphans;
   },
 };
+
+/**
+ * A client unlinked from an account (user kept) leaves that account's Socket.io
+ * room at once: the room was joined at handshake (socket.ts) and would keep
+ * delivering the account's events until the socket reconnects.
+ */
+function leaveAccountRoom(userId: number, accountId: number): void {
+  void import('../../socket').then(({ getIO }) => {
+    getIO()?.in(`user:${userId}`).socketsLeave(`account:${accountId}`);
+  }).catch((err) => { logger.debug({ err, userId, accountId }, 'socketsLeave failed'); });
+}
 
 async function killSessions(userId: number): Promise<void> {
   try {

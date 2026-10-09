@@ -11,7 +11,7 @@ import { reconcileService, type AccountSnapshot, type SiteSnapshot } from '../do
 import { certificateService } from '../edge/certificate.service';
 import { edgeService } from '../edge/edge.service';
 import { releaseService } from '../releases/release.service';
-import { assertNeedSomewhere, assertStaff, loadAccount, scopeToActor, type HostingActor } from './access';
+import { assertCanGrantClientCapabilities, assertNeedSomewhere, assertStaff, loadAccount, scopeToActor, type HostingActor } from './access';
 import { allocationService, withAllocationRetry } from './allocation.service';
 import { clientUsersService } from './clientUsers.service';
 import { envelopeService, lockTenant, withTenantLock } from './envelope.service';
@@ -160,7 +160,11 @@ export const accountsService = {
       nodeId = body.nodeId;
     } else nodeId = await localNodeId();
     const owner = body.owner ?? null;
-    if (owner) await clientUsersService.assertCreatable(owner);
+    if (owner) {
+      // The owner login must not carry hosting rights the caller lacks.
+      assertCanGrantClientCapabilities(actor, owner.capabilities);
+      await clientUsersService.assertCreatable(owner);
+    }
 
     let created: { id: number; ownerId: number | null };
     try {
@@ -265,7 +269,7 @@ export const accountsService = {
   async refreshUsage(actor: HostingActor, accountId: number): Promise<HostingAccount> {
     const row = await loadAccount(actor, accountId, 'read');
     try {
-      await usageService.refresh(row.id);
+      await usageService.refreshOnDemand(row.id);
     } catch (err) {
       if (err instanceof AppError) throw err;
       throw backendUnavailable(err, 'Disk usage unavailable', actor);

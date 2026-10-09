@@ -115,6 +115,9 @@ router.put('/password', stepUpLimiter, validate(changePasswordSchema), async (re
     }
     if (!(await comparePassword(currentPassword, user.password_hash))) throw new AppError(400, 'Current password is incorrect');
     await db('users').where({ id: userId }).update({ password_hash: await hashPassword(newPassword), updated_at: new Date() });
+    // Every OTHER session ends (stolen cookie, session opened with the old password).
+    const { revokeOtherSessions } = await import('../services/userSessions.service');
+    await revokeOtherSessions(req, 'password_changed');
     await auditService.logReq(req, 'user.password_changed', { resourceType: 'user', resourcePath: String(userId) });
     res.json({ success: true, message: 'Password changed successfully' });
   } catch (err) { next(err); }

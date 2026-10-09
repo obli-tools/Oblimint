@@ -361,7 +361,7 @@ export function AdminUsersPage() {
                       <Input label={t('users.displayNameLabel') || 'Display name'} value={formDisplayName} onChange={(e) => setFormDisplayName(e.target.value)} />
                       <Input label={t('users.emailLabel') || 'E-mail'} type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} autoComplete="off" />
                       {userFormMode === 'create' && (
-                        <Input label={t('users.passwordLabel') || 'Password'} type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
+                        <Input label={t('users.passwordLabel') || 'Password'} type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} required minLength={12} autoComplete="new-password" />
                       )}
                       {/* Platform role: only a platform admin may set it. */}
                       {isPlatformAdmin && (
@@ -387,7 +387,7 @@ export function AdminUsersPage() {
                       {t('users.changePasswordTitle', { username: stripOg(editingUser.username), defaultValue: 'Change password of {{username}}' })}
                     </h3>
                     <form onSubmit={handlePasswordChange} className="space-y-3">
-                      <Input label={t('users.newPassword') || 'New password'} type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
+                      <Input label={t('users.newPassword') || 'New password'} type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} required minLength={12} autoComplete="new-password" />
                       <div className="flex gap-2">
                         <Button type="submit" size="sm" loading={saving}>{t('users.changePassword') || 'Change password'}</Button>
                         <Button type="button" size="sm" variant="secondary" onClick={resetUserForm}>{t('common.cancel') || 'Cancel'}</Button>

@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import crypto from 'crypto';
 import { APP_COLOR, MASTER_TENANT_ID } from '@oblimint/shared';
 import { db } from '../db';
-import { regenerateSession } from '../utils/session';
+import { regenerateSession, stampCredentialVersion } from '../utils/session';
 import {
   obligateService, applyObligatePreferences, type ObligateRoster, type ObligateUserAssertion,
 } from '../services/obligate.service';
@@ -205,6 +205,7 @@ async function provisionObligateUser(assertion: ObligateUserAssertion, req: Requ
     delete req.session.requestedTenantSlug;
   }
   req.session.currentTenantId = resolvedTenantId ?? firstTenantId;
+  await stampCredentialVersion(req);
 
   void auditService.log({
     tenantId: req.session.currentTenantId,
@@ -381,9 +382,16 @@ router.get('/connected-apps', async (req, res) => {
       res.status(401).json({ success: false, error: 'Authentication required' });
       return;
     }
-    const row = await db('users').where({ id: req.session.userId }).first('foreign_source', 'foreign_id') as
-      { foreign_source: string | null; foreign_id: number | null } | undefined;
+    const row = await db('users').where({ id: req.session.userId }).first('foreign_source', 'foreign_id', 'kind', 'role') as
+      { foreign_source: string | null; foreign_id: number | null; kind: string; role: string } | undefined;
     const obligateUserId = row?.foreign_source === 'obligate' && row.foreign_id ? row.foreign_id : null;
+    // Without an Obligate identity the list is the operator's UNSCOPED app
+    // list (names, internal base URLs): only a platform administrator sees
+    // it, never a hosting client or a local staff member.
+    if (!obligateUserId && !(row?.kind !== 'client' && row?.role === 'admin')) {
+      res.json({ success: true, data: [] });
+      return;
+    }
     res.json({ success: true, data: await obligateService.getConnectedApps(obligateUserId) });
   } catch {
     res.json({ success: true, data: [] });

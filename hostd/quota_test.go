@@ -237,7 +237,7 @@ func TestXFSTagCancelled(t *testing.T) {
 
 func TestMeasuredQuotaPersistsLimits(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "run", "hostd-quota.json")
-	q := newMeasuredQuota(state)
+	q := newMeasuredQuota(state, true, "")
 	q.measure = func(context.Context, string) (int64, error) { return 4096, nil }
 	if err := q.Ensure(bg, 100001, "x", i64(10)); err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func TestMeasuredQuotaPersistsLimits(t *testing.T) {
 	_ = q.Ensure(bg, 100002, "x", i64(20))
 	_ = q.Ensure(bg, 100002, "x", nil)
 
-	q2 := newMeasuredQuota(state)
+	q2 := newMeasuredQuota(state, true, "")
 	q2.measure = q.measure
 	used, limit, err := q2.Usage(bg, 100001, "x")
 	if err != nil || used != 4096 || limit == nil || *limit != 10*mib {
@@ -255,7 +255,7 @@ func TestMeasuredQuotaPersistsLimits(t *testing.T) {
 		t.Errorf("limit of 100002 should be cleared, got %d", *limit)
 	}
 	_ = q2.Release(100001)
-	if _, limit, _ := newMeasuredQuota(state).Usage(bg, 100001, t.TempDir()); limit != nil {
+	if _, limit, _ := newMeasuredQuota(state, true, "").Usage(bg, 100001, t.TempDir()); limit != nil {
 		t.Error("release must clear the limit")
 	}
 }
@@ -271,15 +271,87 @@ func TestDetectQuota(t *testing.T) {
 	ext4 := func(string) (FSInfo, error) { return FSInfo{FSType: "ext4", MountPoint: "/", ProjectQuota: true}, nil }
 	unknown := func(string) (FSInfo, error) { return FSInfo{}, errUnsupported }
 
-	if q, _ := detectQuota(l, xfs, found, nil); q.Mode() != quotaXFS || q.(*xfsQuota).mountPoint != "/srv/oblimint" {
+	if q, _ := detectQuota(l, xfs, found, nil, false); q.Mode() != quotaXFS || q.(*xfsQuota).mountPoint != "/srv/oblimint" {
 		t.Errorf("xfs+prjquota: %v", q.Mode())
 	}
 	for name, info := range map[string]func(string) (FSInfo, error){"noprj": noPrj, "ext4": ext4, "unknown": unknown} {
-		if q, _ := detectQuota(l, info, found, nil); q.Mode() != quotaMeasured {
+		if q, _ := detectQuota(l, info, found, nil, false); q.Mode() != quotaMeasured {
 			t.Errorf("%s: %v", name, q.Mode())
 		}
 	}
-	if q, why := detectQuota(l, xfs, missing, nil); q.Mode() != quotaMeasured || !strings.Contains(why, "xfs_quota") {
+	if q, why := detectQuota(l, xfs, missing, nil, false); q.Mode() != quotaMeasured || !strings.Contains(why, "xfs_quota") {
 		t.Errorf("no binary: %v %s", q.Mode(), why)
+	}
+}
+
+// Measured mode cannot enforce a disk limit: without the operator opt-in a
+// limit is refused (fail closed, the account is not provisioned) instead of
+// being recorded as if it capped the tenant; no limit, release and usage keep
+// working.
+func TestMeasuredQuotaRefusesLimitsWithoutOptIn(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "run", "hostd-quota.json")
+	q := newMeasuredQuota(state, false, "/srv/oblimint on / (ext4) has no XFS project quota")
+	q.measure = func(context.Context, string) (int64, error) { return 4096, nil }
+
+	err := q.Ensure(bg, 100001, "x", i64(10))
+	status, code := classify(err)
+	if err == nil || status != 409 || code != codeQuotaNotEnforced {
+		t.Fatalf("limit without opt-in: %v (%d %s)", err, status, code)
+	}
+	for _, want := range []string{"10 MiB", "ext4", allowMeasuredQuotaEnv, "prjquota"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not mention %q", err, want)
+		}
+	}
+	if _, limit, _ := q.Usage(bg, 100001, "x"); limit != nil {
+		t.Errorf("a refused limit must not be recorded, got %d", *limit)
+	}
+	// No limit (unlimited plan), 0 and release are accepted.
+	if err := q.Ensure(bg, 100001, "x", nil); err != nil {
+		t.Errorf("no limit: %v", err)
+	}
+	if err := q.Ensure(bg, 100001, "x", i64(0)); err != nil {
+		t.Errorf("zero limit: %v", err)
+	}
+	if err := q.Release(100001); err != nil {
+		t.Errorf("release: %v", err)
+	}
+	// Opted in: recorded (and still reported as measured).
+	q.acceptLimits = true
+	if err := q.Ensure(bg, 100001, "x", i64(10)); err != nil {
+		t.Fatal(err)
+	}
+	if _, limit, _ := q.Usage(bg, 100001, "x"); limit == nil || *limit != 10*mib {
+		t.Errorf("accepted limit = %v", limit)
+	}
+}
+
+// The opt-in reaches the measured fallback only; XFS is unaffected.
+func TestDetectQuotaMeasuredPolicy(t *testing.T) {
+	l := newLayout("/srv/oblimint")
+	found := func(string) (string, error) { return "/usr/sbin/xfs_quota", nil }
+	ext4 := func(string) (FSInfo, error) { return FSInfo{FSType: "ext4", MountPoint: "/"}, nil }
+	xfs := func(string) (FSInfo, error) {
+		return FSInfo{FSType: "xfs", MountPoint: "/srv/oblimint", ProjectQuota: true}, nil
+	}
+
+	q, why := detectQuota(l, ext4, found, nil, false)
+	if m, ok := q.(*measuredQuota); !ok || m.acceptLimits || !strings.Contains(why, "refused") || !strings.Contains(m.reason, "ext4") {
+		t.Errorf("default: %T %+v %s", q, q, why)
+	}
+	q, why = detectQuota(l, ext4, found, nil, true)
+	if m, ok := q.(*measuredQuota); !ok || !m.acceptLimits || !strings.Contains(why, "NOT enforced") {
+		t.Errorf("opt-in: %T %s", q, why)
+	}
+	if q, _ := detectQuota(l, xfs, found, nil, true); q.Mode() != quotaXFS {
+		t.Errorf("xfs with opt-in: %v", q.Mode())
+	}
+}
+
+func TestEnvFlag(t *testing.T) {
+	for v, want := range map[string]bool{"1": true, "true": true, " YES ": true, "on": true, "": false, "0": false, "false": false, "no": false, "2": false} {
+		if got := envFlag(v); got != want {
+			t.Errorf("envFlag(%q) = %v, want %v", v, got, want)
+		}
 	}
 }

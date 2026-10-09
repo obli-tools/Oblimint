@@ -3,6 +3,7 @@ import http from 'http';
 import path from 'path';
 import { X509Certificate, createPrivateKey } from 'crypto';
 import * as acme from 'acme-client';
+import { clientCertificateError } from './certificateMessages';
 import { isValidServerName } from './nginxConfig';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,7 +49,12 @@ export const defaultAcmeClientFactory: AcmeClientFactory = (opts) => {
   return new acme.Client(opts) as unknown as AcmeClientLike;
 };
 
-export type IssueLog = (level: 'info' | 'warn' | 'error', message: string) => void | Promise<void>;
+/**
+ * Progress log of an issuance. `message` is shown to the tenant (client users
+ * included): it never embeds raw error text — that goes to `detail` (staff and
+ * server log only, invariant A6, certificateMessages.ts).
+ */
+export type IssueLog = (level: 'info' | 'warn' | 'error', message: string, detail?: string) => void | Promise<void>;
 
 export interface IssueDeps {
   /** localPaths.edge() — account keys go to <edgeDir>/acme-account/. */
@@ -91,6 +97,30 @@ export interface IssuedCertificate {
 }
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{8,256}$/;
+
+/**
+ * Top-level labels a public CA never issues for: RFC 6761 / RFC 2606
+ * special-use names (test, example, invalid, localhost), RFC 6762 .local,
+ * RFC 9476 .alt, .onion, .internal (ICANN private use), reverse zones
+ * (.arpa, home.arpa) and the usual private-network suffixes. An order for
+ * them is refused by Let's Encrypt anyway: the panel never sends it (no
+ * pointless orders on the platform's shared ACME account, no internal host
+ * name sent to the public CA).
+ */
+const NON_PUBLIC_TLDS = new Set([
+  'test', 'example', 'invalid', 'localhost', 'local', 'alt', 'onion', 'internal', 'arpa',
+  'lan', 'home', 'corp', 'intranet', 'private', 'localdomain',
+]);
+
+/** True when a public CA (HTTP-01) can issue for this name: a valid DNS name under a public-looking TLD, not an IP literal. */
+export function isPublicAcmeName(name: string): boolean {
+  if (typeof name !== 'string') return false;
+  const n = name.trim().toLowerCase();
+  if (!isValidServerName(n)) return false;
+  const tld = n.slice(n.lastIndexOf('.') + 1);
+  if (/^[0-9]+$/.test(tld)) return false; // IPv4 literal (a TLD is never all-numeric)
+  return !NON_PUBLIC_TLDS.has(tld);
+}
 
 export function directoryUrl(dir: AcmeDirectoryName): string {
   return dir === 'staging' ? acme.directory.letsencrypt.staging : acme.directory.letsencrypt.production;
@@ -224,9 +254,12 @@ export function httpSelfTest(edgeHost: string, timeoutMs = 5000) {
 export async function issueCertificate(params: IssueParams, deps: IssueDeps): Promise<IssuedCertificate> {
   const names = [...new Set(params.names.map((n) => n.toLowerCase()))];
   if (!names.length || !names.every(isValidServerName)) throw new Error('invalid certificate names');
+  // Last guard before the CA (callers already skip these names).
+  const nonPublic = names.find((n) => !isPublicAcmeName(n));
+  if (nonPublic) throw new Error(`${nonPublic} is not publicly resolvable (reserved or private name): Let's Encrypt cannot issue for it`);
   if (!params.email || /[\s<>]/.test(params.email) || !params.email.includes('@')) throw new Error('invalid ACME contact email');
   const primaryName = names[0];
-  const log = async (level: 'info' | 'warn' | 'error', message: string) => { await deps.log(level, message); };
+  const log = async (level: 'info' | 'warn' | 'error', message: string, detail?: string) => { await deps.log(level, message, detail); };
   const signal = deps.signal;
   const callMs = deps.callTimeoutMs ?? 120_000;
   /** Bounded ACME call (never hangs the serial issuance queue). */
@@ -262,9 +295,10 @@ export async function issueCertificate(params: IssueParams, deps: IssueDeps): Pr
       if (deps.selfTest) {
         try {
           const r = await deps.selfTest(host, challenge.token, keyAuthorization);
-          await log(r.ok ? 'info' : 'warn', `[${host}] Internal self-test ${r.ok ? 'passed' : 'failed'}: ${r.detail}`);
+          // The detail (edge address, start of the body) is for the staff only.
+          await log(r.ok ? 'info' : 'warn', `[${host}] Internal self-test ${r.ok ? 'passed' : 'failed'}`, r.detail);
         } catch (err) {
-          await log('warn', `[${host}] Internal self-test error: ${(err as Error).message}`);
+          await log('warn', `[${host}] Internal self-test error`, (err as Error).message);
         }
       }
 
@@ -273,7 +307,7 @@ export async function issueCertificate(params: IssueParams, deps: IssueDeps): Pr
       await withTimeout(client.waitForValidStatus(challenge), timeoutMs, 'waitForValidStatus', signal, PORT80_HINT);
       await log('info', `[${host}] Challenge validated`);
     } catch (err) {
-      await log('error', `[${host}] Challenge failed: ${(err as Error).message}`);
+      await log('error', `[${host}] Challenge failed: ${clientCertificateError((err as Error)?.message || String(err))}`, (err as Error)?.message || String(err));
       await log('info', `Check: ${host} resolves to this server, port 80 is open (firewall / NAT), no CDN proxy in front during validation.`);
       throw err;
     } finally {

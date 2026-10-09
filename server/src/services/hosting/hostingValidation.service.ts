@@ -57,6 +57,11 @@ export const PHP_LIKE_EXTENSION_RE = /^(php[0-9]?|phar|phtml|pht|phps)$/;
  */
 export const MAX_DATA_PATHS_PER_SITE = 64;
 export const MAX_SERVED_PREFIXES_PER_RUNTIME = 64;
+/** Secondary runtimes of one site: each one is a container with the plan's whole memory / CPU / pids. */
+export const MAX_RUNTIMES_PER_SITE = 4;
+/** Routes of one domain / of one account: each one is a location of the SHARED edge config. */
+export const MAX_ROUTES_PER_DOMAIN = 64;
+export const MAX_ROUTES_PER_ACCOUNT = 512;
 
 /** Custom nginx rules of a site (only ever rendered inside the site container). */
 export const CUSTOM_NGINX_MAX_BYTES = 16 * 1024;
@@ -91,14 +96,28 @@ export function normalizeDomainName(input: unknown): string | null {
 }
 
 /**
- * The panel host name and its preview zone belong to the platform: a tenant
- * can never claim them (the edge would route them away from the panel).
+ * The panel host name and its whole zone belong to the platform: a tenant can
+ * never claim the panel name (the edge would route it away from the panel),
+ * the preview zone, nor ANY name under the panel host — such a name is
+ * same-site with the panel (phishing host for panel credentials, request
+ * forgery and cookie tossing position) and usually covered by the operator's
+ * wildcard DNS. A platform administrator may still attach a name under the
+ * panel host (e.g. www.<panel>), never the panel name or the preview zone.
  */
-export function isPlatformReservedDomain(name: string, panelHostname: string | null | undefined): boolean {
+export function isPlatformReservedDomain(name: string, panelHostname: string | null | undefined, opts: { platformAdmin?: boolean } = {}): boolean {
   const panel = (panelHostname ?? '').trim().toLowerCase().replace(/\.$/, '');
   if (!panel) return false;
   const preview = `preview.${panel}`;
-  return name === panel || name === preview || name.endsWith(`.${preview}`);
+  if (name === panel || name === preview || name.endsWith(`.${preview}`)) return true;
+  return !opts.platformAdmin && name.endsWith(`.${panel}`);
+}
+
+/** Parent names of a host name, nearest first, down to two labels ('a.b.example.com' → b.example.com, example.com). */
+export function parentDomains(name: string): string[] {
+  const labels = name.split('.');
+  const out: string[] = [];
+  for (let i = 1; i <= labels.length - 2; i++) out.push(labels.slice(i).join('.'));
+  return out;
 }
 
 // ── Data paths ───────────────────────────────────────────────────────────────

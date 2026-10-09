@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
 import { validate } from '../middleware/validate';
+import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { sitesService } from '../services/hosting/sites.service';
 import {
@@ -131,7 +132,7 @@ router.get('/:id/runtimes', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/:id/runtimes', validate(runtimeInputSchema), async (req, res, next) => {
+router.post('/:id/runtimes', heavyOpLimiter, validate(runtimeInputSchema), async (req, res, next) => {
   try {
     const runtime = await sitesService.addRuntime(req, await resolveActor(req), idParam(req), req.body.base);
     res.status(201).json({ success: true, data: runtime });

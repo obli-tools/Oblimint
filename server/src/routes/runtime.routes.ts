@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { isSiteBaseId, type SiteBaseId } from '@oblimint/shared';
+import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { auditService } from '../services/audit.service';
 import { idParam, loadSite, resolveActor, type HostingNeed } from '../services/hosting/access';
 import type { SiteRow } from '../services/hosting/rows';
@@ -53,7 +54,7 @@ router.get('/:id/runtime', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/:id/runtime/check', async (req, res, next) => {
+router.post('/:id/runtime/check', heavyOpLimiter, async (req, res, next) => {
   try {
     const row = await site(req, RUNTIME_NEEDS.check);
     const { base } = parseBody(checkSchema, req.body);
@@ -61,7 +62,7 @@ router.post('/:id/runtime/check', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/:id/runtime/switch', async (req, res, next) => {
+router.post('/:id/runtime/switch', heavyOpLimiter, async (req, res, next) => {
   try {
     const row = await site(req, RUNTIME_NEEDS.switch);
     const { base, mode } = parseBody(switchSchema, req.body);

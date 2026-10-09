@@ -9,7 +9,7 @@ import { config, dataDir } from '../../config';
 //   <root>/accounts/<accountId>/                 root:root 0711
 //     staging/                                   uid:gid   0750  (SFTP /staging)
 //       <siteSlug>/                              uid:gid   0750
-//     data/                                      uid:gid   0750  (SFTP /data)
+//     data/                                      root:gid  0750  (SFTP /data; root-owned: data/<slug> is a bind source, the uid must not swap it)
 //       <siteSlug>/<data path>/                  uid:gid   0750  (→ /srv/data in the site container)
 //     filesrv/                                   uid:gid   0700  (SFTPGo state, host keys)
 //     sites/                                     root:root 0711

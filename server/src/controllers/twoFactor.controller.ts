@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { db } from '../db';
-import { regenerateSession } from '../utils/session';
+import { regenerateSession, stampCredentialVersion } from '../utils/session';
 import { clientIp } from '../utils/clientIp';
 import { twoFactorService, acceptTotpStep, hashSessionId } from '../services/twoFactor.service';
 import { checkFactorManagement, sendStepUpFailure } from '../services/stepUp';
@@ -8,6 +8,7 @@ import { authService } from '../services/auth.service';
 import { auditService } from '../services/audit.service';
 import { tenantService, refuseSignInWithoutTenant } from '../services/tenant.service';
 import { AppError } from '../middleware/errorHandler';
+import { revokeOtherSessions } from '../services/userSessions.service';
 
 // TOTP only in P0 (no e-mail codes, no device keys). Same routes and shapes
 // as Obliance (/api/profile/2fa/*); the e-mail routes answer 400.
@@ -81,6 +82,8 @@ export const twoFactorController = {
       const replaced = !!req.session.pendingTotpReplaces;
       clearPendingTotp(req);
       if (!updated) throw new AppError(409, 'Two-factor authentication was enabled in the meantime. Start the setup again.');
+      // A new factor: every OTHER session ends (one opened with a phished password included).
+      await revokeOtherSessions(req, replaced ? 'totp_replaced' : 'totp_enabled');
       await auditSelf(req, replaced ? 'user.totp_replaced' : 'user.totp_enabled');
       res.json({ success: true });
     } catch (err) { next(err); }
@@ -95,6 +98,7 @@ export const twoFactorController = {
       const step = await checkFactorManagement(req, 'profile.totp_manage');
       if (!step.ok) { sendStepUpFailure(res, step); return; }
       await db('users').where({ id: req.session.userId }).update({ totp_secret: null, totp_enabled: false, updated_at: new Date() });
+      await revokeOtherSessions(req, 'totp_disabled');
       await auditSelf(req, 'user.totp_disabled');
       res.json({ success: true });
     } catch (err) { next(err); }
@@ -133,6 +137,7 @@ export const twoFactorController = {
       req.session.username = row.username;
       req.session.role = row.role;
       req.session.currentTenantId = sessionTenantId;
+      await stampCredentialVersion(req);
       await db('users').where({ id: row.id, totp_last_step: step, totp_last_session: preLoginHash })
         .update({ totp_last_session: hashSessionId(req.sessionID) });
       await auditSelf(req, 'auth.login', { username: row.username, via: 'password+totp' });

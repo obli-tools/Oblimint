@@ -15,7 +15,7 @@ import (
 //   <root>/accounts/<accountId>/                 root:root 0711  (XFS project 100000+accountId)
 //     staging/                                   uid:gid   0750
 //       <siteSlug>/                              uid:gid   0750
-//     data/                                      uid:gid   0750
+//     data/                                      root:gid  0750  (NOT the uid's: see dataOwner)
 //       <siteSlug>/<data path>/                  uid:gid   0750
 //     filesrv/                                   uid:gid   0700
 //     sites/                                     root:root 0711
@@ -123,12 +123,27 @@ func (l Layout) Runtime(accountID, siteID int64) string {
 }
 func (l Layout) RunDir() string { return l.abs([]string{"run"}) }
 
+// dataOwner is the owner of accounts/<id>/data: root, group = the account's.
+//
+// data/<slug> is the bind source of /srv/data in the site containers, and
+// Docker resolves that host path again (following symlinks, in the host
+// namespace) at EVERY container start — including the restarts Docker does on
+// its own (restart policy), which never go through hostd. If the account uid
+// owned data/, it could rename data/<slug> away and put a symlink in its place
+// (planted by its PHP, renamed over SFTP), then make its container restart:
+// the next start would bind any host directory the link points to (another
+// account's releases, a world-writable host dir out of the quota). Root-owned,
+// the entry cannot be replaced; group r-x keeps /data listable and
+// traversable for the account's file server (uid:gid), 0 for everyone else.
+// Same rule as sites/ (root-owned parent of the release bind sources).
+func dataOwner(o Owner) Owner { return Owner{UID: 0, GID: o.GID} }
+
 // accountDirs is the account tree in creation order (parents first).
 func (l Layout) accountDirs(accountID int64, o Owner) []dirSpec {
 	return []dirSpec{
 		{l.AccountRel(accountID), rootOwner, 0o711},
 		{l.StagingRel(accountID), o, 0o750},
-		{l.DataRel(accountID), o, 0o750},
+		{l.DataRel(accountID), dataOwner(o), 0o750},
 		{l.FileServerStateRel(accountID), o, 0o700},
 		{l.SitesRel(accountID), rootOwner, 0o711},
 	}

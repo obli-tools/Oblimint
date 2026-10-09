@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { MASTER_TENANT_ID } from '@oblimint/shared';
-import { regenerateSession } from '../utils/session';
+import { regenerateSession, stampCredentialVersion } from '../utils/session';
 import { clientIp } from '../utils/clientIp';
 import { authService } from '../services/auth.service';
 import { appConfigService } from '../services/appConfig.service';
@@ -9,7 +9,7 @@ import { tenantService, noTenantAccessError, refuseSignInWithoutTenant } from '.
 import { obligateService } from '../services/obligate.service';
 import { auditService } from '../services/audit.service';
 import { AppError } from '../middleware/errorHandler';
-import { config } from '../config';
+import { config, SESSION_COOKIE_NAME, sessionCookieSecure } from '../config';
 import { db } from '../db';
 import type { LoginInput } from '../validators/auth.schema';
 
@@ -59,6 +59,7 @@ export const authController = {
       req.session.username = user.username;
       req.session.role = user.role;
       req.session.currentTenantId = sessionTenantId;
+      await stampCredentialVersion(req);
 
       await auditService.log({
         tenantId: sessionTenantId,
@@ -82,7 +83,8 @@ export const authController = {
       const ip = clientIp(req) || undefined;
       req.session.destroy(async (err) => {
         if (err) { next(new AppError(500, 'Failed to logout')); return; }
-        res.clearCookie('connect.sid');
+        // Same attributes as the cookie (a __Host- cookie is only replaced by a Secure one).
+        res.clearCookie(SESSION_COOKIE_NAME, { path: '/', secure: sessionCookieSecure, httpOnly: true, sameSite: 'lax' });
         if (userId && tenantId) {
           await auditService.log({ tenantId, userId, action: 'auth.logout', resourceType: 'user', resourcePath: String(userId), ipAddress: ip });
         }

@@ -1,6 +1,7 @@
 import type { Request } from 'express';
 import { db } from '../db';
 import { AppError } from '../middleware/errorHandler';
+import { staffEquivalentOf } from './hosting/access';
 
 // ── Scope of `users.manage` (P1, docs/mobile/device-bound-2fa.md §6.0) ─────
 //
@@ -61,7 +62,7 @@ async function membershipRole(userId: number, tenantId: number): Promise<string 
  * Can `actor` (not a platform admin) manage an account whose role in
  * `tenantId` is `targetRole`? Returns the refusal text, or null when allowed.
  */
-async function refusalFor(actor: ScopeActor, tenantId: number, targetRole: string): Promise<string | null> {
+async function refusalFor(actor: ScopeActor, tenantId: number, targetRole: string, extraTargetCaps: Iterable<string> = []): Promise<string | null> {
   const callerRole = await membershipRole(actor.userId, tenantId);
   if (callerRole === 'admin') return null; // tenant admin: every capability there
   if (targetRole === 'admin') {
@@ -74,10 +75,30 @@ async function refusalFor(actor: ScopeActor, tenantId: number, targetRole: strin
   }
   const targetCaps = await capsOfRole(targetRole);
   if (targetCaps?.all) return 'This user has permissions you do not hold';
-  for (const cap of targetCaps?.set ?? []) {
+  for (const cap of [...(targetCaps?.set ?? []), ...extraTargetCaps]) {
     if (!callerCaps.set.has(cap)) return 'This user has permissions you do not hold';
   }
   return null;
+}
+
+/**
+ * A CLIENT login's real rights are its per-account capabilities
+ * (account_users), not its membership role ('client' = empty set): their
+ * staff equivalents in `tenantId` (releases.* ← sites.manage). Taking it over
+ * (password / 2FA reset, then signing in as it) needs them too.
+ */
+async function clientHostingCapsIn(userId: number, tenantId: number): Promise<Set<string>> {
+  const rows = await db('account_users as au')
+    .join('hosting_accounts as a', 'a.id', 'au.account_id')
+    .where('au.user_id', userId)
+    .andWhere('a.tenant_id', tenantId)
+    .select('au.capabilities') as Array<{ capabilities: unknown }>;
+  const all: string[] = [];
+  for (const r of rows) {
+    const raw = typeof r.capabilities === 'string' ? JSON.parse(r.capabilities) : r.capabilities;
+    if (Array.isArray(raw)) all.push(...raw.map(String));
+  }
+  return staffEquivalentOf(all);
 }
 
 export const userScope = {
@@ -85,9 +106,10 @@ export const userScope = {
    *  tenant access). Throws 400 / 403 / 404 (AppError). */
   async assertManageableTarget(actor: ScopeActor, targetId: number): Promise<ManagedTarget> {
     if (!Number.isInteger(targetId) || targetId <= 0) throw new AppError(400, 'Invalid user id');
-    const target = await db('users').where({ id: targetId })
-      .first('id', 'username', 'role', 'is_active', 'foreign_source') as ManagedTarget | undefined;
-    if (!target) throw new AppError(404, 'User not found');
+    const row = await db('users').where({ id: targetId })
+      .first('id', 'username', 'role', 'is_active', 'foreign_source', 'kind') as (ManagedTarget & { kind?: string }) | undefined;
+    if (!row) throw new AppError(404, 'User not found');
+    const { kind, ...target } = row;
     if (actor.isPlatformAdmin) return target;
     if (target.role === 'admin') {
       throw new AppError(403, 'Only a platform administrator can manage an administrator account');
@@ -95,7 +117,9 @@ export const userScope = {
     const rows = await db('user_tenants').where({ user_id: targetId }).select('tenant_id', 'role') as Array<{ tenant_id: number; role: string }>;
     if (!rows.some((r) => Number(r.tenant_id) === actor.tenantId)) throw new AppError(404, 'User not found');
     for (const r of rows) {
-      const refusal = await refusalFor(actor, Number(r.tenant_id), normaliseTenantRole(r.role));
+      const tenantId = Number(r.tenant_id);
+      const extra = kind === 'client' ? await clientHostingCapsIn(targetId, tenantId) : [];
+      const refusal = await refusalFor(actor, tenantId, normaliseTenantRole(r.role), extra);
       if (refusal) throw new AppError(403, refusal);
     }
     return target;

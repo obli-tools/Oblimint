@@ -10,12 +10,15 @@ import { appConfigService } from '../appConfig.service';
 import { auditService } from '../audit.service';
 import { reconcileService } from '../docker/reconcile.service';
 import { certificateService } from '../edge/certificate.service';
+import { certificateSummaryView, viewerOf, type CertificateViewer } from '../edge/certificateMessages';
 import { edgeService } from '../edge/edge.service';
 import { assertNeedSomewhere, loadAccount, loadDomain, scopeToActor, type HostingActor } from './access';
 import { accountDeleting } from './accounts.service';
 import { envelopeService, lockTenant } from './envelope.service';
 import { emitHosting } from './events';
-import { MAX_SERVED_PREFIXES_PER_RUNTIME, isPlatformReservedDomain, isUniqueViolation } from './hostingValidation.service';
+import {
+  MAX_ROUTES_PER_ACCOUNT, MAX_ROUTES_PER_DOMAIN, MAX_SERVED_PREFIXES_PER_RUNTIME, isPlatformReservedDomain, isUniqueViolation, parentDomains,
+} from './hostingValidation.service';
 import { toCertificateSummary, toDomain, toSiteRoute, type CertificateRow, type DomainRow, type RouteRow } from './rows';
 import { selectRoutes } from './sites.service';
 
@@ -33,8 +36,11 @@ function selectDomains() {
     .select('d.*', 'a.username as account_username');
 }
 
-/** Maps domain rows with their routes and certificate summary (two batched queries). */
-async function mapDomains(rows: DomainRow[]): Promise<Domain[]> {
+/**
+ * Maps domain rows with their routes and certificate summary (two batched
+ * queries). viewer 'client': the certificate's raw error text is replaced (A6).
+ */
+async function mapDomains(rows: DomainRow[], viewer: CertificateViewer): Promise<Domain[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
   const [routes, certs] = await Promise.all([
@@ -43,15 +49,15 @@ async function mapDomains(rows: DomainRow[]): Promise<Domain[]> {
   ]);
   return rows.map((r) => {
     const cert = certs.find((c) => c.domain_id === r.id);
-    const summary: CertificateSummary | null = cert ? toCertificateSummary(cert) : null;
+    const summary: CertificateSummary | null = cert ? certificateSummaryView(toCertificateSummary(cert), viewer) : null;
     return toDomain(r, routes.filter((x) => x.domain_id === r.id).map(toSiteRoute), summary);
   });
 }
 
-export async function fetchDomain(domainId: number): Promise<Domain> {
+export async function fetchDomain(domainId: number, viewer: CertificateViewer = 'staff'): Promise<Domain> {
   const row = await selectDomains().where('d.id', domainId).first() as DomainRow | undefined;
   if (!row) throw new AppError(404, 'Domain not found', 'notFound');
-  return (await mapDomains([row]))[0];
+  return (await mapDomains([row], viewer))[0];
 }
 
 async function fetchRoute(routeId: number): Promise<SiteRoute> {
@@ -115,6 +121,33 @@ async function assertNamesFree(name: string, includeWww: boolean, exceptId: numb
   }
 }
 
+/**
+ * Subdomains of a domain belong to the account holding it: a name whose
+ * parent domain is held by ANOTHER account is refused (www.<name> has the
+ * same foreign parents as <name>) — e.g. shop.victim.com, or www.victim.com when victim.com's
+ * owner left includeWww off. Without it any tenant could claim names of
+ * another tenant's zone (wildcard / www records already point at the edge)
+ * and get a trusted certificate for them. Same answer as an exact clash.
+ */
+async function assertNoForeignParent(name: string, accountId: number): Promise<void> {
+  const parents = parentDomains(name);
+  if (parents.length === 0) return;
+  const foreign = await db('domains').whereIn('name', parents).whereNot('account_id', accountId).first('name') as { name: string } | undefined;
+  if (foreign) throw domainTaken(name);
+}
+
+/** Route count limits (each route is a location of the shared edge config). Run under the account row lock. */
+async function assertRouteRoom(trx: Knex.Transaction, domain: { id: number; account_id: number }): Promise<void> {
+  const perDomain = await trx('site_routes').where({ domain_id: domain.id }).count('* as c').first() as { c: string | number };
+  if (Number(perDomain.c) >= MAX_ROUTES_PER_DOMAIN) {
+    throw new AppError(409, `A domain has at most ${MAX_ROUTES_PER_DOMAIN} routes`, 'routeLimit', { max: MAX_ROUTES_PER_DOMAIN, scope: 'domain' });
+  }
+  const perAccount = await trx('site_routes').where({ account_id: domain.account_id }).count('* as c').first() as { c: string | number };
+  if (Number(perAccount.c) >= MAX_ROUTES_PER_ACCOUNT) {
+    throw new AppError(409, `An account has at most ${MAX_ROUTES_PER_ACCOUNT} routes`, 'routeLimit', { max: MAX_ROUTES_PER_ACCOUNT, scope: 'account' });
+  }
+}
+
 async function audit(req: Request, domain: { id: number; tenant_id: number; name: string; account_id: number }, action: string, details: Record<string, unknown> = {}): Promise<void> {
   await auditService.logReqAs(req, domain.tenant_id, action, {
     resourceType: 'domain', resourcePath: String(domain.id), details: { name: domain.name, accountId: domain.account_id, ...details },
@@ -147,23 +180,25 @@ export const domainsService = {
       const like = `%${search.toLowerCase().replace(/[%_\\]/g, '\\$&')}%`;
       q.where((b) => { b.where('d.name', 'like', like).orWhere('a.username', 'ilike', like); });
     }
-    return mapDomains(await q.orderBy('d.name') as DomainRow[]);
+    return mapDomains(await q.orderBy('d.name') as DomainRow[], viewerOf(actor));
   },
 
   async get(actor: HostingActor, domainId: number): Promise<Domain> {
     await loadDomain(actor, domainId, 'read');
-    return fetchDomain(domainId);
+    return fetchDomain(domainId, viewerOf(actor));
   },
 
   async create(req: Request, actor: HostingActor, body: DomainCreateBody): Promise<Domain> {
     const account = await loadAccount(actor, body.accountId, 'domains.manage');
     if (account.status === 'deleting') throw accountDeleting();
     const name = body.name;
-    if (isPlatformReservedDomain(name, await panelHostname())) {
+    const platformAdmin = actor.kind === 'staff' && actor.caps === '*';
+    if (isPlatformReservedDomain(name, await panelHostname(), { platformAdmin })) {
       throw new AppError(400, 'This name belongs to the panel', 'domainReserved');
     }
     const includeWww = body.includeWww ?? false;
     await assertNamesFree(name, includeWww, null);
+    await assertNoForeignParent(name, account.id);
     await envelopeService.assertRoomFor('domains', account); // early answer, re-checked under the lock
     if (body.siteId) {
       const site = await db('sites').where({ id: body.siteId, account_id: account.id }).first('id');
@@ -203,7 +238,7 @@ export const domainsService = {
     emitDomain(domain, 'created');
     scheduleEdgeSync(`domain ${domainId} created`);
     ensureCertificate(domainId, tlsMode);
-    return fetchDomain(domainId);
+    return fetchDomain(domainId, viewerOf(actor));
   },
 
   async update(req: Request, actor: HostingActor, domainId: number, body: DomainUpdateBody): Promise<Domain> {
@@ -211,7 +246,14 @@ export const domainsService = {
     const patch: Record<string, unknown> = {};
     if (body.kind !== undefined && body.kind !== row.kind) patch.kind = body.kind;
     if (body.includeWww !== undefined && body.includeWww !== row.include_www) {
-      if (body.includeWww) await assertNamesFree(row.name, true, row.id);
+      if (body.includeWww) {
+        await assertNamesFree(row.name, true, row.id);
+        const panel = await panelHostname();
+        const platformAdmin = actor.kind === 'staff' && actor.caps === '*';
+        if (isPlatformReservedDomain(`www.${row.name}`, panel, { platformAdmin })) {
+          throw new AppError(400, 'This name belongs to the panel', 'domainReserved');
+        }
+      }
       patch.include_www = body.includeWww;
     }
     if (body.tlsMode !== undefined && body.tlsMode !== row.tls_mode) patch.tls_mode = body.tlsMode;
@@ -225,7 +267,7 @@ export const domainsService = {
       // New names (www) or TLS turned on: the certificate follows.
       ensureCertificate(row.id, (patch.tls_mode as string | undefined) ?? row.tls_mode);
     }
-    return fetchDomain(row.id);
+    return fetchDomain(row.id, viewerOf(actor));
   },
 
   async remove(req: Request, actor: HostingActor, domainId: number): Promise<void> {
@@ -247,10 +289,15 @@ export const domainsService = {
     await assertRuntimePrefixRoom(input.runtimeId, input.pathPrefix, null);
     let routeId: number;
     try {
-      const [row] = await db('site_routes').insert({
-        account_id: domain.account_id, domain_id: domain.id, path_prefix: input.pathPrefix, site_id: input.siteId, runtime_id: input.runtimeId ?? null,
-      }).returning('id') as Array<{ id: number }>;
-      routeId = row.id;
+      routeId = await db.transaction(async (trx) => {
+        // Counted under the account row lock: concurrent adds cannot overshoot.
+        await trx('hosting_accounts').where({ id: domain.account_id }).forUpdate().first('id');
+        await assertRouteRoom(trx, domain);
+        const [row] = await trx('site_routes').insert({
+          account_id: domain.account_id, domain_id: domain.id, path_prefix: input.pathPrefix, site_id: input.siteId, runtime_id: input.runtimeId ?? null,
+        }).returning('id') as Array<{ id: number }>;
+        return row.id;
+      });
     } catch (err) {
       if (isUniqueViolation(err)) throw routeTaken(input.pathPrefix);
       throw err;

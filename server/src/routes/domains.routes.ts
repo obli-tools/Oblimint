@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { validate } from '../middleware/validate';
+import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { domainsService } from '../services/hosting/domains.service';
 import {
@@ -61,7 +62,7 @@ router.delete('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/:id/routes', validate(routeInputSchema), async (req, res, next) => {
+router.post('/:id/routes', heavyOpLimiter, validate(routeInputSchema), async (req, res, next) => {
   try {
     const route = await domainsService.addRoute(req, await resolveActor(req), idParam(req), req.body as RouteInputBody);
     res.status(201).json({ success: true, data: route });

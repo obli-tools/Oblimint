@@ -90,8 +90,8 @@ export function ProfilePage() {
       toast.error(t('profile.password.mismatch') || 'Passwords do not match');
       return;
     }
-    if (newPassword.length < 8) {
-      toast.error(t('profile.password.tooShort') || 'Password must be at least 8 characters');
+    if (newPassword.length < 12) {
+      toast.error(t('profile.password.tooShort') || 'Password must be at least 12 characters');
       return;
     }
     setSavingPassword(true);

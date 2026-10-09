@@ -10,14 +10,14 @@ import { auditService } from '../audit.service';
 import { reconcileService } from '../docker/reconcile.service';
 import { edgeService } from '../edge/edge.service';
 import { releaseService } from '../releases/release.service';
-import { assertNeedSomewhere, loadAccount, loadSite, scopeToActor, type HostingActor } from './access';
+import { actorCan, assertNeedSomewhere, loadAccount, loadSite, scopeToActor, type HostingActor } from './access';
 import { DELETION_FAILED_MESSAGE, accountDeleting, backendUnavailable, siteSnapshots } from './accounts.service';
 import { envelopeService, withTenantLock } from './envelope.service';
 import { siteDeletions } from './deletions';
 import { forActor } from './statusMessage';
 import { emitHosting } from './events';
 import {
-  MAX_DATA_PATHS_PER_SITE, customNginxError, dataPathContainsDocroot, dataPathForbiddenError, findDataPathOverlap, isUniqueViolation, phpSettingsError,
+  MAX_DATA_PATHS_PER_SITE, MAX_RUNTIMES_PER_SITE, customNginxError, dataPathContainsDocroot, dataPathForbiddenError, findDataPathOverlap, isUniqueViolation, phpSettingsError,
 } from './hostingValidation.service';
 import { previewHostname } from './naming';
 import {
@@ -263,7 +263,15 @@ export const sitesService = {
       patch.docroot = docroot;
     }
     if (body.basePath !== undefined && body.basePath !== row.base_path) patch.base_path = body.basePath;
-    if (body.publishMode !== undefined && body.publishMode !== row.publish_mode) patch.publish_mode = body.publishMode;
+    if (body.publishMode !== undefined && body.publishMode !== row.publish_mode) {
+      // The approval gate is the approvers' control: leaving 'approval' takes
+      // releases.approve (a client given sites.manage + releases.publish but
+      // not releases.approve must not switch its own reviews off).
+      if (row.publish_mode === 'approval' && !actorCan(actor, 'releases.approve', { tenantId: row.tenant_id, accountId: row.account_id })) {
+        throw new AppError(403, 'Leaving approval mode requires the right to approve releases', 'approvalRequired');
+      }
+      patch.publish_mode = body.publishMode;
+    }
     if (body.publishDebounceSec !== undefined && body.publishDebounceSec !== row.publish_debounce_sec) patch.publish_debounce_sec = body.publishDebounceSec;
     if (body.healthcheckPath !== undefined && body.healthcheckPath !== row.healthcheck_path) patch.healthcheck_path = body.healthcheckPath;
     if (body.php !== undefined) {
@@ -439,7 +447,18 @@ export const sitesService = {
     const site = await loadSite(actor, siteId, 'sites.manage');
     const account = await db('hosting_accounts').where({ id: site.account_id }).first('plan_id') as Pick<AccountRow, 'plan_id'>;
     assertBaseAllowed(await planOf(account), base);
-    const [row] = await db('site_runtimes').insert({ site_id: site.id, base }).returning('*') as SiteRuntimeRow[];
+    // Every runtime is one more container with the plan's whole memory / CPU /
+    // pids (siteContainerSpec): their number per site is capped, counted
+    // under a lock on the site row (two concurrent adds cannot both pass).
+    const row = await db.transaction(async (trx) => {
+      await trx('sites').where({ id: site.id }).forUpdate().first('id');
+      const count = await trx('site_runtimes').where({ site_id: site.id }).count('* as c').first() as { c: string | number };
+      if (Number(count.c) >= MAX_RUNTIMES_PER_SITE) {
+        throw new AppError(409, `A site has at most ${MAX_RUNTIMES_PER_SITE} secondary runtimes`, 'runtimeLimit', { max: MAX_RUNTIMES_PER_SITE });
+      }
+      const [inserted] = await trx('site_runtimes').insert({ site_id: site.id, base }).returning('*') as SiteRuntimeRow[];
+      return inserted;
+    });
     await audit(req, site, 'site.runtime_add', { runtimeId: row.id, base });
     emitSite(site, 'updated');
     requestSite(site.id, 'runtime-added');

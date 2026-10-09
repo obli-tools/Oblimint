@@ -9,7 +9,8 @@
   "servedPrefixes": [],
   "dataPaths": [
     { "path": "uploads", "policy": "persistent", "allowedExtensions": null },
-    { "path": "media", "policy": "typed", "allowedExtensions": ["jpg", "png"] }
+    { "path": "media", "policy": "typed", "allowedExtensions": ["jpg", "png"] },
+    { "path": "cache", "policy": "ephemeral", "allowedExtensions": null }
   ],
   "php": { "memoryLimitMb": 256, "uploadMaxFilesizeMb": 64, "postMaxSizeMb": 64, "maxExecutionTime": 60 },
   "customNginx": "location = /smoke-custom { return 204; }\n",

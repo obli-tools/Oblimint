@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '../db';
 import { AppError } from '../middleware/errorHandler';
 import { validate } from '../middleware/validate';
+import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { auditService } from '../services/audit.service';
 import { idParam, loadSite, resolveActor } from '../services/hosting/access';
 import { toSite, type SiteRow } from '../services/hosting/rows';
@@ -94,7 +95,7 @@ router.get('/:id/releases/:rid', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/:id/releases/:rid/diff', validate(diffQuery, 'query'), async (req, res, next) => {
+router.get('/:id/releases/:rid/diff', heavyOpLimiter, validate(diffQuery, 'query'), async (req, res, next) => {
   try {
     const site = await siteFor(req, 'read');
     const q = req.query as unknown as z.infer<typeof diffQuery>;
@@ -137,14 +138,14 @@ router.post('/:id/releases/:rid/reject', validate(rejectBody), async (req, res, 
   } catch (err) { next(err); }
 });
 
-router.get('/:id/staging', async (req, res, next) => {
+router.get('/:id/staging', heavyOpLimiter, async (req, res, next) => {
   try {
     const site = await siteFor(req, 'read');
     res.json({ success: true, data: await releaseService.stagingStatus(site.id) });
   } catch (err) { next(err); }
 });
 
-router.get('/:id/staging/detect', async (req, res, next) => {
+router.get('/:id/staging/detect', heavyOpLimiter, async (req, res, next) => {
   try {
     const site = await siteFor(req, 'read');
     res.json({ success: true, data: await releaseService.detectProfile(site.id) });

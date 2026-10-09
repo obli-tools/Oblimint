@@ -6,7 +6,7 @@ const username = z.string().min(3).max(64).regex(/^[a-zA-Z0-9_.-]+$/, 'Only lett
 
 export const createUserSchema = z.object({
   username,
-  password: z.string().min(8).max(128),
+  password: z.string().min(12).max(128),
   displayName: z.string().max(128).nullable().optional(),
   email: z.string().email().max(255).nullable().optional(),
   role: z.enum(['admin', 'user']).optional(),
@@ -24,7 +24,7 @@ export const updateUserSchema = z.object({
 });
 
 export const changePasswordSchema = z.object({
-  password: z.string().min(8).max(128),
+  password: z.string().min(12).max(128),
 });
 
 export type CreateUserInput = z.infer<typeof createUserSchema>;

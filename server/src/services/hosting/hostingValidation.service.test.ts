@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  customNginxError, dataPathContainsDocroot, dataPathForbiddenError, dataPathsOverlap, findDataPathOverlap, isPlatformReservedDomain, isValidAccountUsername, isValidClientUsername,
+  customNginxError, dataPathContainsDocroot, dataPathForbiddenError, dataPathsOverlap, findDataPathOverlap, isPlatformReservedDomain, parentDomains, isValidAccountUsername, isValidClientUsername,
   normalizeDomainName, normalizeExtensions, phpSettingsError,
 } from './hostingValidation.service';
 import {
@@ -72,14 +72,28 @@ test('domain names: normalisation, IDN → punycode, refusals', () => {
   assert.equal(domainCreateSchema.safeParse({ accountId: 1, name: '10.0.0.1' }).success, false);
 });
 
-test('the panel host name and its preview zone are refused', () => {
+test('the panel host name and its whole zone are refused (platform admin: only the panel name and previews)', () => {
   const panel = 'Panel.Example.com';
   assert.equal(isPlatformReservedDomain('panel.example.com', panel), true);
   assert.equal(isPlatformReservedDomain('preview.panel.example.com', panel), true);
   assert.equal(isPlatformReservedDomain('blog-3.preview.panel.example.com', panel), true);
+  // Same-site with the panel (phishing / request forgery / cookie tossing host): reserved for tenants.
+  assert.equal(isPlatformReservedDomain('login.panel.example.com', panel), true);
+  assert.equal(isPlatformReservedDomain('www.panel.example.com', panel), true);
+  assert.equal(isPlatformReservedDomain('a.b.panel.example.com', panel), true);
   assert.equal(isPlatformReservedDomain('shop.example.com', panel), false);
   assert.equal(isPlatformReservedDomain('xpanel.example.com', panel), false);
   assert.equal(isPlatformReservedDomain('panel.example.com', null), false);
+  // A platform administrator may attach www.<panel>, never the panel name or a preview.
+  assert.equal(isPlatformReservedDomain('www.panel.example.com', panel, { platformAdmin: true }), false);
+  assert.equal(isPlatformReservedDomain('panel.example.com', panel, { platformAdmin: true }), true);
+  assert.equal(isPlatformReservedDomain('x-1.preview.panel.example.com', panel, { platformAdmin: true }), true);
+});
+
+test('parentDomains walks the labels down to two', () => {
+  assert.deepEqual(parentDomains('a.b.example.com'), ['b.example.com', 'example.com']);
+  assert.deepEqual(parentDomains('www.example.com'), ['example.com']);
+  assert.deepEqual(parentDomains('example.com'), []);
 });
 
 test('data paths overlap segment-wise', () => {

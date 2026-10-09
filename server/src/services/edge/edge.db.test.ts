@@ -130,6 +130,12 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
   const afterFail = await certificateService.getForDomain(dom.id);
   assert.equal(afterFail?.status, 'valid');
   assert.match(afterFail?.lastError ?? '', /rate limited/);
+  assert.ok(afterFail?.log.some((l) => l.message.includes('rate limited')), 'the staff log keeps the raw detail');
+  // A6: a client user gets the categorised sentence, never the raw text (log included).
+  const clientView = await certificateService.getForDomain(dom.id, 'client');
+  assert.match(clientView?.lastError ?? '', /Let's Encrypt rate limit reached/);
+  assert.ok(clientView?.log.some((l) => l.message.startsWith('FAILED: ')), 'the client log still says it failed');
+  assert.ok(!clientView?.log.some((l) => l.message.includes('rate limited')), 'no raw text in the client log');
   const row = await db('certificates').where({ domain_id: dom.id }).first();
   assert.equal(row.failure_count, 1);
   const alert = await db('audit_logs').where({ action: 'certificate.renewal_failed', tenant_id: 1 }).first();
@@ -224,8 +230,16 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
   await db('app_config').insert({ key: 'panel_hostname', value: 'panel.host.example' }).onConflict('key').merge();
   const [reserved] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'x.preview.panel.host.example', tls_mode: 'letsencrypt' }).returning('id');
   assert.equal(await codeOf(certificateService.startRequest(reserved.id)), '409:domainReserved');
+  // A non-public panel name: no ACME order for it nor its preview hosts (no row created).
+  certificateService.ensureAuxiliary();
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(await db('certificates').whereNull('domain_id').first('id'), undefined, 'no panel / preview row for panel.host.example');
   await db('app_config').where({ key: 'panel_hostname' }).del();
-  await db('domains').whereIn('id', [offDom.id, goneLe.id, reserved.id]).del();
+  // Reserved / private TLD of a tenant domain: refused before the CA is contacted.
+  const [lab] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'shop.lab.test', tls_mode: 'letsencrypt' }).returning('id');
+  assert.equal(await codeOf(certificateService.startRequest(lab.id)), '409:certificateNameNotPublic');
+  assert.equal(await db('certificates').where({ domain_id: lab.id }).first('id'), undefined);
+  await db('domains').whereIn('id', [offDom.id, goneLe.id, reserved.id, lab.id]).del();
   assert.equal(await codeOf(certificateService.startRequest(999_999)), '404:notFound');
 
   // ── removal ──

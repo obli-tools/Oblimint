@@ -146,6 +146,13 @@ async function startNormalMode(): Promise<void> {
   });
   listen(server, 'panel');
 
+  // The edge container fronts the panel: trust its exact addresses for
+  // X-Forwarded-For (rate-limit keys, audit IPs). Needs Docker.
+  if (config.hosting.workersEnabled) {
+    const { proxyTrustService } = await import('./services/proxyTrust');
+    proxyTrustService.start();
+  }
+
   // P1 hosting workers (reconcile, publish debounce, certificates, usage) +
   // the internal file-server hook listener.
   const { startWorkers } = await import('./workers');

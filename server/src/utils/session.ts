@@ -20,3 +20,20 @@ export function regenerateSession(req: Request, keep: string[] = []): Promise<vo
     });
   });
 }
+
+/**
+ * Stamps users.credential_version on a session that just signed in (password,
+ * password + TOTP, SSO) or whose own user just changed a credential:
+ * sessionUserGuard ends every session whose stamp differs from the database —
+ * a password / TOTP change, an admin 2FA reset or a disable revokes the
+ * OTHER sessions (stolen cookie, session opened with a phished password).
+ */
+export async function stampCredentialVersion(req: Request): Promise<void> {
+  const userId = Number(req.session?.userId);
+  if (!Number.isInteger(userId) || userId <= 0) return;
+  const { db } = await import('../db');
+  const { forgetSessionUser } = await import('../middleware/sessionUserGuard');
+  forgetSessionUser(userId);
+  const row = await db('users').where({ id: userId }).first('credential_version') as { credential_version: number | string | null } | undefined;
+  if (row) req.session.credVersion = Number(row.credential_version ?? 0);
+}

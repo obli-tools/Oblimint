@@ -5,6 +5,8 @@
 //
 //	OBLIMINT_ROOT          hosting root (default /srv/oblimint)
 //	OBLIMINT_HOSTD_SOCKET  API socket (default <root>/run/hostd.sock, mode 0660)
+//	OBLIMINT_ALLOW_MEASURED_QUOTA  1 = without XFS project quotas, accept disk
+//	                       limits that are only measured (default: refused)
 package main
 
 import (
@@ -38,7 +40,7 @@ func main() {
 		socket = path.Join(layout.RunDir(), "hostd.sock")
 	}
 
-	quota, why := detectQuota(layout, fsInfo, exec.LookPath, execRunner)
+	quota, why := detectQuota(layout, fsInfo, exec.LookPath, execRunner, envFlag(os.Getenv(allowMeasuredQuotaEnv)))
 	log.Info("quota mode", "mode", quota.Mode(), "reason", why)
 	ops := newHostOps(layout, quota, fdOwner)
 

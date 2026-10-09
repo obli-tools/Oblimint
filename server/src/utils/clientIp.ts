@@ -37,13 +37,14 @@ import type { IncomingMessage } from 'http';
  * 172.16/12), set TRUSTED_PROXY_HOPS=1: with 2, such a client can choose the
  * address it is seen with.
  *
- * Rate limits do NOT use this function: they key on req.ip, which Express
- * ('trust proxy', 1 — app.ts) resolves to the address the client nginx saw,
- * something a client cannot forge.
+ * Rate limits key on req.ip, which Express resolves with the SAME trust
+ * function (expressTrustProxy below, app.ts): only an X-Forwarded-For entry
+ * appended by a trusted proxy is ever used.
  */
-// Oblimint: the panel is published directly (port 8443, no client nginx in
-// front): only loopback is trusted by default. Add the reverse proxy (and set
-// TRUST_PROXY_HOPS) when one fronts the panel.
+// Oblimint: the panel is published directly (port 8443) AND through the edge
+// container, whose exact addresses are trusted dynamically
+// (setEdgeProxyAddresses). Only loopback is trusted statically by default; add
+// any other reverse proxy to TRUSTED_PROXIES (TRUST_PROXY_HOPS when chained).
 export const DEFAULT_TRUSTED_PROXIES = 'loopback';
 
 /** IPv4 subnets of this process's interfaces (Docker plumbing). In the host
@@ -115,14 +116,48 @@ function fatal(message: string): never {
   process.exit(1);
 }
 
-/** Trust function of this process (also given to Express `trust proxy`). */
-export const isTrustedProxy = (() => {
+/** TRUSTED_PROXIES (static part of the trust function). */
+const isConfiguredProxy = (() => {
   try {
     return compileTrustedProxies(process.env.TRUSTED_PROXIES || DEFAULT_TRUSTED_PROXIES);
   } catch (err) {
     return fatal((err as Error).message);
   }
 })();
+
+/**
+ * Oblimint: the panel is ALSO served through the edge container (nginx,
+ * `proxy_pass https://oblimint-panel:8443`, X-Forwarded-For appended). Its
+ * addresses (one per Docker network it is attached to) are read from Docker
+ * by services/proxyTrust.ts and set here — an exact list, never a subnet:
+ * the panel shares the account networks with tenant site containers, which
+ * must never be trusted.
+ */
+let edgeProxyAddresses: ReadonlySet<string> = new Set();
+
+export function setEdgeProxyAddresses(addresses: readonly string[]): void {
+  edgeProxyAddresses = new Set(addresses.map((a) => normalizeIp(a)).filter((a) => isIP(a) !== 0));
+}
+
+export function edgeProxyAddressList(): string[] {
+  return [...edgeProxyAddresses];
+}
+
+/** Trust function of this process (also given to Express `trust proxy`, see expressTrustProxy). */
+export const isTrustedProxy = (addr: string): boolean => edgeProxyAddresses.has(normalizeIp(addr)) || isConfiguredProxy(addr);
+
+/**
+ * Express `trust proxy`: a FUNCTION of the hop address, never a bare hop
+ * count — with a count, Express trusts the last X-Forwarded-For entry
+ * whoever the peer is, and port 8443 stays reachable directly: any client
+ * could pick its own rate-limit key. Hop i (0 = socket peer) is trusted only
+ * when it is a trusted proxy and i < max(1, hops) (TRUST_PROXY_HOPS: proxies
+ * chained in front of the panel, all of which must be trusted).
+ */
+export function expressTrustProxy(hops: number): (addr: string, i: number) => boolean {
+  const max = Math.max(1, Math.floor(Number(hops) || 0));
+  return (addr: string, i: number) => i < max && isTrustedProxy(addr);
+}
 
 export const DEFAULT_TRUSTED_PROXY_HOPS = 1;
 export const trustedProxyHops = (() => {

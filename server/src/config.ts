@@ -1,5 +1,6 @@
 import './env';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { DEFAULT_SITE_IMAGE_PREFIX } from '@oblimint/shared';
 
@@ -83,6 +84,20 @@ function intEnv(name: string, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
+function numEnv(name: string, fallback: number): number {
+  const n = parseFloat(process.env[name] ?? '');
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * Node ceiling of ONE site container (docs/P1-PLAN.md §18): 3/4 of the host
+ * RAM (os.totalmem reads the host's /proc/meminfo, also from the panel
+ * container) and of its CPUs, so that a site never takes the whole host from
+ * the panel, its PostgreSQL, the edge and the other tenants.
+ */
+const DEFAULT_SITE_MAX_MEMORY_MB = Math.max(256, Math.floor((os.totalmem() / 1048576) * 0.75));
+const DEFAULT_SITE_MAX_CPUS = Math.max(1, Math.floor(((typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length) || 1) * 0.75));
+
 export const config = {
   mode: resolveMode() as PanelMode,
   /** Where the panel configuration came from (logs only). */
@@ -97,11 +112,20 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL || fileConfig?.databaseUrl || '',
   sessionSecret: process.env.SESSION_SECRET || fileConfig?.sessionSecret || (explicitDevelopment ? DEV_SESSION_SECRET : ''),
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5174',
+  /**
+   * Extra browser origins allowed to send state-changing requests and open a
+   * socket (ALLOWED_ORIGINS, comma-separated, e.g. "https://panel.example").
+   * The origin of the request's own Host and clientOrigin are always allowed
+   * (middleware/originGuard.ts).
+   */
+  allowedOrigins: (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim().replace(/\/+$/, '').toLowerCase()).filter(Boolean),
   forceHttps: process.env.FORCE_HTTPS === 'true',
   appName: process.env.APP_NAME || 'Oblimint',
   appUrl: process.env.APP_URL || '',
-  /** Express `trust proxy` hops (0 = the socket peer is the client: the panel
-   *  is published directly on 8443). Set it when a reverse proxy fronts it. */
+  /** Max proxies chained in front of the panel whose X-Forwarded-For entries
+   *  are believed (min 1). Only TRUSTED addresses count — the edge container
+   *  (read from Docker) and TRUSTED_PROXIES —, never any peer: port 8443 stays
+   *  published directly (utils/clientIp.ts expressTrustProxy). */
   trustProxyHops: Math.max(0, parseInt(process.env.TRUST_PROXY_HOPS || '0', 10) || 0),
   defaultAdminUsername: process.env.DEFAULT_ADMIN_USERNAME || 'admin',
   defaultAdminPassword: process.env.DEFAULT_ADMIN_PASSWORD || '',
@@ -115,8 +139,19 @@ export const config = {
     /** OBLIMINT_WORKERS=off: no reconcile / publish / renewal / usage worker
      *  (development on a box without Docker). The API still answers. */
     workersEnabled: process.env.OBLIMINT_WORKERS !== 'off',
+    /**
+     * Ceiling of every site container (memory MiB / CPUs): applied when the
+     * plan leaves the value unlimited (null) and when the plan asks for more
+     * (a reseller's "unlimited" plan never means "the whole host"). 0 = no
+     * ceiling (previous behaviour). Defaults: 3/4 of the host RAM / CPUs.
+     */
+    siteMaxMemoryMb: intEnv('OBLIMINT_SITE_MAX_MEMORY_MB', DEFAULT_SITE_MAX_MEMORY_MB),
+    siteMaxCpus: numEnv('OBLIMINT_SITE_MAX_CPUS', DEFAULT_SITE_MAX_CPUS),
     /** Internal HTTP listener for the file-server hooks (never published on the host; 0 = disabled). */
     internalPort: intEnv('OBLIMINT_INTERNAL_PORT', 8081),
+    /** Hook calls accepted only from the account's own file server address
+     *  (services/docker/hookSource.ts). 'off' = token only (escape hatch). */
+    hookSourceCheck: process.env.OBLIMINT_HOOK_SOURCE_CHECK !== 'off',
     /** uid/gid range of hosting accounts (gid = uid). */
     uidMin: intEnv('OBLIMINT_UID_MIN', 20000),
     uidMax: intEnv('OBLIMINT_UID_MAX', 59999),
@@ -140,6 +175,9 @@ export const config = {
     releasesKeep: intEnv('OBLIMINT_RELEASES_KEEP', 10),
     /** git executable used by the release pipeline. */
     gitBinary: process.env.OBLIMINT_GIT || 'git',
+    /** Forwarded to hostd: without XFS project quotas, accept disk limits that
+     *  are only measured (not enforced). Off by default: hostd refuses them. */
+    allowMeasuredQuota: ['1', 'true', 'yes', 'on'].includes((process.env.OBLIMINT_ALLOW_MEASURED_QUOTA || '').trim().toLowerCase()),
   },
   /** Static client build served in production. */
   // server/src (tsx) → ../../client/dist ; server/dist/src (compiled) → ../../../client/dist
@@ -149,7 +187,17 @@ export const config = {
     || path.resolve(__dirname, '../../../client/dist'),
 };
 
-const PLACEHOLDER_RE = /change[-_. ]?(?:me|this)|admin123/i;
+/** The session cookie is Secure in production (TLS served by the container), HTTP allowed in dev. */
+export const sessionCookieSecure = config.nodeEnv === 'production' ? true : config.forceHttps;
+/**
+ * Session cookie name. With Secure, the `__Host-` prefix makes browsers refuse
+ * any variant set with a Domain or a Path other than / — a page on a
+ * subdomain of the panel host (blue/green previews, tenant domains) cannot
+ * toss or shadow the panel session. Plain HTTP (dev) cannot use the prefix.
+ */
+export const SESSION_COOKIE_NAME = sessionCookieSecure ? '__Host-oblimint.sid' : 'oblimint.sid';
+
+const PLACEHOLDER_RE =/change[-_. ]?(?:me|this)|admin123/i;
 const MIN_SESSION_SECRET_LENGTH = 32;
 const MIN_ADMIN_PASSWORD_LENGTH = 12;
 

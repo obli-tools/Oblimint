@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,9 +25,26 @@ const (
 	// quotaXFS: hard limits enforced by the kernel (XFS project quotas).
 	quotaXFS QuotaMode = "xfs"
 	// quotaMeasured: usage measured by walking the tree, the limit is only
-	// remembered (the panel alerts, nothing is enforced).
+	// remembered (the panel alerts, nothing is enforced). A disk limit is
+	// refused in this mode unless the operator accepted unenforced limits
+	// (OBLIMINT_ALLOW_MEASURED_QUOTA=1): otherwise one account could fill the
+	// shared filesystem while the plan promises a cap.
 	quotaMeasured QuotaMode = "measured"
 )
+
+// allowMeasuredQuotaEnv is the operator opt-in to disk limits that are only
+// measured (no filesystem able to enforce them). The panel forwards it from
+// its own environment to the hostd container.
+const allowMeasuredQuotaEnv = "OBLIMINT_ALLOW_MEASURED_QUOTA"
+
+// envFlag reads a boolean opt-in: 1 / true / yes (case-insensitive) = on.
+func envFlag(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
 
 const mib = 1024 * 1024
 
@@ -321,14 +339,33 @@ func parseXFSReport(out string) (map[uint32]xfsReportRow, error) {
 // ── Measured fallback ────────────────────────────────────────────────────────
 
 // measuredQuota walks the tree (diskUsage) and only remembers the limit, in a
-// small state file so a restart keeps it.
+// small state file so a restart keeps it. Nothing stops a tenant from writing
+// past that limit, so Ensure refuses a limit unless acceptLimits (operator
+// opt-in): the account is then not provisioned (fail closed) instead of
+// running with a cap that only exists on paper. reason (why no hard quota) is
+// quoted in the refusal.
 type measuredQuota struct {
-	store   *limitStore
-	measure func(ctx context.Context, dir string) (int64, error)
+	store        *limitStore
+	measure      func(ctx context.Context, dir string) (int64, error)
+	acceptLimits bool
+	reason       string
 }
 
-func newMeasuredQuota(statePath string) *measuredQuota {
-	return &measuredQuota{store: newLimitStore(statePath), measure: measureDir}
+func newMeasuredQuota(statePath string, acceptLimits bool, reason string) *measuredQuota {
+	return &measuredQuota{store: newLimitStore(statePath), measure: measureDir, acceptLimits: acceptLimits, reason: reason}
+}
+
+// errNotEnforced: a disk limit was asked for on a filesystem that cannot
+// enforce it, and the operator did not accept measured-only limits.
+func (q *measuredQuota) errNotEnforced(limitMB int64) error {
+	why := q.reason
+	if why == "" {
+		why = "no XFS project quota on the hosting root"
+	}
+	return &apiError{http.StatusConflict, codeQuotaNotEnforced, fmt.Sprintf(
+		"disk limit of %d MiB refused: it cannot be enforced (%s). Put the hosting root on XFS mounted with prjquota for hard quotas, "+
+			"or set %s=1 on the panel to accept limits that are only measured (no hard limit: an account can fill the disk)",
+		limitMB, why, allowMeasuredQuotaEnv)}
 }
 
 func measureDir(ctx context.Context, dir string) (int64, error) {
@@ -343,6 +380,9 @@ func measureDir(ctx context.Context, dir string) (int64, error) {
 func (q *measuredQuota) Mode() QuotaMode { return quotaMeasured }
 
 func (q *measuredQuota) Ensure(_ context.Context, projectID uint32, _ string, limitMB *int64) error {
+	if limitMB != nil && *limitMB > 0 && !q.acceptLimits {
+		return q.errNotEnforced(*limitMB)
+	}
 	return q.store.set(projectID, limitMB)
 }
 
@@ -433,17 +473,26 @@ func (s *limitStore) saveLocked() error {
 
 // detectQuota picks XFS project quotas when the root lives on XFS mounted with
 // prjquota and xfs_quota is installed, the measured fallback otherwise.
-func detectQuota(l Layout, info func(string) (FSInfo, error), lookPath func(string) (string, error), run runner) (Quota, string) {
+// acceptMeasured (OBLIMINT_ALLOW_MEASURED_QUOTA) lets the fallback record disk
+// limits it cannot enforce; without it the fallback refuses them.
+func detectQuota(l Layout, info func(string) (FSInfo, error), lookPath func(string) (string, error), run runner, acceptMeasured bool) (Quota, string) {
 	statePath := filepath.Join(filepath.FromSlash(l.RunDir()), "hostd-quota.json")
+	measured := func(why string) (Quota, string) {
+		policy := "disk limits refused (set " + allowMeasuredQuotaEnv + "=1 to accept unenforced limits)"
+		if acceptMeasured {
+			policy = "disk limits accepted but NOT enforced (" + allowMeasuredQuotaEnv + ")"
+		}
+		return newMeasuredQuota(statePath, acceptMeasured, why), why + "; " + policy
+	}
 	fi, err := info(l.Root)
 	switch {
 	case err != nil:
-		return newMeasuredQuota(statePath), "filesystem unknown: " + err.Error()
+		return measured("filesystem unknown: " + err.Error())
 	case fi.FSType != "xfs" || !fi.ProjectQuota:
-		return newMeasuredQuota(statePath), fmt.Sprintf("%s on %s (%s) has no XFS project quota", l.Root, fi.MountPoint, fi.FSType)
+		return measured(fmt.Sprintf("%s on %s (%s) has no XFS project quota", l.Root, fi.MountPoint, fi.FSType))
 	}
 	if _, err := lookPath("xfs_quota"); err != nil {
-		return newMeasuredQuota(statePath), "xfs_quota not installed"
+		return measured("xfs_quota not installed")
 	}
 	return newXFSQuota(fi.MountPoint, run), "xfs prjquota on " + fi.MountPoint
 }

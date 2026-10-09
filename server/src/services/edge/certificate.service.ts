@@ -11,8 +11,11 @@ import { EDGE_CONTAINER, previewHostname } from '../hosting/naming';
 import { localPaths } from '../hosting/paths';
 import { json, toCertificateSummary, type CertificateRow } from '../hosting/rows';
 import {
-  defaultAcmeClientFactory, httpSelfTest, issueCertificate, removeCertificateFiles, type AcmeClientFactory,
+  defaultAcmeClientFactory, httpSelfTest, isPublicAcmeName, issueCertificate, removeCertificateFiles, type AcmeClientFactory,
 } from './acmeIssuer';
+import {
+  certificateLogView, certificateSummaryView, clientCertificateError, type CertificateViewer, type StoredCertificateLogLine,
+} from './certificateMessages';
 import { certFilesExist, edgeService } from './edge.service';
 import { isValidServerName } from './nginxConfig';
 import {
@@ -78,9 +81,15 @@ const deps: {
 
 const queue: { chain: Promise<unknown>; byName: Map<string, Promise<void>> } = { chain: Promise.resolve(), byName: new Map() };
 const timers: { first: NodeJS.Timeout | null; interval: NodeJS.Timeout | null } = { first: null, interval: null };
+let warnedNonPublicPanel = false;
 
-function toDetail(r: CertificateRow): CertificateDetail {
-  return { ...toCertificateSummary(r), domainId: r.domain_id, log: json<CertificateLogLine[]>(r.log, []) };
+/** The detail as `viewer` may read it (A6: a client never gets the raw error text, certificateMessages.ts). */
+function toDetail(r: CertificateRow, viewer: CertificateViewer = 'staff'): CertificateDetail {
+  return {
+    ...certificateSummaryView(toCertificateSummary(r), viewer),
+    domainId: r.domain_id,
+    log: certificateLogView(json<StoredCertificateLogLine[]>(r.log, []), viewer),
+  };
 }
 
 function scheduleRow(r: CertificateRow): ScheduleRow {
@@ -109,7 +118,7 @@ async function panelHostname(): Promise<string | null> {
 }
 
 /** Why a domain gets no certificate (each one has its own API error code). */
-type SkipReason = 'domain not found' | 'TLS disabled for this domain' | 'account deleting' | 'account not served' | 'reserved platform name';
+type SkipReason = 'domain not found' | 'TLS disabled for this domain' | 'account deleting' | 'account not served' | 'reserved platform name' | 'name not public';
 
 /** The API error of a skip reason (explicit requests: POST renew). */
 export function skipError(reason: SkipReason): AppError {
@@ -118,6 +127,7 @@ export function skipError(reason: SkipReason): AppError {
     case 'TLS disabled for this domain': return new AppError(409, 'TLS is disabled for this domain', 'tlsDisabled');
     case 'account deleting': return new AppError(409, 'The hosting account is being deleted', 'accountDeleting');
     case 'reserved platform name': return new AppError(409, 'This name belongs to the panel', 'domainReserved');
+    case 'name not public': return new AppError(409, "Let's Encrypt does not issue certificates for reserved or private names (.test, .local, .internal…)", 'certificateNameNotPublic');
     case 'account not served':
     default: return new AppError(409, 'The hosting account is not online yet (provisioning or in error)', 'accountNotServed');
   }
@@ -137,6 +147,8 @@ async function domainTarget(domainId: number): Promise<CertTarget | { skip: Skip
   const name = d.name.toLowerCase();
   // The panel / preview host names belong to the platform (never served for a tenant).
   if (isReservedPlatformName(name, await panelHostname())) return { skip: 'reserved platform name' };
+  // Special-use / private names: the public CA would refuse the order (never sent).
+  if (!isPublicAcmeName(name)) return { skip: 'name not public' };
   return {
     kind: 'domain', domainId: d.id, siteId: null, names: d.include_www ? [name, `www.${name}`] : [name],
     tenantId: d.tenant_id, accountId: d.account_id,
@@ -199,11 +211,12 @@ async function runIssuance(target: CertTarget): Promise<void> {
   // others). Its names stay those of the certificate until the new one is in.
   const keepValid = isUsable(row, Date.now()) && certFilesExist(row.primary_name);
   const wasIssued = row.not_after !== null;
-  const lines: CertificateLogLine[] = [];
-  const log = async (level: CertificateLogLine['level'], message: string) => {
-    if (level === 'info') logger.info({ certId, names: target.names }, `certificate: ${message}`);
-    else logger.warn({ certId, names: target.names }, `certificate: ${message}`);
-    lines.push({ at: new Date().toISOString(), level, message });
+  const lines: StoredCertificateLogLine[] = [];
+  // `message` is client-safe (tenant-visible); `detail` is the raw text (staff + server log only, A6).
+  const log = async (level: CertificateLogLine['level'], message: string, detail?: string) => {
+    if (level === 'info') logger.info({ certId, names: target.names, detail }, `certificate: ${message}`);
+    else logger.warn({ certId, names: target.names, detail }, `certificate: ${message}`);
+    lines.push({ at: new Date().toISOString(), level, message, ...(detail ? { detail: detail.slice(0, 2000) } : {}) });
     if (lines.length > LOG_CAP) lines.splice(0, lines.length - LOG_CAP);
     try { await db('certificates').where({ id: certId }).update({ log: JSON.stringify(lines) }); } catch { /* best effort */ }
   };
@@ -285,7 +298,7 @@ async function runIssuance(target: CertTarget): Promise<void> {
   } catch (err) {
     clearTimeout(deadlineTimer);
     const message = (err as Error)?.message || String(err);
-    await log('error', `FAILED: ${message}`);
+    await log('error', `FAILED: ${clientCertificateError(message)}`, message);
     const now = Date.now();
     const current = await db('certificates').where({ id: certId }).first() as CertificateRow | undefined;
     if (!current) return;
@@ -315,6 +328,14 @@ async function runIssuance(target: CertTarget): Promise<void> {
 
 /** Queues an issuance (one at a time; a name already queued is not queued twice). */
 function enqueue(target: CertTarget): Promise<void> {
+  // Never an order the public CA must refuse (reserved / private names: the
+  // panel or preview host names of a lab install, rows created before this
+  // rule): no load on the platform's shared ACME account, no internal name
+  // sent to the CA. The edge keeps serving its default certificate.
+  if (!target.names.every(isPublicAcmeName)) {
+    logger.info({ names: target.names }, "certificate: non-public name, no Let's Encrypt request");
+    return Promise.resolve();
+  }
   const key = target.names[0];
   const existing = queue.byName.get(key);
   if (existing) return existing;
@@ -365,7 +386,7 @@ export const certificateService = {
   ensureForHost(host: string, opts: { siteId: number | null; tenantId: number; accountId: number | null }): void {
     void (async () => {
       const name = host.trim().toLowerCase();
-      if (!isValidServerName(name)) return;
+      if (!isValidServerName(name) || !isPublicAcmeName(name)) return;
       await ensureTarget({
         kind: opts.siteId ? 'preview' : 'panel', domainId: null, siteId: opts.siteId, names: [name],
         tenantId: opts.tenantId, accountId: opts.accountId,
@@ -378,6 +399,16 @@ export const certificateService = {
     void (async () => {
       const panel = await panelHostname();
       if (!panel) return;
+      if (!isPublicAcmeName(panel)) {
+        // Lab / internal install (panel.oblimint.test…): the panel and every preview
+        // host name below it are not publicly resolvable — the edge serves its
+        // default certificate, Let's Encrypt is never asked.
+        if (!warnedNonPublicPanel) {
+          warnedNonPublicPanel = true;
+          logger.warn({ panel }, "certificate: panel_hostname is a reserved / private name: no Let's Encrypt certificate for the panel and preview hosts");
+        }
+        return;
+      }
       certificateService.ensureForHost(panel, { siteId: null, tenantId: MASTER_TENANT_ID, accountId: null });
       const nodeId = await localNodeId();
       const sites = await db('sites as s')
@@ -418,7 +449,8 @@ export const certificateService = {
     const target = await requireDomainTarget(domainId);
     let row = await findRow(target);
     if (!row) row = await upsertRow(target);
-    if (queue.byName.has(target.names[0])) return toDetail(row); // already queued / running
+    const viewer: CertificateViewer = opts.staff ? 'staff' : 'client';
+    if (queue.byName.has(target.names[0])) return toDetail(row, viewer); // already queued / running
     const now = Date.now();
     const sched = scheduleRow(row);
     const last = row.last_attempt_at ? new Date(row.last_attempt_at).getTime() : NaN;
@@ -434,7 +466,7 @@ export const certificateService = {
       throw new AppError(409, 'The certificate is valid and does not need renewal yet', 'certificateNotDue');
     }
     if (needed || opts.force) void enqueue(target);
-    return toDetail(row);
+    return toDetail(row, viewer);
   },
 
   /** Deletes the cert row + files of a domain (called BEFORE the domain row is deleted). */
@@ -446,9 +478,10 @@ export const certificateService = {
     edgeService.scheduleSync('certificate removed');
   },
 
-  async getForDomain(domainId: number): Promise<CertificateDetail | null> {
+  /** viewer 'client' (a client user of the account): raw error text replaced (A6). */
+  async getForDomain(domainId: number, viewer: CertificateViewer = 'staff'): Promise<CertificateDetail | null> {
     const row = await db('certificates').where({ domain_id: domainId }).first() as CertificateRow | undefined;
-    return row ? toDetail(row) : null;
+    return row ? toDetail(row, viewer) : null;
   },
 
   /**

@@ -66,6 +66,25 @@ RUN set -eux; \
     rm -f /usr/local/etc/php-fpm.d/*.conf; \
     rm -rf /var/cache/apk/* /tmp/*
 
+# oblimint_exec (php/oblimint_exec/): Zend compile hook — PHP is only ever
+# compiled from oblimint.exec_dirs (release, guard, code caches), so a file in
+# a data path or /tmp is never run, not even through include/require. Built
+# with phpize; the build dependencies are removed in the same layer.
+RUN --mount=type=bind,source=php/oblimint_exec,target=/usr/src/oblimint_exec-src \
+    set -eux; \
+    apk add --no-cache --virtual .oblimint-exec-build $PHPIZE_DEPS; \
+    cp -r /usr/src/oblimint_exec-src /tmp/oblimint_exec; \
+    cd /tmp/oblimint_exec; \
+    phpize; \
+    ./configure --enable-oblimint-exec; \
+    make -j"$(nproc)"; \
+    make install; \
+    docker-php-ext-enable oblimint_exec; \
+    cd /; \
+    rm -rf /tmp/oblimint_exec; \
+    apk del .oblimint-exec-build; \
+    php -m | grep -qx oblimint_exec
+
 COPY --from=siteconf /out/siteconf /usr/local/bin/siteconf
 COPY common/oblimint-entrypoint common/oblimint-reload /usr/local/bin/
 COPY common/lib.sh /usr/local/lib/oblimint/lib.sh

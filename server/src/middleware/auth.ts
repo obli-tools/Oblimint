@@ -8,6 +8,8 @@ declare module 'express-session' {
     username: string;
     role: string;
     currentTenantId: number;
+    /** users.credential_version at sign-in (sessionUserGuard ends the session when it moves). */
+    credVersion?: number;
     oauthState: string;
     /** Exact redirect_uri of the pending Obligate authorize request. */
     oauthRedirectUri?: string;

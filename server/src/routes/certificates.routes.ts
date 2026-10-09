@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AppError } from '../middleware/errorHandler';
 import { auditService } from '../services/audit.service';
 import { certificateService } from '../services/edge/certificate.service';
+import { viewerOf } from '../services/edge/certificateMessages';
 import { idParam, loadDomain, resolveActor } from '../services/hosting/access';
 
 // /api/domains/:id/certificate* — OWNED BY MODULE `edge` (docs/P1-PLAN.md §API).
@@ -22,7 +23,8 @@ router.get('/:id/certificate', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
     const domain = await loadDomain(actor, idParam(req), 'read');
-    res.json({ success: true, data: await certificateService.getForDomain(domain.id) });
+    // A client user never reads the raw issuance errors (A6, certificateMessages.ts).
+    res.json({ success: true, data: await certificateService.getForDomain(domain.id, viewerOf(actor)) });
   } catch (err) { next(err); }
 });
 

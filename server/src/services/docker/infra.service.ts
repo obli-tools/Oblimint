@@ -108,7 +108,7 @@ export const infraService = {
     await withLock(infraLockKey('hostd'), async () => {
       const nodeId = await localNodeId();
       const docker = await engineFor(nodeId);
-      const spec = hostdContainerSpec({ hostDataDir: hostRoot() });
+      const spec = hostdContainerSpec({ hostDataDir: hostRoot(), allowMeasuredQuota: config.hosting.allowMeasuredQuota });
       await ensureInfraContainer(docker, spec, log);
       log('Waiting for the hostd API…');
       const deadline = Date.now() + HOSTD_HEALTH_TIMEOUT_MS;

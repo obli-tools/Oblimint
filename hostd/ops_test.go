@@ -50,7 +50,7 @@ func newTestOps(t *testing.T) (*hostOps, *ownerRec, string) {
 	t.Helper()
 	dir := t.TempDir()
 	rec := &ownerRec{root: dir, got: map[string]string{}}
-	q := newMeasuredQuota("")
+	q := newMeasuredQuota("", true, "test") // operator accepted measured-only limits
 	h := newHostOps(newLayout(dir), q, rec.own)
 	h.now = func() time.Time { return time.Date(2026, 10, 9, 12, 0, 0, 0, time.FixedZone("x", 3600)) }
 	return h, rec, dir
@@ -102,7 +102,7 @@ func TestEnsureAccountAndSite(t *testing.T) {
 		"accounts":           "0:0 0711",
 		"accounts/3":         "0:0 0711",
 		"accounts/3/staging": "20001:20002 0750",
-		"accounts/3/data":    "20001:20002 0750",
+		"accounts/3/data":    "0:20002 0750", // root-owned: data/<slug> (bind source) cannot be swapped by the uid
 		"accounts/3/filesrv": "20001:20002 0700",
 		"accounts/3/sites":   "0:0 0711",
 	}
@@ -629,5 +629,28 @@ func TestFSInfoStaysInRoot(t *testing.T) {
 	}
 	if len(looked) != 2 {
 		t.Errorf("mountinfo looked up for %q", looked)
+	}
+}
+
+// Through the ops: in measured mode without the opt-in, an account with a
+// disk limit is refused (409 quotaNotEnforced, the panel marks it in error)
+// while an account without a limit is provisioned; SetQuota likewise.
+func TestEnsureAccountMeasuredWithoutOptIn(t *testing.T) {
+	dir := t.TempDir()
+	rec := &ownerRec{root: dir, got: map[string]string{}}
+	h := newHostOps(newLayout(dir), newMeasuredQuota("", false, "no prjquota"), rec.own)
+
+	_, err := h.EnsureAccount(bg, AccountSpec{AccountID: 3, Owner: tenant, QuotaMB: i64(100)})
+	if _, code := classify(err); code != codeQuotaNotEnforced {
+		t.Fatalf("limited account: %v", err)
+	}
+	if mode, err := h.EnsureAccount(bg, AccountSpec{AccountID: 4, Owner: tenant}); err != nil || mode != quotaMeasured {
+		t.Fatalf("unlimited account: %v %v", mode, err)
+	}
+	if _, err := h.SetQuota(bg, 4, i64(50)); err == nil {
+		t.Error("SetQuota with a limit must be refused")
+	}
+	if _, err := h.SetQuota(bg, 4, nil); err != nil {
+		t.Errorf("SetQuota(nil): %v", err)
 	}
 }

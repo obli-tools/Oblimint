@@ -24,12 +24,13 @@ images/
     oblimint-entrypoint    PID 1 (sous tini) : rendu → php-fpm + serveur web → supervision
     oblimint-reload        docker exec … oblimint-reload : re-rendu, test, reload gracieux
     lib.sh                 fonctions communes (installé dans /usr/local/lib/oblimint/)
-    guard.php              auto_prepend_file : refuse tout script dont le realpath est sous /srv/data
+    guard.php              auto_prepend_file : refuse tout script principal dont le realpath n'est pas dans une release
     php.ini                php.ini de production
     placeholder.html       page « Site en attente de première publication » (503)
     ping                   corps de /__oblimint/ping (Apache)
     smoke/                 test de fumée exécuté PENDANT le build (jamais livré)
   php/Dockerfile           bases Apache/nginx + PHP-FPM
+  php/oblimint_exec/       extension PHP (C) : PHP n'est compilé que depuis oblimint.exec_dirs (include/require compris)
   nginx-static/Dockerfile  base statique
   edge/                    nginx.conf, pages d'erreur, entrypoint de l'edge
   filesrv/                 entrypoint SFTPGo + README des hooks
@@ -56,7 +57,8 @@ Chaque build de base de site :
    (`mlocati/php-extension-installer:2.12.0`, épinglé par digest) ;
 3. exécute `common/smoke/smoke-test.sh` : rendu des configs d'exemple en mode site **et**
    placeholder, `httpd -t` / `nginx -t` / `php-fpm -t`, présence des extensions, gd
-   jpeg/webp/freetype, et vérification fonctionnelle de `guard.php`. Un module Apache manquant,
+   jpeg/webp/freetype, et vérification fonctionnelle de `guard.php` et de `oblimint_exec`
+   (include d'un chemin de données, de /tmp ou via php://filter refusé ; release et cache éphémère OK). Un module Apache manquant,
    une directive inconnue ou une extension absente **cassent le build**.
 
 Épinglage : `drakkan/sftpgo`, `nginx`, `mlocati/php-extension-installer` sont épinglés par tag +
@@ -113,7 +115,7 @@ garde son pool précédent jusqu'à son prochain redémarrage, message sur stder
 
 ### Chemins de données : PHP n'y est **jamais** exécuté
 
-Dans la release, `<chemin>` est un lien vers `/srv/data/<chemin>`. Trois couches indépendantes :
+Dans la release, `<chemin>` est un lien vers `/srv/data/<chemin>`. Quatre couches indépendantes :
 
 1. **Serveur web**
    - Apache : `<Directory "/srv/data">` et, par chemin, `<Directory "/srv/releases/current/<p>">`
@@ -138,14 +140,36 @@ Dans la release, `<chemin>` est un lien vers `/srv/data/<chemin>`. Trois couches
      chemin `typed` → tout refusé) et l'ajoute à l'exclusion php-fpm. Un fichier `.htaccess` de la
      release (y compris au-dessus du docroot) qui est lui-même un lien vers `/srv/data` → `AllowOverride
      None` sur son dossier. Octets hors liste blanche dans un nom → joker `?` (jamais écrit brut).
-     nginx ne lit aucun fichier par dossier ; pour PHP, `guard.php` (realpath) reste la barrière.
+     nginx ne lit aucun fichier par dossier ; pour PHP, `guard.php` et `oblimint_exec` (realpath) restent la barrière.
      Limite connue : un `.user.ini` de la release qui serait un lien vers `/srv/data` reste lu par
      php-fpm (réglages `PHP_INI_PERDIR` seulement ; `open_basedir` et `auto_prepend_file` sont
      `php_admin_value`, non modifiables).
 2. **php-fpm** : `security.limit_extensions = .php`, `php_admin_value[open_basedir] =
    /srv/releases/:/srv/data/:/tmp/:/opt/oblimint/`, `php_admin_value[auto_prepend_file] =
    /opt/oblimint/guard.php` (non modifiables par `ini_set` ni `.user.ini`).
-3. **`guard.php`** : `realpath($_SERVER['SCRIPT_FILENAME'])` sous `/srv/data/` → `403` + `exit` ;
+3. **`oblimint_exec`** (extension compilée dans l'image, `php/oblimint_exec/`) : enveloppe
+   `zend_compile_file`, donc **chaque** fichier compilé (script principal, `auto_prepend_file`,
+   `include`/`require`/`*_once`, `opcache_compile_file`). Le fichier n'est compilé que si son
+   **realpath** est sous un préfixe de `php_admin_value[oblimint.exec_dirs]` (`PHP_INI_SYSTEM` :
+   ni `ini_set`, ni `php_value`, ni `.user.ini`) ; sinon erreur fatale **avant** compilation (aucune
+   fonction/classe du fichier n'est déclarée). Liste rendue par `siteconf` (`execdirs.go`) :
+   `/srv/releases/`, `/opt/oblimint/`, chaque chemin `ephemeral` (caches régénérables : Symfony,
+   Smarty, `bootstrap/cache`…, vidés à chaque publication) et, dans un chemin `persistent`, seulement
+   les dossiers de code connus des frameworks (`storage/framework/views` Laravel,
+   `sites/default/files/php` Drupal, `app/config` PrestaShop). Jamais `/tmp` (sessions, envois en
+   cours), jamais un chemin `typed`, jamais le contenu utilisateur (`wp-content/uploads`, `upload`,
+   `storage/app`…), jamais un wrapper (`php://filter`, `data:`…) ; `phar://` est jugé sur l'archive.
+   Un fichier PHP déposé dans les données (SFTP, faille d'écriture, site compromis) reste inerte même
+   inclus par le code de la release, et ne survit pas comme code à un changement de release.
+   Limite connue : un cache autorisé (éphémère ou dossier de code de framework) reste inscriptible par
+   le site, donc une faille d'écriture qui y vise un fichier inclus reste une exécution jusqu'à la
+   prochaine publication (éphémère) ou durablement (dossier de code d'un chemin `persistent`, ex.
+   `app/config/parameters.php` de PrestaShop) — c'est le prix de la compatibilité des frameworks.
+   Le réglage n'est posé que dans la pool php-fpm : `php` en ligne de commande (réglage vide) n'est
+   pas restreint.
+4. **`guard.php`** (script principal, liste blanche) : `realpath($_SERVER['SCRIPT_FILENAME'])` doit
+   être dans une release (`/srv/releases/<n>/…`), sinon `403` + `exit` (`/srv/data`, `/tmp`, tout
+   autre emplacement inscriptible refusés) ;
    chemin non résolu → refus aussi (échec fermé).
 
 `typed` : seules les extensions listées sont servies (Apache `Require all denied` + `FilesMatch`
@@ -176,6 +200,7 @@ démarre sans elle (message sur stderr) — jamais de boucle de crash. Bases Apa
 
 ### PHP
 
+- Extension maison : `oblimint_exec` (voir « Chemins de données », couche 3).
 - Extensions : gd (jpeg, webp, freetype), intl, mysqli, pdo_mysql, pdo_pgsql, zip, opcache, exif,
   bcmath, soap, xml, mbstring, curl (vérifiées au build).
 - `php.ini` : `expose_php Off`, `display_errors Off`, `log_errors` → stderr, `date.timezone UTC`,

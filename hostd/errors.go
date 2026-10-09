@@ -18,6 +18,10 @@ const (
 	codeUnsupported = "unsupported" // 501: not available on this OS / filesystem
 	codeCancelled   = "cancelled"   // 503: the caller left (timeout): the operation stopped part way
 	codeInternal    = "internal"    // 500
+
+	// 409: a disk limit was asked for in measured mode without the operator
+	// opt-in (OBLIMINT_ALLOW_MEASURED_QUOTA): it could not be enforced.
+	codeQuotaNotEnforced = "quotaNotEnforced"
 )
 
 // apiError is an error carrying its HTTP status and code.

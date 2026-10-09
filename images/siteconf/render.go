@@ -140,7 +140,9 @@ type templateData struct {
 	ShareDir   string
 	DataRoot   string
 	GuardFile  string
-	FpmSocket  string
+	// ExecDirs: oblimint.exec_dirs of the pool (see execdirs.go).
+	ExecDirs  string
+	FpmSocket string
 
 	SessionsDir  string
 	ReleasesRoot string
@@ -300,6 +302,9 @@ func Render(cfg *SiteConfig, opt Options) (*Output, error) {
 		found, warnings := opt.DataLinks(cfg.Docroot)
 		out.Warnings = append(out.Warnings, warnings...)
 		d.DataLinks, linkRegexes = dataLinkViews(cfg, found)
+	}
+	if d.ExecDirs, err = execDirs(cfg); err != nil {
+		return nil, err
 	}
 	if d.PHPExcludeRegex, err = phpExcludeRegex(views, linkRegexes); err != nil {
 		return nil, err

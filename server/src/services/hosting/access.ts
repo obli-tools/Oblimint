@@ -79,6 +79,42 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
   'releases.approve': 'releases.approve',
 };
 
+/**
+ * Staff capability equivalent to each CLIENT capability (releases.* ←
+ * sites.manage, as for staff needs). Whoever grants a client capability, or
+ * takes over a client login (users.manage: password / 2FA reset), must hold
+ * its equivalent: a client login is never a way to launder rights the staff
+ * member does not have.
+ */
+export const CLIENT_CAP_STAFF_EQUIVALENT: Record<ClientCapability, string> = {
+  'sites.manage': 'sites.manage',
+  'domains.manage': 'domains.manage',
+  'files.manage': 'files.manage',
+  'releases.publish': 'sites.manage',
+  'releases.approve': 'sites.manage',
+};
+
+/** Staff capabilities a set of client capabilities amounts to. */
+export function staffEquivalentOf(caps: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const c of caps) {
+    const eq = (CLIENT_CAP_STAFF_EQUIVALENT as Record<string, string | undefined>)[c];
+    if (eq) out.add(eq);
+  }
+  return out;
+}
+
+/** 403 unless the staff actor holds the staff equivalent of every client capability it grants. */
+export function assertCanGrantClientCapabilities(actor: HostingActor, caps: Iterable<string>): void {
+  if (actor.kind !== 'staff') throw new AppError(403, 'Insufficient permissions');
+  if (actor.caps === '*') return;
+  const held = actor.caps;
+  const missing = [...staffEquivalentOf(caps)].filter((c) => !held.has(c));
+  if (missing.length > 0) {
+    throw new AppError(403, `You cannot grant rights you do not hold (${missing.join(', ')})`, 'capabilityNotHeld', { missing });
+  }
+}
+
 const actorCache = new WeakMap<Request, Promise<HostingActor>>();
 
 /** Who is calling. Must run after requireAuth + requireTenant (req.tenantId set). Cached per request. */

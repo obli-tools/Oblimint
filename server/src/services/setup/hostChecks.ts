@@ -119,9 +119,13 @@ async function dataDirFsCheck(): Promise<HostCheck> {
   }
   const prjquota = m.options.some((o) => o === 'prjquota' || o === 'pquota');
   if (m.fsType === 'xfs' && prjquota) return check('datadir_fs', 'ok', `${m.mountPoint}: xfs with project quotas (hard quotas available)`);
+  // hostd refuses disk limits it cannot enforce unless the operator opts in.
+  const policy = config.hosting.allowMeasuredQuota
+    ? 'disk limits accepted but only measured (OBLIMINT_ALLOW_MEASURED_QUOTA=1: an account can fill the disk)'
+    : 'accounts with a disk limit are refused (set OBLIMINT_ALLOW_MEASURED_QUOTA=1 on the panel to accept measured-only limits)';
   const detail = m.fsType === 'xfs'
-    ? `${m.mountPoint}: xfs without prjquota — measured quotas only (alerts, no hard limit)`
-    : `${m.mountPoint}: ${m.fsType} — measured quotas only (alerts, no hard limit); XFS with prjquota gives hard quotas`;
+    ? `${m.mountPoint}: xfs without prjquota — no hard quota; ${policy}`
+    : `${m.mountPoint}: ${m.fsType} — no hard quota; ${policy}. XFS with prjquota gives hard quotas`;
   return check('datadir_fs', 'warn', detail, {
     fixCommand: m.fsType === 'xfs'
       ? `# add prjquota to the mount options of ${m.mountPoint} in /etc/fstab, then reboot (XFS needs it at mount time)`

@@ -258,7 +258,7 @@
       "new": "New password",
       "newPlaceholder": "Enter new password",
       "title": "Change password",
-      "tooShort": "Password must be at least 8 characters"
+      "tooShort": "Password must be at least 12 characters"
     },
     "preferredLanguage": "Language",
     "profileUpdated": "Profile updated",

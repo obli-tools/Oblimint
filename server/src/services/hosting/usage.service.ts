@@ -29,7 +29,32 @@ export function isOverQuota(usedBytes: number | null, quotaBytes: number | null)
   return usedBytes !== null && quotaBytes !== null && usedBytes > quotaBytes;
 }
 
+/** API refreshes of one account closer than this reuse the last measurement. */
+export const USAGE_REFRESH_COOLDOWN_MS = 30 * 1000;
+const onDemandInFlight = new Map<number, Promise<void>>();
+const lastOnDemand = new Map<number, number>();
+
 export const usageService = {
+  /**
+   * POST /accounts/:id/usage/refresh: any member may ask (read), and in
+   * measured mode hostd walks the whole account tree. Concurrent asks for one
+   * account share ONE measurement, and a measurement less than 30 s old is
+   * reused: a loop of requests cannot keep hostd walking trees.
+   */
+  async refreshOnDemand(accountId: number): Promise<void> {
+    const running = onDemandInFlight.get(accountId);
+    if (running) return running;
+    const last = lastOnDemand.get(accountId);
+    if (last !== undefined && Date.now() - last < USAGE_REFRESH_COOLDOWN_MS) return;
+    const p = (async () => {
+      await this.refresh(accountId);
+      if (lastOnDemand.size > 100_000) lastOnDemand.clear();
+      lastOnDemand.set(accountId, Date.now());
+    })().finally(() => { onDemandInFlight.delete(accountId); });
+    onDemandInFlight.set(accountId, p);
+    return p;
+  },
+
   /** Refresh one account now (API "refresh usage"). Throws when hostd fails. */
   async refresh(accountId: number): Promise<void> {
     const row = await db('hosting_accounts as a')

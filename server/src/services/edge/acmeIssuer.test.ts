@@ -7,7 +7,7 @@ import { X509Certificate, createPrivateKey } from 'crypto';
 import selfsigned from 'selfsigned';
 import type * as acme from 'acme-client';
 import {
-  accountKeyPath, directoryUrl, issueCertificate, readCertificateDates, type AcmeClientFactory, type AcmeClientLike, type IssueDeps,
+  accountKeyPath, directoryUrl, isPublicAcmeName, issueCertificate, readCertificateDates, type AcmeClientFactory, type AcmeClientLike, type IssueDeps,
 } from './acmeIssuer';
 
 const DAY = 24 * 3600_000;
@@ -32,7 +32,7 @@ function tempRoot(t: { after: (fn: () => void) => void }): string {
 }
 
 test('certificate dates are read from the PEM (X509Certificate), not assumed', () => {
-  const { cert } = makeCert(['dates.example'], 45);
+  const { cert } = makeCert(['dates.example.net'], 45);
   const { notBefore, notAfter } = readCertificateDates(cert + cert); // chain: first certificate wins
   const x = new X509Certificate(cert);
   assert.equal(notAfter.getTime(), new Date(x.validTo).getTime());
@@ -156,11 +156,11 @@ test('a failed challenge removes the token file and installs nothing', async (t)
     async createAccount() { return {}; },
     async createOrder() { return { url: 'o' } as unknown as acme.Order; },
     async getAuthorizations() {
-      return [{ url: 'a', status: 'pending', identifier: { type: 'dns', value: 'fail.example' },
+      return [{ url: 'a', status: 'pending', identifier: { type: 'dns', value: 'fail.example.net' },
         challenges: [{ type: 'http-01', url: 'c', token: 'failTOKEN_123456', status: 'pending' }] }] as unknown as acme.Authorization[];
     },
     async getChallengeKeyAuthorization() { return 'ka'; },
-    async completeChallenge() { throw new Error('Invalid response from http://fail.example: 404'); },
+    async completeChallenge() { throw new Error('Invalid response from http://fail.example.net: 404'); },
     async waitForValidStatus(item) { return item; },
     async finalizeOrder() { throw new Error('must not finalize'); },
     async getCertificate() { throw new Error('must not download'); },
@@ -169,9 +169,9 @@ test('a failed challenge removes the token file and installs nothing', async (t)
     edgeDir: path.join(root, 'edge'), acmeWebroot: path.join(root, 'edge', 'acme'), certsDir: path.join(root, 'edge', 'certs'),
     createClient: factory, log: () => {},
   };
-  await assert.rejects(issueCertificate({ names: ['fail.example'], email: 'ops@example.com', directory: 'staging' }, deps), /404/);
+  await assert.rejects(issueCertificate({ names: ['fail.example.net'], email: 'ops@example.com', directory: 'staging' }, deps), /404/);
   assert.deepEqual(fs.readdirSync(path.join(root, 'edge', 'acme', '.well-known', 'acme-challenge')), []);
-  assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'fail.example')), false);
+  assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'fail.example.net')), false);
 });
 
 test('a hostile token (path traversal) is refused before touching the disk', async (t) => {
@@ -180,7 +180,7 @@ test('a hostile token (path traversal) is refused before touching the disk', asy
     async createAccount() { return {}; },
     async createOrder() { return { url: 'o' } as unknown as acme.Order; },
     async getAuthorizations() {
-      return [{ url: 'a', status: 'pending', identifier: { type: 'dns', value: 'x.example' },
+      return [{ url: 'a', status: 'pending', identifier: { type: 'dns', value: 'x.example.net' },
         challenges: [{ type: 'http-01', url: 'c', token: '../../../certs/x', status: 'pending' }] }] as unknown as acme.Authorization[];
     },
     async getChallengeKeyAuthorization() { return 'ka'; },
@@ -193,14 +193,14 @@ test('a hostile token (path traversal) is refused before touching the disk', asy
     edgeDir: path.join(root, 'edge'), acmeWebroot: path.join(root, 'edge', 'acme'), certsDir: path.join(root, 'edge', 'certs'),
     createClient: factory, log: () => {},
   };
-  await assert.rejects(issueCertificate({ names: ['x.example'], email: 'ops@example.com', directory: 'staging' }, deps), /invalid ACME challenge token/);
+  await assert.rejects(issueCertificate({ names: ['x.example.net'], email: 'ops@example.com', directory: 'staging' }, deps), /invalid ACME challenge token/);
   assert.equal(fs.existsSync(path.join(root, 'edge', 'certs')), false);
 });
 
 test('a certificate that does not match the key or the names is refused', async (t) => {
   const root = tempRoot(t);
-  const other = makeCert(['other.example'], 90);
-  const mine = makeCert(['mine.example'], 90);
+  const other = makeCert(['other.example.net'], 90);
+  const mine = makeCert(['mine.example.net'], 90);
   const factory: AcmeClientFactory = () => ({
     async createAccount() { return {}; },
     async createOrder() { return { url: 'o' } as unknown as acme.Order; },
@@ -215,8 +215,8 @@ test('a certificate that does not match the key or the names is refused', async 
     edgeDir: path.join(root, 'edge'), acmeWebroot: path.join(root, 'edge', 'acme'), certsDir: path.join(root, 'edge', 'certs'),
     createClient: factory, createCertificateKey: async () => mine.key, log: () => {},
   };
-  await assert.rejects(issueCertificate({ names: ['mine.example'], email: 'ops@example.com', directory: 'production' }, deps), /does not match/);
-  assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'mine.example')), false);
+  await assert.rejects(issueCertificate({ names: ['mine.example.net'], email: 'ops@example.com', directory: 'production' }, deps), /does not match/);
+  assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'mine.example.net')), false);
 });
 
 test('every ACME call is bounded: a hung request times out, an aborted issuance installs nothing', async (t) => {
@@ -237,24 +237,46 @@ test('every ACME call is bounded: a hung request times out, an aborted issuance 
     async getCertificate() { return ''; },
   };
   // A hung createOrder / finalizeOrder → rejected after callTimeoutMs.
-  await assert.rejects(issueCertificate({ names: ['hang.example'], email: 'ops@example.com', directory: 'staging' },
+  await assert.rejects(issueCertificate({ names: ['hang.example.net'], email: 'ops@example.com', directory: 'staging' },
     deps(() => ({ ...base, createOrder: () => never<acme.Order>() }), { callTimeoutMs: 50 })), /createOrder timed out/);
-  await assert.rejects(issueCertificate({ names: ['hang.example'], email: 'ops@example.com', directory: 'staging' },
+  await assert.rejects(issueCertificate({ names: ['hang.example.net'], email: 'ops@example.com', directory: 'staging' },
     deps(() => ({ ...base, finalizeOrder: () => never<acme.Order>() }), { callTimeoutMs: 50 })), /finalizeOrder timed out/);
 
   // The caller's deadline aborts a pending call at once, with its reason.
   const ctrl = new AbortController();
-  const p = issueCertificate({ names: ['hang.example'], email: 'ops@example.com', directory: 'staging' },
+  const p = issueCertificate({ names: ['hang.example.net'], email: 'ops@example.com', directory: 'staging' },
     deps(() => ({ ...base, getCertificate: () => never<string>() }), { signal: ctrl.signal }));
   setTimeout(() => ctrl.abort(new Error('issuance deadline')), 30);
   await assert.rejects(p, /issuance deadline/);
-  assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'hang.example')), false);
+  assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'hang.example.net')), false);
 
   // Already aborted: no ACME call at all.
   let calls = 0;
   const dead = new AbortController();
   dead.abort(new Error('too late'));
-  await assert.rejects(issueCertificate({ names: ['hang.example'], email: 'ops@example.com', directory: 'staging' },
+  await assert.rejects(issueCertificate({ names: ['hang.example.net'], email: 'ops@example.com', directory: 'staging' },
     deps(() => ({ ...base, async createAccount() { calls++; return {}; } }), { signal: dead.signal })), /too late/);
   assert.equal(calls, 1, 'the call may be issued but its result is ignored');
+});
+
+test('non-public names (special-use TLDs, IP literals) never reach the CA', async () => {
+  for (const n of ['example.com', 'shop.example.net', 'www.oblimint.fr', 'xn--bcher-kva.de']) assert.equal(isPublicAcmeName(n), true, n);
+  for (const n of [
+    'panel.oblimint.test', 'a.example', 'x.invalid', 'localhost', 'app.localhost', 'nas.local', 'svc.internal',
+    'router.home.arpa', 'srv.lan', 'dc.corp', 'box.home', 'h.alt', 'abc.onion', '10.0.0.1', '192.168.1.20', 'single', '',
+  ]) assert.equal(isPublicAcmeName(n), false, n);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oblimint-acme-np-'));
+  let called = 0;
+  const deps = {
+    edgeDir: path.join(root, 'edge'), acmeWebroot: path.join(root, 'edge', 'acme'), certsDir: path.join(root, 'edge', 'certs'),
+    createClient: () => { called++; throw new Error('the CA must not be contacted'); },
+    log: () => {},
+  };
+  await assert.rejects(
+    issueCertificate({ names: ['panel.oblimint.test'], email: 'ops@example.com', directory: 'production' }, deps as never),
+    /not publicly resolvable/,
+  );
+  assert.equal(called, 0);
+  assert.equal(fs.existsSync(path.join(root, 'edge', 'acme-account')), false, 'no ACME account key created either');
 });

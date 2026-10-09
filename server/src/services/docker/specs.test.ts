@@ -6,9 +6,10 @@ import type Docker from 'dockerode';
 import { DEFAULT_PLAN_LIMITS, type PlanLimits } from '@oblimint/shared';
 import { LABELS } from '../hosting/naming';
 import {
-  canonicalJson, EDGE_NOFILE_LIMIT, edgeContainerSpec, fileServerContainerSpec, hostdContainerSpec, siteContainerSpec, specHash,
-  type SiteContainerInput,
+  canonicalJson, EDGE_NOFILE_LIMIT, edgeContainerSpec, effectiveSiteLimits, fileServerContainerSpec, hostdContainerSpec,
+  PLATFORM_OOM_SCORE_ADJ, siteContainerSpec, specHash, TENANT_OOM_SCORE_ADJ, type SiteContainerInput,
 } from './specs';
+import { config } from '../../config';
 
 // Hardening invariants H1–H4 (docs/P1-PLAN.md §14) on the pure spec builders.
 
@@ -59,9 +60,12 @@ test('site container: H1 hardening, account uid:gid, plan limits (no swap)', () 
   assert.equal(spec.User, '20001:20001');
   assert.equal(spec.Image, 'meejay/oblimint-apache-php8.3:latest');
   assert.equal(hc.PidsLimit, 300);
-  assert.equal(hc.Memory, 512 * 1048576);
+  // Plan values (512 MiB, 1.5 CPU) under the node ceiling (capped otherwise: effectiveSiteLimits).
+  const eff = effectiveSiteLimits({ memoryMb: 512, cpuCores: 1.5 });
+  assert.equal(hc.Memory, Math.round(eff.memoryMb! * 1048576));
   assert.equal(hc.MemorySwap, hc.Memory);
-  assert.equal(hc.NanoCpus, 1.5e9);
+  assert.equal(hc.NanoCpus, Math.round(eff.cpus! * 1e9));
+  if (config.hosting.siteMaxCpus >= 1.5 && config.hosting.siteMaxMemoryMb >= 512) assert.equal(hc.NanoCpus, 1.5e9);
   assert.equal(hc.CapAdd, undefined);
   assert.deepEqual(hc.RestartPolicy, { Name: 'unless-stopped' });
   assert.deepEqual(hc.LogConfig, { Type: 'json-file', Config: { 'max-size': '10m', 'max-file': '3' } });
@@ -72,13 +76,29 @@ test('site container: H1 hardening, account uid:gid, plan limits (no swap)', () 
   assert.deepEqual(Object.keys(hc.Tmpfs ?? {}).sort(), ['/run', '/tmp']);
 });
 
-test('site container: limits fall back (pids 256) and are omitted when the plan has none', () => {
+test('site container: limits fall back (pids 256; memory / CPU = node ceiling, never unlimited)', () => {
   const spec = siteContainerSpec(siteInput({ limits: { ...limits, memoryMb: null, cpuCores: null, pidsLimit: null } }));
   const hc = spec.HostConfig!;
   assert.equal(hc.PidsLimit, 256);
-  assert.equal(hc.Memory, undefined);
-  assert.equal(hc.MemorySwap, undefined);
-  assert.equal(hc.NanoCpus, undefined);
+  assert.ok(config.hosting.siteMaxMemoryMb > 0 && config.hosting.siteMaxCpus > 0, 'a ceiling exists by default');
+  assert.equal(hc.Memory, Math.round(config.hosting.siteMaxMemoryMb * 1048576));
+  assert.equal(hc.MemorySwap, hc.Memory);
+  assert.equal(hc.NanoCpus, Math.round(config.hosting.siteMaxCpus * 1e9));
+});
+
+test('effectiveSiteLimits: unlimited → ceiling, above → capped, below → plan; ceiling 0 = off', () => {
+  const ceiling = { memoryMb: 4096, cpus: 3 };
+  assert.deepEqual(effectiveSiteLimits({ memoryMb: null, cpuCores: null }, ceiling), { memoryMb: 4096, cpus: 3 });
+  assert.deepEqual(effectiveSiteLimits({ memoryMb: 0, cpuCores: 0 }, ceiling), { memoryMb: 4096, cpus: 3 });
+  assert.deepEqual(effectiveSiteLimits({ memoryMb: 1_000_000, cpuCores: 64 }, ceiling), { memoryMb: 4096, cpus: 3 });
+  assert.deepEqual(effectiveSiteLimits({ memoryMb: 512, cpuCores: 1.5 }, ceiling), { memoryMb: 512, cpus: 1.5 });
+  assert.deepEqual(effectiveSiteLimits({ memoryMb: null, cpuCores: 2 }, { memoryMb: 0, cpus: 0 }), { memoryMb: null, cpus: 2 });
+});
+
+test('oom_score_adj: tenant containers are killed before the edge under host memory pressure', () => {
+  assert.equal(siteContainerSpec(siteInput()).HostConfig!.OomScoreAdj, TENANT_OOM_SCORE_ADJ);
+  assert.ok(TENANT_OOM_SCORE_ADJ > 0 && PLATFORM_OOM_SCORE_ADJ < 0);
+  assert.equal(edgeContainerSpec({ hostDataDir: ROOT }).HostConfig!.OomScoreAdj, PLATFORM_OOM_SCORE_ADJ);
 });
 
 test('site container: H2 release + runtime READ-ONLY, data RW, nothing else', () => {
@@ -208,6 +228,12 @@ test('hostd: privileged, host pid/network, /srv/oblimint rshared, socket env', (
   assert.ok(spec.Env!.includes(`OBLIMINT_HOSTD_SOCKET=${ROOT}/run/hostd.sock`));
   assert.ok(spec.Env!.includes(`OBLIMINT_ROOT=${ROOT}`));
   assert.equal(spec.Labels![LABELS.role], 'hostd');
+  // Measured-only disk limits are refused by hostd unless the operator opts in.
+  assert.ok(!spec.Env!.some((e: string) => e.startsWith('OBLIMINT_ALLOW_MEASURED_QUOTA')));
+  assert.equal(specHash(hostdContainerSpec({ hostDataDir: ROOT, allowMeasuredQuota: false })), specHash(spec));
+  const optIn = hostdContainerSpec({ hostDataDir: ROOT, allowMeasuredQuota: true });
+  assert.ok(optIn.Env!.includes('OBLIMINT_ALLOW_MEASURED_QUOTA=1'));
+  assert.notEqual(specHash(optIn), specHash(spec));
 });
 
 test('specHash: stable across key order, ignores its own label, sensitive to any change', () => {

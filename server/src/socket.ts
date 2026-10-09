@@ -4,6 +4,9 @@ import { Server as SocketIOServer } from 'socket.io';
 import { db } from './db';
 import { logger } from './utils/logger';
 import { getSessionMiddleware } from './app';
+import { config } from './config';
+import { isForeignBrowserRequest } from './middleware/originGuard';
+import { sessionPolicyRefusal } from './middleware/sessionUserGuard';
 import { sessionRoom } from './utils/sessionHash';
 
 let io: SocketIOServer | null = null;
@@ -18,9 +21,15 @@ let io: SocketIOServer | null = null;
  */
 export function createSocketServer(server: HttpServer | HttpsServer): SocketIOServer {
   io = new SocketIOServer(server, {
-    // Same-origin in production; WebSocket upgrades always send Origin —
-    // auth is enforced by the session check below, not by CORS.
-    cors: { origin: true, credentials: true },
+    // Same-origin in production. A foreign origin must never open a socket
+    // with the victim's cookie: SameSite=Lax does not stop a same-SITE page
+    // (previews and tenant domains under the panel's domain), so the Origin
+    // of every handshake (polling and WebSocket upgrade) is checked against
+    // the panel origin — the same rule as originGuard for the REST API.
+    cors: { origin: config.clientOrigin, credentials: true },
+    allowRequest: (req, callback) => {
+      callback(null, !isForeignBrowserRequest(req));
+    },
     transports: ['websocket', 'polling'],
     maxHttpBufferSize: 1e6,
   });
@@ -30,9 +39,12 @@ export function createSocketServer(server: HttpServer | HttpsServer): SocketIOSe
 
   io.use(async (socket, next) => {
     try {
-      const sess = (socket.request as any).session as { userId?: number; currentTenantId?: number } | undefined;
+      const sess = (socket.request as any).session as { userId?: number; currentTenantId?: number; credVersion?: number } | undefined;
       const userId = sess?.userId;
       if (!userId) return next(new Error('Unauthorized'));
+      // Credentials changed since sign-in, or force_2fa pending: no socket.
+      const refusal = await sessionPolicyRefusal(sess);
+      if (refusal) return next(new Error(refusal));
       const user = await db('users').where({ id: userId, is_active: true }).first('id', 'role', 'kind');
       if (!user) return next(new Error('Unauthorized'));
       const tenantId = sess?.currentTenantId ?? null;

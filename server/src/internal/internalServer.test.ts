@@ -126,3 +126,35 @@ test('a bulk upload (> 600 events/min) is never rate-limited; site lookups are c
     srv.close();
   }
 });
+
+test('a hook call that does not come from the account\'s file server is a 404, even with the right token', async () => {
+  const seen: Array<{ accountId: number; remote: string | undefined }> = [];
+  let logins = 0;
+  const changes: number[] = [];
+  const app = createInternalApp({
+    verifyToken: (accountId, token) => accountId === 7 && token === 'good-token',
+    verifyLogin: async () => { logins++; return { ok: true, method: 'password' }; },
+    accountUsername: async () => 'alice',
+    siteIdBySlug: async () => 42,
+    notifyChange: (siteId) => { changes.push(siteId); },
+    // e.g. a compromised SITE container of the account network that stole the token
+    sourceAllowed: async (accountId, remote) => { seen.push({ accountId, remote }); return false; },
+  });
+  const s = await new Promise<http.Server>((resolve) => { const x = app.listen(0, '127.0.0.1', () => resolve(x)); });
+  try {
+    const b = `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
+    const p = (path: string, body: unknown) => fetch(`${b}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    assert.equal((await p('/internal/filesrv/7/good-token/auth', { username: 'alice', password: 'pw' })).status, 404);
+    assert.equal((await p('/internal/filesrv/7/good-token/event', { action: 'upload', virtual_path: '/staging/blog/a' })).status, 404);
+    await settle();
+    assert.equal(logins, 0);
+    assert.deepEqual(changes, []);
+    assert.equal(seen.length, 2);
+    assert.ok(seen.every((x) => x.accountId === 7 && typeof x.remote === 'string' && x.remote.includes('127.0.0.1')), JSON.stringify(seen));
+    // A bad token is refused before any source lookup.
+    assert.equal((await p('/internal/filesrv/7/bad/auth', { username: 'alice', password: 'pw' })).status, 404);
+    assert.equal(seen.length, 2);
+  } finally {
+    s.close();
+  }
+});

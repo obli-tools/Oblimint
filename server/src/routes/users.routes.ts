@@ -86,6 +86,9 @@ router.delete('/:id/2fa', async (req, res, next) => {
     if (id === req.session.userId) throw new AppError(400, 'Use your profile to manage your own two-factor authentication');
     const target = await userScope.assertManageableTarget(actorFromReq(req), id);
     if (!(await resetSecondFactors(id))) throw new AppError(404, 'User not found');
+    // Sessions opened with the removed factor end (the account signs in again).
+    const { killSessionsForUser } = await import('../services/userSessions.service');
+    await killSessionsForUser(id, '2fa_reset');
     await auditService.logReq(req, 'user.2fa_reset', { resourceType: 'user', resourcePath: String(id), details: { username: target.username } });
     res.json({ success: true, message: 'MFA reset successfully' });
   } catch (err) { next(err); }
