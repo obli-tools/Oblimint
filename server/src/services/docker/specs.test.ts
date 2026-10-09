@@ -107,6 +107,8 @@ test('site container: H2 release + runtime READ-ONLY, data RW, nothing else', ()
   assert.deepEqual(Object.keys(byTarget).sort(), ['/etc/oblimint/site', '/srv/data', '/srv/releases']);
   assert.equal(byTarget['/srv/releases'].ReadOnly, true);
   assert.equal(byTarget['/srv/releases'].Source, `${ROOT}/accounts/3/sites/7/releases`);
+  // P3: the window overlay mounted over releases/<n> on the host reaches the running container.
+  assert.deepEqual(byTarget['/srv/releases'].BindOptions, { Propagation: 'rslave' });
   assert.equal(byTarget['/etc/oblimint/site'].ReadOnly, true);
   assert.equal(byTarget['/etc/oblimint/site'].Source, `${ROOT}/accounts/3/sites/7/runtime`);
   assert.equal(byTarget['/srv/data'].ReadOnly, false);

@@ -1,0 +1,47 @@
+# <sample> <rules that MUST match, comma-separated | - = no rule may match>
+# Samples are base64-encoded (decoded into a temporary directory at test time only).
+eval-decoder.php Oblimint_Php_Eval_Decoder
+assert-decoder.php Oblimint_Php_Assert_Decoder
+request-eval.php Oblimint_Php_Request_Eval
+remote-eval.php Oblimint_Php_Remote_Eval
+preg-e.php Oblimint_Php_Preg_Replace_E
+create-function.php Oblimint_Php_Create_Function_Decoder
+request-shell.php Oblimint_Php_Request_Shell
+request-shell-tick.php Oblimint_Php_Request_Shell
+request-shell-tick-assign.php Oblimint_Php_Request_Shell
+request-shell-tick-oneline.php Oblimint_Php_Request_Shell
+request-shell-tick-statement.php Oblimint_Php_Request_Shell
+request-include.php Oblimint_Php_Request_Include
+request-callable.php Oblimint_Php_Request_Callable
+reverse-shell.php Oblimint_Php_Reverse_Shell
+decoder-chain.php Oblimint_Php_Decoder_Chain
+long-base64.php Oblimint_Php_Long_Base64_Literal
+hex-escapes.php Oblimint_Php_Hex_Escapes
+chr-chain.php Oblimint_Php_Chr_Chain
+encoded-globals.php Oblimint_Php_Encoded_Globals
+obfuscated-ids.php Oblimint_Php_Obfuscated_Identifiers
+rot13-exec.php Oblimint_Php_Rot13_Exec
+packed-js.php Oblimint_Php_Packed_Js_In_Php
+dropper.php Oblimint_Php_Write_Decoded_File
+hygiene.php Oblimint_Php_Shell_Hygiene
+c99.php Oblimint_Webshell_C99
+r57.php Oblimint_Webshell_R57
+b374k.php Oblimint_Webshell_B374k
+wso.php Oblimint_Webshell_WSO,Oblimint_Webshell_FilesMan
+weevely.php Oblimint_Webshell_Weevely
+generic-ui.php Oblimint_Webshell_Generic_Ui
+uploader.php Oblimint_Php_Tiny_Uploader
+copy-uploader.php Oblimint_Php_Copy_Uploader
+mailer.php Oblimint_Php_Spam_Mailer
+seo-cloak.php Oblimint_Php_Seo_Cloaking
+link-injector.php Oblimint_Php_Spam_Link_Injector
+polyglot.jpg Oblimint_Php_In_Image
+dot-htaccess Oblimint_Htaccess_Php_Handler
+selftest.php Oblimint_Php_Eval_Decoder,Oblimint_Php_Request_Shell,Oblimint_Webshell_FilesMan
+benign-wp-plugin.php -
+benign-autoload.php -
+benign-image.png -
+benign-htaccess -
+benign-mailer.php -
+# WordPress core PHPDoc writes request keys Markdown-style (`$_POST['action']`): not a backtick shell
+benign-wp-docblock.php -

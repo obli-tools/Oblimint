@@ -4,7 +4,8 @@ import { config } from '../../config';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Typed client of the hostd API (unix socket, docs/P1-PLAN.md §4/§7).
-// OWNED BY MODULE `hostd`. Talks JSON over HTTP on config.hosting.hostdSocket
+// OWNED BY MODULE `hostd` (P1), `hostd-firewall` (P2), `overlay-hostd` (P3: signatures of the
+// P3 methods are frozen — docs/P3-PLAN.md §5). Talks JSON over HTTP on config.hosting.hostdSocket
 // (http.request({ socketPath })).
 //
 // hostd never takes arbitrary paths from the panel: it computes every path
@@ -129,6 +130,166 @@ export interface HostdGatewayEvent {
   remoteIp: string | null;
 }
 
+// ─── P3 (docs/P3-PLAN.md §5 hostd) ───────────────────────────────────────────
+
+/**
+ * Modification window of a site: overlay mounted by hostd OVER
+ * sites/<siteId>/releases/<releaseNumber> in the host mount namespace
+ * (lowerdir = RO bind windows/<w>/lower of that release, upperdir/workdir =
+ * windows/<w>/{upper,work}, options metacopy=on,redirect_dir=on, nosuid,nodev),
+ * propagated (rslave) into every container of the site. rw: the merged view is
+ * made writable by the account uid (metadata-only chown walk); ro: frozen view
+ * (lowerdir = upper:lower, no upper) — same content, no write possible.
+ * quarantineExecutables (supervised mode): every executable file written in the
+ * upper layer is moved to the quarantine store and reverted at once.
+ */
+export interface HostdWindowSpec extends HostdSiteSpec {
+  windowId: number;
+  releaseNumber: number;
+  mode: 'rw' | 'ro';
+  quarantineExecutables: boolean;
+}
+
+export interface HostdWindowStatus {
+  accountId: number;
+  siteId: number;
+  windowId: number;
+  mounted: boolean;
+  mode: 'rw' | 'ro' | null;
+  releaseNumber: number | null;
+  quarantineExecutables: boolean;
+  /** Size / entries of the upper layer (metadata-only copies excluded). */
+  upperBytes: number;
+  upperEntries: number;
+  /** export/manifest.json exists (exportWindow done since the last write). */
+  exportReady: boolean;
+}
+
+export type HostdChangeKind = 'added' | 'modified' | 'deleted' | 'typechange';
+
+/** One entry of export/manifest.json (diff lower ↔ merged, restricted to the paths the upper layer touches). */
+export interface HostdDiffEntry {
+  /** Relative POSIX path in the release. */
+  path: string;
+  change: HostdChangeKind;
+  type: 'file' | 'symlink' | 'dir';
+  /** New size (file), null for deletions / dirs. */
+  size: number | null;
+  /** New permission bits (e.g. 420 = 0644). */
+  mode: number | null;
+  sha256: string | null;
+  /** symlink target (never resolved). */
+  linkTarget: string | null;
+  /** Content copied to export/files/<path> (regular files and symlinks). */
+  exported: boolean;
+  skipped: 'tooLarge' | 'special' | null;
+}
+
+/** export/manifest.json (read by the panel from localPaths.windowManifest). */
+export interface HostdWindowManifest {
+  version: 1;
+  windowId: number;
+  releaseNumber: number;
+  createdAt: string;
+  entries: HostdDiffEntry[];
+  truncated: boolean;
+}
+
+export interface HostdExportOptions {
+  /** Larger files are listed (sha256 + size) but not copied (skipped: 'tooLarge'). */
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  maxEntries: number;
+}
+
+export interface HostdWindowExportResult {
+  entries: number;
+  added: number;
+  modified: number;
+  deleted: number;
+  bytes: number;
+  truncated: boolean;
+}
+
+export interface HostdPropagationResult {
+  pid: number;
+  /** The overlay is visible at /srv/releases/<n> in that process' mount namespace. */
+  visible: boolean;
+  mode: 'rw' | 'ro' | null;
+  error: string | null;
+}
+
+export interface HostdMountedWindow {
+  accountId: number;
+  siteId: number;
+  windowId: number;
+  mode: 'rw' | 'ro';
+  releaseNumber: number;
+}
+
+export type HostdChangeSource = { kind: 'window'; windowId: number } | { kind: 'workspace'; workspaceId: number };
+
+export interface HostdStagingChange {
+  path: string;
+  op: 'write' | 'delete';
+}
+
+export interface HostdStagingApplyResult {
+  written: number;
+  deleted: number;
+  /** Paths not applied: a symlink / file in the way (R1), missing source, invalid path. */
+  conflicts: Array<{ path: string; reason: 'symlink' | 'notDirectory' | 'missingSource' | 'invalid' }>;
+}
+
+export interface HostdWorkspaceSpec extends HostdSiteSpec {
+  workspaceId: number;
+  /** Release copied into work/<workspaceId>/tree (owned by uid:gid, files 0644 / dirs 0755, symlinks kept). */
+  releaseNumber: number;
+}
+
+/** Typed data paths hostd watches (inotify) for one site: extension whitelist + content sniffing → quarantine. */
+export interface HostdWatchSpec extends HostdSiteSpec {
+  typed: Array<{ path: string; allowedExtensions: string[] }>;
+}
+
+export type HostdQuarantineReason = 'extension' | 'php-content' | 'polyglot' | 'magic-mismatch' | 'executable-write' | 'special';
+
+export interface HostdQuarantineEntry {
+  /** Opaque id (^[0-9a-z-]{8,64}$), directory name in accounts/<id>/quarantine/. */
+  id: string;
+  accountId: number;
+  siteId: number | null;
+  slug: string | null;
+  source: 'typed' | 'supervised';
+  /** data: under data/<slug>/ ; code: in the window overlay of the site. */
+  area: 'data' | 'code';
+  /** Relative to data/<slug>/ (area data) or to the release root (area code). */
+  path: string;
+  dataPath: string | null;
+  reason: HostdQuarantineReason;
+  detail: string | null;
+  size: number;
+  sha256: string;
+  detectedType: string | null;
+  quarantinedAt: string;
+  /** Present once restored (the entry is kept until deleted). */
+  restoredAt: string | null;
+}
+
+export type HostdEventKind = 'quarantined' | 'watchError' | 'windowLost';
+
+export interface HostdEvent {
+  /** Monotonic within one hostd process (restarts at 1 when hostd restarts: the panel resyncs). */
+  seq: number;
+  at: string;
+  kind: HostdEventKind;
+  accountId: number;
+  siteId: number | null;
+  windowId: number | null;
+  entryId: string | null;
+  message: string | null;
+}
+
 export class HostdError extends Error {
   constructor(public status: number, message: string, public code?: string) {
     super(message);
@@ -174,6 +335,35 @@ export interface HostdClient {
   removeGateway(accountId: number): Promise<void>;
   /** Long poll: returns as soon as events exist, or [] after waitSec (≤ 55). */
   gatewayEvents(waitSec: number): Promise<HostdGatewayEvent[]>;
+
+  // ── P3 — windows, workspaces, staging reflection, typed watcher, quarantine (module overlay-hostd) ──
+  /** Idempotent: mounts (or switches the mode of) the window overlay over releases/<releaseNumber>. 409 conflict: another window / release mounted. */
+  ensureWindow(spec: HostdWindowSpec): Promise<HostdWindowStatus>;
+  windowStatus(accountId: number, siteId: number, windowId: number): Promise<HostdWindowStatus>;
+  /** Diff lower ↔ merged into windows/<w>/export/{manifest.json,files/} (replaces a previous export). */
+  exportWindow(spec: HostdSiteSpec & { windowId: number }, opts: HostdExportOptions): Promise<HostdWindowExportResult>;
+  /** Unmounts the overlay + lower bind, removes upper/work (and export unless keepExport). Idempotent. */
+  removeWindow(spec: HostdSiteSpec & { windowId: number }, opts: { keepExport: boolean }): Promise<void>;
+  /** Checks /proc/<pid>/mountinfo of container init processes (docker inspect State.Pid). */
+  verifyWindowPropagation(accountId: number, siteId: number, windowId: number, pids: number[]): Promise<HostdPropagationResult[]>;
+  /** Every window overlay currently mounted (boot recovery). */
+  listWindows(): Promise<HostdMountedWindow[]>;
+  /** Writes / deletes paths of staging/<slug> from a window export or a workspace, as uid:gid, never through a symlink (R1). */
+  applyToStaging(spec: HostdSiteSpec, source: HostdChangeSource, changes: HostdStagingChange[]): Promise<HostdStagingApplyResult>;
+  /** Copy of releases/<n> into work/<id>/tree owned by uid:gid (reflink when possible). */
+  ensureWorkspace(spec: HostdWorkspaceSpec): Promise<{ files: number; bytes: number }>;
+  removeWorkspace(spec: HostdSiteSpec & { workspaceId: number }): Promise<void>;
+  /** Replaces the typed-path watch of a site (empty typed list = no watch). Existing non-conforming files are quarantined at once. */
+  setWatch(spec: HostdWatchSpec): Promise<{ watching: number; quarantined: number }>;
+  removeWatch(accountId: number, siteId: number): Promise<void>;
+  listQuarantine(accountId: number): Promise<HostdQuarantineEntry[]>;
+  /** Moves the file back (as uid:gid, no symlink followed) and allow-lists its sha256 at that path for the watcher. */
+  restoreQuarantine(accountId: number, entryId: string, opts: { uid: number; gid: number; overwrite: boolean }): Promise<{ restored: boolean; path: string }>;
+  /** Deletes the entry (content + meta) for good. */
+  deleteQuarantine(accountId: number, entryId: string): Promise<void>;
+  quarantinePreview(accountId: number, entryId: string, maxBytes: number): Promise<{ base64: string; truncated: boolean; size: number }>;
+  /** Long poll of hostd events with seq > since (≤ 55 s). */
+  events(since: number, waitSec: number): Promise<{ events: HostdEvent[]; next: number }>;
 }
 
 // ─── Transport ───────────────────────────────────────────────────────────────
@@ -187,6 +377,8 @@ export const HOSTD_TIMEOUTS = {
   seed: 10 * 60_000,
   /** P2: long poll of the gateway events (waitSec + margin). */
   events: 70_000,
+  /** P3: mount + chown walk of a big release, export of a big change set, workspace copy, staging apply. */
+  window: 10 * 60_000,
 } as const;
 
 export interface HostdClientOptions {
@@ -196,12 +388,14 @@ export interface HostdClientOptions {
   timeouts?: Partial<Record<keyof typeof HOSTD_TIMEOUTS, number>>;
 }
 
-/** Hard cap on a response body: every hostd answer is a small JSON object. */
+/** Hard cap on a response body: every hostd answer is a small JSON object… */
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+/** …except the quarantine list of an account (P3), which grows with every entry kept as evidence. */
+const MAX_LIST_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 type Method = 'GET' | 'PUT' | 'POST' | 'DELETE';
 
-function request<T>(socketPath: string, method: Method, path: string, body: unknown, timeoutMs: number): Promise<T> {
+function request<T>(socketPath: string, method: Method, path: string, body: unknown, timeoutMs: number, maxResponseBytes = MAX_RESPONSE_BYTES): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     let settled = false;
@@ -223,7 +417,7 @@ function request<T>(socketPath: string, method: Method, path: string, body: unkn
       let size = 0;
       res.on('data', (c: Buffer) => {
         size += c.length;
-        if (size > MAX_RESPONSE_BYTES) {
+        if (size > maxResponseBytes) {
           fail(new HostdError(502, `hostd ${method} ${path}: response too large`, 'hostdBadResponse'));
           req.destroy();
           return;
@@ -270,12 +464,20 @@ function id(n: number, what: string): number {
 
 const siteBody = (s: HostdSiteSpec) => ({ slug: s.slug, uid: s.uid, gid: s.gid });
 const sitePath = (s: HostdSiteSpec) => `/v1/accounts/${id(s.accountId, 'account id')}/sites/${id(s.siteId, 'site id')}`;
+const siteIdsPath = (accountId: number, siteId: number) => `/v1/accounts/${id(accountId, 'account id')}/sites/${id(siteId, 'site id')}`;
+const windowPath = (s: HostdSiteSpec, windowId: number) => `${sitePath(s)}/windows/${id(windowId, 'window id')}`;
+
+/** Quarantine entry ids are opaque but never a path (R2). */
+function entry(entryId: string): string {
+  if (typeof entryId !== 'string' || !/^[0-9a-z-]{8,64}$/.test(entryId)) throw new HostdError(400, `hostd: invalid quarantine entry ${String(entryId)}`, 'invalid');
+  return entryId;
+}
 
 /** Client bound to one socket (no database access: usable in tests). */
 export function createHostdClient(opts: HostdClientOptions): HostdClient {
   const t = { ...HOSTD_TIMEOUTS, ...opts.timeouts };
-  const call = <T>(method: Method, path: string, body?: unknown, timeout: number = t.default) =>
-    request<T>(opts.socketPath, method, path, body, timeout);
+  const call = <T>(method: Method, path: string, body?: unknown, timeout: number = t.default, maxResponseBytes?: number) =>
+    request<T>(opts.socketPath, method, path, body, timeout, maxResponseBytes);
 
   return {
     health: () => call<HostdHealth>('GET', '/v1/health'),
@@ -372,6 +574,94 @@ export function createHostdClient(opts: HostdClientOptions): HostdClient {
       const r = await call<{ events: HostdGatewayEvent[] }>('GET', `/v1/gateway/events?wait=${w}`, undefined, t.events);
       return Array.isArray(r.events) ? r.events : [];
     },
+
+    // ── P3 (async: an invalid id rejects, it never throws synchronously) ──
+    ensureWindow: async (spec) => call<HostdWindowStatus>('PUT', windowPath(spec, spec.windowId), {
+      ...siteBody(spec),
+      releaseNumber: id(spec.releaseNumber, 'release number'),
+      mode: spec.mode === 'ro' ? 'ro' : 'rw',
+      quarantineExecutables: spec.quarantineExecutables === true,
+    }, t.window),
+
+    windowStatus: async (accountId, siteId, windowId) =>
+      call<HostdWindowStatus>('GET', `${siteIdsPath(accountId, siteId)}/windows/${id(windowId, 'window id')}`),
+
+    exportWindow: async (spec, opts) => call<HostdWindowExportResult>('POST', `${windowPath(spec, spec.windowId)}/export`, {
+      ...siteBody(spec), maxFileBytes: opts.maxFileBytes, maxTotalBytes: opts.maxTotalBytes, maxEntries: opts.maxEntries,
+    }, t.window),
+
+    removeWindow: async (spec, { keepExport }) => {
+      const q = new URLSearchParams({ slug: spec.slug, keepExport: keepExport ? '1' : '0' });
+      await call('DELETE', `${windowPath(spec, spec.windowId)}?${q}`, undefined, t.window);
+    },
+
+    verifyWindowPropagation: async (accountId, siteId, windowId, pids) => {
+      const r = await call<{ results: HostdPropagationResult[] }>('POST',
+        `${siteIdsPath(accountId, siteId)}/windows/${id(windowId, 'window id')}/verify`, { pids: pids.map((p) => id(p, 'pid')) });
+      return Array.isArray(r.results) ? r.results : [];
+    },
+
+    listWindows: async () => {
+      const r = await call<{ windows: HostdMountedWindow[] }>('GET', '/v1/windows');
+      return Array.isArray(r.windows) ? r.windows : [];
+    },
+
+    applyToStaging: async (spec, source, changes) => call<HostdStagingApplyResult>('POST', `${sitePath(spec)}/staging/apply`, {
+      ...siteBody(spec),
+      source: source.kind === 'window'
+        ? { kind: 'window', id: id(source.windowId, 'window id') }
+        : { kind: 'workspace', id: id(source.workspaceId, 'workspace id') },
+      changes,
+    }, t.window),
+
+    ensureWorkspace: async (spec) => {
+      const r = await call<{ files: number; bytes: number }>('PUT', `${sitePath(spec)}/workspaces/${id(spec.workspaceId, 'workspace id')}`,
+        { ...siteBody(spec), releaseNumber: id(spec.releaseNumber, 'release number') }, t.window);
+      return { files: r.files, bytes: r.bytes };
+    },
+
+    removeWorkspace: async (spec) => {
+      const q = new URLSearchParams({ slug: spec.slug });
+      await call('DELETE', `${sitePath(spec)}/workspaces/${id(spec.workspaceId, 'workspace id')}?${q}`, undefined, t.window);
+    },
+
+    setWatch: async (spec) => {
+      const r = await call<{ watching: number; quarantined: number }>('PUT', `${sitePath(spec)}/watch`, { ...siteBody(spec), typed: spec.typed }, t.seed);
+      return { watching: r.watching, quarantined: r.quarantined };
+    },
+
+    removeWatch: async (accountId, siteId) => {
+      await call('DELETE', `${siteIdsPath(accountId, siteId)}/watch`);
+    },
+
+    listQuarantine: async (accountId) => {
+      const r = await call<{ entries: HostdQuarantineEntry[] }>('GET', `/v1/accounts/${id(accountId, 'account id')}/quarantine`, undefined, t.default, MAX_LIST_RESPONSE_BYTES);
+      if (r?.entries == null) return [];
+      // A malformed answer must not look like "nothing in quarantine" (the ingest would close rows as missing).
+      if (!Array.isArray(r.entries)) throw new HostdError(502, `hostd GET /v1/accounts/${accountId}/quarantine: malformed entries`, 'hostdBadResponse');
+      return r.entries;
+    },
+
+    restoreQuarantine: async (accountId, entryId, opts) => {
+      const r = await call<{ restored: boolean; path: string }>('POST',
+        `/v1/accounts/${id(accountId, 'account id')}/quarantine/${entry(entryId)}/restore`,
+        { uid: opts.uid, gid: opts.gid, overwrite: opts.overwrite === true });
+      return { restored: r.restored, path: r.path };
+    },
+
+    deleteQuarantine: async (accountId, entryId) => {
+      await call('DELETE', `/v1/accounts/${id(accountId, 'account id')}/quarantine/${entry(entryId)}`);
+    },
+
+    quarantinePreview: async (accountId, entryId, maxBytes) => call<{ base64: string; truncated: boolean; size: number }>('GET',
+      `/v1/accounts/${id(accountId, 'account id')}/quarantine/${entry(entryId)}/preview?max=${Math.max(1, Math.min(256 * 1024, Math.floor(maxBytes)))}`),
+
+    events: async (since, waitSec) => {
+      const w = Math.max(0, Math.min(55, Math.floor(waitSec)));
+      const s = Math.max(0, Math.floor(since));
+      const r = await call<{ events: HostdEvent[]; next: number }>('GET', `/v1/events?since=${s}&wait=${w}`, undefined, t.events);
+      return { events: Array.isArray(r.events) ? r.events : [], next: typeof r.next === 'number' ? r.next : s };
+    },
   };
 }
 
@@ -449,5 +739,22 @@ export function hostdFor(nodeId: number): HostdClient {
     setGateway: async (spec) => (await target()).setGateway(spec),
     removeGateway: async (accountId) => (await target()).removeGateway(accountId),
     gatewayEvents: async (waitSec) => (await target()).gatewayEvents(waitSec),
+    // P3
+    ensureWindow: async (spec) => (await target()).ensureWindow(spec),
+    windowStatus: async (accountId, siteId, windowId) => (await target()).windowStatus(accountId, siteId, windowId),
+    exportWindow: async (spec, opts) => (await target()).exportWindow(spec, opts),
+    removeWindow: async (spec, opts) => (await target()).removeWindow(spec, opts),
+    verifyWindowPropagation: async (accountId, siteId, windowId, pids) => (await target()).verifyWindowPropagation(accountId, siteId, windowId, pids),
+    listWindows: async () => (await target()).listWindows(),
+    applyToStaging: async (spec, source, changes) => (await target()).applyToStaging(spec, source, changes),
+    ensureWorkspace: async (spec) => (await target()).ensureWorkspace(spec),
+    removeWorkspace: async (spec) => (await target()).removeWorkspace(spec),
+    setWatch: async (spec) => (await target()).setWatch(spec),
+    removeWatch: async (accountId, siteId) => (await target()).removeWatch(accountId, siteId),
+    listQuarantine: async (accountId) => (await target()).listQuarantine(accountId),
+    restoreQuarantine: async (accountId, entryId, opts) => (await target()).restoreQuarantine(accountId, entryId, opts),
+    deleteQuarantine: async (accountId, entryId) => (await target()).deleteQuarantine(accountId, entryId),
+    quarantinePreview: async (accountId, entryId, maxBytes) => (await target()).quarantinePreview(accountId, entryId, maxBytes),
+    events: async (since, waitSec) => (await target()).events(since, waitSec),
   };
 }

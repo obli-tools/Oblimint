@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ChevronLeft, ChevronRight, History, RotateCcw, Rocket, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, History, RotateCcw, Rocket, ShieldAlert, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { HostingSocketEvents, type Release } from '@oblimint/shared';
 import { releasesApi } from '@/api/releases.api';
@@ -20,6 +20,15 @@ import type { SiteTabProps } from './types';
 const PAGE_SIZE = 25;
 /** Server limit of the reject reason (releases rejectBody). */
 const REJECT_REASON_MAX = 500;
+
+/**
+ * P3: the pre-publication scan blocked this release and no staff override was
+ * recorded. A plain approve always fails with 409 riskBlocked: only the audited
+ * override of the ReleaseDrawer (staff) publishes it.
+ */
+export function isScanBlocked(r: Pick<Release, 'scan'>): boolean {
+  return !!r.scan?.blocked && !r.scan.override;
+}
 
 export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabProps & { tick: number }) {
   const { t, i18n } = useTranslation();
@@ -139,10 +148,12 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
     const busy = busyId === r.id;
     const out = [];
     if (r.status === 'awaiting_approval' && canApprove) {
-      out.push(
+      if (!isScanBlocked(r)) out.push(
         <Button key="approve" size="sm" onClick={() => void approve(r)} disabled={busy} className="bg-green-600 hover:bg-green-500">
           <Check size={14} className="mr-1" />{t('releases.actions.approve') || 'Approve'}
         </Button>,
+      );
+      out.push(
         <Button key="reject" size="sm" variant="secondary" onClick={() => void reject(r)} disabled={busy}>
           <X size={14} className="mr-1" />{t('releases.actions.reject') || 'Reject'}
         </Button>,
@@ -224,7 +235,18 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
                     <span className="text-amber-400">~{r.filesModified}</span>{' '}
                     <span className="text-red-400">−{r.filesDeleted}</span>
                   </td>
-                  <td className={tdCls}>{r.scan ? <ScanVerdictChip verdict={r.scan.verdict} /> : <span className="text-text-muted">—</span>}</td>
+                  <td className={tdCls}>
+                    {r.scan ? (
+                      <span className="inline-flex flex-wrap items-center gap-1">
+                        <ScanVerdictChip verdict={r.scan.verdict} />
+                        {isScanBlocked(r) && (
+                          <Pill tone="red" className="text-[10px]">
+                            <ShieldAlert size={11} className="mr-0.5" />{t('scanner.blocked.chip') || 'blocked'}
+                          </Pill>
+                        )}
+                      </span>
+                    ) : <span className="text-text-muted">—</span>}
+                  </td>
                   <td className={`${tdCls} text-xs`}>
                     {r.onDisk ? <Check className="h-4 w-4 text-status-up" aria-label={t('releases.onDiskYes') || 'yes'} /> : <span className="text-text-muted">—</span>}
                   </td>

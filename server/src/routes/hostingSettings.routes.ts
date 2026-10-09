@@ -47,6 +47,15 @@ async function settingsChanged(sections: string[]): Promise<void> {
       const { firewallService } = await import('../services/firewall/firewall.service');
       firewallService.requestSyncAll('hosting-settings');
     }
+    // P3: scanner (deploy / reconfigure the container), maintenance (typed watcher on/off → watch specs).
+    if (sections.includes('scanner')) {
+      const { scanService } = await import('../services/scan/scan.service');
+      scanService.settingsChanged();
+    }
+    if (sections.includes('maintenance')) {
+      const { quarantineService } = await import('../services/quarantine/quarantine.service');
+      quarantineService.requestWatchSyncAll('hosting-settings');
+    }
   } catch (err) {
     logger.warn({ err }, 'hosting settings change hooks failed');
   }

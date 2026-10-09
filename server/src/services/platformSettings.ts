@@ -57,6 +57,27 @@ const sectionSchemas = {
     accessLogRetentionDays: z.number().int().min(1).max(366),
     resourceRetentionDays: z.number().int().min(1).max(90),
   }).strict(),
+  // P3 (docs/P3-PLAN.md §Réglages)
+  scanner: z.object({
+    enabled: z.boolean(),
+    clamav: z.boolean(),
+    yara: z.boolean(),
+    reviewScore: z.number().int().min(1).max(100),
+    blockScore: z.number().int().min(1).max(100),
+    maxFileSizeMb: z.number().int().min(1).max(512),
+    signatureChecksPerDay: z.number().int().min(1).max(24),
+  }).strict(), // + reviewScore ≤ blockScore (checked in update(): a ZodEffects has no .partial())
+  maintenance: z.object({
+    windowsEnabled: z.boolean(),
+    maxWindowMinutes: z.number().int().min(15).max(10080),
+    snapshotRetentionDays: z.number().int().min(1).max(365),
+    maxSnapshotsPerSite: z.number().int().min(1).max(100),
+    autoValidateRequireChecksums: z.boolean(),
+    adaptersEnabled: z.boolean(),
+    adapterTimeoutMinutes: z.number().int().min(1).max(240),
+    adapterMemoryMb: z.number().int().min(256).max(8192),
+    typedWatcher: z.boolean(),
+  }).strict(),
 } as const;
 
 const SECTIONS = Object.keys(sectionSchemas) as HostingSettingsSection[];
@@ -128,6 +149,10 @@ export const platformSettings = {
       if (!part) continue;
       const merged = { ...current[s], ...part };
       const parsed = sectionSchemas[s].safeParse(merged);
+      if (parsed.success && s === 'scanner') {
+        const v = parsed.data as { reviewScore: number; blockScore: number };
+        if (v.reviewScore > v.blockScore) throw new AppError(400, 'Validation failed — scanner: reviewScore must be ≤ blockScore', 'validation');
+      }
       if (!parsed.success) {
         throw new AppError(400, `Validation failed — ${s}: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ')}`, 'validation');
       }

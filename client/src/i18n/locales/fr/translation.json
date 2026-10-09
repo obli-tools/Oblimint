@@ -183,7 +183,8 @@
     "sites": "Sites",
     "users": "Utilisateurs",
     "workspaces": "Workspaces",
-    "usage": "Consommation"
+    "usage": "Consommation",
+    "maintenance": "Maintenance"
   },
   "nodes": {
     "col": {

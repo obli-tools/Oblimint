@@ -86,7 +86,8 @@ async function fire(siteId: number): Promise<void> {
     if (!s || s.mode === 'manual') return;
     await deps.publish(siteId);
   } catch (err) {
-    if (err instanceof AppError && err.code === 'publishInProgress') {
+    // adapterBusy (P3): an adapter run is past its publication / deferred; retried like a busy pipeline.
+    if (err instanceof AppError && (err.code === 'publishInProgress' || err.code === 'adapterBusy')) {
       const now = deps.now();
       arm(siteId, now, now + BUSY_RETRY_MS);
       return;

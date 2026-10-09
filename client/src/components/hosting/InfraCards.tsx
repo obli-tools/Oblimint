@@ -55,7 +55,9 @@ export function InfraCards() {
           ? (t('platformSettings.infra.redeployDnsConfirm') || 'The PowerDNS container is recreated: the hosted zones do not answer for a few seconds (secondary servers keep answering).')
           : component === 'dbadmin'
             ? (t('platformSettings.infra.redeployDbAdminConfirm') || 'The phpMyAdmin and Adminer containers are recreated: open database admin sessions are closed.')
-            : (t('infra.redeployHostdConfirm') || 'The hostd container is recreated: quota and provisioning operations in progress are interrupted.'),
+            : component === 'scanner'
+              ? (t('scanner.infra.redeployConfirm') || 'The scanner container is recreated: analyses in progress fall back to the heuristics and the ClamAV signatures are reloaded (a few minutes).')
+              : (t('infra.redeployHostdConfirm') || 'The hostd container is recreated: quota and provisioning operations in progress are interrupted.'),
       confirmLabel: t('infra.redeploy') || 'Redeploy',
       danger: true,
     }))) return;
@@ -276,12 +278,15 @@ function ComponentRow({ c, busy, onDeploy }: { c: InfraComponentStatus; busy: st
     hostd: t('infra.component.hostd') || 'hostd (host daemon)',
     dns: t('platformSettings.infra.dns') || 'DNS server (PowerDNS)',
     dbadmin: t('platformSettings.infra.dbadmin') || 'Database admin (phpMyAdmin + Adminer)',
+    scanner: t('scanner.infra.label') || 'Scanner (ClamAV + YARA)',
   } as Record<InfraComponentId, string>)[c.id] ?? c.id;
   const description = c.id === 'dns'
     ? (t('platformSettings.infra.dnsHint') || 'Authoritative DNS of the hosted zones, on port 53 (TCP + UDP) of the host. Its API stays on the internal network.')
     : c.id === 'dbadmin'
       ? (t('platformSettings.infra.dbadminHint') || 'Shared phpMyAdmin and Adminer, opened from the panel with single sign-on, on the host name of the settings.')
-      : null;
+      : c.id === 'scanner'
+        ? (t('scanner.infra.description') || 'Shared ClamAV + YARA scanner on the internal network: analyzes the releases before publication and the changes of the modification windows. It never mounts a tenant tree.')
+        : null;
   return (
     <div className="rounded-lg bg-bg-primary p-3">
       <div className="flex flex-wrap items-center gap-2">

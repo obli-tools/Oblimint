@@ -40,7 +40,9 @@ export const LABELS = {
 
 export type ContainerRole = 'site' | 'site-secondary' | 'site-preview' | 'filesrv' | 'edge' | 'hostd' | 'panel-postgres'
   // P2
-  | 'db' | 'pdns' | 'dbadmin';
+  | 'db' | 'pdns' | 'dbadmin'
+  // P3: shared scanner (panel network), ephemeral adapter tools container (account networks)
+  | 'scanner' | 'tools';
 
 // ── P2 (docs/P2-PLAN.md §Conteneurs) ─────────────────────────────────────────
 
@@ -69,7 +71,22 @@ export const P2_LABELS = {
  * must NEVER remove as orphans: their owning module converges them itself
  * (databases: db). destroyAccount still removes them (label oblimint.account).
  */
-export const EXTERNALLY_MANAGED_ROLES: readonly ContainerRole[] = ['db'];
+export const EXTERNALLY_MANAGED_ROLES: readonly ContainerRole[] = ['db', 'tools'];
+
+// ── P3 (docs/P3-PLAN.md §Conteneurs) ─────────────────────────────────────────
+
+/** Shared change scanner: ClamAV daemon + YARA + scand HTTP API (panel network only, no published port). */
+export const SCANNER_CONTAINER = 'oblimint-scanner';
+export const scannerImage = (): string => `${config.hosting.scannerImage}:${config.hosting.imageTag}`;
+/** Ephemeral tools container of one adapter step (labels oblimint.account + oblimint.adapter-run, role tools). */
+export const toolsContainer = (runId: number, step: string): string => `oblimint-tools-${runId}-${step.replace(/[^a-z0-9-]/g, '')}`;
+/** Tools image for a PHP version ('8.3' → meejay/oblimint-tools-php8.3:latest). */
+export const toolsImage = (php: string): string => `${config.hosting.toolsImagePrefix}${php}:${config.hosting.imageTag}`;
+
+export const P3_LABELS = {
+  /** adapter_runs.id of a tools container (role tools). */
+  adapterRun: 'oblimint.adapter-run',
+} as const;
 
 /** Blue/green preview host on the dedicated preview domain (P2): <slug>-<id>.<previewDomain>. */
 export function previewHost(site: { id: number; slug: string }, previewDomain: string): string {

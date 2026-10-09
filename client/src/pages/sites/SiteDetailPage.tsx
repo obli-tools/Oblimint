@@ -2,12 +2,13 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  ArrowLeft, CalendarClock, Cpu, Database, Eye, FolderOpen, Globe, History, LayoutDashboard, Play, RefreshCw, Rocket, Route, ScrollText,
-  Square, Trash2, ExternalLink,
+  ArrowLeft, CalendarClock, Cpu, Database, DoorOpen, Eye, FolderOpen, Globe, History, LayoutDashboard, Play, RefreshCw, Rocket, Route,
+  ScrollText, Square, Trash2, ExternalLink, Wrench,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { HostingSocketEvents, type HostingChangedPayload, type Site } from '@oblimint/shared';
+import { HostingSocketEvents, type HostingChangedPayload, type MaintenanceWindow, type Site, type WindowUpdatedPayload } from '@oblimint/shared';
 import { sitesApi } from '@/api/sites.api';
+import { maintenanceApi } from '@/api/maintenance.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
@@ -29,9 +30,10 @@ import { SiteDataPathsTab } from '@/components/sites/tabs/SiteDataPathsTab';
 import { SiteFilesTab } from '@/components/sites/tabs/SiteFilesTab';
 import { SiteCronTab } from '@/components/cron/SiteCronTab';
 import { SiteLogsTab } from '@/components/logs/SiteLogsTab';
+import { SiteMaintenanceTab } from '@/components/maintenance/SiteMaintenanceTab';
 
-type Tab = 'overview' | 'releases' | 'runtime' | 'routes' | 'data' | 'files' | 'cron' | 'logs';
-const TAB_IDS: readonly Tab[] = ['overview', 'releases', 'runtime', 'routes', 'data', 'files', 'cron', 'logs'];
+type Tab = 'overview' | 'releases' | 'runtime' | 'routes' | 'data' | 'files' | 'cron' | 'logs' | 'maintenance';
+const TAB_IDS: readonly Tab[] = ['overview', 'releases', 'runtime', 'routes', 'data', 'files', 'cron', 'logs', 'maintenance'];
 
 function isTab(v: string | null): v is Tab {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
@@ -86,6 +88,24 @@ export function SiteDetailPage() {
   }, []);
 
   useEffect(() => { setSite(null); void loadSite(); }, [loadSite]);
+
+  // P3: header badge « window open » / « review pending » (silent when the endpoint is not there).
+  const [activeWindow, setActiveWindow] = useState<MaintenanceWindow | null>(null);
+  const windowSeq = useRef(0);
+  const loadWindow = useCallback(async () => {
+    const seq = ++windowSeq.current;
+    if (!Number.isInteger(siteId) || siteId <= 0) return;
+    try {
+      const info = await maintenanceApi.info(siteId);
+      if (seq === windowSeq.current) setActiveWindow(info.activeWindow);
+    } catch {
+      if (seq === windowSeq.current) setActiveWindow(null);
+    }
+  }, [siteId]);
+  useEffect(() => { setActiveWindow(null); void loadWindow(); }, [loadWindow]);
+  useHostingEvent<WindowUpdatedPayload>(HostingSocketEvents.WINDOW_UPDATED, (p) => {
+    if (p.siteId === siteId) void loadWindow();
+  });
 
   useHostingEvent<HostingChangedPayload>(HostingSocketEvents.HOSTING_CHANGED, (p) => {
     if (p.entity !== 'site' || p.id !== siteId) return;
@@ -178,6 +198,7 @@ export function SiteDetailPage() {
     { id: 'files', label: t('sites.tabs.files') || 'File access', icon: <FolderOpen size={16} /> },
     { id: 'cron', label: t('cron.tab.title') || 'Cron', icon: <CalendarClock size={16} /> },
     { id: 'logs', label: t('logs.tab.title') || 'Logs', icon: <ScrollText size={16} /> },
+    { id: 'maintenance', label: t('maintenance.tab.title') || 'Maintenance', icon: <Wrench size={16} /> },
   ];
 
   const tabProps = {
@@ -207,6 +228,19 @@ export function SiteDetailPage() {
             {site.previewBase && (
               <Pill tone="blue"><Eye className="h-3 w-3" />{t('runtime.preview.badge') || 'Preview running'}</Pill>
             )}
+            {activeWindow && activeWindow.status === 'pending_review' ? (
+              <Link to={`/sites/${site.id}/windows/${activeWindow.id}`} className="inline-flex">
+                <Pill tone="amber"><Eye className="h-3 w-3" />{t('maintenance.badge.review') || 'Review pending'}</Pill>
+              </Link>
+            ) : activeWindow && activeWindow.status === 'open' ? (
+              <button type="button" onClick={() => setTab('maintenance')} className="inline-flex">
+                <Pill tone="accent"><DoorOpen className="h-3 w-3" />{t('maintenance.badge.open') || 'Window open'}</Pill>
+              </button>
+            ) : activeWindow ? (
+              <button type="button" onClick={() => setTab('maintenance')} className="inline-flex">
+                <Pill tone="blue"><DoorOpen className="h-3 w-3" />{t('maintenance.badge.busy') || 'Window in progress'}</Pill>
+              </button>
+            ) : null}
             <TenantBadge tenantId={site.tenantId} size="md" />
           </div>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
@@ -239,7 +273,7 @@ export function SiteDetailPage() {
           <IconButton
             label={t('common.refresh') || 'Refresh'}
             icon={<RefreshCw className="h-4 w-4" />}
-            onClick={() => { void loadSite(true); setReleasesTick((n) => n + 1); }}
+            onClick={() => { void loadSite(true); void loadWindow(); setReleasesTick((n) => n + 1); }}
             size="lg"
             variant="solid"
             className="rounded-lg"
@@ -285,6 +319,7 @@ export function SiteDetailPage() {
       {tab === 'files' && <SiteFilesTab {...tabProps} />}
       {tab === 'cron' && <SiteCronTab site={site} />}
       {tab === 'logs' && <SiteLogsTab site={site} />}
+      {tab === 'maintenance' && <SiteMaintenanceTab site={site} />}
       </Fragment>
 
       <PublishModal

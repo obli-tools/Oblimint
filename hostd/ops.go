@@ -101,6 +101,16 @@ type hostOps struct {
 	now         func() time.Time
 
 	locks sync.Map // accountID → chan struct{} (cap 1): one operation per account at a time
+
+	// P3: stops the watchers and unmounts the windows of a site / account
+	// before it is removed (nil: nothing mounted, tests of the P1 ops).
+	releaser mountReleaser
+}
+
+// mountReleaser is implemented by the window manager (windows.go).
+type mountReleaser interface {
+	ReleaseSite(ctx context.Context, accountID, siteID int64) error
+	ReleaseAccount(ctx context.Context, accountID int64) error
 }
 
 func newHostOps(l Layout, q Quota, own ownerFunc) *hostOps {
@@ -261,6 +271,12 @@ func (h *hostOps) RemoveAccount(ctx context.Context, accountID int64, purge bool
 		return err
 	}
 	defer unlock()
+	// P3: never delete (or leave behind) a tree with window mounts in it.
+	if h.releaser != nil {
+		if err := h.releaser.ReleaseAccount(ctx, accountID); err != nil {
+			return fmt.Errorf("windows: %w", err)
+		}
+	}
 	if err := h.quota.Release(projectID(accountID)); err != nil {
 		return fmt.Errorf("quota: %w", err)
 	}
@@ -312,8 +328,15 @@ func (h *hostOps) RemoveSite(ctx context.Context, accountID, siteID int64, slug 
 	if err := validateSlug(slug); err != nil {
 		return err
 	}
+	// P3: the watchers and window mounts of the site go first (purge or not:
+	// the site is gone).
+	if h.releaser != nil {
+		if err := h.releaser.ReleaseSite(ctx, accountID, siteID); err != nil {
+			return fmt.Errorf("windows: %w", err)
+		}
+	}
 	if !purge {
-		return nil // nothing is held per site besides its files
+		return nil // nothing else is held per site besides its files
 	}
 	unlock, err := h.lock(ctx, accountID, 0)
 	if err != nil {

@@ -19,6 +19,15 @@ const (
 	codeCancelled   = "cancelled"   // 503: the caller left (timeout): the operation stopped part way
 	codeInternal    = "internal"    // 500
 
+	// P3 (409): another window / release is mounted on the site; the window
+	// is not mounted; a restore would overwrite an existing file.
+	codeConflict         = "conflict"
+	codeWindowNotMounted = "windowNotMounted"
+	codeRestoreConflict  = "restoreConflict"
+	// 409: the freeze could only lazily detach the rw overlay and processes
+	// still hold it (writes into upper/ remain possible): no export.
+	codeWindowWriters = "windowWriters"
+
 	// 409: a disk limit was asked for in measured mode without the operator
 	// opt-in (OBLIMINT_ALLOW_MEASURED_QUOTA): it could not be enforced.
 	codeQuotaNotEnforced = "quotaNotEnforced"

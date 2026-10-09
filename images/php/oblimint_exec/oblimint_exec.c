@@ -22,7 +22,9 @@
  * fatal error BEFORE compilation: compiling has side effects (top-level
  * functions and classes are bound at compile time), so a refused file must
  * never be compiled at all. The check runs again on the compiled file name as
- * a safety net. phar://<archive>/<entry> is judged on the archive file.
+ * a safety net. phar://<archive>/<entry> is judged on the archive file; a
+ * phar://<alias>/<entry> (Phar::mapPhar stubs: WP-CLI, Composer) is opened
+ * first so that the phar wrapper names the real archive behind the alias.
  *
  * Empty / unset setting = no restriction (CLI tools, the image build).
  *
@@ -50,7 +52,7 @@
 #include "ext/standard/info.h"
 #include "zend_compile.h"
 
-#define PHP_OBLIMINT_EXEC_VERSION "1.0.0"
+#define PHP_OBLIMINT_EXEC_VERSION "1.0.1"
 
 #ifndef PATH_MAX
 # define PATH_MAX 4096
@@ -186,6 +188,39 @@ static int oe_precheck(zend_file_handle *fh, const char *dirs)
 	return allowed;
 }
 
+/* phar://<alias>/<entry>: a phar stub does Phar::mapPhar('wp-cli.phar') then
+ * include 'phar://wp-cli.phar/php/boot-phar.php' (Composer: composer.phar).
+ * The alias names no file, so it cannot be judged as such. Open the handle
+ * first, through the engine's own stream layer (what include_once does before
+ * compiling): the phar wrapper resolves the alias (or a relative archive
+ * name) and reports the opened path as phar://<real archive path>/<entry>,
+ * which oe_precheck() then judges like any phar:// path, still BEFORE
+ * compilation. Opening reads the archive manifest, never runs its code.
+ * The compiled file name is the same opened path (post-check safety net). */
+static void oe_open_phar_alias(zend_file_handle *fh)
+{
+	const char *name;
+
+	if (fh->opened_path != NULL || fh->type != ZEND_HANDLE_FILENAME || fh->filename == NULL) {
+		return;
+	}
+#if PHP_VERSION_ID >= 80100
+	name = ZSTR_VAL(fh->filename);
+#else
+	name = fh->filename;
+#endif
+	if (strncasecmp(name, "phar://", 7) != 0 || name[7] == '/' || name[7] == '\0') {
+		return;
+	}
+	/* On failure the handle stays a FILENAME handle without opened_path: the
+	 * alias is then refused by oe_precheck(). */
+#if PHP_VERSION_ID >= 80100
+	(void) zend_stream_open(fh);
+#else
+	(void) zend_stream_open(name, fh);
+#endif
+}
+
 static ZEND_COLD ZEND_NORETURN void oe_refuse(const char *name)
 {
 	zend_error_noreturn(E_COMPILE_ERROR,
@@ -202,6 +237,7 @@ static zend_op_array *oe_compile_file(zend_file_handle *file_handle, int type)
 		return oe_orig_compile_file(file_handle, type);
 	}
 
+	oe_open_phar_alias(file_handle);
 	if (oe_precheck(file_handle, dirs) == 0) {
 		char shown[PATH_MAX];
 #if PHP_VERSION_ID >= 80100

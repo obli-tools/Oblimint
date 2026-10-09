@@ -1,15 +1,23 @@
 import type { ScanSummary } from '@oblimint/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pre-publish scan hook (ARCHITECTURE §1 "Publication"). P1 ships the
-// interface and a no-op scanner; ClamAV + YARA (php-malware-finder) plug in
-// here in P3. OWNED BY MODULE `releases`.
+// Pre-publish scan hook (ARCHITECTURE §1 "Publication"). P1 shipped the
+// interface and a no-op scanner; in P3 the scanners module registers its
+// analyser (heuristics + YARA + ClamAV) here at scanService.start().
+// OWNED BY MODULE `releases` (P3: module `windows`).
 //
-// Verdict semantics in the pipeline:
-//   clean       → continue;
+// Semantics in the pipeline (docs/P3-PLAN.md §9.3):
+//   blocked     → summary.blocked (risk ≥ scanner.blockScore or a ClamAV hit;
+//                 a verdict 'infected' without the flag counts as blocked):
+//                 the release waits in awaiting_approval, BLOCKED — only a
+//                 staff member holding releases.approve can approve it, with
+//                 an override (audited 'release.approve.override', recorded in
+//                 scan.override); notify('scan.threat');
 //   suspicious  → mode auto/manual: the release waits for approval
 //                 (status awaiting_approval); mode approval: unchanged;
-//   infected    → the release fails (status failed), nothing goes live.
+//   clean       → continue (mode approval still waits).
+// publishCommit (windows / adapters) may pass a precomputed summary: same gates,
+// the decision of the caller counting as the approval (approvedBy).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ScanContext {

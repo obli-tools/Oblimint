@@ -92,7 +92,7 @@ func do(t *testing.T, ops Ops, method, target, body string) (int, map[string]any
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
-	newMux(ops, newLayout("/srv/oblimint"), nil, nil).ServeHTTP(rec, req)
+	newMux(ops, newLayout("/srv/oblimint"), nil, nil, nil).ServeHTTP(rec, req)
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("%s %s: non-JSON body %q", method, target, rec.Body)

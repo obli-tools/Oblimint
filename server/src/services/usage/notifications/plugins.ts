@@ -83,6 +83,15 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'db.instanceFailed': 'Instance de base de données en échec',
   'cron.failed': 'Tâche planifiée en échec',
   'security.banned': 'Adresse IP bannie',
+  // P3
+  'window.pendingReview': 'Fenêtre de modification à valider',
+  'window.autoValidated': 'Fenêtre de modification validée automatiquement',
+  'window.failed': 'Fenêtre de modification en échec',
+  'scan.threat': 'Menace détectée par l’analyse',
+  'quarantine.added': 'Fichier mis en quarantaine',
+  'adapter.completed': 'Mise à jour applicative publiée',
+  'adapter.failed': 'Mise à jour applicative en échec',
+  'supervision.digest': 'Résumé de supervision',
   test: 'Test',
 };
 

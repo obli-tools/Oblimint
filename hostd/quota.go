@@ -228,7 +228,8 @@ func rootProject(root *os.Root, attr projAttr) (uint32, bool, error) {
 // directory and regular file below it that lacks it, through descriptors
 // opened without following links. Symlinks, fifos and sockets are skipped
 // (they cannot be opened safely; a link only weighs its inode). Returns how
-// many entries were changed.
+// many entries were changed. P3: mount points below root (window overlays,
+// lower binds) are never entered: nothing is tagged through them.
 func tagTree(ctx context.Context, root *os.Root, projectID uint32, attr projAttr) (int, error) {
 	fixed := 0
 	fix := func(f *os.File, dir bool) error {
@@ -253,7 +254,7 @@ func tagTree(ctx context.Context, root *os.Root, projectID uint32, attr projAttr
 	if err := fixDir(root); err != nil {
 		return fixed, err
 	}
-	tooDeep, err := walkTree(ctx, root, func(parent *os.Root, name string, fi fs.FileInfo, sub *os.Root) error {
+	tooDeep, err := walkTreeSkip(ctx, root, mountSkipper(root.Name(), false), func(parent *os.Root, name string, fi fs.FileInfo, sub *os.Root) error {
 		switch {
 		case sub != nil:
 			return fixDir(sub)

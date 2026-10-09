@@ -32,6 +32,25 @@ import (
 //     databases/                                 root:root 0711  (P2)
 //       <instanceId>/                            uid:gid   0700  data dir of one instance (in the XFS project)
 //
+//     (P3, docs/P3-PLAN.md §4)
+//     sites/<siteId>/windows/                    root:root 0700  modification windows (hostd)
+//       <windowId>/                              root:root 0700
+//         lower/                                 RO bind of releases/<n> (pristine: never receives the overlay)
+//         upper/  work/                          overlay write layer (= the diff) + workdir
+//         export/manifest.json                   HostdWindowManifest (diff lower ↔ merged)
+//         export/files/<path>                    new content of the added / modified entries (root 0600)
+//         state.json                             what hostd mounted (boot recovery, listWindows)
+//       (the overlay itself is mounted OVER releases/<n>, propagated rslave into the site containers)
+//     sites/<siteId>/work/                       root:root 0711  adapter workspaces
+//       <workspaceId>/                           root:root 0711
+//         tree/                                  uid:gid   0755  copy of a release (tools container rw)
+//     snapshots/                                 root:root 0700  database snapshots (panel writes)
+//     quarantine/                                root:root 0700  (hostd) never mounted anywhere
+//       <entryId>/{content,meta.json}            root:root 0700 / 0600: kept as evidence
+//       allow.json                               (path, sha256) restored by the staff: ignored by the watchers
+//   <root>/scanner/                              scanner state (panel)
+//   <root>/run/hostd-mnt/                        private mount area of hostd (pristine binds, never propagated)
+//
 // hostd never takes an absolute path from the panel (except GET /v1/fs and
 // GET /v1/du, checked by RelFromAbs): every path is computed here from ids,
 // slugs and validated relative data paths.
@@ -107,6 +126,122 @@ func (l Layout) ReleasesRel(accountID, siteID int64) []string {
 }
 func (l Layout) RuntimeRel(accountID, siteID int64) []string {
 	return append(l.SiteRel(accountID, siteID), "runtime")
+}
+
+// ── P3: windows, workspaces, quarantine (docs/P3-PLAN.md §4) ──
+
+func (l Layout) ReleaseRel(accountID, siteID, releaseNumber int64) []string {
+	return append(l.ReleasesRel(accountID, siteID), id(releaseNumber))
+}
+func (l Layout) WindowsRel(accountID, siteID int64) []string {
+	return append(l.SiteRel(accountID, siteID), "windows")
+}
+func (l Layout) WindowRel(accountID, siteID, windowID int64) []string {
+	return append(l.WindowsRel(accountID, siteID), id(windowID))
+}
+func (l Layout) WindowLowerRel(accountID, siteID, windowID int64) []string {
+	return append(l.WindowRel(accountID, siteID, windowID), "lower")
+}
+func (l Layout) WindowUpperRel(accountID, siteID, windowID int64) []string {
+	return append(l.WindowRel(accountID, siteID, windowID), "upper")
+}
+func (l Layout) WindowWorkRel(accountID, siteID, windowID int64) []string {
+	return append(l.WindowRel(accountID, siteID, windowID), "work")
+}
+func (l Layout) WindowExportRel(accountID, siteID, windowID int64) []string {
+	return append(l.WindowRel(accountID, siteID, windowID), "export")
+}
+func (l Layout) WindowExportFilesRel(accountID, siteID, windowID int64) []string {
+	return append(l.WindowExportRel(accountID, siteID, windowID), "files")
+}
+func (l Layout) WindowManifestRel(accountID, siteID, windowID int64) []string {
+	return append(l.WindowExportRel(accountID, siteID, windowID), "manifest.json")
+}
+func (l Layout) WindowStateRel(accountID, siteID, windowID int64) []string {
+	return append(l.WindowRel(accountID, siteID, windowID), "state.json")
+}
+func (l Layout) WorkspacesRel(accountID, siteID int64) []string {
+	return append(l.SiteRel(accountID, siteID), "work")
+}
+func (l Layout) WorkspaceRel(accountID, siteID, workspaceID int64) []string {
+	return append(l.WorkspacesRel(accountID, siteID), id(workspaceID))
+}
+func (l Layout) WorkspaceTreeRel(accountID, siteID, workspaceID int64) []string {
+	return append(l.WorkspaceRel(accountID, siteID, workspaceID), "tree")
+}
+func (l Layout) SnapshotsRel(accountID int64) []string {
+	return append(l.AccountRel(accountID), "snapshots")
+}
+func (l Layout) QuarantineRel(accountID int64) []string {
+	return append(l.AccountRel(accountID), "quarantine")
+}
+func (l Layout) QuarantineEntryRel(accountID int64, entryID string) []string {
+	return append(l.QuarantineRel(accountID), entryID)
+}
+func (l Layout) ScannerRel() []string { return []string{"scanner"} }
+
+// PrivateMountRel is where hostd makes its private (never propagated) binds.
+func (l Layout) PrivateMountRel() []string { return []string{"run", "hostd-mnt"} }
+
+func (l Layout) Release(accountID, siteID, releaseNumber int64) string {
+	return l.abs(l.ReleaseRel(accountID, siteID, releaseNumber))
+}
+func (l Layout) Windows(accountID, siteID int64) string {
+	return l.abs(l.WindowsRel(accountID, siteID))
+}
+func (l Layout) Window(accountID, siteID, windowID int64) string {
+	return l.abs(l.WindowRel(accountID, siteID, windowID))
+}
+func (l Layout) WindowLower(accountID, siteID, windowID int64) string {
+	return l.abs(l.WindowLowerRel(accountID, siteID, windowID))
+}
+func (l Layout) WindowUpper(accountID, siteID, windowID int64) string {
+	return l.abs(l.WindowUpperRel(accountID, siteID, windowID))
+}
+func (l Layout) WindowWork(accountID, siteID, windowID int64) string {
+	return l.abs(l.WindowWorkRel(accountID, siteID, windowID))
+}
+func (l Layout) WindowExport(accountID, siteID, windowID int64) string {
+	return l.abs(l.WindowExportRel(accountID, siteID, windowID))
+}
+func (l Layout) WindowExportFiles(accountID, siteID, windowID int64) string {
+	return l.abs(l.WindowExportFilesRel(accountID, siteID, windowID))
+}
+func (l Layout) WindowManifest(accountID, siteID, windowID int64) string {
+	return l.abs(l.WindowManifestRel(accountID, siteID, windowID))
+}
+func (l Layout) Workspaces(accountID, siteID int64) string {
+	return l.abs(l.WorkspacesRel(accountID, siteID))
+}
+func (l Layout) Workspace(accountID, siteID, workspaceID int64) string {
+	return l.abs(l.WorkspaceRel(accountID, siteID, workspaceID))
+}
+func (l Layout) WorkspaceTree(accountID, siteID, workspaceID int64) string {
+	return l.abs(l.WorkspaceTreeRel(accountID, siteID, workspaceID))
+}
+func (l Layout) Snapshots(accountID int64) string  { return l.abs(l.SnapshotsRel(accountID)) }
+func (l Layout) Quarantine(accountID int64) string { return l.abs(l.QuarantineRel(accountID)) }
+func (l Layout) ScannerDir() string                { return l.abs(l.ScannerRel()) }
+func (l Layout) PrivateMount() string              { return l.abs(l.PrivateMountRel()) }
+
+// windowDirs is the tree of one window (below an existing site tree). upper/
+// is created apart: it takes the owner and mode of the release root (the
+// overlay root inode is the upper directory).
+func (l Layout) windowDirs(accountID, siteID, windowID int64) []dirSpec {
+	return []dirSpec{
+		{l.WindowsRel(accountID, siteID), rootOwner, 0o700},
+		{l.WindowRel(accountID, siteID, windowID), rootOwner, 0o700},
+		{l.WindowLowerRel(accountID, siteID, windowID), rootOwner, 0o700},
+		{l.WindowWorkRel(accountID, siteID, windowID), rootOwner, 0o700},
+	}
+}
+
+// workspaceDirs is the root-owned part of a workspace (tree/ is the uid's).
+func (l Layout) workspaceDirs(accountID, siteID, workspaceID int64) []dirSpec {
+	return []dirSpec{
+		{l.WorkspacesRel(accountID, siteID), rootOwner, 0o711},
+		{l.WorkspaceRel(accountID, siteID, workspaceID), rootOwner, 0o711},
+	}
 }
 
 // ── P2: database sockets and data (docs/P2-PLAN.md §4) ──

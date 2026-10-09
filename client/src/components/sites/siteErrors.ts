@@ -82,6 +82,14 @@ export function siteErrorMessage(err: unknown, t: TFunction, fallback?: string):
     if (details?.restored === false) return t('sites.errors.runtimeSwitchNotRestored') || RUNTIME_NOT_RESTORED_FALLBACK;
   }
   if (isKnownCode(code)) return t(`sites.errors.${code}`) || SITE_ERROR_FALLBACKS[code];
+  // P3 codes met by P1 screens (publish / rollback / data paths: windowActive, adapterBusy, riskBlocked…):
+  // translated by maintenance.json (maintenance.errors.*) with the error details, when the key exists.
+  if (code && /^[A-Za-z]+$/.test(code)) {
+    const d = (err as { response?: { data?: { details?: unknown } } } | null)?.response?.data?.details;
+    const vars = d && typeof d === 'object' && !Array.isArray(d) ? (d as Record<string, unknown>) : {};
+    const p3 = t(`maintenance.errors.${code}`, { maxMinutes: '?', path: '?', count: 0, ...vars, defaultValue: '' });
+    if (typeof p3 === 'string' && p3) return p3;
+  }
   if (apiErrorStatus(err) === 501) return t('sites.errors.notImplemented') || SITE_ERROR_FALLBACKS.notImplemented;
   return apiErrorMessage(err, fallback ?? (t('common.error') || 'Error'));
 }

@@ -208,6 +208,19 @@ export const config = {
     logsDir: process.env.OBLIMINT_LOGS_DIR || path.join(dataDir, 'logs'),
     /** Usage collector + enforcement workers (module usage). 'off' = no collection. */
     usageCollector: process.env.OBLIMINT_USAGE_COLLECTOR !== 'off',
+    // ── P3 (docs/P3-PLAN.md §Configuration) ──
+    /** Shared change scanner (ClamAV + YARA + scand, module scanners). */
+    scannerImage: process.env.OBLIMINT_SCANNER_IMAGE || 'meejay/oblimint-scanner',
+    /** Base URL of scand on the panel network (never published). */
+    scannerUrl: process.env.OBLIMINT_SCANNER_URL || 'http://oblimint-scanner:8080',
+    /** Repository prefix of the adapter tools images: <prefix><php version>:<imageTag> (meejay/oblimint-tools-php8.3:latest). */
+    toolsImagePrefix: process.env.OBLIMINT_TOOLS_IMAGE_PREFIX || 'meejay/oblimint-tools-php',
+    /**
+     * After mounting a window overlay, check through hostd (/proc/<pid>/mountinfo)
+     * that every running container of the site sees it; a container that does not
+     * is restarted (fallback, docs/P3-PLAN.md §5). 'off' = trust the propagation.
+     */
+    windowPropagationCheck: process.env.OBLIMINT_WINDOW_PROPAGATION_CHECK !== 'off',
   },
   /** Static client build served in production. */
   // server/src (tsx) → ../../client/dist ; server/dist/src (compiled) → ../../../client/dist

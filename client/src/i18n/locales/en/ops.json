@@ -409,7 +409,15 @@
       "quotaAction": "Uploads blocked / account suspended",
       "quotaExceeded": "Quota exceeded (100 %)",
       "quotaWarning": "Quota threshold reached (80 %)",
-      "securityBanned": "Address banned"
+      "securityBanned": "Address banned",
+      "windowPendingReview": "Modification window waiting for review",
+      "windowAutoValidated": "Modification window validated automatically",
+      "windowFailed": "Modification window failure",
+      "scanThreat": "Threat found by the scanner",
+      "quarantineAdded": "File quarantined",
+      "adapterCompleted": "Application update published",
+      "adapterFailed": "Application update failure",
+      "supervisionDigest": "Supervision digest"
     },
     "form": {
       "botToken": "Bot token",

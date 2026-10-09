@@ -1,9 +1,10 @@
 import apiClient from './client';
 import type {
-  ApiResponse, ProfileDetection, PublishRequest, Release, ReleaseDetail, ReleaseDiff, Site, StagingStatus,
+  ApiResponse, ApproveRequest, ProfileDetection, PublishRequest, Release, ReleaseDetail, ReleaseDiff, Site, StagingStatus,
 } from '@oblimint/shared';
 
-// /api/sites/:id/releases + /staging — docs/P1-PLAN.md §API. OWNED BY MODULE `ui-sites`.
+// /api/sites/:id/releases + /staging — docs/P1-PLAN.md §API. OWNED BY MODULE `ui-sites`
+// (P3: `ui-maintenance` — approval with a staff override of a blocked scan, docs/P3-PLAN.md §6.2).
 export const releasesApi = {
   async list(siteId: number, params: { limit?: number; offset?: number } = {}): Promise<{ items: Release[]; total: number }> {
     const res = await apiClient.get<ApiResponse<{ items: Release[]; total: number }>>(`/sites/${siteId}/releases`, { params });
@@ -33,8 +34,9 @@ export const releasesApi = {
     return res.data.data!;
   },
 
-  async approve(siteId: number, releaseId: number): Promise<Release> {
-    const res = await apiClient.post<ApiResponse<Release>>(`/sites/${siteId}/releases/${releaseId}/approve`);
+  /** P3: `{ override: true, reason }` = staff override of a blocked scan (audited; 403 overrideForbidden otherwise). */
+  async approve(siteId: number, releaseId: number, data: ApproveRequest = {}): Promise<Release> {
+    const res = await apiClient.post<ApiResponse<Release>>(`/sites/${siteId}/releases/${releaseId}/approve`, data);
     return res.data.data!;
   },
 

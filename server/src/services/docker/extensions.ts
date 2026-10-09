@@ -17,7 +17,10 @@ import type { AccountState, ReconcileReport } from './reconcile.service';
 //                  converge: create / start / stop with the account status)
 //      firewall  → firewallReconcileHook.afterAccountPass (gateway target of
 //                  the file server, nftables state of the account)
+//      quarantine → quarantineReconcileHook.afterAccountPass (P3: typed-path
+//                  watch specs of the account's sites pushed to hostd)
 //  - infra components: dns (PowerDNS) and dbadmin (phpMyAdmin + Adminer),
+//    scanner (P3: ClamAV + YARA + scand, module scanners),
 //    shown on the Nodes page, deployable from /api/system/infra/:id/deploy,
 //    ensured at boot.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,6 +40,8 @@ export async function runAfterAccountPassHooks(ctx: AccountPassContext): Promise
   const hooks: Array<[string, () => Promise<AccountPassHook>]> = [
     ['databases', async () => (await import('../databases/reconcileHook')).databaseReconcileHook],
     ['firewall', async () => (await import('../firewall/reconcileHook')).firewallReconcileHook],
+    // P3 (docs/P3-PLAN.md §7): typed-path watch specs of the account's sites → hostd.
+    ['quarantine', async () => (await import('../quarantine/reconcileHook')).quarantineReconcileHook],
   ];
   for (const [name, load] of hooks) {
     try {
@@ -49,7 +54,7 @@ export async function runAfterAccountPassHooks(ctx: AccountPassContext): Promise
 
 /** A platform component deployed by a P2 module (Nodes page, setup wizard, boot). */
 export interface InfraComponentProvider {
-  id: Extract<InfraComponentId, 'dns' | 'dbadmin'>;
+  id: Extract<InfraComponentId, 'dns' | 'dbadmin' | 'scanner'>;
   /** Pull + (re)create when missing / drifted. Idempotent. Throws on failure (the caller logs / reports). */
   ensure(log: (line: string) => void): Promise<void>;
   /** Never throws: errors go to `detail`. docker null = engine unreachable (dockerError). */
@@ -62,5 +67,7 @@ export async function extraInfraComponents(): Promise<InfraComponentProvider[]> 
   const out: InfraComponentProvider[] = [];
   try { out.push((await import('../dns/infra')).dnsInfraComponent); } catch (err) { logger.warn({ err: (err as Error)?.message }, 'dns infra component unavailable'); }
   try { out.push((await import('../databases/dbadminInfra')).dbAdminInfraComponent); } catch (err) { logger.warn({ err: (err as Error)?.message }, 'dbadmin infra component unavailable'); }
+  // P3: shared change scanner (ClamAV + YARA), module scanners.
+  try { out.push((await import('../scan/scannerInfra')).scannerInfraComponent); } catch (err) { logger.warn({ err: (err as Error)?.message }, 'scanner infra component unavailable'); }
   return out;
 }

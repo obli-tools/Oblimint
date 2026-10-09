@@ -409,7 +409,15 @@
       "quotaAction": "Envois bloqués / compte suspendu",
       "quotaExceeded": "Quota dépassé (100 %)",
       "quotaWarning": "Seuil de quota atteint (80 %)",
-      "securityBanned": "Adresse bannie"
+      "securityBanned": "Adresse bannie",
+      "windowPendingReview": "Fenêtre de modification à valider",
+      "windowAutoValidated": "Fenêtre de modification validée automatiquement",
+      "windowFailed": "Échec d’une fenêtre de modification",
+      "scanThreat": "Menace détectée par l’analyse",
+      "quarantineAdded": "Fichier mis en quarantaine",
+      "adapterCompleted": "Mise à jour applicative publiée",
+      "adapterFailed": "Échec d’une mise à jour applicative",
+      "supervisionDigest": "Résumé de supervision"
     },
     "form": {
       "botToken": "Jeton du bot",

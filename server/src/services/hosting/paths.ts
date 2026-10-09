@@ -31,6 +31,16 @@ import { config, dataDir } from '../../config';
 //     databases/                                 root:root 0711  (P2)
 //       <instanceId>/                            uid:gid   0700  data dir of one instance (counted in the XFS project)
 //
+//     (P3, docs/P3-PLAN.md §4)
+//     sites/<siteId>/windows/<windowId>/          root:root 0700  one modification window (hostd)
+//       lower/                                     RO bind of releases/<n> (lower layer kept reachable)
+//       upper/ work/                               overlay write layer (= the diff) + workdir
+//       export/{manifest.json,files/}              changed content exported for the panel (frozen window)
+//       (the overlay itself is mounted OVER releases/<n>, propagated rslave into the site containers)
+//     sites/<siteId>/work/<workspaceId>/tree/      uid:gid  copy of a release for an adapter run (tools container rw)
+//     snapshots/<file>.sql.gz                      root:root 0700  database snapshots (panel)
+//     quarantine/<entryId>/{content,meta.json}     root:root 0700  quarantined files (hostd, kept as evidence)
+//
 //   <root>/edge/conf.d/  edge/certs/  edge/acme/   (edge module)
 //   <root>/dns/                                     (P2: PowerDNS state, panel only)
 //   <root>/logs/<accountId>/<siteId>/              (P2: persisted access logs, panel only)
@@ -60,6 +70,8 @@ export const CONTAINER_PATHS = {
   filesRoot: '/srv/files',
   /** File server: SFTPGo state directory. */
   filesrvState: '/var/lib/sftpgo',
+  /** P3 — adapter tools container: the workspace (copy of the release, rw) and the site data (rw). */
+  toolsApp: '/srv/app',
 } as const;
 
 function joinPosix(...parts: Array<string | number>): string {
@@ -108,6 +120,23 @@ export function hostingLayout(root: string) {
     edgeCerts: () => joinPosix(r, 'edge', 'certs'),
     edgeAcme: () => joinPosix(r, 'edge', 'acme'),
     runDir: () => joinPosix(r, 'run'),
+    // ── P3 (docs/P3-PLAN.md §4) — hostd creates / mounts them; the panel only READS
+    // export/ and work/<id>/tree/ (tenant-derived content: lstat, never follow a symlink).
+    windows: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'windows'),
+    window: (accountId: number, siteId: number, windowId: number) => joinPosix(site(accountId, siteId), 'windows', windowId),
+    windowExport: (accountId: number, siteId: number, windowId: number) => joinPosix(site(accountId, siteId), 'windows', windowId, 'export'),
+    windowExportFiles: (accountId: number, siteId: number, windowId: number) => joinPosix(site(accountId, siteId), 'windows', windowId, 'export', 'files'),
+    windowManifest: (accountId: number, siteId: number, windowId: number) => joinPosix(site(accountId, siteId), 'windows', windowId, 'export', 'manifest.json'),
+    workspaces: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'work'),
+    workspace: (accountId: number, siteId: number, workspaceId: number) => joinPosix(site(accountId, siteId), 'work', workspaceId),
+    workspaceTree: (accountId: number, siteId: number, workspaceId: number) => joinPosix(site(accountId, siteId), 'work', workspaceId, 'tree'),
+    /** Database snapshots (panel writes, root 0700; counted in the account quota). */
+    snapshots: (accountId: number) => joinPosix(account(accountId), 'snapshots'),
+    snapshotFile: (accountId: number, fileName: string) => joinPosix(account(accountId), 'snapshots', fileName),
+    /** Scanner state (ClamAV signatures), panel network only (module scanners). */
+    scannerDir: () => joinPosix(r, 'scanner'),
+    /** hostd quarantine store (root 0700, never mounted anywhere). */
+    quarantine: (accountId: number) => joinPosix(account(accountId), 'quarantine'),
   };
 }
 

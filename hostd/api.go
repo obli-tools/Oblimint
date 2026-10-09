@@ -20,7 +20,8 @@ type FSInfo struct {
 	ProjectQuota bool     `json:"projectQuota"`
 }
 
-// maxBodyBytes bounds every JSON body (a data-path list is the largest one).
+// maxBodyBytes bounds every JSON body (a data-path list is the largest one)
+// except POST .../staging/apply (maxStagingBodyBytes).
 const maxBodyBytes = 1 << 20
 
 // api serves the hostd HTTP API (unix socket, panel only).
@@ -30,10 +31,12 @@ type api struct {
 	// P2 (nil = 501 unsupported: tests of the P1 routes).
 	fw *firewallManager
 	gw *gateway
+	// P3 (nil = 501 unsupported).
+	p3 P3Ops
 }
 
-func newMux(ops Ops, l Layout, fw *firewallManager, gw *gateway) *http.ServeMux {
-	a := &api{ops: ops, layout: l, fw: fw, gw: gw}
+func newMux(ops Ops, l Layout, fw *firewallManager, gw *gateway, p3 P3Ops) *http.ServeMux {
+	a := &api{ops: ops, layout: l, fw: fw, gw: gw, p3: p3}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", a.health)
 	mux.HandleFunc("GET /v1/fs", a.fs)
@@ -58,6 +61,8 @@ func newMux(ops Ops, l Layout, fw *firewallManager, gw *gateway) *http.ServeMux 
 	mux.HandleFunc("PUT /v1/gateway/accounts/{id}", a.setGateway)
 	mux.HandleFunc("DELETE /v1/gateway/accounts/{id}", a.removeGateway)
 	mux.HandleFunc("GET /v1/gateway/events", a.gatewayEvents)
+	// P3 — windows, staging, workspaces, watch, quarantine, events (api_p3.go).
+	registerP3(mux, a)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, &apiError{http.StatusNotFound, codeNotFound, "no route " + r.Method + " " + r.URL.Path})
 	})

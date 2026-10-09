@@ -1,9 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { GitCommit, Loader2 } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { AlertTriangle, GitCommit, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import type { Release, ReleaseDetail, ReleaseLogLine } from '@oblimint/shared';
 import { releasesApi } from '@/api/releases.api';
+import { useHostingMe } from '@/store/hostingStore';
+import { Button } from '@/components/common/Button';
 import { Drawer } from '@/components/common/Drawer';
+import { useConfirm, usePrompt } from '@/components/common/ConfirmDialog';
+import { RiskBadge, useEngineLabel } from '@/components/maintenance/MaintenanceBadges';
+import { toastMaintenanceError } from '@/components/maintenance/maintenanceErrors';
 import { cn } from '@/utils/cn';
 import { ReleaseDiffPanel } from './DiffViewer';
 import { Pill, ReleaseStatusBadge, ScanVerdictChip } from './SiteBadges';
@@ -23,6 +29,9 @@ export interface ReleaseDrawerProps {
   renderActions?: (release: Release) => ReactNode;
 }
 
+/** Server limit of the override reason (ApproveRequest). */
+const OVERRIDE_REASON_MAX = 500;
+
 const LEVEL_CLS: Record<ReleaseLogLine['level'], string> = {
   info: 'text-text-secondary',
   warn: 'text-amber-400',
@@ -38,6 +47,14 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
   );
   const [detail, setDetail] = useState<ReleaseDetail | null>(null);
   const [error, setError] = useState('');
+  /** P3: refetch after a staff override (the parent list follows RELEASE_UPDATED). */
+  const [localTick, setLocalTick] = useState(0);
+  const [overriding, setOverriding] = useState(false);
+  const confirm = useConfirm();
+  const prompt = usePrompt();
+  const engineLabel = useEngineLabel();
+  const { me, can } = useHostingMe();
+  const isStaff = me?.kind === 'staff';
 
   useEffect(() => {
     if (releaseId === null) { setDetail(null); return; }
@@ -47,11 +64,46 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
       .then((d) => { if (!cancelled) setDetail(d); })
       .catch((err) => { if (!cancelled) setError(siteErrorMessage(err, t)); });
     return () => { cancelled = true; };
-  }, [siteId, releaseId, tick, t]);
+  }, [siteId, releaseId, tick, localTick, t]);
 
   // Until the detail arrives, show the list row (instant title / status).
   const release: Release | null = (detail && detail.id === releaseId ? detail : null) ?? releases.find((r) => r.id === releaseId) ?? null;
   const log = detail && detail.id === releaseId ? detail.log : null;
+
+  // P3 — staff override of a blocked scan: approve with { override: true, reason } (audited server side).
+  const blocked = !!release?.scan?.blocked;
+  const canOverride = isStaff && can('releases.approve') && blocked && release?.status === 'awaiting_approval';
+  const overrideApprove = async (r: Release) => {
+    const reason = await prompt({
+      title: t('scanner.override.title', { number: r.number, defaultValue: 'Override the scan of release #{{number}}' }),
+      message: t('scanner.override.message') || 'The scan blocked this release. Explain why it is safe to publish (kept in the audit log):',
+      multiline: true,
+      required: true,
+      maxLength: OVERRIDE_REASON_MAX,
+      plain: false,
+      confirmLabel: t('common.next') || 'Next',
+    });
+    if (reason === null || !reason.trim()) return;
+    if (!(await confirm({
+      title: t('scanner.override.confirmTitle') || 'Publish despite the scan',
+      message: t('scanner.override.confirm', {
+        number: r.number, score: r.scan?.risk?.score ?? '?',
+        defaultValue: 'Release #{{number}} (risk {{score}}) will be published right away. Your name and this decision are recorded in the audit log.',
+      }),
+      confirmLabel: t('scanner.override.submit') || 'Override and approve',
+      danger: true,
+    }))) return;
+    setOverriding(true);
+    try {
+      await releasesApi.approve(siteId, r.id, { override: true, reason: reason.trim() });
+      toast.success(t('scanner.override.done', { number: r.number, defaultValue: 'Release #{{number}} approved with an override' }));
+      setLocalTick((n) => n + 1);
+    } catch (err) {
+      toastMaintenanceError(err, t);
+    } finally {
+      setOverriding(false);
+    }
+  };
 
   const meta: Array<[string, ReactNode]> = release ? [
     [t('releases.fields.trigger') || 'Trigger', triggerLabel(release.trigger, t)],
@@ -116,8 +168,43 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
               <div className={cn(sectionLabelCls, 'flex items-center gap-2')}>
                 {t('releases.scan.title') || 'Pre-publication scan'}
                 <ScanVerdictChip verdict={release.scan.verdict} />
+                {release.scan.risk && <RiskBadge risk={release.scan.risk} className="normal-case tracking-normal" />}
                 <span className="normal-case tracking-normal text-text-muted/70">{release.scan.scanner}</span>
               </div>
+              {blocked && !release.scan.override && (
+                <div className="mb-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+                  <p className="flex items-start gap-2">
+                    <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                    {isStaff
+                      ? (t('scanner.blocked.staff') || 'Blocked by the scan (risk at or above the block threshold, or a ClamAV detection): only an audited staff override publishes it.')
+                      : (t('scanner.blocked.client') || 'Blocked by the security scan: this release cannot be published. Contact the support if you think it is a false positive.')}
+                  </p>
+                  {canOverride && (
+                    <Button size="sm" variant="danger" className="mt-2" loading={overriding} onClick={() => { void overrideApprove(release); }}>
+                      <ShieldAlert size={14} className="mr-1" />{t('scanner.override.button') || 'Approve with an override'}
+                    </Button>
+                  )}
+                </div>
+              )}
+              {release.scan.override && (
+                <p className="mb-2 flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-xs text-amber-400">
+                  <ShieldCheck size={14} className="mt-0.5 shrink-0" />
+                  <span>
+                    {t('scanner.override.info', { name: release.scan.override.by, date: formatDateTime(release.scan.override.at, i18n.language), defaultValue: 'Published with a staff override by {{name}} on {{date}}' })}
+                    {release.scan.override.reason && <span className="block text-text-secondary">« {release.scan.override.reason} »</span>}
+                  </span>
+                </p>
+              )}
+              {(release.scan.scannerUnavailable || (release.scan.skipped ?? 0) > 0) && (
+                <p className="mb-2 flex items-start gap-2 text-xs text-amber-400">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  <span>
+                    {release.scan.scannerUnavailable ? (t('windowReview.risk.scannerUnavailable') || 'The scanner (ClamAV / YARA) did not answer: heuristics only.') : null}
+                    {release.scan.scannerUnavailable && (release.scan.skipped ?? 0) > 0 ? ' ' : null}
+                    {(release.scan.skipped ?? 0) > 0 ? t('windowReview.risk.skipped', { count: release.scan.skipped, defaultValue: '{{count}} file(s) not scanned (too large)' }) : null}
+                  </span>
+                </p>
+              )}
               {release.scan.findings.length === 0 ? (
                 <p className="text-xs text-text-muted">{t('releases.scan.noFinding') || 'No finding.'}</p>
               ) : (
@@ -126,7 +213,8 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
                     <li key={`${f.path}:${f.rule}:${i}`} className="rounded-lg bg-bg-tertiary/60 px-3 py-2 text-xs">
                       <div className="flex flex-wrap items-center gap-2">
                         <Pill tone={f.severity === 'critical' ? 'red' : f.severity === 'warn' ? 'amber' : 'muted'} className="text-[10px] uppercase">{severityLabel(f.severity)}</Pill>
-                        <code className="break-all font-mono text-text-primary">{f.path}</code>
+                        {f.engine && <Pill tone="muted" className="text-[10px]">{engineLabel(f.engine)}</Pill>}
+                        <code className="break-all font-mono text-text-primary">{f.path}{f.line != null ? ':' + f.line : ''}</code>
                         <span className="font-mono text-text-muted">{f.rule}</span>
                       </div>
                       <p className="mt-1 text-text-secondary">{f.message}</p>
@@ -173,5 +261,7 @@ export function triggerLabel(trigger: Release['trigger'], t: (k: string) => stri
     auto: t('releases.trigger.auto') || 'automatic',
     manual: t('releases.trigger.manual') || 'manual',
     api: t('releases.trigger.api') || 'API',
+    window: t('releases.trigger.window') || 'window',
+    adapter: t('releases.trigger.adapter') || 'adapter',
   })[trigger];
 }

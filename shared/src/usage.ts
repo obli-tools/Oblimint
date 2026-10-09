@@ -140,10 +140,21 @@ export type NotificationEvent =
   | 'dns.syncFailed'
   | 'db.instanceFailed'
   | 'cron.failed'
-  | 'security.banned';
+  | 'security.banned'
+  // P3 (docs/P3-PLAN.md §Notifications)
+  | 'window.pendingReview'   // a closed window waits for a human decision
+  | 'window.autoValidated'   // a scheduled window was validated automatically
+  | 'window.failed'          // opening / analysis / validation of a window failed
+  | 'scan.threat'            // high / critical risk found (publication, window, adapter)
+  | 'quarantine.added'       // a file was quarantined (typed data path, supervised mode)
+  | 'adapter.completed'      // an adapter run published a release
+  | 'adapter.failed'         // an adapter run failed / was rolled back
+  | 'supervision.digest';    // periodic digest of a supervised site
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'quota.warning', 'quota.exceeded', 'quota.action', 'certificate.failed', 'dns.syncFailed', 'db.instanceFailed', 'cron.failed', 'security.banned',
+  'window.pendingReview', 'window.autoValidated', 'window.failed', 'scan.threat', 'quarantine.added', 'adapter.completed', 'adapter.failed',
+  'supervision.digest',
 ];
 
 /**

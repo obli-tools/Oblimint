@@ -1,0 +1,88 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-tools-exec — entrypoint wrapper of the adapter tools containers
+# (ENTRYPOINT tini -- oblimint-tools-exec <argv>).
+#
+# oblimint_exec (images/php/oblimint_exec) is loaded in the tools image with
+# the restrictive default of zz-oblimint-tools.ini:
+#
+#     oblimint.exec_dirs = "/srv/app/:/usr/local/bin/"
+#
+# i.e. the workspace copy of the release (its data links resolve to /srv/data
+# and are therefore refused) and the pinned tool phars (WP-CLI, Composer:
+# phar://<archive>/… is judged on the archive). WP-CLI, drush and occ boot the
+# whole application: a data-path file pulled in by include/require (planted
+# wp-content/uploads/x.php…) is never compiled here either, exactly as on the
+# live site (P1 invariant "data is never code", docs/P3-PLAN.md §14).
+#
+# The live site also compiles its regenerable code caches (siteconf
+# execdirs.go: `ephemeral` data paths, framework code dirs inside persistent
+# ones). The panel passes the same list, mapped under /srv/data/, in
+#
+#     OBLIMINT_EXEC_EXTRA = "/srv/data/<rel>/:/srv/data/<rel>/…"
+#
+# Every entry must be a strict, normalised sub-directory of /srv/data/ (never
+# /srv/data/ itself, never '.', '..', '//', never a character outside
+# [A-Za-z0-9._@+/-]): anything else aborts the step (exit 64) instead of
+# widening the policy. Unset/empty = the default above, unchanged.
+#
+# The effective list is written to /run/oblimint-php/zz-oblimint-exec.ini
+# (/run is a per-container tmpfs) and PHP_INI_SCAN_DIR lists the image conf.d
+# then that directory, so it is inherited by every PHP sub-process (WP-CLI
+# runcommand, Composer scripts). oblimint.exec_dirs is PHP_INI_SYSTEM:
+# ini_set(), .user.ini and php_value cannot change it. Residual: code that
+# ALREADY runs (release code) can spawn `php -d …` or rewrite the ini for its
+# children — it is code execution already, as on the live site (§14).
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+BASE_DIRS=/srv/app/:/usr/local/bin/
+INI_DIR=/run/oblimint-php
+IMAGE_SCAN_DIR=/usr/local/etc/php/conf.d
+
+refuse() {
+	echo "oblimint-tools-exec: refusing exec dir '$1' (must be a normalised sub-directory of /srv/data/ ending with '/')" >&2
+	exit 64
+}
+
+dirs=$BASE_DIRS
+extra=${OBLIMINT_EXEC_EXTRA:-}
+if [ -n "$extra" ]; then
+	old_ifs=$IFS
+	IFS=:
+	# shellcheck disable=SC2086 # split on ':' on purpose; globbing is off below
+	set -f
+	for d in $extra; do
+		[ -n "$d" ] || continue
+		case "$d" in
+			*[!A-Za-z0-9._@+/-]*) refuse "$d" ;;
+		esac
+		case "$d" in
+			/srv/data/?*/) ;;
+			*) refuse "$d" ;;
+		esac
+		case "$d" in
+			*//* | */./* | */../*) refuse "$d" ;;
+		esac
+		case ":$dirs:" in
+			*":$d:"*) ;;
+			*) dirs="$dirs:$d" ;;
+		esac
+	done
+	set +f
+	IFS=$old_ifs
+fi
+
+umask 022
+mkdir -p "$INI_DIR"
+rm -f "$INI_DIR/zz-oblimint-exec.ini"
+printf 'oblimint.exec_dirs = "%s"\n' "$dirs" >"$INI_DIR/zz-oblimint-exec.ini"
+chmod 0444 "$INI_DIR/zz-oblimint-exec.ini"
+PHP_INI_SCAN_DIR="$IMAGE_SCAN_DIR:$INI_DIR"
+export PHP_INI_SCAN_DIR
+unset OBLIMINT_EXEC_EXTRA
+
+if [ "$#" -eq 0 ]; then
+	set -- php -v
+fi
+exec "$@"

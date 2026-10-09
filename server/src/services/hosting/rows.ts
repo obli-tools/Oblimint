@@ -72,6 +72,8 @@ export interface ReleaseRow {
   files_added: number; files_modified: number; files_deleted: number; scan: unknown; error: string | null;
   log: unknown; on_disk: boolean; approved_by: number | null; approved_at: Date | string | null;
   published_at: Date | string | null; created_at: Date | string; updated_at: Date | string;
+  /** P3 (migration 005): origin of a window / adapter release, staff override of a blocked scan. */
+  window_id?: number | null; adapter_run_id?: number | null; scan_override_by?: number | null; scan_override_at?: Date | string | null;
   /** joined */ author_name?: string | null; approver_name?: string | null; is_current?: boolean;
 }
 

@@ -32,6 +32,9 @@ import { DatabasesPage } from '@/pages/databases/DatabasesPage';     // ui-dns-d
 import { DbInstancePage } from '@/pages/databases/DbInstancePage';   // ui-dns-db
 import { DnsZonePage } from '@/pages/dns/DnsZonePage';               // ui-dns-db
 import { UsagePage } from '@/pages/usage/UsagePage';                 // ui-ops
+// P3 — updates and modification windows (docs/P3-PLAN.md §13)
+import { MaintenancePage } from '@/pages/maintenance/MaintenancePage';     // ui-maintenance
+import { WindowReviewPage } from '@/pages/maintenance/WindowReviewPage';   // ui-maintenance
 import { TwoFactorGate } from '@/components/common/TwoFactorGate';
 import { ConfirmProvider } from '@/components/common/ConfirmDialog';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
@@ -67,6 +70,9 @@ function NormalRoutes() {
           <Route path="/databases" element={<DatabasesPage />} />
           <Route path="/databases/:id" element={<DbInstancePage />} />
           <Route path="/usage" element={<UsagePage />} />
+          {/* P3: maintenance overview (reviews, windows, updates, quarantine) + window review */}
+          <Route path="/maintenance" element={<MaintenancePage />} />
+          <Route path="/sites/:id/windows/:windowId" element={<WindowReviewPage />} />
           <Route path="/mail" element={<ComingSoonPage icon={<Mail />} titleKey="nav.mail" titleFallback="Mail" descriptionKey="comingSoon.mail" descriptionFallback="Manage mailboxes, aliases, forwards, quotas and DKIM keys on the mail engine chosen at installation." />} />
           <Route path="/files" element={<ComingSoonPage icon={<FolderOpen />} titleKey="nav.files" titleFallback="Files" descriptionKey="comingSoon.files" descriptionFallback="Browse and edit the files of an account, and open an SFTP/FTPS server on demand for it." />} />
 

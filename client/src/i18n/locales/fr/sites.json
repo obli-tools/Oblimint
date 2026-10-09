@@ -142,7 +142,9 @@
     "trigger": {
       "api": "API",
       "auto": "automatique",
-      "manual": "manuelle"
+      "manual": "manuelle",
+      "window": "fenêtre",
+      "adapter": "adaptateur"
     }
   },
   "runtime": {

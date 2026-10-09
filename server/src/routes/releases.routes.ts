@@ -17,7 +17,10 @@ import { releaseService } from '../services/releases/release.service';
 //   GET  /:id/releases/:rid          → ReleaseDetail (read)
 //   GET  /:id/releases/:rid/diff     ?against=<rid>|previous|empty &file=<path> → ReleaseDiff (read)
 //   POST /:id/releases/:rid/rollback → Site (releases.publish)
-//   POST /:id/releases/:rid/approve  → Release (releases.approve)
+//   POST /:id/releases/:rid/approve  ApproveRequest { override?, reason? } → Release (releases.approve;
+//                                    P3: a BLOCKED scan → 409 riskBlocked {score, level} unless override by a STAFF
+//                                    member holding releases.approve, 403 overrideForbidden for anyone else; audited
+//                                    'release.approve.override')
 //   POST /:id/releases/:rid/reject   { reason? } → Release (releases.approve)
 //   GET  /:id/staging                → StagingStatus (read)
 //   GET  /:id/staging/detect         → ProfileDetection (read)
@@ -38,6 +41,11 @@ const diffQuery = z.object({
   against: z.union([z.literal('previous'), z.literal('empty'), z.coerce.number().int().positive()]).default('previous'),
   file: z.string().min(1).max(4096).optional(),
 });
+
+const approveBody = z.object({
+  override: z.boolean().optional(),
+  reason: z.string().max(500).nullable().optional(),
+}).strict();
 
 const rejectBody = z.object({
   reason: z.string().max(500).nullable().optional(),
@@ -115,14 +123,29 @@ router.post('/:id/releases/:rid/rollback', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/:id/releases/:rid/approve', async (req, res, next) => {
+router.post('/:id/releases/:rid/approve', validate(approveBody), async (req, res, next) => {
   try {
-    const site = await siteFor(req, 'releases.approve');
-    const release = await releaseService.approve(site.id, idParam(req, 'rid'), userIdOf(req));
+    const actor = await resolveActor(req);
+    const site = await loadSite(actor, idParam(req), 'releases.approve');
+    const body = req.body as z.infer<typeof approveBody>;
+    // M5: a client never overrides a blocked scan (loadSite already proved releases.approve for staff).
+    if (body.override && actor.kind !== 'staff') {
+      throw new AppError(403, 'Only staff can override a blocked scan', 'overrideForbidden');
+    }
+    const reason = body.reason?.trim() ? body.reason.trim().slice(0, 500) : null;
+    const release = await releaseService.approve(site.id, idParam(req, 'rid'), userIdOf(req), {
+      override: body.override ? { reason } : null,
+    });
     await auditService.logReqAs(req, site.tenant_id, 'release.approve', {
       resourceType: 'release', resourcePath: String(release.id), details: { siteId: site.id, number: release.number },
     });
-    res.json({ success: true, data: release });
+    if (release.scan?.override) {
+      await auditService.logReqAs(req, site.tenant_id, 'release.approve.override', {
+        resourceType: 'release', resourcePath: String(release.id),
+        details: { siteId: site.id, number: release.number, risk: release.scan.risk ?? null, reason },
+      });
+    }
+    res.json({ success: true, data: releaseForActor(actor, release) });
   } catch (err) { next(err); }
 });
 

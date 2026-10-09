@@ -142,7 +142,9 @@
     "trigger": {
       "api": "API",
       "auto": "automatic",
-      "manual": "manual"
+      "manual": "manual",
+      "window": "window",
+      "adapter": "adapter"
     }
   },
   "runtime": {

@@ -1,5 +1,5 @@
 import http from 'http';
-import { hostdFor, type HostdClient } from '../hostd/client';
+import { hostdFor, type HostdClient, type HostdChangeSource, type HostdSiteSpec, type HostdStagingApplyResult, type HostdStagingChange } from '../hostd/client';
 import { realLinkOps, type LinkOps } from './materialize';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,6 +24,14 @@ export interface ReleaseDeps {
   sleep(ms: number): Promise<void>;
   /** Healthcheck schedule (attempts, delay between them, per-attempt timeout). */
   health: { attempts: number; delayMs: number; timeoutMs: number };
+  /**
+   * P3 guard (docs/P3-PLAN.md §5.3): a modification window holds the site
+   * (windowService.blocksPublish). exemptWindowId: the window publishing its
+   * own candidate (publishCommit) is not blocked by itself. Never throws.
+   */
+  windowBlocks(siteId: number, exemptWindowId: number | null): Promise<boolean>;
+  /** hostd applyToStaging (changeset.reflectToStaging). */
+  applyToStaging(nodeId: number, spec: HostdSiteSpec, source: HostdChangeSource, changes: HostdStagingChange[]): Promise<HostdStagingApplyResult>;
 }
 
 /** GET with an explicit Host header (node:http: fetch would not let us set Host). */
@@ -59,6 +67,17 @@ const defaults: ReleaseDeps = {
   links: realLinkOps,
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   health: { attempts: 3, delayMs: 3000, timeoutMs: 10_000 },
+  async windowBlocks(siteId, exemptWindowId) {
+    // Fails CLOSED: a window state that cannot be read never lets a publication replace the release
+    // under an overlay (§5.3); the caller gets 409 windowActive and retries (auto-publish scheduler).
+    try {
+      const { windowService } = await import('../windows/window.service');
+      return await windowService.blocksPublish(siteId, exemptWindowId ?? null);
+    } catch {
+      return true;
+    }
+  },
+  applyToStaging: (nodeId, spec, source, changes) => hostdFor(nodeId).applyToStaging(spec, source, changes),
 };
 
 let current: ReleaseDeps = { ...defaults };

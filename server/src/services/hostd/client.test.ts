@@ -158,3 +158,138 @@ test('hostdFor: local node only, resolved once and cached', async () => {
   await assert.rejects(hostdFor(3).health(), { status: 404, code: 'nodeNotFound' });
   setLocalNodeResolver(null);
 });
+
+// ── P3 — windows, staging, workspaces, watch, quarantine, events ──
+
+const qid = '20261009t031500-1a2b3c4d';
+
+test('P3: every call hits the right route with the right body', async () => {
+  const status = { accountId: 7, siteId: 9, windowId: 5, mounted: true, mode: 'rw', releaseNumber: 3, quarantineExecutables: false, upperBytes: 0, upperEntries: 0, exportReady: false };
+  const replies: Record<string, unknown> = {
+    'PUT /v1/accounts/7/sites/9/windows/5': status,
+    'GET /v1/accounts/7/sites/9/windows/5': { ...status, mounted: false, mode: null, releaseNumber: null },
+    'POST /v1/accounts/7/sites/9/windows/5/export': { entries: 2, added: 1, modified: 1, deleted: 0, bytes: 10, truncated: false },
+    'POST /v1/accounts/7/sites/9/windows/5/verify': { results: [{ pid: 4242, visible: true, mode: 'rw', error: null }] },
+    'GET /v1/windows': { windows: [{ accountId: 7, siteId: 9, windowId: 5, mode: 'ro', releaseNumber: 3 }] },
+    'POST /v1/accounts/7/sites/9/staging/apply': { written: 1, deleted: 1, conflicts: [{ path: 'x', reason: 'symlink' }] },
+    'PUT /v1/accounts/7/sites/9/workspaces/11': { files: 12, bytes: 3400, extra: 'dropped' },
+    'PUT /v1/accounts/7/sites/9/watch': { watching: 1, quarantined: 2 },
+    'GET /v1/accounts/7/quarantine': { entries: [{ id: qid }] },
+    [`POST /v1/accounts/7/quarantine/${qid}/restore`]: { restored: true, path: 'uploads/a.jpg' },
+    [`GET /v1/accounts/7/quarantine/${qid}/preview`]: { base64: 'aGk=', truncated: false, size: 2 },
+    'GET /v1/events': { events: [{ seq: 4, kind: 'quarantined' }], next: 4 },
+  };
+  handler = (req, res) => json(res, 200, replies[`${req.method} ${req.url!.split('?')[0]}`] ?? { ok: true });
+
+  const spec = { ...site, windowId: 5 };
+  assert.deepEqual(await client.ensureWindow({ ...spec, releaseNumber: 3, mode: 'rw', quarantineExecutables: true }), status);
+  await client.ensureWindow({ ...spec, releaseNumber: 3, mode: 'ro', quarantineExecutables: false });
+  assert.equal((await client.windowStatus(7, 9, 5)).mounted, false);
+  assert.equal((await client.exportWindow(spec, { maxFileBytes: 1000, maxTotalBytes: 20000, maxEntries: 50 })).entries, 2);
+  await client.removeWindow(spec, { keepExport: true });
+  await client.removeWindow(spec, { keepExport: false });
+  assert.deepEqual(await client.verifyWindowPropagation(7, 9, 5, [4242]), [{ pid: 4242, visible: true, mode: 'rw', error: null }]);
+  assert.deepEqual(await client.listWindows(), [{ accountId: 7, siteId: 9, windowId: 5, mode: 'ro', releaseNumber: 3 }]);
+  assert.equal((await client.applyToStaging(site, { kind: 'window', windowId: 5 }, [{ path: 'a/b.php', op: 'write' }, { path: 'c', op: 'delete' }])).written, 1);
+  await client.applyToStaging(site, { kind: 'workspace', workspaceId: 11 }, []);
+  assert.deepEqual(await client.ensureWorkspace({ ...site, workspaceId: 11, releaseNumber: 3 }), { files: 12, bytes: 3400 });
+  await client.removeWorkspace({ ...site, workspaceId: 11 });
+  assert.deepEqual(await client.setWatch({ ...site, typed: [{ path: 'wp-content/uploads', allowedExtensions: ['jpg'] }] }), { watching: 1, quarantined: 2 });
+  await client.removeWatch(7, 9);
+  assert.equal((await client.listQuarantine(7))[0].id, qid);
+  assert.deepEqual(await client.restoreQuarantine(7, qid, { uid: 20007, gid: 20007, overwrite: true }), { restored: true, path: 'uploads/a.jpg' });
+  await client.deleteQuarantine(7, qid);
+  assert.equal((await client.quarantinePreview(7, qid, 10 * 1024 * 1024)).size, 2);
+  assert.deepEqual(await client.events(3, 120), { events: [{ seq: 4, kind: 'quarantined' }], next: 4 });
+
+  const siteBody = { slug: 'blog', uid: 20007, gid: 20007 };
+  assert.deepEqual(seen.map(({ method, url, body }) => ({ method, url, body })), [
+    { method: 'PUT', url: '/v1/accounts/7/sites/9/windows/5', body: { ...siteBody, releaseNumber: 3, mode: 'rw', quarantineExecutables: true } },
+    { method: 'PUT', url: '/v1/accounts/7/sites/9/windows/5', body: { ...siteBody, releaseNumber: 3, mode: 'ro', quarantineExecutables: false } },
+    { method: 'GET', url: '/v1/accounts/7/sites/9/windows/5', body: undefined },
+    { method: 'POST', url: '/v1/accounts/7/sites/9/windows/5/export', body: { ...siteBody, maxFileBytes: 1000, maxTotalBytes: 20000, maxEntries: 50 } },
+    { method: 'DELETE', url: '/v1/accounts/7/sites/9/windows/5?slug=blog&keepExport=1', body: undefined },
+    { method: 'DELETE', url: '/v1/accounts/7/sites/9/windows/5?slug=blog&keepExport=0', body: undefined },
+    { method: 'POST', url: '/v1/accounts/7/sites/9/windows/5/verify', body: { pids: [4242] } },
+    { method: 'GET', url: '/v1/windows', body: undefined },
+    { method: 'POST', url: '/v1/accounts/7/sites/9/staging/apply', body: { ...siteBody, source: { kind: 'window', id: 5 }, changes: [{ path: 'a/b.php', op: 'write' }, { path: 'c', op: 'delete' }] } },
+    { method: 'POST', url: '/v1/accounts/7/sites/9/staging/apply', body: { ...siteBody, source: { kind: 'workspace', id: 11 }, changes: [] } },
+    { method: 'PUT', url: '/v1/accounts/7/sites/9/workspaces/11', body: { ...siteBody, releaseNumber: 3 } },
+    { method: 'DELETE', url: '/v1/accounts/7/sites/9/workspaces/11?slug=blog', body: undefined },
+    { method: 'PUT', url: '/v1/accounts/7/sites/9/watch', body: { ...siteBody, typed: [{ path: 'wp-content/uploads', allowedExtensions: ['jpg'] }] } },
+    { method: 'DELETE', url: '/v1/accounts/7/sites/9/watch', body: undefined },
+    { method: 'GET', url: '/v1/accounts/7/quarantine', body: undefined },
+    { method: 'POST', url: `/v1/accounts/7/quarantine/${qid}/restore`, body: { uid: 20007, gid: 20007, overwrite: true } },
+    { method: 'DELETE', url: `/v1/accounts/7/quarantine/${qid}`, body: undefined },
+    // max is clamped to 256 KiB, wait to 55 s.
+    { method: 'GET', url: `/v1/accounts/7/quarantine/${qid}/preview?max=262144`, body: undefined },
+    { method: 'GET', url: '/v1/events?since=3&wait=55', body: undefined },
+  ]);
+});
+
+test('P3: ids, pids and quarantine entry ids are validated before any request (R2)', async () => {
+  const spec = { ...site, windowId: 5 };
+  await assert.rejects(client.ensureWindow({ ...spec, windowId: 0, releaseNumber: 3, mode: 'rw', quarantineExecutables: false }), { status: 400, code: 'invalid' });
+  await assert.rejects(client.ensureWindow({ ...spec, releaseNumber: 1.5, mode: 'rw', quarantineExecutables: false }), { status: 400, code: 'invalid' });
+  await assert.rejects(client.windowStatus(7, -1, 5), { status: 400, code: 'invalid' });
+  await assert.rejects(client.verifyWindowPropagation(7, 9, 5, [0]), { status: 400, code: 'invalid' });
+  await assert.rejects(client.applyToStaging(site, { kind: 'window', windowId: 0 }, []), { status: 400, code: 'invalid' });
+  await assert.rejects(client.ensureWorkspace({ ...site, workspaceId: 11, releaseNumber: 0 }), { status: 400, code: 'invalid' });
+  for (const bad of ['../../etc/passwd', 'ABCDEFGHIJ', 'short', 'a/b-cdefghij', '', 'x'.repeat(65)]) {
+    await assert.rejects(client.restoreQuarantine(7, bad, { uid: 20007, gid: 20007, overwrite: false }), { status: 400, code: 'invalid' });
+    await assert.rejects(client.deleteQuarantine(7, bad), { status: 400, code: 'invalid' });
+    await assert.rejects(client.quarantinePreview(7, bad, 100), { status: 400, code: 'invalid' });
+  }
+  assert.equal(seen.length, 0);
+});
+
+test('P3: hostd error codes are surfaced (conflict, windowNotMounted, restoreConflict, unsupported)', async () => {
+  const spec = { ...site, windowId: 5 };
+  handler = (_req, res) => json(res, 409, { ok: false, error: 'site 9: window 4 is mounted on release 3', code: 'conflict' });
+  await assert.rejects(client.ensureWindow({ ...spec, releaseNumber: 3, mode: 'rw', quarantineExecutables: false }), { name: 'HostdError', status: 409, code: 'conflict' });
+  handler = (_req, res) => json(res, 409, { ok: false, error: 'window 5 is not mounted', code: 'windowNotMounted' });
+  await assert.rejects(client.exportWindow(spec, { maxFileBytes: 1, maxTotalBytes: 1, maxEntries: 1 }), { status: 409, code: 'windowNotMounted' });
+  handler = (_req, res) => json(res, 409, { ok: false, error: 'uploads/a.jpg already exists', code: 'restoreConflict' });
+  await assert.rejects(client.restoreQuarantine(7, qid, { uid: 20007, gid: 20007, overwrite: false }), { status: 409, code: 'restoreConflict' });
+  handler = (_req, res) => json(res, 501, { ok: false, error: 'not supported on this OS', code: 'unsupported' });
+  await assert.rejects(client.setWatch({ ...site, typed: [] }), { status: 501, code: 'unsupported' });
+});
+
+test('P3: missing lists degrade to empty, events keep since when next is absent', async () => {
+  handler = (_req, res) => json(res, 200, { ok: true });
+  assert.deepEqual(await client.listWindows(), []);
+  assert.deepEqual(await client.listQuarantine(7), []);
+  assert.deepEqual(await client.verifyWindowPropagation(7, 9, 5, [42]), []);
+  assert.deepEqual(await client.events(17, -3), { events: [], next: 17 });
+  assert.equal(seen[seen.length - 1].url, '/v1/events?since=17&wait=0');
+});
+
+test('P3: window operations use the long timeout, status the default one', async () => {
+  handler = () => { /* never answers */ };
+  const slow = createHostdClient({ socketPath, timeouts: { default: 100, window: 400, events: 250 } });
+  const spec = { ...site, windowId: 5 };
+  let t0 = Date.now();
+  await assert.rejects(slow.windowStatus(7, 9, 5), { status: 504, code: 'hostdTimeout' });
+  assert.ok(Date.now() - t0 < 350, `status took ${Date.now() - t0} ms`);
+  for (const op of [
+    () => slow.ensureWindow({ ...spec, releaseNumber: 3, mode: 'rw', quarantineExecutables: false }),
+    () => slow.exportWindow(spec, { maxFileBytes: 1, maxTotalBytes: 1, maxEntries: 1 }),
+    () => slow.applyToStaging(site, { kind: 'window', windowId: 5 }, []),
+    () => slow.ensureWorkspace({ ...site, workspaceId: 1, releaseNumber: 1 }),
+  ]) {
+    t0 = Date.now();
+    await assert.rejects(op(), { status: 504, code: 'hostdTimeout' });
+    assert.ok(Date.now() - t0 >= 350, `window op timed out after only ${Date.now() - t0} ms`);
+  }
+  t0 = Date.now();
+  await assert.rejects(slow.events(0, 1), { status: 504, code: 'hostdTimeout' });
+  assert.ok(Date.now() - t0 >= 200, 'events uses its own timeout');
+  server.closeAllConnections();
+});
+
+test('P3: a large quarantine list is accepted (other answers keep the 1 MiB cap)', async () => {
+  const entries = Array.from({ length: 6000 }, (_, i) => ({ id: `20261009t031500-${String(i).padStart(8, '0')}`, path: `uploads/${'x'.repeat(200)}-${i}.jpg` }));
+  handler = (_req, res) => json(res, 200, { entries, windows: entries });
+  assert.equal((await client.listQuarantine(7)).length, 6000);
+  await assert.rejects(client.listWindows(), { status: 502, code: 'hostdBadResponse' });
+});

@@ -709,7 +709,8 @@ export interface DomainUpdate {
 // ─── RELEASES (ARCHITECTURE §1) ──────────────────────────────────────────────
 
 export type ReleaseStatus = 'queued' | 'scanning' | 'awaiting_approval' | 'publishing' | 'ready' | 'failed' | 'rejected';
-export type ReleaseTrigger = 'auto' | 'manual' | 'api';
+/** P3: 'window' = validated modification window, 'adapter' = application adapter run (docs/P3-PLAN.md). */
+export type ReleaseTrigger = 'auto' | 'manual' | 'api' | 'window' | 'adapter';
 
 export type ScanVerdict = 'clean' | 'suspicious' | 'infected';
 
@@ -718,12 +719,29 @@ export interface ScanFinding {
   rule: string;
   severity: 'info' | 'warn' | 'critical';
   message: string;
+  /** P3: engine of the finding ('heuristic' | 'yara' | 'clamav' | 'checksum'). */
+  engine?: 'heuristic' | 'yara' | 'clamav' | 'checksum';
+  /** P3: 1-based line when known. */
+  line?: number | null;
 }
 
 export interface ScanSummary {
   scanner: string;
   verdict: ScanVerdict;
   findings: ScanFinding[];
+  /** P3: risk score of the change set (0–100) and its level (riskLevelOf). */
+  risk?: { score: number; level: 'none' | 'low' | 'medium' | 'high' | 'critical' };
+  /** P3: files not scanned by the engines (too large, unreadable). */
+  skipped?: number;
+  /** P3: the scanner container was expected but unreachable (heuristics only). */
+  scannerUnavailable?: boolean;
+  /**
+   * P3: risk ≥ settings scanner.blockScore (or a ClamAV hit) when scanned: the
+   * release waits for approval and only a staff override (audited) publishes it.
+   */
+  blocked?: boolean;
+  /** P3: staff override of a blocked scan (who / when / why). */
+  override?: { by: string; at: string; reason: string | null } | null;
 }
 
 export interface ReleaseLogLine {
@@ -764,6 +782,12 @@ export interface ReleaseDetail extends Release {
 
 export interface PublishRequest {
   message?: string | null;
+}
+
+/** POST /sites/:id/releases/:rid/approve (P3: override of a high-risk scan, staff only, audited). */
+export interface ApproveRequest {
+  override?: boolean;
+  reason?: string | null;
 }
 
 export type DiffFileStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'typechange';
@@ -889,7 +913,8 @@ export interface SiteRuntimeConfig {
 
 // ─── INFRA / EDGE ────────────────────────────────────────────────────────────
 
-export type InfraComponentId = 'edge' | 'hostd' | 'dns' | 'dbadmin';
+/** P3: + scanner (ClamAV + YARA, module scanners). */
+export type InfraComponentId = 'edge' | 'hostd' | 'dns' | 'dbadmin' | 'scanner';
 
 export interface InfraComponentStatus {
   /** P2: + dns (PowerDNS), dbadmin (phpMyAdmin + Adminer). */
@@ -952,6 +977,13 @@ export const HostingSocketEvents = {
   CRON_RUN_UPDATED: 'CRON_RUN_UPDATED',
   /** { alertId, accountId|null, tenantId, level } */
   USAGE_ALERT: 'USAGE_ALERT',
+  // ── P3 (payloads: ids only, clients refetch — maintenance.ts) ──
+  /** WindowUpdatedPayload { siteId, windowId, status } */
+  WINDOW_UPDATED: 'WINDOW_UPDATED',
+  /** AdapterRunUpdatedPayload { siteId, runId, status } */
+  ADAPTER_RUN_UPDATED: 'ADAPTER_RUN_UPDATED',
+  /** QuarantineUpdatedPayload { accountId, itemId, status } */
+  QUARANTINE_UPDATED: 'QUARANTINE_UPDATED',
 } as const;
 export type HostingSocketEventName = typeof HostingSocketEvents[keyof typeof HostingSocketEvents];
 

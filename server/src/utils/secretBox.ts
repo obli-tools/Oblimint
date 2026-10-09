@@ -13,7 +13,9 @@ import { config } from '../config';
 // reset the superuser password through the container; channels: ask again).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin';
+export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
+  // P3: shared key of the scanner API (scand, X-Oblimint-Scanner-Key).
+  | 'scanner';
 
 export class SecretBoxError extends Error {
   constructor(message: string) {

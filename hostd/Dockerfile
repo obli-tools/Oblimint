@@ -16,6 +16,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /out/hostd .
 # hostd needs root on the host (ownership, quotas, mounts, firewall):
 # no nonroot user. Deployed by the orchestration module privileged, with
 # pid/network host and /srv/oblimint bind-mounted with rshared propagation.
+# P3: window overlays are mounted by hostd over releases/<n> (propagated to
+# the host and, rslave, into the site containers), /proc/<pid>/mountinfo of
+# container processes is read for the propagation check (pid host), and the
+# typed-path watcher uses inotify (fs.inotify.max_user_watches raised through
+# /proc/sys, writable because privileged). Standard library only: no package.
 FROM alpine:3.22
 RUN apk add --no-cache xfsprogs-extra nftables
 COPY --from=build /out/hostd /usr/local/bin/hostd

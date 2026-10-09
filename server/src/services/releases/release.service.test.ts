@@ -247,14 +247,17 @@ test('noChanges: an unchanged staging creates no release; a change, a new data p
   assert.equal(await currentId(s.siteId), r5.id);
 });
 
-test('scan: infected → failed (nothing live); suspicious → awaiting_approval → approve resumes', { skip: SKIP }, async () => {
+test('scan: infected → blocked awaiting_approval (nothing live, override needed); suspicious → awaiting_approval → approve resumes', { skip: SKIP }, async () => {
   const s = await newSite({ files: { 'index.php': 'v1' } });
   m.setScanner({ name: 'fake', scan: async () => ({ scanner: 'fake', verdict: 'infected', findings: [{ path: 'index.php', rule: 'x', severity: 'critical', message: 'bad' }] }) });
   const bad = await publish(s.siteId);
-  assert.equal(bad.status, 'failed');
+  assert.equal(bad.status, 'awaiting_approval', 'P3: a blocked scan waits for a staff override instead of failing');
+  assert.equal(JSON.parse(typeof bad.scan === 'string' ? bad.scan : JSON.stringify(bad.scan)).blocked, true);
   assert.equal(bad.on_disk, false);
   assert.equal(await currentId(s.siteId), null);
   assert.equal(calls.reload.length, 0);
+  await assert.rejects(m.releaseService.approve(s.siteId, bad.id, userId), (e: any) => e.code === 'riskBlocked' && e.statusCode === 409);
+  await m.releaseService.reject(s.siteId, bad.id, userId, 'menace');
 
   m.setScanner({ name: 'fake', scan: async (ctx) => ({ scanner: 'fake', verdict: 'suspicious', findings: ctx.changedFiles.map((p) => ({ path: p, rule: 'y', severity: 'warn' as const, message: 'hmm' })) }) });
   const sus = await publish(s.siteId);
@@ -399,7 +402,7 @@ test('removeSiteStorage deletes repo, releases and runtime only', { skip: SKIP }
   assert.equal(fs.existsSync(s.staging), true, 'staging untouched');
 });
 
-test('the scan diffs against the LIVE release: content of a failed (infected) release is scanned again', { skip: SKIP }, async () => {
+test('the scan diffs against the LIVE release: content of a blocked (infected) release is scanned again', { skip: SKIP }, async () => {
   const s = await newSite({ files: { 'index.php': 'v1' } });
   const seen: string[][] = [];
   m.setScanner({ name: 'fake', scan: async (ctx) => {
@@ -412,10 +415,11 @@ test('the scan diffs against the LIVE release: content of a failed (infected) re
   assert.equal(r1.status, 'ready');
   writeFiles(s.staging, { 'evil.php': '<?php system($_GET[1]);' });
   const r2 = await publish(s.siteId);
-  assert.equal(r2.status, 'failed');
+  assert.equal(r2.status, 'awaiting_approval');
   writeFiles(s.staging, { 'harmless.txt': 'h' });
   const r3 = await publish(s.siteId);
-  assert.equal(r3.status, 'failed', 'evil.php is still in the delta vs the live release');
+  assert.equal(r3.status, 'awaiting_approval', 'evil.php is still in the delta vs the live release');
+  assert.equal(JSON.parse(typeof r3.scan === 'string' ? r3.scan : JSON.stringify(r3.scan)).blocked, true);
   assert.deepEqual(seen.at(-1), ['evil.php', 'harmless.txt']);
   assert.equal(r3.files_added, 2);
   assert.equal(await currentId(s.siteId), r1.id);
@@ -638,4 +642,32 @@ test('lockForTeardown: refused while a publication runs, blocks publications whi
   await assert.rejects(m.releaseService.applyDataPathChange(s.siteId, { next: [], userId, apply: async () => {} }), (e: any) => e.code === 'publishInProgress');
   unlock();
   assert.equal(m.internals.locks.has(s.siteId), false);
+});
+
+test('adapter run past its publication or deferred: publish / approve another release / rollback refused (adapterBusy)', { skip: SKIP }, async () => {
+  const s = await newSite({ files: { 'index.php': 'v1' } });
+  const r1 = await settle(s.siteId, (await m.releaseService.publish(s.siteId, { trigger: 'manual', userId })).id);
+  assert.equal(r1.status, 'ready');
+  fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+  const r2 = await settle(s.siteId, (await m.releaseService.publish(s.siteId, { trigger: 'manual', userId })).id);
+  assert.equal(r2.status, 'ready');
+  fs.writeFileSync(`${s.staging}/index.php`, 'v3');
+  const insertRun = async (status: string, analysis: Record<string, unknown>) => {
+    const [row] = await m.db('adapter_runs').insert({
+      tenant_id: 1, account_id: accountId, site_id: s.siteId, adapter: 'wordpress', action: 'update', status, options: '{}',
+      base_release_id: r2.id, analysis: JSON.stringify(analysis), log: '[]',
+    }).returning('id');
+    return Number(row.id ?? row);
+  };
+  // post_deploy (migrations + healthcheck): every pipeline entry point refuses.
+  const run = await insertRun('post_deploy', { verdict: 'clean' });
+  await assert.rejects(m.releaseService.publish(s.siteId, { trigger: 'auto', userId: null }), (e: any) => e.code === 'adapterBusy');
+  await assert.rejects(m.releaseService.rollback(s.siteId, r1.id, userId), (e: any) => e.code === 'adapterBusy');
+  // Deferred (its release awaiting approval, pendingReflect kept): still refused.
+  await m.db('adapter_runs').where({ id: run }).update({ status: 'awaiting_approval', analysis: JSON.stringify({ verdict: 'clean', pendingReflect: [] }) });
+  await assert.rejects(m.releaseService.publish(s.siteId, { trigger: 'manual', userId }), (e: any) => e.code === 'adapterBusy');
+  // A plain awaiting_approval run (nothing to continue) or a final run does not hold the site.
+  await m.db('adapter_runs').where({ id: run }).update({ status: 'failed', analysis: JSON.stringify({ verdict: 'clean' }) });
+  const r3 = await settle(s.siteId, (await m.releaseService.publish(s.siteId, { trigger: 'manual', userId })).id);
+  assert.equal(r3.status, 'ready');
 });

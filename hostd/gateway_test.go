@@ -408,7 +408,7 @@ func TestFirewallAndGatewayRoutes(t *testing.T) {
 	fw := newFirewallManager(nft, clk, "")
 	fw.resolvers = nil
 	g, _ := testGateway(t, fw.Allows)
-	mux := newMux(&fakeOps{}, newLayout("/srv/oblimint"), fw, g)
+	mux := newMux(&fakeOps{}, newLayout("/srv/oblimint"), fw, g, nil)
 	call := func(method, target, body string) (int, string) {
 		rec := httptest.NewRecorder()
 		req, _ := http.NewRequest(method, target, strings.NewReader(body))
@@ -448,7 +448,7 @@ func TestFirewallAndGatewayRoutes(t *testing.T) {
 	// Without managers (P1 wiring): 501.
 	rec := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/v1/firewall", nil)
-	newMux(&fakeOps{}, newLayout("/srv/oblimint"), nil, nil).ServeHTTP(rec, req)
+	newMux(&fakeOps{}, newLayout("/srv/oblimint"), nil, nil, nil).ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotImplemented {
 		t.Errorf("no managers: %d", rec.Code)
 	}

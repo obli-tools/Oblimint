@@ -21,6 +21,14 @@ export function eventLabel(t: TFunction, e: NotificationEvent): string {
     'db.instanceFailed': 'Database instance failure',
     'cron.failed': 'Cron job failing',
     'security.banned': 'Address banned',
+    'window.pendingReview': 'Modification window waiting for review',
+    'window.autoValidated': 'Modification window validated automatically',
+    'window.failed': 'Modification window failure',
+    'scan.threat': 'Threat found by the scanner',
+    'quarantine.added': 'File quarantined',
+    'adapter.completed': 'Application update published',
+    'adapter.failed': 'Application update failure',
+    'supervision.digest': 'Supervision digest',
   };
   return t(`notifications.event.${eventKey(e)}`) || fallback[e];
 }

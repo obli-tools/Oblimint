@@ -64,12 +64,60 @@ export interface UsageSettings {
   resourceRetentionDays: number;
 }
 
+/**
+ * P3 — change scanner (docs/P3-PLAN.md §8). Heuristics always run in the
+ * panel; ClamAV and YARA run in the shared container oblimint-scanner
+ * (infra component 'scanner') when enabled.
+ */
+export interface ScannerSettings {
+  /** Use the shared scanner container (deployed at boot when true). false = heuristics only. */
+  enabled: boolean;
+  /** ClamAV daemon in the scanner container (≈ 1 GB RAM with the full signatures). */
+  clamav: boolean;
+  /** YARA rules (php-malware-finder style) in the scanner container. */
+  yara: boolean;
+  /** Risk score from which a change needs a human review (suspicious / no auto-validation). */
+  reviewScore: number;
+  /** Risk score from which publication / validation is blocked unless a staff override (audited). */
+  blockScore: number;
+  /** Files larger than this are not sent to ClamAV / YARA (finding 'scan.skipped'). */
+  maxFileSizeMb: number;
+  /** freshclam checks per day (1 … 24). */
+  signatureChecksPerDay: number;
+}
+
+/** P3 — modification windows, snapshots, adapters, quarantine (docs/P3-PLAN.md). */
+export interface MaintenanceSettings {
+  /** Platform switch of the modification windows (manual / scheduled / API / supervised). */
+  windowsEnabled: boolean;
+  /** Longest window (minutes, extensions included). */
+  maxWindowMinutes: number;
+  /** Database snapshots kept (days) once their window / run is decided. */
+  snapshotRetentionDays: number;
+  /** Snapshots kept per site at most (oldest decided ones expire first). */
+  maxSnapshotsPerSite: number;
+  /** Auto-validation needs every changed executable file to be covered by a verified checksum. */
+  autoValidateRequireChecksums: boolean;
+  /** Application adapters (WP-CLI, Composer, drush, occ). */
+  adaptersEnabled: boolean;
+  /** Time limit of one adapter CLI step (minutes). */
+  adapterTimeoutMinutes: number;
+  /** Memory of the ephemeral tools container (MiB). */
+  adapterMemoryMb: number;
+  /** hostd watches the typed data paths (extension whitelist + content sniffing → quarantine). */
+  typedWatcher: boolean;
+}
+
 export interface HostingSettings {
   dns: DnsSettings;
   preview: PreviewSettings;
   dbAdmin: DbAdminSettings;
   access: AccessSettings;
   usage: UsageSettings;
+  /** P3 */
+  scanner: ScannerSettings;
+  /** P3 */
+  maintenance: MaintenanceSettings;
 }
 
 export type HostingSettingsSection = keyof HostingSettings;
@@ -101,4 +149,24 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     egressFilter: 'metadata',
   },
   usage: { alertThresholds: [80, 100], accessLogRetentionDays: 30, resourceRetentionDays: 7 },
+  scanner: {
+    enabled: false,
+    clamav: true,
+    yara: true,
+    reviewScore: 30,
+    blockScore: 70,
+    maxFileSizeMb: 32,
+    signatureChecksPerDay: 12,
+  },
+  maintenance: {
+    windowsEnabled: true,
+    maxWindowMinutes: 1440,
+    snapshotRetentionDays: 14,
+    maxSnapshotsPerSite: 10,
+    autoValidateRequireChecksums: false,
+    adaptersEnabled: true,
+    adapterTimeoutMinutes: 30,
+    adapterMemoryMb: 1024,
+    typedWatcher: true,
+  },
 };

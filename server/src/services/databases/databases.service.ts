@@ -266,6 +266,15 @@ function assertNotBusy(instanceId: number): void {
   if (isInstanceBusy(instanceId)) throw new AppError(409, 'Another operation is running on this instance', 'instanceBusy');
 }
 
+// ── P3 (snapshotIo.ts, module checksums-snapshots): additive exports of the
+// helpers above, so that the snapshot dump / restore follow the same rules.
+/** The instance's Docker engine (failures mapped to 502 backendUnavailable). */
+export const instanceDocker = dockerOf;
+/** 409 accountSuspended / instanceNotRunning unless the account runs and the instance is running. */
+export const assertInstanceRunning = assertRunning;
+export const DB_DUMP_TIMEOUT_MS = DUMP_TIMEOUT_MS;
+export const DB_RESTORE_TIMEOUT_MS = RESTORE_TIMEOUT_MS;
+
 function requestFirewallSync(accountId: number, reason: string): void {
   void import('../firewall/firewall.service')
     .then((m) => m.firewallService.requestSync(accountId, reason))

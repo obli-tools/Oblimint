@@ -40,6 +40,15 @@ import usageRoutes from './usage.routes';                      // usage
 import notificationsRoutes from './notifications.routes';      // usage
 import cronRoutes from './cron.routes';                        // cron-logs
 import logsRoutes from './logs.routes';                        // cron-logs
+// P3 — updates and modification windows (docs/P3-PLAN.md §6). One router file per owning module.
+import windowsRoutes from './windows.routes';                  // windows (/sites/:id/maintenance|windows|tokens)
+import maintenanceRoutes from './maintenance.routes';          // windows (/maintenance/windows overview)
+import siteApiRoutes from './siteApi.routes';                  // windows (public, Bearer site token)
+import snapshotsRoutes from './snapshots.routes';              // checksums-snapshots
+import adaptersRoutes from './adapters.routes';                // adapters
+import quarantineRoutes from './quarantine.routes';            // supervised-quarantine
+import supervisionRoutes from './supervision.routes';          // supervised-quarantine
+import scannerRoutes from './scanner.routes';                  // scanners (platform admin)
 
 const router = Router();
 
@@ -53,6 +62,8 @@ router.use('/system/edge', requireAuth, requireRole('admin'), edgeRoutes);   // 
 router.use('/system/hosting-settings', requireAuth, requireRole('admin'), hostingSettingsRoutes); // P2 architect
 router.use('/system/dns', requireAuth, requireRole('admin'), systemDnsRoutes);           // P2 dns
 router.use('/system/firewall', requireAuth, requireRole('admin'), systemFirewallRoutes); // P2 hostd-firewall
+router.use('/system/scanner', requireAuth, requireRole('admin'), scannerRoutes);         // P3 scanners
+router.use('/site-api', siteApiRoutes);            // P3 windows: Bearer site token (no session)
 router.use('/system', systemRoutes);               // platform admin, no tenant required
 
 // ── Authenticated, no tenant required ───────────────────────────────────────
@@ -92,6 +103,13 @@ tenantRouter.use('/dns', dnsRoutes);
 tenantRouter.use('/databases', databasesRoutes);
 tenantRouter.use('/usage', usageRoutes);
 tenantRouter.use('/notifications', notificationsRoutes);
+// P3 updates / windows. Shared /sites prefix: no catch-all in any of these routers.
+tenantRouter.use('/sites', windowsRoutes);              // /:id/maintenance, /:id/windows…, /:id/tokens…
+tenantRouter.use('/sites', snapshotsRoutes);            // /:id/snapshots…
+tenantRouter.use('/sites', adaptersRoutes);             // /:id/adapters…
+tenantRouter.use('/sites', supervisionRoutes);          // /:id/supervision…
+tenantRouter.use('/maintenance', maintenanceRoutes);
+tenantRouter.use('/quarantine', quarantineRoutes);
 
 router.use('/', tenantRouter);
 

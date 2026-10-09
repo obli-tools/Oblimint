@@ -170,3 +170,51 @@ func TestRelFromAbs(t *testing.T) {
 		}
 	}
 }
+
+// P3 paths: same strings as hostingLayout('/srv/oblimint') of paths.ts
+// (windows, window, windowExport, windowExportFiles, windowManifest,
+// workspaces, workspace, workspaceTree, snapshots, quarantine, scannerDir).
+func TestLayoutMatchesPanelP3(t *testing.T) {
+	l := newLayout("")
+	cases := map[string]string{
+		l.Release(7, 42, 3):           "/srv/oblimint/accounts/7/sites/42/releases/3",
+		l.Windows(7, 42):              "/srv/oblimint/accounts/7/sites/42/windows",
+		l.Window(7, 42, 5):            "/srv/oblimint/accounts/7/sites/42/windows/5",
+		l.WindowLower(7, 42, 5):       "/srv/oblimint/accounts/7/sites/42/windows/5/lower",
+		l.WindowUpper(7, 42, 5):       "/srv/oblimint/accounts/7/sites/42/windows/5/upper",
+		l.WindowWork(7, 42, 5):        "/srv/oblimint/accounts/7/sites/42/windows/5/work",
+		l.WindowExport(7, 42, 5):      "/srv/oblimint/accounts/7/sites/42/windows/5/export",
+		l.WindowExportFiles(7, 42, 5): "/srv/oblimint/accounts/7/sites/42/windows/5/export/files",
+		l.WindowManifest(7, 42, 5):    "/srv/oblimint/accounts/7/sites/42/windows/5/export/manifest.json",
+		l.Workspaces(7, 42):           "/srv/oblimint/accounts/7/sites/42/work",
+		l.Workspace(7, 42, 11):        "/srv/oblimint/accounts/7/sites/42/work/11",
+		l.WorkspaceTree(7, 42, 11):    "/srv/oblimint/accounts/7/sites/42/work/11/tree",
+		l.Snapshots(7):                "/srv/oblimint/accounts/7/snapshots",
+		l.Quarantine(7):               "/srv/oblimint/accounts/7/quarantine",
+		l.ScannerDir():                "/srv/oblimint/scanner",
+		l.PrivateMount():              "/srv/oblimint/run/hostd-mnt",
+	}
+	for got, want := range cases {
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	}
+	var got []string
+	for _, d := range l.windowDirs(3, 9, 5) {
+		got = append(got, d.String())
+	}
+	for _, d := range l.workspaceDirs(3, 9, 11) {
+		got = append(got, d.String())
+	}
+	want := []string{
+		"accounts/3/sites/9/windows 0:0 0700",
+		"accounts/3/sites/9/windows/5 0:0 0700",
+		"accounts/3/sites/9/windows/5/lower 0:0 0700",
+		"accounts/3/sites/9/windows/5/work 0:0 0700",
+		"accounts/3/sites/9/work 0:0 0711",
+		"accounts/3/sites/9/work/11 0:0 0711",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("P3 trees:\n got %q\nwant %q", got, want)
+	}
+}

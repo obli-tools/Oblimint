@@ -19,17 +19,27 @@ import { siteUpstream } from '../hosting/naming';
 import { emitHosting } from '../hosting/events';
 import { json, toRelease, toReleaseDetail, type DataPathRow, type ReleaseRow, type SiteRow } from '../hosting/rows';
 import { HostdError, type HostdSiteSpec } from '../hostd/client';
+import type { PublishCommitOptions } from '../maintenance/contracts';
+import { notify } from '../usage/notifications.service';
 import { EMPTY_TREE, type GitIdentity } from './git';
 import {
-  clearStaleGitLocks, commitExists, commitStaging, diffNameStatus, diffNumstat, diffStats, filePatch, initBareRepo, scanStaging,
+  clearStaleGitLocks, commitExists, commitStaging, diffNameStatus, diffNumstat, diffStats, filePatch, headCommit, initBareRepo, scanStaging,
   stagingChanges, stagingMatchesCommit, writeExclude,
 } from './repo';
+import { fastForwardHead, parentOf } from './candidate';
 import { dataLinksMatch, materializeRelease, readCurrent, removeTmpEntries, removeUnder, staleDataExposure, switchCurrent } from './materialize';
 import { releaseDeps } from './deps';
 import { getScanner } from './scan';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Release pipeline (ARCHITECTURE §1, docs/P1-PLAN.md §9). OWNED BY MODULE `releases`.
+// Release pipeline (ARCHITECTURE §1, docs/P1-PLAN.md §9). OWNED BY MODULE `releases` (P1);
+// in P3 by module `windows` (docs/P3-PLAN.md §2: publishCommit, windowActive guards, scan override).
+//
+// P3: publish / approve / rollback / applyDataPathChange refuse 409
+// windowActive while a modification window holds the site (§5.3);
+// publishCommit publishes a candidate commit (window / adapter) through the
+// same steps; a BLOCKED scan (risk ≥ blockScore or ClamAV) waits for an
+// audited staff override instead of failing (§9.3, M5).
 // Callers have ALREADY checked access (services/hosting/access.ts).
 //
 // publish: lock(site) → commit staging into repo.git (author, message,
@@ -52,6 +62,10 @@ export interface PublishOptions {
 }
 
 const IN_FLIGHT: ReleaseStatus[] = ['queued', 'scanning', 'publishing'];
+/** waitForRelease polling period. */
+const WAIT_POLL_MS = 250;
+/** waitForRelease: longest wait for the end of the run (prune) once the release is settled. */
+const WAIT_LOCK_GRACE_MS = 60_000;
 const LOG_CAP = 500;
 const DIFF_FILES_CAP = 2000;
 const PATCH_FILE_CAP = 256 * 1024;
@@ -384,13 +398,49 @@ async function commitAndScan(run: Run): Promise<boolean> {
 
   await run.save({ status: 'scanning' });
   const scanner = getScanner();
-  const summary: ScanSummary = await scanner.scan({
+  const summary = normalizeScan(await scanner.scan({
     siteId: ctx.site.id, accountId: ctx.account.id, stagingDir: ctx.paths.staging, commitSha: sha, changedFiles: stats.changed,
-  });
-  await run.step('info', `analyse (${summary.scanner}) : ${summary.verdict}`, { scan: JSON.stringify(summary) });
-  if (summary.verdict === 'infected') throw new PipelineError(`analyse : contenu infecté (${summary.findings.length} détection(s))`);
-  if (summary.verdict === 'suspicious' || ctx.site.publish_mode === 'approval') {
-    const why = summary.verdict === 'suspicious' ? 'contenu suspect' : 'mode approbation';
+  }));
+  return scanGate(run, summary, { approvedBy: null, scanOverrideBy: null, notifyThreat: true });
+}
+
+/** P3 (docs/P3-PLAN.md §9.3): `blocked` = risk ≥ blockScore or a ClamAV hit; a P1-style 'infected' verdict counts as blocked. */
+function normalizeScan(summary: ScanSummary): ScanSummary {
+  const blocked = summary.blocked === true || summary.verdict === 'infected';
+  return { ...summary, blocked };
+}
+
+function riskText(scan: ScanSummary): string {
+  return scan.risk ? `risque ${scan.risk.score} (${scan.risk.level})` : `${scan.findings.length} détection(s)`;
+}
+
+/**
+ * Scan step of a release (publish and publishCommit). Records the summary and
+ * decides: blocked (no staff override) ⇒ awaiting_approval, BLOCKED (only an
+ * audited staff override approves it, M5); suspicious or publish mode
+ * 'approval' ⇒ awaiting_approval unless the caller's decision is the approval
+ * (approvedBy). Returns true when the pipeline goes on to deployment.
+ */
+async function scanGate(run: Run, scan: ScanSummary, opts: { approvedBy: number | null; scanOverrideBy: number | null; notifyThreat: boolean }): Promise<boolean> {
+  const { ctx, release } = run;
+  await run.step('info', `analyse (${scan.scanner}) : ${scan.verdict}${scan.risk ? `, ${riskText(scan)}` : ''}`, { scan: JSON.stringify(scan) });
+  if (scan.blocked) {
+    if (opts.notifyThreat) {
+      notify('scan.threat', {
+        tenantId: ctx.site.tenant_id, accountId: ctx.account.id, key: `release:${release.id}`, severity: 'critical',
+        title: `Publication bloquée : ${ctx.site.name}`,
+        message: `La release #${release.number} du site ${ctx.site.name} est bloquée par l’analyse (${riskText(scan)}). Seule une dérogation du staff peut la publier.`,
+        link: `/sites/${ctx.site.id}?tab=releases`,
+      });
+    }
+    if (!opts.scanOverrideBy) {
+      await run.step('warn', `publication bloquée par l’analyse (${riskText(scan)}) : dérogation du staff requise`, { status: 'awaiting_approval' });
+      return false;
+    }
+    run.line('warn', `analyse bloquante levée par dérogation du staff (utilisateur #${opts.scanOverrideBy})`);
+  }
+  if (!opts.approvedBy && (scan.verdict === 'suspicious' || ctx.site.publish_mode === 'approval')) {
+    const why = scan.verdict === 'suspicious' ? 'contenu suspect' : 'mode approbation';
     await run.step('info', `en attente d’approbation (${why})`, { status: 'awaiting_approval' });
     return false;
   }
@@ -458,7 +508,9 @@ async function deploy(run: Run): Promise<void> {
   const { ctx, release } = run;
   await run.save({ status: 'publishing' });
   await ensureStorageFor(ctx);
-  await materialize(ctx, release, run);
+  // publishCommit without a precomputed scan materializes first (the scan reads the tree): no second pass.
+  const dir = path.posix.join(ctx.paths.releases, String(release.number));
+  if (!(release.on_disk && fs.existsSync(dir))) await materialize(ctx, release, run);
   await run.save();
 
   const failed = await switchAndVerify(ctx, release.number, run);
@@ -470,12 +522,34 @@ async function deploy(run: Run): Promise<void> {
   });
   ctx.site.current_release_id = release.id;
   await run.step('info', `release #${release.number} en ligne`, { status: 'ready' });
+  if ((release.trigger === 'window' || release.trigger === 'adapter') && release.commit_sha) await fastForwardHeadTo(run, release.commit_sha);
   if (release.trigger !== 'manual' || release.approved_by) {
     await auditService.log({
       tenantId: ctx.site.tenant_id, userId: release.approved_by ?? release.author_user_id ?? undefined, action: 'release.publish',
       resourceType: 'release', resourcePath: String(release.id),
       details: { siteId: ctx.site.id, number: release.number, trigger: release.trigger, live: true },
     });
+  }
+}
+
+/**
+ * A published candidate (window / adapter) becomes HEAD when HEAD still is its
+ * parent (nothing committed from the staging since): the staging, reflected
+ * by the caller, then shows no pending change. Otherwise HEAD stays (the next
+ * staging commit is a normal commit on top of it). Never throws.
+ */
+async function fastForwardHeadTo(run: Run, commit: string): Promise<void> {
+  try {
+    const parent = await parentOf(run.ctx.paths.repo, commit);
+    if (!parent) return;
+    if (await headCommit(run.ctx.paths.repo) !== parent) {
+      run.line('info', 'HEAD du dépôt a bougé depuis la base : non avancé');
+      return;
+    }
+    if (await fastForwardHead(run.ctx.paths.repo, commit, parent)) run.line('info', `HEAD avancé sur ${commit.slice(0, 12)}`);
+    await run.save();
+  } catch (err) {
+    logger.warn({ err, releaseId: run.release.id }, 'Release: cannot fast-forward HEAD');
   }
 }
 
@@ -520,7 +594,50 @@ async function syncCurrent(ctx: SiteContext, doReload = true): Promise<void> {
 }
 
 /** Background body of publish / approve. Never throws. */
-async function runInBackground(siteId: number, releaseId: number, phase: 'full' | 'deploy'): Promise<void> {
+/** Steps of publishCommit before the deployment: stats vs the live release, scan (precomputed or on the materialized tree), gates. */
+async function prepareCommit(run: Run, opts: CommitRunOptions): Promise<boolean> {
+  const { ctx, release } = run;
+  await ensureStorageFor(ctx);
+  const sha = release.commit_sha as string;
+  if (!(await commitExists(ctx.paths.repo, sha))) throw new PipelineError(`commit candidat introuvable : ${sha.slice(0, 12)}`);
+  const base = await liveCommit(ctx);
+  const stats = await diffStats(ctx.paths.repo, base, sha);
+  await run.step('info', `commit ${sha.slice(0, 12)} : +${stats.added} ~${stats.modified} -${stats.deleted}`, {
+    files_added: stats.added, files_modified: stats.modified, files_deleted: stats.deleted,
+  });
+  let scan: ScanSummary;
+  if (opts.scan) {
+    scan = normalizeScan(opts.scan);
+    run.line('info', 'analyse fournie par l’appelant (fenêtre / adaptateur) : pas de nouvelle analyse');
+  } else {
+    await run.save({ status: 'scanning' });
+    // The candidate is not in the staging: the scanner reads the materialized tree of the release.
+    await materialize(ctx, release, run);
+    await run.save();
+    scan = normalizeScan(await getScanner().scan({
+      siteId: ctx.site.id, accountId: ctx.account.id, stagingDir: path.posix.join(ctx.paths.releases, String(release.number)),
+      commitSha: sha, changedFiles: stats.changed,
+    }));
+  }
+  if (opts.scanOverrideBy && scan.blocked) {
+    scan = { ...scan, override: { by: await userName(opts.scanOverrideBy), at: new Date().toISOString(), reason: opts.overrideReason ?? null } };
+  }
+  return scanGate(run, scan, { approvedBy: opts.approvedBy, scanOverrideBy: opts.scanOverrideBy, notifyThreat: !opts.scan });
+}
+
+interface CommitRunOptions {
+  scan: ScanSummary | null;
+  approvedBy: number | null;
+  scanOverrideBy: number | null;
+  overrideReason?: string | null;
+}
+
+async function userName(userId: number): Promise<string> {
+  const u = await db('users').where({ id: userId }).first('username', 'display_name') as { username: string; display_name: string | null } | undefined;
+  return u ? (u.display_name || u.username) : `#${userId}`;
+}
+
+async function runInBackground(siteId: number, releaseId: number, phase: 'full' | 'deploy' | 'commit', commitOpts?: CommitRunOptions): Promise<void> {
   let run: Run | null = null;
   try {
     const ctx = await loadContext(siteId);
@@ -531,6 +648,9 @@ async function runInBackground(siteId: number, releaseId: number, phase: 'full' 
     if (phase === 'full') {
       await run.step('info', `publication #${release.number} (${release.trigger})`);
       if (!(await commitAndScan(run))) return;
+    } else if (phase === 'commit') {
+      await run.step('info', `publication #${release.number} (${release.trigger === 'window' ? `fenêtre #${release.window_id ?? '?'}` : `adaptateur, run #${release.adapter_run_id ?? '?'}`})`);
+      if (!(await prepareCommit(run, commitOpts ?? { scan: null, approvedBy: null, scanOverrideBy: null }))) return;
     } else {
       await run.step('info', 'reprise après approbation');
     }
@@ -641,6 +761,33 @@ function publishInProgress(): AppError {
   return new AppError(409, 'A publication is already in progress for this site', 'publishInProgress');
 }
 
+function windowActiveError(): AppError {
+  return new AppError(409, 'A modification window holds this site (decide it first)', 'windowActive');
+}
+
+/** P3 §5.3: no publish / approve / rollback / data-path rebuild while a window holds the site. */
+async function assertNoWindow(siteId: number): Promise<void> {
+  if (await releaseDeps().windowBlocks(siteId, null)) throw windowActiveError();
+}
+
+/**
+ * P3 (adapters, integration): no staging publish / approval of another release / manual rollback /
+ * data-path rebuild while an adapter run of the site is past its publication (publishing, post_deploy:
+ * migrations + healthcheck) or deferred awaiting the approval of its own release (its continuation runs
+ * the migrations once that release is live): the update would be dropped from the live site, possibly
+ * after its migrations ran. 409 adapterBusy; the auto-publish scheduler retries later. `exemptRunId`:
+ * the run whose own release is being approved. The run's own revertTo is not guarded (rollbackTo).
+ */
+async function assertNoAdapterRun(siteId: number, exemptRunId: number | null = null): Promise<void> {
+  const q = db('adapter_runs').where({ site_id: siteId }).where((w) => {
+    w.whereIn('status', ['publishing', 'post_deploy'])
+      .orWhere((d) => d.where('status', 'awaiting_approval').whereRaw("analysis -> 'pendingReflect' is not null"));
+  });
+  if (exemptRunId !== null) q.whereNot('id', exemptRunId);
+  const row = await q.first('id');
+  if (row) throw new AppError(409, 'An application update is being published on this site (adapter run in progress)', 'adapterBusy');
+}
+
 /** detectAppProfile helper: does `rel` exist under root, no component being a symlink (R1)? */
 export function existsNoFollow(root: string, rel: string): boolean {
   const norm = normalizeRelPath(rel);
@@ -734,6 +881,8 @@ export const releaseService = {
     locks.add(siteId);
     try {
       if (await hasInFlight(siteId)) throw publishInProgress();
+      await assertNoWindow(siteId);
+      await assertNoAdapterRun(siteId);
       const deps = releaseDeps();
       const next = opts.next.filter((d) => normalizeRelPath(d.path) === d.path && dataPathForbiddenError(d.path) === null);
       const nextPaths = next.map((d) => d.path);
@@ -824,6 +973,8 @@ export const releaseService = {
     let started = false;
     try {
       if (await hasInFlight(siteId)) throw publishInProgress();
+      await assertNoWindow(siteId);
+      await assertNoAdapterRun(siteId);
       const scan = scanStaging(ctx.paths.staging, dataPathList(ctx));
       if (scan.fileCount === 0) {
         throw new AppError(409, 'The staging directory of this site is empty', 'stagingEmpty');
@@ -858,17 +1009,41 @@ export const releaseService = {
     }
   },
 
-  async approve(siteId: number, releaseId: number, userId: number): Promise<Release> {
+  /**
+   * Approves a release awaiting approval. A release whose scan is BLOCKED
+   * (risk ≥ blockScore or ClamAV, M5) needs `override` — the caller (route)
+   * has checked it is a staff member holding releases.approve and audits it
+   * ('release.approve.override'); the override is recorded in scan.override
+   * and releases.scan_override_by/at. 409 riskBlocked {score, level} without.
+   */
+  async approve(siteId: number, releaseId: number, userId: number, opts: { override?: { reason: string | null } | null } = {}): Promise<Release> {
     const ctx = await loadContext(siteId);
     const row = await fetchRelease(siteId, releaseId);
     if (row.status !== 'awaiting_approval') throw new AppError(409, 'This release is not awaiting approval', 'releaseNotAwaitingApproval');
     assertNotDeleting(ctx);
     if (ctx.account.status === 'suspended') throw new AppError(409, 'The hosting account is suspended', 'accountSuspended');
+    // A window's release is decided through its window (validate / reject), never approved on its own: a
+    // rejected / re-reviewed window must not go live through a leftover release (docs/P3-PLAN.md §5, M5).
+    if (row.window_id) {
+      const w = await db('maintenance_windows').where({ id: row.window_id, site_id: siteId }).first('status') as { status: string } | undefined;
+      if (!w || w.status !== 'validating') {
+        throw new AppError(409, 'This release belongs to a modification window: decide the window instead', 'releaseNotAwaitingApproval');
+      }
+    }
+    const scan = json<ScanSummary | null>(row.scan, null);
+    const blocked = !!scan && (scan.blocked === true || scan.verdict === 'infected');
+    if (blocked && !opts.override) {
+      throw new AppError(409, 'The scan of this release blocks its publication (staff override required)', 'riskBlocked', {
+        score: scan?.risk?.score ?? 100, level: scan?.risk?.level ?? 'critical',
+      });
+    }
     if (locks.has(siteId)) throw publishInProgress();
     locks.add(siteId);
     let started = false;
     try {
       if (await hasInFlight(siteId)) throw publishInProgress();
+      await assertNoWindow(siteId);
+      await assertNoAdapterRun(siteId, row.adapter_run_id ? Number(row.adapter_run_id) : null);
       // Approving an older release would silently replace newer published content.
       // A rebuild of OLDER content (data paths changed: same commit as an older ready release) brings nothing newer.
       const newer = await db('releases as n').where({ 'n.site_id': siteId, 'n.status': 'ready' }).where('n.number', '>', row.number)
@@ -876,8 +1051,13 @@ export const releaseService = {
           .whereRaw('o.commit_sha = n.commit_sha'))
         .first('n.id');
       if (newer) throw new AppError(409, 'A newer release has already been published', 'releaseSuperseded');
-      const n = await db('releases').where({ id: releaseId, status: 'awaiting_approval' })
-        .update({ approved_by: userId, approved_at: db.fn.now(), status: 'publishing', updated_at: db.fn.now() });
+      const patch: Record<string, unknown> = { approved_by: userId, approved_at: db.fn.now(), status: 'publishing', updated_at: db.fn.now() };
+      if (blocked && scan && opts.override) {
+        patch.scan = JSON.stringify({ ...scan, blocked: true, override: { by: await userName(userId), at: new Date().toISOString(), reason: opts.override.reason ?? null } });
+        patch.scan_override_by = userId;
+        patch.scan_override_at = db.fn.now();
+      }
+      const n = await db('releases').where({ id: releaseId, status: 'awaiting_approval' }).update(patch);
       if (!n) throw new AppError(409, 'This release is not awaiting approval', 'releaseNotAwaitingApproval');
       started = true;
       void runInBackground(siteId, releaseId, 'deploy');
@@ -901,52 +1081,142 @@ export const releaseService = {
     return toRelease(await fetchRelease(siteId, releaseId));
   },
 
+  /**
+   * Internal (module windows): a release left awaiting approval is rejected
+   * (no user). false when it was not awaiting approval any more.
+   */
+  async dismissAwaiting(siteId: number, releaseId: number, reason: string): Promise<boolean> {
+    const ctx = await loadContext(siteId);
+    const row = await fetchRelease(siteId, releaseId);
+    if (row.status !== 'awaiting_approval') return false;
+    const run = new Run(ctx, row);
+    const why = reason.trim().slice(0, 500) || 'écartée';
+    run.line('warn', `écartée automatiquement : ${why}`);
+    const n = await db('releases').where({ id: releaseId, status: 'awaiting_approval' })
+      .update({ status: 'rejected', error: why, updated_at: db.fn.now() });
+    if (!n) return false;
+    await run.save({ status: 'rejected' });
+    return true;
+  },
+
   /** Makes an older READY release current again (re-materialized from git when pruned). */
   async rollback(siteId: number, releaseId: number, userId: number): Promise<void> {
+    await assertNoAdapterRun(siteId);
+    await rollbackTo(siteId, releaseId, { userId, reason: null });
+  },
+
+  // ── P3 (docs/P3-PLAN.md §6.4) — module `windows` ──
+
+  /**
+   * Publishes an EXISTING commit (candidate of a window / an adapter run)
+   * through the normal pipeline: release row (trigger window | adapter,
+   * window_id / adapter_run_id), scan step skipped when opts.scan is given,
+   * approval gate skipped when opts.approvedBy, then materialize → data links
+   * → switch → reload → healthcheck → auto-rollback, HEAD fast-forwarded to
+   * the commit when it still points at its parent. 409 publishInProgress /
+   * windowActive (another window) / windowBaseChanged (base no longer live).
+   * Returns the queued row at once (background run, RELEASE_UPDATED events).
+   */
+  async publishCommit(siteId: number, opts: PublishCommitOptions): Promise<Release> {
     const ctx = await loadContext(siteId);
-    const target = await fetchRelease(siteId, releaseId);
-    if (target.status !== 'ready') throw new AppError(409, 'Only a published release can be restored', 'releaseNotReady');
-    const deps = releaseDeps();
-    // Current only when the DB AND releases/current agree: a disk out of sync (crash) stays repairable from the UI.
-    if (ctx.site.current_release_id === target.id && readCurrent(ctx.paths.releases, deps.links) === target.number) {
-      throw new AppError(409, 'This release is already the current one', 'releaseIsCurrent');
-    }
     assertNotDeleting(ctx);
     if (ctx.account.status === 'suspended') throw new AppError(409, 'The hosting account is suspended', 'accountSuspended');
+    if (!/^[0-9a-f]{40,64}$/.test(opts.commitSha)) throw new AppError(409, 'Candidate commit not found', 'candidateNotFound');
     if (locks.has(siteId)) throw publishInProgress();
     locks.add(siteId);
-    const run = new Run(ctx, target);
+    let started = false;
     try {
       if (await hasInFlight(siteId)) throw publishInProgress();
+      const exempt = opts.trigger === 'window' ? opts.windowId ?? null : null;
+      if (await releaseDeps().windowBlocks(siteId, exempt)) throw windowActiveError();
+      const fresh = await db('sites').where({ id: siteId }).first('current_release_id') as { current_release_id: number | null } | undefined;
+      if (opts.baseReleaseId !== null && (fresh?.current_release_id ?? null) !== opts.baseReleaseId) {
+        throw opts.trigger === 'window'
+          ? new AppError(409, 'The base release of this window is no longer the live one', 'windowBaseChanged')
+          : new AppError(409, 'A newer release has already been published', 'releaseSuperseded');
+      }
       await ensureStorageFor(ctx);
-      run.line('info', `restauration demandée par l’utilisateur #${userId}`);
-      const dir = path.posix.join(ctx.paths.releases, String(target.number));
-      const onDisk = target.on_disk && fs.existsSync(dir);
-      const typed = ctx.dataPaths.filter((d) => d.policy === 'typed').map((d) => d.path);
-      const staleLinks = onDisk && (!dataLinksMatch(dir, dataPathList(ctx), deps.links)
-        || staleDataExposure(dir, target.number, dataPathList(ctx), typed, deps.links).length > 0);
-      if (staleLinks) run.line('info', 'liens de données obsolètes (chemins de données modifiés) : arbre reconstruit');
-      if (!onDisk || staleLinks) {
-        try {
-          await materialize(ctx, target, run);
-        } catch (err) {
-          await run.save();
-          if (err instanceof PipelineError) throw new AppError(502, err.message, 'backendUnavailable');
-          throw err;
-        }
-      }
-      const failed = await switchAndVerify(ctx, target.number, run);
-      if (failed) {
-        run.line('error', `restauration annulée (${failed})`);
-        await run.save();
-        throw new AppError(502, failed, 'rollbackHealthcheckFailed');
-      }
-      await db('sites').where({ id: siteId }).update({ current_release_id: target.id, updated_at: db.fn.now() });
-      ctx.site.current_release_id = target.id;
-      run.line('info', `release #${target.number} restaurée`);
-      await run.save({ status: 'ready' });
+      if (!(await commitExists(ctx.paths.repo, opts.commitSha))) throw new AppError(409, 'Candidate commit not found', 'candidateNotFound');
+      const message = opts.message?.trim() ? opts.message.trim().slice(0, 2000) : null;
+      const id = await db.transaction(async (trx) => {
+        await trx('sites').where({ id: siteId }).forUpdate().first('id');
+        const max = await trx('releases').where({ site_id: siteId }).max('number as n').first() as { n: number | null } | undefined;
+        const [row] = await trx('releases').insert({
+          site_id: siteId,
+          number: Number(max?.n ?? 0) + 1,
+          status: 'queued',
+          trigger: opts.trigger,
+          message,
+          author_user_id: opts.userId,
+          commit_sha: opts.commitSha,
+          window_id: opts.trigger === 'window' ? opts.windowId ?? null : null,
+          adapter_run_id: opts.trigger === 'adapter' ? opts.adapterRunId ?? null : null,
+          approved_by: opts.approvedBy ?? null,
+          approved_at: opts.approvedBy ? trx.fn.now() : null,
+          scan_override_by: opts.scanOverrideBy ?? null,
+          scan_override_at: opts.scanOverrideBy ? trx.fn.now() : null,
+          log: JSON.stringify([]),
+          on_disk: false,
+        }).returning('id');
+        return Number(typeof row === 'object' ? row.id : row);
+      });
+      const row = await fetchRelease(siteId, id);
+      emitHosting(HostingSocketEvents.RELEASE_UPDATED, { siteId, releaseId: id, status: 'queued' }, { tenantId: ctx.site.tenant_id, accountId: ctx.account.id });
+      started = true;
+      void runInBackground(siteId, id, 'commit', {
+        scan: opts.scan, approvedBy: opts.approvedBy ?? null, scanOverrideBy: opts.scanOverrideBy ?? null,
+      });
+      return toRelease(row);
     } finally {
-      try { await prune(ctx); } catch (err) { logger.warn({ err, siteId }, 'Release prune failed'); }
+      if (!started) locks.delete(siteId);
+    }
+  },
+
+  /** Resolves when the release reaches ready / failed / rejected / awaiting_approval (or the timeout: current row). */
+  async waitForRelease(siteId: number, releaseId: number, timeoutMs: number): Promise<Release> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    let settledAt: number | null = null;
+    for (;;) {
+      const row = await fetchRelease(siteId, releaseId);
+      const settled = !IN_FLIGHT.includes(row.status);
+      if (settled && settledAt === null) settledAt = Date.now();
+      // A terminal status is final, but the run still holds the site lock while it prunes: the caller's
+      // next step (revertTo, reopening a window) would get publishInProgress. Wait for it (bounded).
+      const lockFree = !locks.has(siteId) || (settledAt !== null && Date.now() - settledAt > WAIT_LOCK_GRACE_MS);
+      if ((settled && lockFree) || Date.now() >= deadline) return toRelease(row);
+      await new Promise((r) => setTimeout(r, WAIT_POLL_MS));
+    }
+  },
+
+  /** Internal rollback (adapter post-deploy failure): same as rollback() without a user, `reason` logged and audited. */
+  async revertTo(siteId: number, releaseId: number, reason: string): Promise<void> {
+    await rollbackTo(siteId, releaseId, { userId: null, reason: reason.trim().slice(0, 500) || 'retour automatique' });
+    const site = await db('sites').where({ id: siteId }).first('tenant_id') as { tenant_id: number } | undefined;
+    if (site) {
+      await auditService.log({
+        tenantId: site.tenant_id, action: 'release.revert', resourceType: 'release', resourcePath: String(releaseId),
+        details: { siteId, reason },
+      });
+    }
+  },
+
+  /** A pipeline / rollback runs (or is recorded in flight) for the site. */
+  async pipelineBusy(siteId: number): Promise<boolean> {
+    return locks.has(siteId) || await hasInFlight(siteId);
+  },
+
+  /**
+   * Runs `fn` while holding the pipeline lock of the site (no publication can
+   * start meanwhile); 409 publishInProgress when a pipeline runs. Used by the
+   * windows module to create its row atomically with respect to publications.
+   */
+  async reserve<T>(siteId: number, fn: () => Promise<T>): Promise<T> {
+    if (locks.has(siteId)) throw publishInProgress();
+    locks.add(siteId);
+    try {
+      if (await hasInFlight(siteId)) throw publishInProgress();
+      return await fn();
+    } finally {
       locks.delete(siteId);
     }
   },
@@ -1100,6 +1370,57 @@ export const releaseService = {
     }
   },
 };
+
+/** Body of rollback() / revertTo(): makes an older READY release current again. */
+async function rollbackTo(siteId: number, releaseId: number, who: { userId: number | null; reason: string | null }): Promise<void> {
+  const ctx = await loadContext(siteId);
+  const target = await fetchRelease(siteId, releaseId);
+  if (target.status !== 'ready') throw new AppError(409, 'Only a published release can be restored', 'releaseNotReady');
+  const deps = releaseDeps();
+  // Current only when the DB AND releases/current agree: a disk out of sync (crash) stays repairable from the UI.
+  if (ctx.site.current_release_id === target.id && readCurrent(ctx.paths.releases, deps.links) === target.number) {
+    throw new AppError(409, 'This release is already the current one', 'releaseIsCurrent');
+  }
+  assertNotDeleting(ctx);
+  if (ctx.account.status === 'suspended') throw new AppError(409, 'The hosting account is suspended', 'accountSuspended');
+  if (locks.has(siteId)) throw publishInProgress();
+  locks.add(siteId);
+  const run = new Run(ctx, target);
+  try {
+    if (await hasInFlight(siteId)) throw publishInProgress();
+    await assertNoWindow(siteId);
+    await ensureStorageFor(ctx);
+    run.line('info', who.userId ? `restauration demandée par l’utilisateur #${who.userId}` : `retour automatique : ${who.reason ?? 'sans motif'}`);
+    const dir = path.posix.join(ctx.paths.releases, String(target.number));
+    const onDisk = target.on_disk && fs.existsSync(dir);
+    const typed = ctx.dataPaths.filter((d) => d.policy === 'typed').map((d) => d.path);
+    const staleLinks = onDisk && (!dataLinksMatch(dir, dataPathList(ctx), deps.links)
+      || staleDataExposure(dir, target.number, dataPathList(ctx), typed, deps.links).length > 0);
+    if (staleLinks) run.line('info', 'liens de données obsolètes (chemins de données modifiés) : arbre reconstruit');
+    if (!onDisk || staleLinks) {
+      try {
+        await materialize(ctx, target, run);
+      } catch (err) {
+        await run.save();
+        if (err instanceof PipelineError) throw new AppError(502, err.message, 'backendUnavailable');
+        throw err;
+      }
+    }
+    const failed = await switchAndVerify(ctx, target.number, run);
+    if (failed) {
+      run.line('error', `restauration annulée (${failed})`);
+      await run.save();
+      throw new AppError(502, failed, 'rollbackHealthcheckFailed');
+    }
+    await db('sites').where({ id: siteId }).update({ current_release_id: target.id, updated_at: db.fn.now() });
+    ctx.site.current_release_id = target.id;
+    run.line('info', `release #${target.number} restaurée`);
+    await run.save({ status: 'ready' });
+  } finally {
+    try { await prune(ctx); } catch (err) { logger.warn({ err, siteId }, 'Release prune failed'); }
+    locks.delete(siteId);
+  }
+}
 
 /** Tests only: in-process lock state. */
 export const __releaseInternals = { locks, prune: (siteId: number) => loadContext(siteId).then(prune) };

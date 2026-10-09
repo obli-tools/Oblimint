@@ -11,6 +11,9 @@ import (
 
 // Mount is one line of /proc/<pid>/mountinfo (see proc(5)).
 type Mount struct {
+	// Dev is the superblock device "major:minor" (field 3): every copy of a
+	// mount (bind, propagated slave in a container) shares it.
+	Dev          string
 	MountPoint   string
 	Root         string
 	FSType       string
@@ -40,6 +43,7 @@ func ParseMountinfo(r io.Reader) ([]Mount, error) {
 			return nil, fmt.Errorf("mountinfo line %d: too few fields", n)
 		}
 		m := Mount{
+			Dev:        f[2],
 			Root:       unescapeOctal(f[3]),
 			MountPoint: unescapeOctal(f[4]),
 			Options:    strings.Split(f[5], ","),
@@ -114,4 +118,11 @@ func (m Mount) ProjectQuota() bool {
 		}
 	}
 	return false
+}
+
+// devString is the "major:minor" of a Linux dev_t (the mountinfo format).
+func devString(dev uint64) string {
+	major := (dev>>8)&0xfff | (dev>>32)&0xfffff000
+	minor := dev&0xff | (dev>>12)&0xffffff00
+	return strconv.FormatUint(major, 10) + ":" + strconv.FormatUint(minor, 10)
 }

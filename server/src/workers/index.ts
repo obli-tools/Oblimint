@@ -35,6 +35,8 @@ export async function startWorkers(): Promise<void> {
   // P2 workers (docs/P2-PLAN.md §Workers): same contract (start returns at once, never throws).
   const p2 = await p2Workers();
   for (const [name, w] of p2) starters.push([name, () => w.start()]);
+  // P3 workers (docs/P3-PLAN.md §Workers): same contract.
+  for (const [name, w] of await p3Workers()) starters.push([name, () => w.start()]);
   for (const [name, start] of starters) {
     try { start(); } catch (err) { logger.error({ err, worker: name }, 'Worker failed to start'); }
   }
@@ -66,6 +68,29 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
   return list;
 }
 
+/**
+ * P3 workers, in start order: scan first (registers the pre-publish scanner
+ * of the release pipeline), then windows (boot recovery of the overlays,
+ * scheduler, expiries), snapshots (retention), adapters (schedules, recovery),
+ * quarantine (hostd events, watch specs, supervision digests).
+ */
+async function p3Workers(): Promise<Array<[string, Worker]>> {
+  const [scan, windows, snapshots, adapters, quarantine] = await Promise.all([
+    import('../services/scan/scan.service').then((m) => m.scanService),
+    import('../services/windows/window.service').then((m) => m.windowService),
+    import('../services/snapshots/snapshot.service').then((m) => m.snapshotService),
+    import('../services/adapters/adapter.service').then((m) => m.adapterService),
+    import('../services/quarantine/quarantine.service').then((m) => m.quarantineService),
+  ]);
+  return [
+    ['scan', scan],
+    ['windows', windows],
+    ['snapshots', snapshots],
+    ['adapters', adapters],
+    ['quarantine', quarantine],
+  ];
+}
+
 export async function stopWorkers(): Promise<void> {
   const mods = await Promise.all([
     import('../services/docker/reconcile.service').then((m) => m.reconcileService),
@@ -77,6 +102,7 @@ export async function stopWorkers(): Promise<void> {
   ]);
   for (const m of mods) { try { m.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p2Workers()) { try { w.stop(); } catch { /* exiting */ } }
+  for (const [, w] of await p3Workers()) { try { w.stop(); } catch { /* exiting */ } }
   const { stopInternalServer } = await import('../internal/internalServer');
   try { stopInternalServer(); } catch { /* exiting */ }
 }

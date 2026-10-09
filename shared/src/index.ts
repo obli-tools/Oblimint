@@ -7,3 +7,4 @@ export * from './access';
 export * from './usage';
 export * from './cron';
 export * from './platform';
+export * from './maintenance';

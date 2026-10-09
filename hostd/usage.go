@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 )
 
 // fileKey identifies an inode (device + inode number) to count hard links once.
@@ -29,11 +30,21 @@ type visitFunc func(parent *os.Root, name string, fi fs.FileInfo, sub *os.Root) 
 // directories deeper than maxWalkDepth are visited but not entered (counted in
 // tooDeep). ctx is checked between entries.
 func walkTree(ctx context.Context, dir *os.Root, visit visitFunc) (tooDeep int, err error) {
-	err = walkLevel(ctx, dir, 0, visit, &tooDeep)
+	return walkTreeSkip(ctx, dir, nil, visit)
+}
+
+// skipFunc reports whether the directory rel (relative to the walked root)
+// must not be entered: P3, a mount point (window overlay, lower bind).
+type skipFunc func(rel string) bool
+
+// walkTreeSkip is walkTree without entering the directories skip names (they
+// are not visited either).
+func walkTreeSkip(ctx context.Context, dir *os.Root, skip skipFunc, visit visitFunc) (tooDeep int, err error) {
+	err = walkLevel(ctx, dir, "", 0, skip, visit, &tooDeep)
 	return tooDeep, err
 }
 
-func walkLevel(ctx context.Context, dir *os.Root, depth int, visit visitFunc, tooDeep *int) error {
+func walkLevel(ctx context.Context, dir *os.Root, rel string, depth int, skip skipFunc, visit visitFunc, tooDeep *int) error {
 	d, err := dir.Open(".")
 	if err != nil {
 		return err
@@ -60,6 +71,9 @@ func walkLevel(ctx context.Context, dir *os.Root, depth int, visit visitFunc, to
 			}
 			continue
 		}
+		if skip != nil && skip(joinRel(rel, e.Name())) {
+			continue
+		}
 		sub, err := openDir(dir, e.Name())
 		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errUnsafePath) {
 			sub = nil // vanished or swapped for a link: never followed
@@ -71,7 +85,7 @@ func walkLevel(ctx context.Context, dir *os.Root, depth int, visit visitFunc, to
 			if depth+1 > maxWalkDepth {
 				*tooDeep++
 			} else {
-				err = walkLevel(ctx, sub, depth+1, visit, tooDeep)
+				err = walkLevel(ctx, sub, joinRel(rel, e.Name()), depth+1, skip, visit, tooDeep)
 			}
 		}
 		if sub != nil {
@@ -89,6 +103,10 @@ func walkLevel(ctx context.Context, dir *os.Root, depth int, visit visitFunc, to
 // through hard links. Entries that vanish during the walk (a tenant deleting
 // files) are ignored, and a tree deeper than maxWalkDepth is measured down to
 // that depth (logged): measuring never fails because of tenant content.
+//
+// P3: a window overlay mounted below dir is not entered (its content is
+// counted once, through the pristine lower bind of the window and the upper
+// layer); see mountSkipper.
 func diskUsage(ctx context.Context, dir *os.Root) (int64, error) {
 	seen := make(map[fileKey]bool)
 	fi, err := dir.Stat(".")
@@ -96,7 +114,7 @@ func diskUsage(ctx context.Context, dir *os.Root) (int64, error) {
 		return 0, err
 	}
 	total := allocated(dir, ".", fi, seen)
-	tooDeep, err := walkTree(ctx, dir, func(parent *os.Root, name string, fi fs.FileInfo, _ *os.Root) error {
+	tooDeep, err := walkTreeSkip(ctx, dir, mountSkipper(dir.Name(), true), func(parent *os.Root, name string, fi fs.FileInfo, _ *os.Root) error {
 		total += allocated(parent, name, fi, seen)
 		return nil
 	})
@@ -117,4 +135,34 @@ func allocated(dir *os.Root, name string, fi fs.FileInfo, seen map[fileKey]bool)
 		seen[key] = true
 	}
 	return bytes
+}
+
+// mountsBelow lists the mount points below an absolute directory, relative to
+// it (→ fstype). Linux reads /proc/self/mountinfo; a variable for the tests.
+var mountsBelow = func(dir string) map[string]string {
+	mounts, err := defaultMounter().mounts()
+	if err != nil {
+		return nil
+	}
+	resolved := dir
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		resolved = filepath.ToSlash(r)
+	}
+	return mountsBelowIn(mounts, resolved)
+}
+
+// mountSkipper skips the mount points below dir: only the overlays when
+// overlaysOnly (measuring: the lower bind of a window is the pristine release,
+// hidden under the overlay, and is counted once through it), every one
+// otherwise (quota tagging: nothing seen through an overlay or a read-only
+// bind is ever re-tagged).
+func mountSkipper(dir string, overlaysOnly bool) skipFunc {
+	below := mountsBelow(dir)
+	if len(below) == 0 {
+		return nil
+	}
+	return func(rel string) bool {
+		fstype, ok := below[rel]
+		return ok && (!overlaysOnly || fstype == "overlay")
+	}
 }

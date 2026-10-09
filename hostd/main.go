@@ -47,6 +47,10 @@ func main() {
 	quota, why := detectQuota(layout, fsInfo, exec.LookPath, execRunner, envFlag(os.Getenv(allowMeasuredQuotaEnv)))
 	log.Info("quota mode", "mode", quota.Mode(), "reason", why)
 	ops := newHostOps(layout, quota, fdOwner)
+	// P3: window overlays, workspaces, typed-path / supervised watchers,
+	// quarantine store and events.
+	windows := newWindowManager(layout, defaultMounter(), defaultOverlayAttrs(), fdOwner, rootLchown, time.Now)
+	ops.releaser = windows
 
 	// P2: firewall + port gateway, restored from the state file.
 	statePath := path.Join(layout.RunDir(), "hostd-state.json")
@@ -64,13 +68,15 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Handler:           newMux(ops, layout, fw, gw),
+		Handler:           newMux(ops, layout, fw, gw, windows),
 		ReadHeaderTimeout: 5 * time.Second,
-		// No WriteTimeout: GET /v1/gateway/events is a long poll (≤ 55 s).
+		// No WriteTimeout: GET /v1/gateway/events and /v1/events are long polls
+		// (≤ 55 s); window operations may take minutes.
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	windows.start(ctx)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

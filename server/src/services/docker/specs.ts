@@ -177,7 +177,9 @@ export function siteContainerSpec(input: SiteContainerInput): Docker.ContainerCr
 
   const hostConfig: Docker.HostConfig = {
     Mounts: [
-      { Type: 'bind', Source: posix(input.releasesDir), Target: CONTAINER_PATHS.releases, ReadOnly: true },
+      // P3: rslave — the window overlay hostd mounts over releases/<n> on the host appears in the
+      // RUNNING container (no recreation); outside a window nothing is mounted there (H2 unchanged).
+      { Type: 'bind', Source: posix(input.releasesDir), Target: CONTAINER_PATHS.releases, ReadOnly: true, BindOptions: { Propagation: 'rslave' } },
       { Type: 'bind', Source: posix(input.dataDir), Target: CONTAINER_PATHS.data, ReadOnly: false },
       { Type: 'bind', Source: path.posix.dirname(posix(input.runtimeConfigFile)), Target: CONTAINER_PATHS.siteConfigDir, ReadOnly: true },
       // P2: database sockets (READ-ONLY binds: connect() on a socket works on a RO mount).
