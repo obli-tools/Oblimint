@@ -56,6 +56,12 @@ async function settingsChanged(sections: string[]): Promise<void> {
       const { quarantineService } = await import('../services/quarantine/quarantine.service');
       quarantineService.requestWatchSyncAll('hosting-settings');
     }
+    // P4: mail (engine config, DNS records of every mail domain, edge vhosts / certificates,
+    // relay, webmail container). Each hook never throws.
+    if (sections.includes('mail')) {
+      const { notifyMailSettingsChanged } = await import('../services/mail/contracts');
+      await notifyMailSettingsChanged();
+    }
   } catch (err) {
     logger.warn({ err }, 'hosting settings change hooks failed');
   }

@@ -29,6 +29,9 @@ export function eventLabel(t: TFunction, e: NotificationEvent): string {
     'adapter.completed': 'Application update published',
     'adapter.failed': 'Application update failure',
     'supervision.digest': 'Supervision digest',
+    'mail.outboundSuspended': 'Outbound mail suspended',
+    'mail.serviceFailed': 'Mail service failure',
+    'mail.quotaWarning': 'Mailbox almost full',
   };
   return t(`notifications.event.${eventKey(e)}`) || fallback[e];
 }

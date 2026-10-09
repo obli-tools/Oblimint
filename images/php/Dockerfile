@@ -49,7 +49,7 @@ LABEL org.opencontainers.image.title="oblimint-${ENGINE}-php${PHP_VERSION}" \
 COPY --from=ipe /usr/bin/install-php-extensions /usr/local/bin/install-php-extensions
 
 # Web server (Alpine packages: Apache 2.4 + mod_proxy_fcgi, or nginx), tini
-# (PID 1, signal forwarding, zombie reaping), msmtp (PHP mail(), relay in P4),
+# (PID 1, signal forwarding, zombie reaping), msmtp (PHP mail() → site relay, P4),
 # then the PHP extensions the supported CMSs need (WordPress, PrestaShop,
 # Joomla, Drupal, Laravel). xml, mbstring, curl are built into the official
 # image; gd gets jpeg / webp / freetype from the installer. The default
@@ -94,10 +94,19 @@ COPY common/placeholder.html common/ping /usr/share/oblimint/
 
 # Permissions for an arbitrary uid on a read-only root: everything readable,
 # scripts executable, nothing writable. Mount points exist (empty).
+# P4 (docs/P4-PLAN.md §9.5): msmtp's SYSTEM configuration is the per-site file
+# the panel writes into the runtime directory (mounted read-only:
+# /etc/oblimint/site/msmtprc, 0640 root:<account gid>): host oblimint-mail-relay,
+# port 2525, auth plain as site-<id>, envelope sender forced. A system file
+# (unlike ~/.msmtprc) is not subject to msmtp's owner / mode check. No file
+# (relay off, account suspended) = a dangling link: msmtp finds no account and
+# mail() returns false, as before P4.
 RUN set -eux; \
     chmod 0755 /usr/local/bin/oblimint-entrypoint /usr/local/bin/oblimint-reload /usr/local/bin/siteconf; \
     mkdir -p /usr/share/oblimint/empty /srv/releases /srv/data /etc/oblimint/site; \
-    chmod -R a+rX,go-w /usr/local/lib/oblimint /opt/oblimint /usr/share/oblimint /usr/local/etc/php
+    chmod -R a+rX,go-w /usr/local/lib/oblimint /opt/oblimint /usr/share/oblimint /usr/local/etc/php; \
+    ln -sf /etc/oblimint/site/msmtprc /etc/msmtprc; \
+    test "$(readlink /etc/msmtprc)" = /etc/oblimint/site/msmtprc
 
 # PGHOST: libpq clients run from the CLI (cron, docker exec) find the account's
 # default PostgreSQL instance socket (php-fpm gets it from its pool: clear_env).

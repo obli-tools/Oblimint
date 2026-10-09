@@ -13,6 +13,7 @@ export function capabilityLabel(t: TFunction, c: ClientCapability): string {
     'files.manage': 'Manage file access',
     'databases.manage': 'Manage databases',
     'dns.manage': 'Manage DNS zones',
+    'mail.manage': 'Manage mail',
   };
   return t(`accounts.capabilities.${c.replace('.', '_')}`) || fallback[c];
 }
@@ -26,6 +27,7 @@ function capabilityHint(t: TFunction, c: ClientCapability): string {
     'files.manage': 'Open the SFTP access, set its password and SSH keys, and the access allow-list.',
     'databases.manage': 'Create database instances, databases and users, open phpMyAdmin / Adminer.',
     'dns.manage': 'Edit the DNS records of the account zones.',
+    'mail.manage': 'Create mail domains, mailboxes, aliases and forwards, manage DKIM and the site relay, open the webmail.',
   };
   return t(`accounts.capabilities.${c.replace('.', '_')}_hint`) || fallback[c];
 }

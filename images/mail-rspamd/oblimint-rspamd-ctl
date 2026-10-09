@@ -1,0 +1,36 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-rspamd-ctl — control script of meejay/oblimint-mail-rspamd, run by
+# the panel through `docker exec` (postfixDovecot/driver.ts):
+#
+#   oblimint-rspamd-ctl configtest   rspamadm configtest (generated local.d included)
+#   oblimint-rspamd-ctl ping         controller answers on 127.0.0.1:11334 (healthcheck)
+#   oblimint-rspamd-ctl version      rspamd version
+#
+# No reload command: Rspamd runs in the foreground (-f), which writes no pid
+# file, and a SIGHUP to the main process makes Rspamd 3.10 crash (signal 11).
+# The panel applies a new configuration by restarting the container (Docker
+# API, postfixDovecot/driver.ts) after `configtest` accepted it.
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+die() {
+	printf 'oblimint-rspamd-ctl: %s\n' "$*" >&2
+	exit 1
+}
+
+case "${1:-}" in
+	configtest)
+		rspamadm configtest -c /etc/rspamd/rspamd.conf
+		;;
+	ping)
+		out=$(wget -q -T 5 -O - http://127.0.0.1:11334/ping 2>/dev/null) || die 'controller not answering'
+		case "$out" in *pong*) ;; *) die 'unexpected controller answer' ;; esac
+		;;
+	version)
+		rspamd --version 2>/dev/null | head -n 1
+		;;
+	*)
+		die "usage: $0 configtest|ping|version"
+		;;
+esac

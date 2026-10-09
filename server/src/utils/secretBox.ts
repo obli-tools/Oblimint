@@ -15,7 +15,10 @@ import { config } from '../config';
 
 export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
   // P3: shared key of the scanner API (scand, X-Oblimint-Scanner-Key).
-  | 'scanner';
+  | 'scanner'
+  // P4: DKIM private keys, site relay credentials, engine admin secrets
+  // (Stalwart admin API, internal keys of the mail / webmail containers).
+  | 'mail-dkim' | 'mail-relay' | 'mail-admin' | 'webmail';
 
 export class SecretBoxError extends Error {
   constructor(message: string) {

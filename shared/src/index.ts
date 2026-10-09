@@ -8,3 +8,4 @@ export * from './usage';
 export * from './cron';
 export * from './platform';
 export * from './maintenance';
+export * from './mail';

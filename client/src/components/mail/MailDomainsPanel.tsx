@@ -1,0 +1,205 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
+import { AlertTriangle, AtSign, ChevronRight, Plus } from 'lucide-react';
+import { HostingSocketEvents, type HostingAccount, type MailDomain, type MailUpdatedPayload } from '@oblimint/shared';
+import { mailApi } from '@/api/mail.api';
+import { useHostingMe } from '@/store/hostingStore';
+import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { TableScroll } from '@/components/common/TableScroll';
+import { TenantBadge } from '@/components/common/TenantBadge';
+import { EmptyState, headerAccentBtnCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { formatBytes } from '@/components/databases/dbFormat';
+import { DnsDots, MailDomainStatusBadge, dotsFromHealthy } from './MailBadges';
+import { MailDomainCreateModal } from './MailDomainCreateModal';
+import { MailSearch } from './MailListParts';
+import { mailLoadError } from './mailErrors';
+import { dotsFromRecords, type DotState } from './mailFormat';
+
+/** Above this many domains the per-domain DNS detail is not fetched (summary flag only). */
+const DOTS_DETAIL_MAX = 40;
+
+/** Domains tab of /mail: list with DNS dots, creation from a domain of the account. */
+export function MailDomainsPanel({ accountId, tenantId, accounts, showTenant }: {
+  accountId: number | null;
+  tenantId?: number;
+  /** Accounts of the selector (creation offers those the caller may manage). */
+  accounts: HostingAccount[];
+  showTenant: boolean;
+}) {
+  const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
+  const { can } = useHostingMe();
+  const [domains, setDomains] = useState<MailDomain[]>([]);
+  const [dots, setDots] = useState<Record<number, Record<string, DotState>>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const seq = useRef(0);
+  /**
+   * `dns`: which per-domain DNS details to (re)fetch for the dots — 'all'
+   * (first load, domain created / deleted), the ids whose DNS or DKIM changed,
+   * or 'none' (mailbox / alias events: only the list and its counts change).
+   */
+  const load = useCallback(async (dns: 'all' | 'none' | number[] = 'all') => {
+    const n = ++seq.current;
+    try {
+      const list = await mailApi.listDomains({ accountId: accountId ?? undefined, tenantId });
+      if (n !== seq.current) return;
+      setDomains(list);
+      setError(null);
+      // DNS detail (expected records + last check, no network on the server side) for the dots.
+      if (list.length > DOTS_DETAIL_MAX) {
+        setDots({});
+        return;
+      }
+      const ids = new Set(list.map((d) => d.id));
+      const wanted = dns === 'all' ? list.map((d) => d.id) : dns === 'none' ? [] : dns.filter((id) => ids.has(id));
+      const results = await Promise.allSettled(wanted.map((id) => mailApi.dnsStatus(id)));
+      if (n !== seq.current) return;
+      setDots((prev) => {
+        const next: Record<number, Record<string, DotState>> = {};
+        // Keep the known dots of the domains still listed, replace the refetched ones.
+        if (dns !== 'all') for (const [k, v] of Object.entries(prev)) if (ids.has(Number(k))) next[Number(k)] = v;
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled') next[wanted[i]] = dotsFromRecords(r.value.records, [r.value.ptr.ipv4?.status ?? null, r.value.ptr.ipv6?.status ?? null]);
+        });
+        return next;
+      });
+    } catch (err) {
+      if (n !== seq.current) return;
+      setDomains([]);
+      setError(mailLoadError(t, err, t('mail.domains.loadFailed') || 'Failed to load the mail domains'));
+    } finally {
+      if (n === seq.current) setLoading(false);
+    }
+  }, [accountId, tenantId, t]);
+
+  useEffect(() => { setLoading(true); void load(); }, [load]);
+  // Events accumulated during the debounce window: what the next reload refetches.
+  const pending = useRef<Set<number>>(new Set());
+  useHostingEvents([HostingSocketEvents.MAIL_UPDATED], () => {
+    const ids = pending.current;
+    pending.current = new Set();
+    void load([...ids]);
+  }, (_e, p) => {
+    const payload = p as MailUpdatedPayload | null;
+    if (!payload || !['mailDomain', 'dns', 'dkim', 'mailbox', 'alias'].includes(payload.entity)) return false;
+    if (!(accountId == null || payload.accountId == null || payload.accountId === accountId)) return false;
+    // mailDomain / dns / dkim: that domain's DNS detail (a deleted one simply drops out of the list).
+    if (payload.entity === 'mailDomain' || payload.entity === 'dns' || payload.entity === 'dkim') pending.current.add(payload.id);
+    return true;
+  }, 800);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return domains;
+    return domains.filter((d) => d.name.includes(q) || d.accountUsername.toLowerCase().includes(q));
+  }, [domains, search]);
+
+  const manageable = useMemo(() => accounts.filter((a) => can('mail.manage', a.id)), [accounts, can]);
+  const canCreate = accountId != null ? can('mail.manage', accountId) : manageable.length > 0;
+  const createBtn = canCreate ? (
+    <button onClick={() => setCreating(true)} className={headerAccentBtnCls}><Plus size={14} />{t('mail.domains.add') || 'Enable mail on a domain'}</button>
+  ) : null;
+  const dotsOf = (d: MailDomain) => dots[d.id] ?? dotsFromHealthy(d.dnsHealthy);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <MailSearch value={search} onChange={setSearch} placeholder={t('mail.domains.search') || 'Search a domain…'} />
+        <div className="ml-auto">{createBtn}</div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-10"><LoadingSpinner /></div>
+      ) : error ? (
+        <EmptyState icon={<AlertTriangle />} text={error} />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon={<AtSign />} text={search ? (t('common.noMatch') || 'No match') : (t('mail.domains.empty') || 'No mail domain yet: enable mail on one of your domains.')} action={!search ? createBtn ?? undefined : undefined} />
+      ) : (
+        <>
+          <ul className="space-y-2 md:hidden">
+            {filtered.map((d) => (
+              <li key={d.id}>
+                <Link to={`/mail/domains/${d.id}`} className="block w-full rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 truncate font-mono text-sm font-semibold text-text-primary">{d.name}</span>
+                    <MailDomainStatusBadge status={d.status} message={d.statusMessage} />
+                    <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+                  </div>
+                  <DnsDots dots={dotsOf(d)} className="mt-1.5" />
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                    <span className="font-mono">{d.accountUsername}</span>
+                    <span>{t('mail.domains.counts', { mailboxes: d.mailboxCount, aliases: d.aliasCount, defaultValue: '{{mailboxes}} mailbox(es) · {{aliases}} alias(es)' })}</span>
+                    {d.usedBytes != null && <span>{formatBytes(t, d.usedBytes)}</span>}
+                    {showTenant && <TenantBadge tenantId={d.tenantId} />}
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
+            <table className="w-full min-w-[900px] text-sm">
+              <thead>
+                <tr className={theadRowCls}>
+                  <th className={thCls}>{t('mail.domains.domain') || 'Mail domain'}</th>
+                  <th className={thCls}>{t('mail.account') || 'Hosting account'}</th>
+                  {showTenant && <th className={thCls}>{t('hostingCommon.tenant') || 'Workspace'}</th>}
+                  <th className={thCls}>{t('mail.domains.status') || 'Status'}</th>
+                  <th className={thCls}>DNS</th>
+                  <th className={`${thCls} text-right`}>{t('mail.domains.mailboxes') || 'Mailboxes'}</th>
+                  <th className={`${thCls} text-right`}>{t('mail.domains.aliases') || 'Aliases'}</th>
+                  <th className={`${thCls} text-right`}>{t('mail.domains.used') || 'Used'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((d) => (
+                  <tr key={d.id} onClick={() => navigate(`/mail/domains/${d.id}`)} className="cursor-pointer transition-colors hover:bg-bg-hover">
+                    <td className="px-4 py-3">
+                      <Link to={`/mail/domains/${d.id}`} onClick={(e) => e.stopPropagation()} className="font-mono font-medium text-text-primary hover:text-accent">{d.name}</Link>
+                      {!d.dnsManaged && <div className="text-[11px] text-text-muted">{t('mail.domains.externalDns') || 'DNS hosted elsewhere'}</div>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link to={`/accounts/${d.accountId}`} onClick={(e) => e.stopPropagation()} className="font-mono text-text-secondary hover:text-accent">{d.accountUsername}</Link>
+                    </td>
+                    {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={d.tenantId} /></td>}
+                    <td className="px-4 py-3"><MailDomainStatusBadge status={d.status} message={d.statusMessage} /></td>
+                    <td className="px-4 py-3">
+                      <DnsDots dots={dotsOf(d)} />
+                      {d.dnsCheckedAt && <div className="mt-0.5 text-[10px] text-text-muted">{new Date(d.dnsCheckedAt).toLocaleString(i18n.language)}</div>}
+                    </td>
+                    <td className="px-4 py-3 text-right font-mono tabular-nums">{d.mailboxCount}</td>
+                    <td className="px-4 py-3 text-right font-mono tabular-nums">{d.aliasCount}</td>
+                    <td className="px-4 py-3 text-right font-mono text-xs tabular-nums">{formatBytes(t, d.usedBytes)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
+          {filtered.some((d) => d.status === 'pending') && (
+            <p className="flex items-start gap-2 text-xs text-text-muted">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0 text-sky-300" />
+              {t('mail.domains.pendingHint') || 'The ownership of this domain is not verified yet: the mail domain stays pending (no mail is received or sent) until the verification succeeds on the Domains page.'}
+            </p>
+          )}
+        </>
+      )}
+
+      <MailDomainCreateModal
+        open={creating}
+        accounts={accountId != null ? accounts.filter((a) => a.id === accountId) : manageable}
+        defaultAccountId={accountId}
+        onClose={() => setCreating(false)}
+        onCreated={(d) => {
+          setCreating(false);
+          toast.success(t('mail.domains.created', { name: d.name, defaultValue: 'Mail enabled on {{name}}' }));
+          navigate(`/mail/domains/${d.id}`);
+        }}
+      />
+    </div>
+  );
+}

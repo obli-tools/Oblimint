@@ -417,7 +417,10 @@
       "quarantineAdded": "Fichier mis en quarantaine",
       "adapterCompleted": "Mise à jour applicative publiée",
       "adapterFailed": "Échec d’une mise à jour applicative",
-      "supervisionDigest": "Résumé de supervision"
+      "supervisionDigest": "Résumé de supervision",
+      "mailOutboundSuspended": "Envoi de mails suspendu",
+      "mailServiceFailed": "Service mail en échec",
+      "mailQuotaWarning": "Boîte mail presque pleine"
     },
     "form": {
       "botToken": "Jeton du bot",

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
-import { Mail, FolderOpen } from 'lucide-react';
+import { FolderOpen } from 'lucide-react';
 import type { SetupMode } from '@oblimint/shared';
 import { useNativeTopOffset } from '@/hooks/useNativeTopOffset';
 import { useAuthStore } from '@/store/authStore';
@@ -35,6 +35,10 @@ import { UsagePage } from '@/pages/usage/UsagePage';                 // ui-ops
 // P3 — updates and modification windows (docs/P3-PLAN.md §13)
 import { MaintenancePage } from '@/pages/maintenance/MaintenancePage';     // ui-maintenance
 import { WindowReviewPage } from '@/pages/maintenance/WindowReviewPage';   // ui-maintenance
+// P4 — mail (docs/P4-PLAN.md §13)
+import { MailPage } from '@/pages/mail/MailPage';                  // ui-mail
+import { MailDomainPage } from '@/pages/mail/MailDomainPage';      // ui-mail
+import { MailboxPage } from '@/pages/mail/MailboxPage';            // ui-mail
 import { TwoFactorGate } from '@/components/common/TwoFactorGate';
 import { ConfirmProvider } from '@/components/common/ConfirmDialog';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
@@ -73,7 +77,10 @@ function NormalRoutes() {
           {/* P3: maintenance overview (reviews, windows, updates, quarantine) + window review */}
           <Route path="/maintenance" element={<MaintenancePage />} />
           <Route path="/sites/:id/windows/:windowId" element={<WindowReviewPage />} />
-          <Route path="/mail" element={<ComingSoonPage icon={<Mail />} titleKey="nav.mail" titleFallback="Mail" descriptionKey="comingSoon.mail" descriptionFallback="Manage mailboxes, aliases, forwards, quotas and DKIM keys on the mail engine chosen at installation." />} />
+          {/* P4: mail (tabs ?tab=domains|mailboxes|aliases|outbound|logs), mail domain, mailbox — client space too (server scopes) */}
+          <Route path="/mail" element={<MailPage />} />
+          <Route path="/mail/domains/:id" element={<MailDomainPage />} />
+          <Route path="/mail/mailboxes/:id" element={<MailboxPage />} />
           <Route path="/files" element={<ComingSoonPage icon={<FolderOpen />} titleKey="nav.files" titleFallback="Files" descriptionKey="comingSoon.files" descriptionFallback="Browse and edit the files of an account, and open an SFTP/FTPS server on demand for it." />} />
 
           {/* Plans: platform admin or the plans.manage capability of the tenant */}

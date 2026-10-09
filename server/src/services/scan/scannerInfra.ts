@@ -6,7 +6,8 @@ import { config } from '../../config';
 import { logger } from '../../utils/logger';
 import type { InfraComponentProvider } from '../docker/extensions';
 import {
-  containerState, ensureImage, inspectContainer, labelHash, recreateContainer, removeContainer, startContainer, stopContainer, type Log,
+  connectNetwork, containerState, ensureImage, inspectContainer, inspectNetwork, labelHash, recreateContainer, removeContainer,
+  restartContainer, startContainer, stopContainer, type Log,
 } from '../docker/dockerOps';
 import { engineFor, localNodeId } from '../docker/engine';
 import { withLock } from '../docker/locks';
@@ -17,7 +18,8 @@ import { platformSettings } from '../platformSettings';
 import { errText, withTimeout } from '../setup/docker';
 import { createScandClient } from './scandClient';
 import { ensureScannerKey, readScannerKey } from './scannerKey';
-import { SCANNER_UID, scannerContainerSpec } from './scannerSpec';
+import { MAIL_CORE_NETWORK } from '../mail/engines/postfixDovecot/layout';
+import { clamdTcpNetsOf, normalizeClamdTcpNets, SCANNER_UID, scannerContainerSpec } from './scannerSpec';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Infra component 'scanner' (module scanners, docs/P3-PLAN.md §4.2, §9.1):
@@ -52,9 +54,28 @@ async function ensureStateDir(log: Log): Promise<void> {
   }
 }
 
+/**
+ * Subnets of oblimint-mail-core while the postfix-dovecot engine uses ClamAV
+ * (active engine postfix-dovecot ∧ settings mail.clamav ∧ network present),
+ * else [] — no clamd TCP socket (R-CLAMD-TCP). Never throws: fails closed.
+ */
+export async function clamdTcpNetsFor(docker: Docker): Promise<string[]> {
+  try {
+    const { activeMailEngine } = await import('../mail/registry');
+    if ((await activeMailEngine()) !== 'postfix-dovecot') return [];
+    if (!(await platformSettings.section('mail')).clamav) return [];
+    const net = await inspectNetwork(docker, MAIL_CORE_NETWORK);
+    return normalizeClamdTcpNets(((net?.IPAM?.Config ?? []) as Array<{ Subnet?: string }>).map((c) => c.Subnet ?? ''));
+  } catch (err) {
+    logger.warn({ err: errText(err) }, 'scanner: mail engine state unreadable, clamd TCP not opened');
+    return [];
+  }
+}
+
 /** Desired spec from the settings (key generated on first use). */
-export async function desiredScannerSpec(settings: ScannerSettings): Promise<Docker.ContainerCreateOptions> {
+export async function desiredScannerSpec(settings: ScannerSettings, clamdTcpNets: readonly string[] = []): Promise<Docker.ContainerCreateOptions> {
   return scannerContainerSpec({
+    clamdTcpNets,
     key: await ensureScannerKey(),
     clamav: settings.clamav,
     yara: settings.yara,
@@ -64,18 +85,39 @@ export async function desiredScannerSpec(settings: ScannerSettings): Promise<Doc
   });
 }
 
+/**
+ * With clamd TCP (P4), oblimint-mail-core is attached BEFORE the container
+ * starts: scand binds clamd's TCP socket to that interface's address only,
+ * resolved at start.
+ */
 async function ensureContainer(docker: Docker, spec: Docker.ContainerCreateOptions, log: Log): Promise<void> {
   const name = spec.name!;
+  const extra = clamdTcpNetsOf(spec.Env).length > 0 ? [MAIL_CORE_NETWORK] : [];
+  const fresh = async () => {
+    await recreateContainer(docker, spec, extra.length === 0);
+    if (extra.length === 0) return;
+    for (const net of extra) if (await connectNetwork(docker, net, name, [name])) log(`${name} attached to ${net}`);
+    await startContainer(docker, name);
+  };
   await ensureImage(docker, spec.Image!, log);
   const info = await inspectContainer(docker, name);
   if (!info) {
     log(`Creating ${name} (${spec.Image})`);
-    await recreateContainer(docker, spec, true);
+    await fresh();
     return;
   }
   if (labelHash(info.Config?.Labels) !== specHashLabel(spec)) {
     log(`${name}: specification changed, recreating`);
-    await recreateContainer(docker, spec, true);
+    await fresh();
+    return;
+  }
+  const attached = info.NetworkSettings?.Networks ?? {};
+  const missing = extra.filter((n) => !attached[n]);
+  if (missing.length > 0) {
+    for (const net of missing) if (await connectNetwork(docker, net, name, [name])) log(`${name} attached to ${net}`);
+    // clamd resolves its TCP address at start
+    log(`Restarting ${name} (clamd TCP address)`);
+    await restartContainer(docker, name, 20);
     return;
   }
   if (!info.State?.Running) {
@@ -125,7 +167,7 @@ export const scannerInfraComponent: InfraComponentProvider = {
       if (!settings.clamav && !settings.yara) log('Note: both ClamAV and YARA are off: scand only answers the status');
       await ensureStateDir(log);
       const docker = await engineFor(await localNodeId());
-      const spec = await desiredScannerSpec(settings);
+      const spec = await desiredScannerSpec(settings, await clamdTcpNetsFor(docker));
       await ensureContainer(docker, spec, log);
       // scand answers within seconds; clamd needs up to a minute to load the signatures (reported, not awaited).
       const client = await scandClientOrNull();

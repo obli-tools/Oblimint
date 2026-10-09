@@ -327,7 +327,7 @@ test('vhost kind / ids are validated', () => {
   assert.throws(() => renderVhost(vhost({ accountId: -1 })), EdgeConfigError);
   assert.throws(() => renderVhost(vhost({ tenantId: 1.5 })), EdgeConfigError);
   assert.throws(() => renderVhost(vhost({ locations: [{ pathPrefix: '/', upstream: 'http://a:1', kind: 'site', siteId: 0 }] })), EdgeConfigError);
-  assert.throws(() => renderVhost(vhost({ locations: [{ pathPrefix: '/', upstream: 'http://a:1', kind: 'mail' as never, siteId: 1 }] })), EdgeConfigError);
+  assert.throws(() => renderVhost(vhost({ locations: [{ pathPrefix: '/', upstream: 'http://a:1', kind: 'smtp' as never, siteId: 1 }] })), EdgeConfigError);
   assert.doesNotThrow(() => renderVhost(vhost({ id: 'dbadmin', kind: 'dbadmin', accountId: null, tenantId: null,
     locations: [{ pathPrefix: '/phpmyadmin/', upstream: 'http://oblimint-phpmyadmin:8080', kind: 'dbadmin', siteId: null }] })));
 });

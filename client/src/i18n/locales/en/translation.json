@@ -412,6 +412,8 @@
       "useObligateHint": "Register Oblimint in Obligate (application type oblimint) and paste its URL and API key. SSO stays disabled until you enable it in Settings."
     },
     "mail": {
+      "notSupported": "Not yet supported",
+      "notSupportedHint": "This engine is not supported by this version of Oblimint yet.",
       "dms": {
         "cons": "Driven through files and CLI (no API); big monolithic container.",
         "pros": "Postfix/Dovecot/Rspamd already assembled and proven in one widely used container."

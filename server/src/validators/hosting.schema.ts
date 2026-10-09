@@ -56,6 +56,13 @@ export const planLimitsSchema = z.object({
   maxCronJobs: z.number().int().min(0).max(1000).nullable().default(DEFAULT_PLAN_LIMITS.maxCronJobs),
   cronMinIntervalMin: z.number().int().min(1).max(1440).default(DEFAULT_PLAN_LIMITS.cronMinIntervalMin),
   overQuotaAction: z.enum(['warn', 'block-uploads', 'suspend']).default(DEFAULT_PLAN_LIMITS.overQuotaAction),
+  // P4 (docs/P4-PLAN.md §Plans): same rule (optional on input, defaults filled).
+  mailQuotaMb: countLimit.default(DEFAULT_PLAN_LIMITS.mailQuotaMb),
+  mailboxQuotaMaxMb: countLimit.default(DEFAULT_PLAN_LIMITS.mailboxQuotaMaxMb),
+  maxMailAliases: z.number().int().min(0).max(100000).nullable().default(DEFAULT_PLAN_LIMITS.maxMailAliases),
+  mailMaxMessageSizeMb: z.number().int().min(1).max(100).default(DEFAULT_PLAN_LIMITS.mailMaxMessageSizeMb),
+  mailOutboundPerHour: z.number().int().min(0).max(1000000).nullable().default(DEFAULT_PLAN_LIMITS.mailOutboundPerHour),
+  mailSiteOutboundPerHour: z.number().int().min(0).max(1000000).nullable().default(DEFAULT_PLAN_LIMITS.mailSiteOutboundPerHour),
 }).strict();
 
 export const planInputSchema = z.object({

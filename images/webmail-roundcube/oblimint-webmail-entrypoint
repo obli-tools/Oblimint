@@ -1,0 +1,27 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# Oblimint — start of the shared Roundcube (USER www-data, read-only root).
+# Checks the panel-provided environment (values never printed), creates the
+# SQLite schema on first start or upgrades it after an image update, then
+# runs Apache in the foreground.
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+umask 027
+
+for v in OBLIMINT_IMAP_HOST OBLIMINT_IMAP_PORT OBLIMINT_DES_KEY OBLIMINT_WEBMAIL_KEY OBLIMINT_PANEL_URL; do
+	if ! printenv "$v" >/dev/null 2>&1; then
+		echo "oblimint-webmail: $v is not set" >&2
+		exit 64
+	fi
+done
+
+mkdir -p /tmp/apache2/lock /tmp/roundcube
+
+cd /opt/roundcube
+if [ ! -s /var/roundcube/db/roundcube.db ]; then
+	php bin/initdb.sh --dir=/opt/roundcube/SQL
+else
+	php bin/updatedb.sh --dir=/opt/roundcube/SQL --package=roundcube
+fi
+
+exec apache2-foreground "$@"

@@ -7,6 +7,7 @@ import { db } from '../../db';
 import { logger } from '../../utils/logger';
 import { platformSettings } from '../platformSettings';
 import { iso, json } from '../hosting/rows';
+import { applyZoneContributors } from './contributors';
 import {
   applyOverrides, autoRecords, inZone, platformAutoRecords, recordConflict, RecordValidationError, sameRecordSet, substitute,
   validateRecord, type AutoContext, type AutoDomain, type GeneratedRecord, type PlatformHosts, type TemplateVars,
@@ -217,11 +218,19 @@ export function autoContext(ctx: DnsContext, zone: ZoneRow): AutoContext {
   return { zone: zone.name, ttl: zone.default_ttl, ipv4: ctx.ipv4, ipv6: ctx.ipv6, panelHostname: ctx.panelHostname, mailEngine: ctx.mailEngine };
 }
 
-/** Desired auto records of the zone (before overrides). */
+/**
+ * Desired auto records of the zone (before overrides). P4 (architect): the
+ * records of an account zone go through the registered contributors
+ * (dns/contributors.ts — mail records of module mail-dns-tls).
+ */
 export async function generatedAuto(zone: ZoneRow, ctx: DnsContext, conn: Db = db): Promise<GeneratedRecord[]> {
   const actx = autoContext(ctx, zone);
   if (zone.account_id === null) return platformAutoRecords(actx, ctx.hosts);
-  return autoRecords(actx, await domainsOfZone(zone, conn));
+  const base = autoRecords(actx, await domainsOfZone(zone, conn));
+  return applyZoneContributors({
+    id: zone.id, name: zone.name, tenantId: zone.tenant_id, accountId: zone.account_id, domainId: zone.domain_id,
+    defaultTtl: zone.default_ttl, kind: zone.kind,
+  }, base, conn);
 }
 
 /**

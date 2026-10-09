@@ -8,6 +8,7 @@ import {
 import type {
   HostCheck, HostCheckStatus, MailEngine, SetupApplyRequest, SetupProgress, SetupStep, SetupStepStatus,
 } from '@oblimint/shared';
+import { isMailEngineSupported } from '@oblimint/shared';
 import { setupApi, getSetupToken, setSetupToken } from '@/api/setup.api';
 import { apiErrorMessage } from '@/api/client';
 import { Logo } from '@/components/common/Logo';
@@ -538,6 +539,8 @@ function SetupForm({ onApplied, onBack, onAuthLost }: { onApplied: () => void; o
           <div role="radiogroup" aria-label={t('setup.form.sectionMail') || 'Mail engine'} className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {MAIL_ENGINES.map((m) => {
               const selected = mailEngine === m.id;
+              // P4: docker-mailserver / maddy are driver skeletons (shared MAIL_ENGINES_SUPPORTED).
+              const supported = isMailEngineSupported(m.id);
               const name = m.id === 'external' ? (t('setup.mail.external.name') || 'None (external)') : m.name;
               return (
                 <button
@@ -545,12 +548,17 @@ function SetupForm({ onApplied, onBack, onAuthLost }: { onApplied: () => void; o
                   type="button"
                   role="radio"
                   aria-checked={selected}
-                  onClick={() => setMailEngine(m.id)}
+                  aria-disabled={!supported}
+                  disabled={!supported}
+                  title={supported ? undefined : (t('setup.mail.notSupportedHint') || 'This engine is not supported by this version of Oblimint yet.')}
+                  onClick={() => { if (supported) setMailEngine(m.id); }}
                   className={cn(
                     'text-left rounded-xl border-2 p-4 transition-all',
-                    selected
-                      ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_rgb(var(--c-accent)/0.2)]'
-                      : 'border-transparent bg-bg-primary/60 hover:border-accent/30 hover:bg-bg-hover',
+                    !supported
+                      ? 'border-transparent bg-bg-primary/40 opacity-50 cursor-not-allowed'
+                      : selected
+                        ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_rgb(var(--c-accent)/0.2)]'
+                        : 'border-transparent bg-bg-primary/60 hover:border-accent/30 hover:bg-bg-hover',
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -559,7 +567,9 @@ function SetupForm({ onApplied, onBack, onAuthLost }: { onApplied: () => void; o
                       {name}
                     </span>
                     <span className="text-[10px] font-mono uppercase tracking-wider text-text-muted">
-                      {t('setup.mail.ram', { ram: m.ram, defaultValue: 'RAM {{ram}}' })}
+                      {supported
+                        ? t('setup.mail.ram', { ram: m.ram, defaultValue: 'RAM {{ram}}' })
+                        : (t('setup.mail.notSupported') || 'Not yet supported')}
                     </span>
                   </div>
                   <p className="mt-2 text-xs text-text-secondary">

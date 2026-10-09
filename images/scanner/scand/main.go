@@ -22,6 +22,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -77,6 +78,14 @@ func main() {
 	}
 
 	if cfg.ClamAV {
+		if cfg.ClamdTCP {
+			cfg.ClamdTCPAddr = cfg.ResolveClamdTCPAddr(30*time.Second, net.InterfaceAddrs)
+			if cfg.ClamdTCPAddr == "" {
+				log.Error("clamd TCP requested but the container has no address on the mail back-end network: TCP socket not opened")
+			} else {
+				log.Info("clamd TCP socket on the mail back-end network", "addr", cfg.ClamdTCPAddr)
+			}
+		}
 		clamdConf, freshConf, err := cfg.WriteConfigs()
 		if err != nil {
 			log.Error("cannot render the ClamAV configuration", "err", err)

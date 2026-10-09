@@ -15,7 +15,9 @@
       "databases_manage": "Manage databases",
       "databases_manage_hint": "Create database instances, databases and users, open phpMyAdmin / Adminer.",
       "dns_manage": "Manage DNS zones",
-      "dns_manage_hint": "Edit the DNS records of the account zones."
+      "dns_manage_hint": "Edit the DNS records of the account zones.",
+      "mail_manage": "Manage mail",
+      "mail_manage_hint": "Create mail domains, mailboxes, aliases and forwards, manage DKIM and the site relay, open the webmail."
     },
     "changePlan": "Change plan",
     "changePlanFailed": "Failed to change the plan",

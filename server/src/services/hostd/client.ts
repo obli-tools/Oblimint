@@ -94,6 +94,19 @@ export interface HostdFirewallGlobal {
   egressAllow: string[];
 }
 
+/**
+ * P4 — bans on the SHARED mail ports (docs/P4-PLAN.md §8). hostd renders them
+ * as an nftables set (timeouts) in table inet oblimint: drops only, before
+ * Docker, on the forward path of the published mail ports (ct original
+ * proto-dst) and on input for the same ports. Replaces the whole state.
+ */
+export interface HostdMailFirewallState {
+  /** Host ports of the mail service (25, 465, 587, 143, 993, 110, 995, 4190). Empty = no rule. */
+  ports: number[];
+  /** Banned addresses / prefixes (IPv4 address, IPv6 address or /64), with expiry. */
+  bans: Array<{ cidr: string; expiresAt: string }>;
+}
+
 export interface HostdFirewallStatus {
   backend: 'nftables' | 'none';
   accounts: number;
@@ -103,6 +116,8 @@ export interface HostdFirewallStatus {
   /** Accounts hostd holds a firewall / gateway state for (hostd ≥ 0.3.0): the panel drops those of deleted accounts. */
   accountIds?: number[];
   gatewayAccountIds?: number[];
+  /** P4: bans currently applied on the mail ports (hostd ≥ 0.5.0). */
+  mailBans?: number;
 }
 
 /** Port gateway of an account's file server (socket activation + PROXY protocol v2). */
@@ -336,6 +351,10 @@ export interface HostdClient {
   /** Long poll: returns as soon as events exist, or [] after waitSec (≤ 55). */
   gatewayEvents(waitSec: number): Promise<HostdGatewayEvent[]>;
 
+  // ── P4 — bans on the shared mail ports (module outbound-security implements the Go side) ──
+  /** PUT /v1/firewall/mail — replaces the mail ports + bans state (idempotent). */
+  setMailFirewall(state: HostdMailFirewallState): Promise<void>;
+
   // ── P3 — windows, workspaces, staging reflection, typed watcher, quarantine (module overlay-hostd) ──
   /** Idempotent: mounts (or switches the mode of) the window overlay over releases/<releaseNumber>. 409 conflict: another window / release mounted. */
   ensureWindow(spec: HostdWindowSpec): Promise<HostdWindowStatus>;
@@ -561,6 +580,10 @@ export function createHostdClient(opts: HostdClientOptions): HostdClient {
 
     firewallStatus: () => call<HostdFirewallStatus>('GET', '/v1/firewall'),
 
+    setMailFirewall: async (state) => {
+      await call('PUT', '/v1/firewall/mail', state);
+    },
+
     setGateway: async (spec) => {
       await call('PUT', `/v1/gateway/accounts/${id(spec.accountId, 'account id')}`, spec);
     },
@@ -736,6 +759,7 @@ export function hostdFor(nodeId: number): HostdClient {
     removeFirewall: async (accountId) => (await target()).removeFirewall(accountId),
     setFirewallGlobal: async (global) => (await target()).setFirewallGlobal(global),
     firewallStatus: async () => (await target()).firewallStatus(),
+    setMailFirewall: async (state) => (await target()).setMailFirewall(state),
     setGateway: async (spec) => (await target()).setGateway(spec),
     removeGateway: async (accountId) => (await target()).removeGateway(accountId),
     gatewayEvents: async (waitSec) => (await target()).gatewayEvents(waitSec),

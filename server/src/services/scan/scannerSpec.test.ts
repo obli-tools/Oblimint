@@ -4,7 +4,7 @@ import { TENANT_SECCOMP_OPT } from '../docker/seccomp';
 import { LOG_CONFIG, NO_NEW_PRIVILEGES, specHash, TENANT_OOM_SCORE_ADJ } from '../docker/specs';
 import { LABELS, PANEL_NETWORK, SCANNER_CONTAINER, scannerImage } from '../hosting/naming';
 import {
-  SCANNER_MEMORY_CLAMAV_BYTES, SCANNER_MEMORY_LIGHT_BYTES, SCANNER_UID, scannerContainerSpec, type ScannerContainerInput,
+  clamdTcpNetsOf, SCANNER_MEMORY_CLAMAV_BYTES, SCANNER_MEMORY_LIGHT_BYTES, SCANNER_UID, scannerContainerSpec, type ScannerContainerInput,
 } from './scannerSpec';
 
 // Pure spec of oblimint-scanner (docs/P3-PLAN.md §4.2, §9.1, M10).
@@ -64,10 +64,22 @@ test('scanner spec: environment from the settings; memory without ClamAV; drift 
   assert.deepEqual(spec.Env, [
     'SCAND_KEY=secret-key-abc', 'SCAND_CLAMAV=1', 'SCAND_YARA=1', 'FRESHCLAM_CHECKS=12', 'SCAND_MAX_FILE_MB=32', 'SCAND_CONCURRENCY=4',
   ]);
+  assert.ok(!spec.Env!.some((e) => e.startsWith('OBLIMINT_CLAMD_TCP')), 'P3 ClamAV alone never opens clamd TCP (R-CLAMD-TCP)');
+  // postfix-dovecot ∧ mail.clamav: TCP bound inside the mail-core subnets only
+  const mail = scannerContainerSpec({ ...base, clamdTcpNets: ['fd00:30::/64', '172.30.0.0/16', '0.0.0.0/0', 'junk', '172.30.0.0/16'] });
+  assert.deepEqual(mail.Env!.slice(-2), ['OBLIMINT_CLAMD_TCP=1', 'OBLIMINT_CLAMD_TCP_NETS=172.30.0.0/16,fd00:30::/64']);
+  assert.deepEqual(clamdTcpNetsOf(mail.Env), ['172.30.0.0/16', 'fd00:30::/64']);
+  assert.deepEqual(clamdTcpNetsOf(spec.Env), []);
+  assert.notEqual(mail.Labels?.[LABELS.specHash], spec.Labels?.[LABELS.specHash], 'TCP on / off recreates the container');
+  const onlyBad = scannerContainerSpec({ ...base, clamdTcpNets: ['0.0.0.0/0', '::/0'] });
+  assert.ok(!onlyBad.Env!.some((e) => e.startsWith('OBLIMINT_CLAMD_TCP')), 'a default route is never a clamd subnet');
+  const noClam = scannerContainerSpec({ ...base, clamav: false, clamdTcpNets: ['172.30.0.0/16'] });
+  assert.ok(!noClam.Env!.some((e) => e.startsWith('OBLIMINT_CLAMD_TCP')));
   assert.match(spec.HostConfig!.Tmpfs!['/tmp'], /size=160m/);
   const light = scannerContainerSpec({ ...base, clamav: false, signatureChecksPerDay: 99, maxFileSizeMb: 0 });
   assert.equal(light.HostConfig!.Memory, SCANNER_MEMORY_LIGHT_BYTES);
   assert.ok(light.Env!.includes('SCAND_CLAMAV=0'));
+  assert.ok(!light.Env!.some((e) => e.startsWith('OBLIMINT_CLAMD_TCP')), 'no clamd, no TCP socket (P4)');
   assert.ok(light.Env!.includes('FRESHCLAM_CHECKS=24'), 'clamped to 24');
   assert.ok(light.Env!.includes('SCAND_MAX_FILE_MB=1'), 'clamped to ≥ 1');
   const h = (s: typeof spec) => s.Labels?.[LABELS.specHash];

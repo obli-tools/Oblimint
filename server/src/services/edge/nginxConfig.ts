@@ -27,7 +27,8 @@ import { normalizePathPrefix } from '@oblimint/shared';
 //     and keeps the values of the location that redirected to it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type EdgeLocationKind = 'site' | 'secondary' | 'preview' | 'panel' | 'dbadmin' | 'probe';
+/** P4: + mail (autoconfig / autodiscover / MTA-STS policy → panel), webmail (→ webmail container) — edge/contributors.ts. */
+export type EdgeLocationKind = 'site' | 'secondary' | 'preview' | 'panel' | 'dbadmin' | 'probe' | 'mail' | 'webmail';
 
 /**
  * What a vhost serves:
@@ -37,13 +38,13 @@ export type EdgeLocationKind = 'site' | 'secondary' | 'preview' | 'panel' | 'dba
  *   preview      blue/green preview on the preview domain;
  *   panel / dbadmin / probe  platform host names.
  */
-export type EdgeVhostKind = 'site' | 'placeholder' | 'preview' | 'panel' | 'dbadmin' | 'probe';
+export type EdgeVhostKind = 'site' | 'placeholder' | 'preview' | 'panel' | 'dbadmin' | 'probe' | 'mail' | 'webmail';
 
 /** $oblimint_kind of the access log (plan §6.8). */
 export type EdgeLogKind = EdgeLocationKind | 'placeholder' | 'suspended' | 'redirect' | 'default';
 
 /** 'suspended': the suspension page of a suspended account (never billed as traffic). */
-export const EDGE_LOG_KINDS: readonly EdgeLogKind[] = ['site', 'secondary', 'preview', 'panel', 'placeholder', 'suspended', 'dbadmin', 'probe', 'redirect', 'default'];
+export const EDGE_LOG_KINDS: readonly EdgeLogKind[] = ['site', 'secondary', 'preview', 'panel', 'placeholder', 'suspended', 'dbadmin', 'probe', 'redirect', 'default', 'mail', 'webmail'];
 
 /** Variables of the access log set by every generated location. */
 export const EDGE_LOG_VARIABLES = ['$oblimint_kind', '$oblimint_site', '$oblimint_account', '$oblimint_tenant'] as const;
@@ -122,8 +123,8 @@ const EXACT_PATH_RE = /^(?:\/[A-Za-z0-9._-]{1,64}){1,8}$/;
 /** Characters allowed in a header value once sanitized (rendered inside double quotes). */
 const HEADER_VALUE_RE = /^[\x20-\x7e]{0,512}$/;
 
-const VHOST_KINDS: readonly EdgeVhostKind[] = ['site', 'placeholder', 'preview', 'panel', 'dbadmin', 'probe'];
-const LOCATION_KINDS: readonly EdgeLocationKind[] = ['site', 'secondary', 'preview', 'panel', 'dbadmin', 'probe'];
+const VHOST_KINDS: readonly EdgeVhostKind[] = ['site', 'placeholder', 'preview', 'panel', 'dbadmin', 'probe', 'mail', 'webmail'];
+const LOCATION_KINDS: readonly EdgeLocationKind[] = ['site', 'secondary', 'preview', 'panel', 'dbadmin', 'probe', 'mail', 'webmail'];
 
 export class EdgeConfigError extends Error {
   constructor(public vhostId: string, message: string) {

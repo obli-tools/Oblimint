@@ -16,10 +16,12 @@ export type HostingNeed =
   | 'read' | 'plans.manage' | 'accounts.manage' | 'sites.manage' | 'domains.manage' | 'files.manage'
   | 'releases.publish' | 'releases.approve'
   // P2: cron → sites.manage, allow-list → files.manage, logs / usage → read.
-  | 'databases.manage' | 'dns.manage';
+  | 'databases.manage' | 'dns.manage'
+  // P4: mail (domains, mailboxes, aliases, DKIM, relay, webmail SSO).
+  | 'mail.manage';
 
 const STAFF_CAPS: Record<HostingNeed, string[]> = {
-  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage'],
+  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage', 'mail.manage'],
   'plans.manage': ['plans.manage'],
   'accounts.manage': ['accounts.manage'],
   'sites.manage': ['sites.manage'],
@@ -29,6 +31,7 @@ const STAFF_CAPS: Record<HostingNeed, string[]> = {
   'releases.approve': ['sites.manage'],
   'databases.manage': ['databases.manage'],
   'dns.manage': ['dns.manage'],
+  'mail.manage': ['mail.manage'],
 };
 
 const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
@@ -42,6 +45,7 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
   'releases.approve': 'releases.approve',
   'databases.manage': 'databases.manage',
   'dns.manage': 'dns.manage',
+  'mail.manage': 'mail.manage',
 };
 
 /** Pure check (exported for tests / non-hook callers). accountId omitted = "on some account". */

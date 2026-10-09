@@ -41,6 +41,8 @@ import { config, dataDir } from '../../config';
 //     snapshots/<file>.sql.gz                      root:root 0700  database snapshots (panel)
 //     quarantine/<entryId>/{content,meta.json}     root:root 0700  quarantined files (hostd, kept as evidence)
 //
+//   <root>/mail/                                    (P4, docs/P4-PLAN.md §4: panel + mail containers only, never a tenant)
+//     data/<engine>/  config/<engine>/  dkim/  certs/<name>/  redis/  relay/  webmail/<kind>/
 //   <root>/edge/conf.d/  edge/certs/  edge/acme/   (edge module)
 //   <root>/dns/                                     (P2: PowerDNS state, panel only)
 //   <root>/logs/<accountId>/<siteId>/              (P2: persisted access logs, panel only)
@@ -137,6 +139,27 @@ export function hostingLayout(root: string) {
     scannerDir: () => joinPosix(r, 'scanner'),
     /** hostd quarantine store (root 0700, never mounted anywhere). */
     quarantine: (accountId: number) => joinPosix(account(accountId), 'quarantine'),
+    // ── P4 (docs/P4-PLAN.md §4) — written by the panel, mounted ONLY in the mail
+    // containers (never in a tenant container, never in the edge).
+    /** Root of everything mail (root:root 0711). */
+    mailRoot: () => joinPosix(r, 'mail'),
+    /** Engine data: postfix-dovecot → vmail/<domain>/<local>/ (Maildir, uid 5000) + spool; stalwart → its store. */
+    mailEngineData: (engine: 'postfix-dovecot' | 'stalwart') => joinPosix(r, 'mail', 'data', engine),
+    /** Configuration generated from the panel DB for the engine (maps, passwd-file, sieve, rspamd maps…). */
+    mailEngineConfig: (engine: 'postfix-dovecot' | 'stalwart') => joinPosix(r, 'mail', 'config', engine),
+    /** DKIM private keys as files (engines reading keys from disk), 0600 owner = engine uid. */
+    mailDkim: () => joinPosix(r, 'mail', 'dkim'),
+    /** Certificates copied for the mail service: <primary name>/{fullchain,privkey}.pem. */
+    mailCerts: () => joinPosix(r, 'mail', 'certs'),
+    mailCertDir: (primaryName: string) => joinPosix(r, 'mail', 'certs', primaryName),
+    /** Redis of rspamd (postfix-dovecot). */
+    mailRedis: () => joinPosix(r, 'mail', 'redis'),
+    /** Site relay: credentials (hashes), sender maps, limits, policy state. */
+    mailRelay: () => joinPosix(r, 'mail', 'relay'),
+    /** Webmail state (Roundcube SQLite DB / SnappyMail data). */
+    webmailData: (kind: 'roundcube' | 'snappymail') => joinPosix(r, 'mail', 'webmail', kind),
+    /** msmtp configuration of a site (written by the outbound module), inside the RO runtime dir (/etc/oblimint/site/msmtprc). */
+    siteMsmtprc: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'runtime', 'msmtprc'),
   };
 }
 

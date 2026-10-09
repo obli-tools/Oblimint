@@ -321,7 +321,9 @@ type renderInput struct {
 	// account network — is dropped, so a site can never talk to SFTPGo
 	// without going through the gateway (allow-list, bans, PROXY header).
 	ProxiedTargets []netip.AddrPort
-	Now            time.Time
+	// Mail: bans on the shared mail ports (P4, mail.go), nil = none.
+	Mail *mailRules
+	Now  time.Time
 }
 
 // liveSet returns the live entries of one family, sorted, without the
@@ -549,6 +551,8 @@ func renderRuleset(in renderInput) string {
 		}
 	}
 
+	renderMailSets(&w, in.Mail, in.Now)
+
 	egress := egressOff
 	var subnets4, subnets6, allow4, allow6 []netip.Prefix
 	if in.Global != nil {
@@ -639,6 +643,7 @@ func renderRuleset(in renderInput) string {
 	// ── input: gateway ports + egress to the host itself ──
 	w.line(1, "chain input {")
 	w.line(2, "type filter hook input priority %d; policy accept;", nftPriority)
+	renderMailDrops(&w, in.Mail, "input")
 	for _, a := range accounts {
 		// Gateway ports, and the published ports too: Docker relays some
 		// published flows through docker-proxy (IPv6, userland proxy), which
@@ -662,6 +667,7 @@ func renderRuleset(in renderInput) string {
 	// ── forward: published ports + egress of the account networks ──
 	w.line(1, "chain forward {")
 	w.line(2, "type filter hook forward priority %d; policy accept;", nftPriority)
+	renderMailDrops(&w, in.Mail, "forward")
 	for _, t := range uniqueAddrPorts(in.ProxiedTargets) {
 		_, m := family(t.Addr().Is6())
 		w.line(2, "%s daddr %s tcp dport %d ct direction original drop", m, t.Addr(), t.Port())

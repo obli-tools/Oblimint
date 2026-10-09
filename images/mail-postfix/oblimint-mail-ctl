@@ -1,0 +1,263 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-mail-ctl — control script of meejay/oblimint-mail-postfix, run by
+# the panel through `docker exec` (server/src/services/mail/engines/
+# postfixDovecot/driver.ts) and by the entrypoint. Every argument is
+# validated here again; nothing is ever evaluated.
+#
+#   oblimint-mail-ctl compile        compile + check the generated configuration
+#                                    into a new generation, switch `live` to it
+#                                    (entrypoint, before the daemons start)
+#   oblimint-mail-ctl reload         same, then postfix reload + doveadm reload;
+#                                    a failed check keeps the running generation
+#   oblimint-mail-ctl ping           exit 0 when Postfix and Dovecot run (healthcheck)
+#   oblimint-mail-ctl version        "postfix X / dovecot Y / pigeonhole Z"
+#   oblimint-mail-ctl usage [<nonce>]
+#                                    doveadm -f json quota get -A → $STATE/ctl/usage[-<nonce>].json
+#   oblimint-mail-ctl queue <n> [<nonce>]
+#                                    postqueue -j | head -n <n>   → $STATE/ctl/queue[-<nonce>].jsonl
+#                                    usage / queue run concurrently (outside the
+#                                    panel lock): each run writes a private temp
+#                                    file renamed into place. With a nonce
+#                                    ([A-Za-z0-9], 8-64) the result file is the
+#                                    caller's own (read, then removed by it;
+#                                    left-overs older than 10 min are pruned).
+#   oblimint-mail-ctl retry <id>     postqueue -i <id>   (exit 3: unknown id)
+#   oblimint-mail-ctl delete <id>    postsuper -d <id>   (exit 3: unknown id)
+#
+# Generated configuration (read-only bind of mail/config/postfix-dovecot):
+#   /etc/oblimint/mail/{postfix,dovecot,sieve}/…
+# Compiled generations (tmpfs): /run/oblimint-mail/gen-<n>/, `live` → current.
+# /etc/postfix → /run/oblimint-mail/live/postfix (image symlink); Postfix meta
+# files live in /usr/share/oblimint-mail/postfix-meta (meta_directory).
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+SRC=/etc/oblimint/mail
+RUN=/run/oblimint-mail
+LIVE="$RUN/live"
+STATE=/var/lib/oblimint-mail
+OUT="$STATE/ctl"
+
+log() {
+	printf '%s oblimint-mail-ctl: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+die() {
+	log "$*"
+	exit 1
+}
+
+valid_nonce() {
+	case "$1" in
+		'' | *[!A-Za-z0-9]*) return 1 ;;
+	esac
+	[ "${#1}" -ge 8 ] && [ "${#1}" -le 64 ]
+}
+
+# ctl_output <base> <ext> [<nonce>]: prints the result path of this run.
+ctl_output() {
+	if [ -n "${3:-}" ]; then
+		valid_nonce "$3" || die 'invalid nonce'
+		printf '%s/%s-%s.%s' "$OUT" "$1" "$3" "$2"
+	else
+		printf '%s/%s.%s' "$OUT" "$1" "$2"
+	fi
+}
+
+prepare_out() {
+	mkdir -p "$OUT"
+	chmod 0700 "$OUT"
+	# per-call results a caller never removed, temp files of killed runs
+	find "$OUT" -maxdepth 1 -type f \( -name 'usage-*.json' -o -name 'queue-*.jsonl' -o -name '.tmp.*' \) -mmin +10 -exec rm -f {} + 2>/dev/null || true
+}
+
+valid_queue_id() {
+	case "$1" in
+		'' | *[!A-F0-9]*) return 1 ;;
+	esac
+	[ "${#1}" -ge 6 ] && [ "${#1}" -le 20 ]
+}
+
+postfix_running() {
+	postfix status >/dev/null 2>&1
+}
+
+dovecot_running() {
+	[ -s /run/dovecot/master.pid ] && kill -0 "$(cat /run/dovecot/master.pid)" 2>/dev/null
+}
+
+# Builds a new generation from $SRC, prints its path. Never touches `live`.
+build_generation() {
+	[ -s "$SRC/postfix/main.cf" ] || die "no generated configuration in $SRC (the panel writes it before starting the container)"
+	[ -s "$SRC/postfix/master.cf" ] || die "$SRC/postfix/master.cf is missing"
+	[ -s "$SRC/dovecot/dovecot.conf" ] || die "$SRC/dovecot/dovecot.conf is missing"
+	mkdir -p "$RUN"
+	chmod 0755 "$RUN"
+	n=$(($(cat "$RUN/.seq" 2>/dev/null || echo 0) + 1))
+	echo "$n" >"$RUN/.seq"
+	gen="$RUN/gen-$n"
+	rm -rf "$gen"
+	mkdir -m 0755 "$gen"
+	cp -R "$SRC/postfix" "$SRC/dovecot" "$gen/" || return 1
+	if [ -d "$SRC/sieve" ]; then cp -R "$SRC/sieve" "$gen/" || return 1; else mkdir "$gen/sieve"; fi
+	# the bind mount is root-owned already; never trust what came through it
+	find "$gen" -type l -exec rm -f {} + 2>/dev/null || true
+	chown -R root:root "$gen"
+	find "$gen" -type d -exec chmod 0755 {} +
+	find "$gen" -type f -exec chmod 0644 {} +
+
+	# Postfix lookup tables (lmdb), compiled with THIS generation's main.cf
+	for m in "$gen"/postfix/maps/*; do
+		[ -f "$m" ] || continue
+		postmap -c "$gen/postfix" "lmdb:$m" || { log "postmap failed: ${m#"$gen"/}"; return 1; }
+	done
+	# SNI: values are file names, base64-loaded by postmap -F (keys inside ⇒ root only)
+	if [ -f "$gen/postfix/sni/tls_sni" ]; then
+		postmap -c "$gen/postfix" -F "lmdb:$gen/postfix/sni/tls_sni" || { log 'postmap -F failed: SNI table (missing certificate file?)'; return 1; }
+		chmod 0600 "$gen/postfix/sni/tls_sni" "$gen/postfix/sni/tls_sni.lmdb"
+	fi
+
+	# Dovecot credentials: readable by the auth process (user dovecot) only
+	for f in "$gen"/dovecot/passwd "$gen"/dovecot/users "$gen"/dovecot/apppasswords.*; do
+		[ -f "$f" ] || continue
+		chown root:dovecot "$f"
+		chmod 0640 "$f"
+	done
+
+	# Panel Sieve scripts (autoresponders), precompiled: the live tree is read-only for vmail.
+	# sievec reads THIS generation's configuration: the default one
+	# (/etc/dovecot/dovecot.conf) only includes `live`, which does not exist yet
+	# on a fresh /run tmpfs (container start / restart) and is the previous
+	# generation on a reload.
+	for s in "$gen"/sieve/*.sieve; do
+		[ -f "$s" ] || continue
+		sievec -c "$gen/dovecot/dovecot.conf" "$s" || { log "sievec failed: ${s#"$gen"/}"; return 1; }
+	done
+	find "$gen/sieve" -type f -exec chmod 0644 {} +
+
+	# Checks before anything switches (syntax, unknown parameters)
+	pc=$(postconf -c "$gen/postfix" -n 2>&1 >/dev/null) || { log "postconf: $pc"; return 1; }
+	if [ -n "$pc" ]; then
+		case "$pc" in
+			*warning:*unused\ parameter* | *warning:*undefined\ parameter* | *fatal*) log "postconf: $pc"; return 1 ;;
+		esac
+	fi
+	doveconf -c "$gen/dovecot/dovecot.conf" -n >/dev/null || { log 'doveconf refused the Dovecot configuration'; return 1; }
+	echo "$gen"
+}
+
+# Atomic switch: the new link is made under a private name and renamed over
+# `live` (rename(2)). `ln -sfn` unlinks then symlinks: a Postfix or Dovecot
+# process started in between would find /etc/postfix missing.
+# mv -T (GNU coreutils, checked at build) never descends into the old target.
+switch_live() {
+	tmp_link="$RUN/.live.$$"
+	rm -f "$tmp_link"
+	ln -s "$1" "$tmp_link" || { rm -f "$tmp_link"; die "cannot create the link to $1"; }
+	mv -Tf "$tmp_link" "$LIVE" || { rm -f "$tmp_link"; die "cannot switch live to $1"; }
+}
+
+current_generation() {
+	readlink "$LIVE" 2>/dev/null || true
+}
+
+prune_generations() {
+	keep_now=$(current_generation)
+	keep_prev=${1:-}
+	for g in "$RUN"/gen-*; do
+		[ -d "$g" ] || continue
+		[ "$g" = "$keep_now" ] && continue
+		[ "$g" = "$keep_prev" ] && continue
+		rm -rf "$g"
+	done
+}
+
+# compile [reload]
+compile() {
+	mode=$1
+	previous=$(current_generation)
+	gen=$(build_generation) || die 'the new configuration was refused: the running one is kept'
+	switch_live "$gen"
+	# postfix check on the switched tree (creates missing queue directories, checks ownership)
+	if ! out=$(postfix check 2>&1); then
+		if [ -n "$previous" ] && [ -d "$previous" ]; then switch_live "$previous"; fi
+		rm -rf "$gen"
+		die "postfix check refused the new configuration: $out"
+	fi
+	[ -n "$out" ] && log "postfix check: $out"
+	if [ "$mode" = reload ]; then
+		failed=''
+		if postfix_running; then postfix reload >/dev/null 2>&1 || failed='postfix reload failed'; fi
+		if [ -z "$failed" ] && dovecot_running; then doveadm reload || failed='doveadm reload failed'; fi
+		if [ -n "$failed" ]; then
+			# The panel restores its previous files when this fails: the live
+			# generation must match them, never stay on the refused one.
+			if [ -n "$previous" ] && [ -d "$previous" ]; then
+				switch_live "$previous"
+				if postfix_running; then postfix reload >/dev/null 2>&1 || log 'postfix reload on the previous generation failed'; fi
+				if dovecot_running; then doveadm reload || log 'doveadm reload on the previous generation failed'; fi
+				rm -rf "$gen"
+				die "$failed: the previous configuration generation is live again"
+			fi
+			die "$failed (no previous generation to go back to)"
+		fi
+	fi
+	prune_generations "$previous"
+	log "configuration generation ${gen##*/} is live"
+}
+
+cmd=${1:-}
+case "$cmd" in
+	compile)
+		compile start
+		;;
+	reload)
+		compile reload
+		;;
+	ping)
+		postfix_running || die 'postfix is not running'
+		dovecot_running || die 'dovecot is not running'
+		;;
+	version)
+		pf=$(postconf -h mail_version 2>/dev/null || echo '?')
+		dv=$(dovecot --version 2>/dev/null | head -n 1 || echo '?')
+		printf 'postfix %s / dovecot %s\n' "$pf" "$dv"
+		;;
+	usage)
+		dest=$(ctl_output usage json "${2:-}")
+		prepare_out
+		tmp=$(mktemp "$OUT/.tmp.usage.XXXXXX") || die 'cannot create a temporary file'
+		doveadm -f json quota get -A >"$tmp" || { rm -f "$tmp"; die 'doveadm quota get failed'; }
+		mv -f "$tmp" "$dest" || { rm -f "$tmp"; die 'cannot write the usage result'; }
+		;;
+	queue)
+		limit=${2:-100}
+		case "$limit" in '' | *[!0-9]*) die 'invalid limit' ;; esac
+		[ "$limit" -ge 1 ] && [ "$limit" -le 1000 ] || die 'invalid limit'
+		dest=$(ctl_output queue jsonl "${3:-}")
+		prepare_out
+		tmp=$(mktemp "$OUT/.tmp.queue.XXXXXX") || die 'cannot create a temporary file'
+		# postqueue -j exits non-zero on an empty queue with some versions: the output decides
+		{ postqueue -j 2>/dev/null || true; } | head -n "$limit" >"$tmp" || { rm -f "$tmp"; die 'cannot write the queue result'; }
+		mv -f "$tmp" "$dest" || { rm -f "$tmp"; die 'cannot write the queue result'; }
+		;;
+	retry)
+		id=${2:-}
+		valid_queue_id "$id" || die 'invalid queue id'
+		{ postqueue -j 2>/dev/null || true; } | grep -q "\"queue_id\": *\"$id\"" || exit 3
+		postqueue -i "$id"
+		;;
+	delete)
+		id=${2:-}
+		valid_queue_id "$id" || die 'invalid queue id'
+		out=$(postsuper -d "$id" 2>&1 || true)
+		case "$out" in
+			*'Deleted: 1 message'*) ;;
+			*) log "$out"; exit 3 ;;
+		esac
+		;;
+	*)
+		die "usage: $0 compile|reload|ping|version|usage [<nonce>]|queue <n> [<nonce>]|retry <id>|delete <id>"
+		;;
+esac

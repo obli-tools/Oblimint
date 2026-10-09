@@ -49,6 +49,13 @@ import adaptersRoutes from './adapters.routes';                // adapters
 import quarantineRoutes from './quarantine.routes';            // supervised-quarantine
 import supervisionRoutes from './supervision.routes';          // supervised-quarantine
 import scannerRoutes from './scanner.routes';                  // scanners (platform admin)
+// P4 — mail (docs/P4-PLAN.md §6). One router file per owning module.
+import mailRoutes from './mail.routes';                        // mail-core (/mail: overview, domains, mailboxes, aliases)
+import systemMailRoutes from './systemMail.routes';            // mail-core (platform admin: engine status / sync / change)
+import mailDnsRoutes from './mailDns.routes';                  // mail-dns-tls (/mail/domains/:id/dns|dns-settings|dkim)
+import mailOutboundRoutes, { siteMailRelayRoutes } from './mailOutbound.routes'; // outbound-security
+import systemMailSecurityRoutes from './systemMailSecurity.routes'; // outbound-security (platform admin: bans, relay test)
+import webmailRoutes from './webmail.routes';                  // webmail (/mail/mailboxes/:id/webmail-session)
 
 const router = Router();
 
@@ -63,6 +70,8 @@ router.use('/system/hosting-settings', requireAuth, requireRole('admin'), hostin
 router.use('/system/dns', requireAuth, requireRole('admin'), systemDnsRoutes);           // P2 dns
 router.use('/system/firewall', requireAuth, requireRole('admin'), systemFirewallRoutes); // P2 hostd-firewall
 router.use('/system/scanner', requireAuth, requireRole('admin'), scannerRoutes);         // P3 scanners
+router.use('/system/mail', requireAuth, requireRole('admin'), systemMailRoutes);         // P4 mail-core (no catch-all)
+router.use('/system/mail', requireAuth, requireRole('admin'), systemMailSecurityRoutes); // P4 outbound-security
 router.use('/site-api', siteApiRoutes);            // P3 windows: Bearer site token (no session)
 router.use('/system', systemRoutes);               // platform admin, no tenant required
 
@@ -110,6 +119,12 @@ tenantRouter.use('/sites', adaptersRoutes);             // /:id/adapters…
 tenantRouter.use('/sites', supervisionRoutes);          // /:id/supervision…
 tenantRouter.use('/maintenance', maintenanceRoutes);
 tenantRouter.use('/quarantine', quarantineRoutes);
+// P4 mail. Shared /mail and /sites prefixes: no catch-all in any of these routers.
+tenantRouter.use('/mail', mailRoutes);
+tenantRouter.use('/mail', mailDnsRoutes);
+tenantRouter.use('/mail', mailOutboundRoutes);
+tenantRouter.use('/mail', webmailRoutes);
+tenantRouter.use('/sites', siteMailRelayRoutes);        // /:id/mail-relay…
 
 router.use('/', tenantRouter);
 

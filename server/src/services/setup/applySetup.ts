@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 import type { SetupApplyRequest, SetupProgress, SetupStep } from '@oblimint/shared';
-import { MASTER_TENANT_ID } from '@oblimint/shared';
+import { isMailEngineSupported, MASTER_TENANT_ID } from '@oblimint/shared';
 import { config, dataDir } from '../../config';
 import { logger } from '../../utils/logger';
 import { obligateUrlError } from '../obligateUrl';
@@ -35,7 +35,9 @@ export const setupApplySchema = z.object({
   publicIpv6: ipv6.nullable(),
   nameservers: z.array(hostname).max(8),
   acmeEmail: z.string().trim().email().max(254),
-  mailEngine: z.enum(['postfix-dovecot', 'stalwart', 'docker-mailserver', 'maddy', 'external']),
+  // P4: docker-mailserver / maddy are driver skeletons (shared MAIL_ENGINES_SUPPORTED): refused.
+  mailEngine: z.enum(['postfix-dovecot', 'stalwart', 'docker-mailserver', 'maddy', 'external'])
+    .refine((e) => isMailEngineSupported(e), { message: 'mailEngineNotSupported: this mail engine is not supported yet' }),
   // P2: registrable domain dedicated to the previews (never under the panel host).
   previewDomain: hostname.nullable().optional(),
   admin: z.object({
@@ -54,7 +56,8 @@ export const setupApplySchema = z.object({
 
 const STEP_IDS = ['network', 'postgres', 'attach', 'config', 'migrate', 'admin', 'settings', 'edge', 'hostd', 'dns', 'mail'] as const;
 type StepId = typeof STEP_IDS[number];
-const LATER_STEPS: StepId[] = ['mail'];
+/** P4: every step is deployed now (mail included). Kept for a future phase. */
+const LATER_STEPS: StepId[] = [];
 
 function freshProgress(): SetupProgress {
   return {
@@ -219,6 +222,20 @@ async function stepDns(): Promise<void> {
 }
 
 /**
+ * P4: the mail engine chosen in the form (module mail-core,
+ * services/mail/infra.ts: deploys the active driver's containers). 'external'
+ * deploys nothing (step skipped). Non-fatal like edge / hostd / dns.
+ */
+async function stepMail(engine: SetupApplyRequest['mailEngine']): Promise<void> {
+  if (engine === 'external') {
+    log('mail', 'External mail engine: nothing to deploy (the panel manages the DNS records only)');
+    return;
+  }
+  const { mailInfraComponent } = await import('../mail/infra');
+  await mailInfraComponent.ensure((line) => log('mail', line));
+}
+
+/**
  * SESSION_SECRET of the normal-mode boot that follows the wizard: the
  * environment wins over config/oblimint.json (config.ts), else the secret
  * just written to the file.
@@ -266,6 +283,7 @@ export function startApply(req: SetupApplyRequest, opts: { exitOnDone?: boolean 
       await runOptionalStep('edge', stepEdge);
       await runOptionalStep('hostd', stepHostd);
       await runOptionalStep('dns', stepDns);
+      await runOptionalStep('mail', () => stepMail(req.mailEngine));
       for (const id of LATER_STEPS) {
         stepOf(id).status = 'skipped';
         log(id, 'Deployed in a later phase (P2+)');

@@ -1,0 +1,31 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# Oblimint — start of the shared SnappyMail (USER www-data, read-only root).
+# Checks the panel-provided environment (values never printed), (re)writes
+# the generated part of the data folder (default domain = the engine
+# endpoints, application.ini essentials), checks that SnappyMail loads its
+# plugins from the root-owned image path and accepts that application.ini
+# (/opt/snappymail/include.php), then runs Apache in the foreground.
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+umask 027
+
+for v in OBLIMINT_IMAP_HOST OBLIMINT_IMAP_PORT OBLIMINT_WEBMAIL_KEY OBLIMINT_PANEL_URL; do
+	if ! printenv "$v" >/dev/null 2>&1; then
+		echo "oblimint-webmail: $v is not set" >&2
+		exit 64
+	fi
+done
+
+mkdir -p /tmp/apache2/lock
+php /usr/local/lib/oblimint/oblimint-snappymail-setup.php /var/lib/snappymail
+
+# Plugin code never comes from the writable data folder (ARCHITECTURE §1):
+# the effective APP_PLUGINS_PATH must be the root-owned one, else no start.
+if ! php -r '$_ENV["SNAPPYMAIL_INCLUDE_AS_API"] = true; require "/opt/snappymail/index.php";
+	exit(APP_PLUGINS_PATH === "/usr/local/lib/oblimint/snappymail-plugin/" && APP_DATA_FOLDER_PATH === "/var/lib/snappymail/" ? 0 : 1);' >/dev/null; then
+	echo "oblimint-webmail: SnappyMail self-check failed (plugin path not /usr/local/lib/oblimint/snappymail-plugin/, or application.ini refused)" >&2
+	exit 70
+fi
+
+exec apache2-foreground "$@"

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   DEFAULT_HOSTING_SETTINGS, type HostingSettings, type HostingSettingsSection, type HostingSettingsUpdate,
 } from '@oblimint/shared';
+import type { Knex } from 'knex';
 import { db } from '../db';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
@@ -78,6 +79,35 @@ const sectionSchemas = {
     adapterMemoryMb: z.number().int().min(256).max(8192),
     typedWatcher: z.boolean(),
   }).strict(),
+  // P4 (docs/P4-PLAN.md §Réglages) — + spamTagScore < spamRejectScore (checked in update()).
+  mail: z.object({
+    hostname: hostname.nullable(),
+    webmail: z.enum(['roundcube', 'snappymail', 'none']),
+    webmailHostname: hostname.nullable(),
+    webmailPerDomain: z.boolean(),
+    autoconfig: z.boolean(),
+    srvRecords: z.boolean(),
+    dkimEd25519: z.boolean(),
+    dkimRotationDays: z.number().int().min(30).max(730).nullable(),
+    dmarcPolicy: z.enum(['none', 'quarantine', 'reject']),
+    dmarcRua: z.string().trim().toLowerCase().email().max(254).nullable(),
+    mtaSts: z.enum(['off', 'testing', 'enforce']),
+    tlsRptRua: z.string().trim().toLowerCase().email().max(254).nullable(),
+    spamTagScore: z.number().min(1).max(50),
+    spamRejectScore: z.number().min(2).max(100),
+    greylisting: z.boolean(),
+    clamav: z.boolean(),
+    maxMessageSizeMb: z.number().int().min(1).max(100),
+    defaultMailboxQuotaMb: z.number().int().min(10).max(1048576),
+    siteRelay: z.boolean(),
+    abuseBounceRatePct: z.number().int().min(1).max(100),
+    abuseMinMessages: z.number().int().min(5).max(100000),
+    abuseAction: z.enum(['notify', 'suspend']),
+    authBanThreshold: z.number().int().min(3).max(1000),
+    authBanWindowMinutes: z.number().int().min(1).max(1440),
+    authBanDurationMinutes: z.number().int().min(1).max(43200),
+    logRetentionDays: z.number().int().min(1).max(366),
+  }).strict(),
 } as const;
 
 const SECTIONS = Object.keys(sectionSchemas) as HostingSettingsSection[];
@@ -96,9 +126,9 @@ function cloneDefaults(): HostingSettings {
   return JSON.parse(JSON.stringify(DEFAULT_HOSTING_SETTINGS)) as HostingSettings;
 }
 
-async function load(): Promise<HostingSettings> {
+async function load(conn: Knex | Knex.Transaction = db): Promise<HostingSettings> {
   const out = cloneDefaults();
-  const rows = await db('app_config')
+  const rows = await conn('app_config')
     .whereIn('key', [...SECTIONS.map(keyOf), 'nameservers', 'preview_domain'])
     .select('key', 'value') as Array<{ key: string; value: string }>;
   const map = new Map(rows.map((r) => [r.key, r.value]));
@@ -137,6 +167,15 @@ export const platformSettings = {
     return cache.value;
   },
 
+  /**
+   * get() for a caller inside a transaction: a fresh cache is used, a miss is
+   * read through `conn` (never a second pool connection) and not cached.
+   */
+  getWith(conn: Knex | Knex.Transaction): Promise<HostingSettings> {
+    if (cache && Date.now() - cache.at <= CACHE_MS) return cache.value;
+    return load(conn);
+  },
+
   async section<K extends HostingSettingsSection>(section: K): Promise<HostingSettings[K]> {
     return (await this.get())[section];
   },
@@ -152,6 +191,10 @@ export const platformSettings = {
       if (parsed.success && s === 'scanner') {
         const v = parsed.data as { reviewScore: number; blockScore: number };
         if (v.reviewScore > v.blockScore) throw new AppError(400, 'Validation failed — scanner: reviewScore must be ≤ blockScore', 'validation');
+      }
+      if (parsed.success && s === 'mail') {
+        const v = parsed.data as unknown as { spamTagScore: number; spamRejectScore: number };
+        if (v.spamTagScore >= v.spamRejectScore) throw new AppError(400, 'Validation failed — mail: spamTagScore must be < spamRejectScore', 'validation');
       }
       if (!parsed.success) {
         throw new AppError(400, `Validation failed — ${s}: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ')}`, 'validation');

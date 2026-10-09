@@ -21,6 +21,7 @@ import {
   certificateLogView, certificateSummaryView, clientCertificateError, type CertificateViewer, type StoredCertificateLogLine,
 } from './certificateMessages';
 import { certFilesExist, edgeService, loadPlatformHosts } from './edge.service';
+import { announceCertificateInstalled, collectCertificateWishes } from './contributors';
 import { isValidServerName } from './nginxConfig';
 import {
   inBackoff, isUsable, issuerFor, issuerOutdated, MANUAL_COOLDOWN_MS, needsIssuance, planRenewals, sameNames, type CertIssuer, type ScheduleRow,
@@ -225,8 +226,12 @@ async function domainTarget(domainId: number, platform?: PlatformHosts): Promise
  * usable row already there) and, until that wildcard is usable with its
  * files, one certificate per served preview.
  */
-async function auxiliaryTargets(platform: PlatformHosts): Promise<{ platform: Map<string, CertTarget>; previews: Map<number, CertTarget> }> {
-  const out = { platform: new Map<string, CertTarget>(), previews: new Map<number, CertTarget>() };
+async function auxiliaryTargets(platform: PlatformHosts): Promise<{
+  platform: Map<string, CertTarget>; previews: Map<number, CertTarget>;
+  /** A contributor failed this pass: its wishes are unknown, platform rows must not be swept. */
+  contributorsFailed: boolean;
+}> {
+  const out = { platform: new Map<string, CertTarget>(), previews: new Map<number, CertTarget>(), contributorsFailed: false };
   const add = (names: string[], preferDns01 = false) => {
     if (!names.every(isPublicAcmeName) || out.platform.has(names[0])) return;
     out.platform.set(names[0], { kind: 'platform', domainId: null, siteId: null, names, preferDns01, tenantId: MASTER_TENANT_ID, accountId: null });
@@ -240,6 +245,19 @@ async function auxiliaryTargets(platform: PlatformHosts): Promise<{ platform: Ma
     }
   }
   for (const h of [platform.dbAdmin, platform.probeV4, platform.probeV6]) if (h) add([h]);
+  // P4 (architect): mail host name + platform webmail host, then the contributed
+  // wishes (mail certificates of the mail domains, edge/contributors.ts) — platform rows.
+  for (const h of platform.extra ?? []) if (h) add([h]);
+  const contributed = await collectCertificateWishes(platform);
+  out.contributorsFailed = contributed.failed.length > 0;
+  for (const w of contributed.wishes) {
+    const names = [...new Set(w.names.map((n) => String(n).trim().toLowerCase()))];
+    if (names.length === 0 || out.platform.has(names[0])) continue;
+    if (!names.every((n) => isValidServerName(n.startsWith('*.') ? n.slice(2) : n) && isPublicAcmeName(n))) continue;
+    out.platform.set(names[0], {
+      kind: 'platform', domainId: null, siteId: null, names, preferDns01: !!w.preferDns01, tenantId: w.tenantId, accountId: w.accountId,
+    });
+  }
 
   const previewDomain = platform.previewDomain;
   if (!previewDomain || !isPublicAcmeName(previewDomain)) return out;
@@ -435,6 +453,8 @@ async function runIssuance(target: CertTarget): Promise<void> {
     }
     emitCert(target, 'valid');
     edgeService.scheduleSync('certificate issued');
+    // P4 (architect): the mail service copies the files it serves and reloads TLS.
+    announceCertificateInstalled(target.names[0], issued.names);
     await auditService.log({
       tenantId: target.tenantId,
       action: 'certificate.issued',
@@ -649,6 +669,12 @@ export const certificateService = {
     }
     const hosts = platform ?? await platformHostsOrPanel();
     const wanted = platform ? await auxiliaryTargets(platform) : null;
+    if (wanted?.contributorsFailed) {
+      // A transient contributor error (DB blip in the mail module…) must never
+      // delete the certificates it wished for (rows AND files, then reissued
+      // from ACME against its rate limits): platform rows kept this pass.
+      logger.warn('certificate renewal: a certificate contributor failed, platform stale-row sweep skipped');
+    }
     const all = await db('certificates').select('*') as CertificateRow[];
 
     const rows: CertificateRow[] = [];
@@ -657,7 +683,7 @@ export const certificateService = {
       // Tenant domain rows on a platform host name (set or changed after the domain was added).
       if (r.domain_id !== null) stale = isReservedPlatformName(r.primary_name, hosts);
       else if (wanted && r.site_id !== null) stale = wanted.previews.get(r.site_id)?.names[0] !== r.primary_name;
-      else if (wanted) stale = !wanted.platform.has(r.primary_name);
+      else if (wanted && !wanted.contributorsFailed) stale = !wanted.platform.has(r.primary_name);
       if (stale) await certificateService.removeRow(r);
       else rows.push(r);
     }

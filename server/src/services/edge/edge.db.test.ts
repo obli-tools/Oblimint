@@ -178,6 +178,34 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
   assert.deepEqual(fixed?.names, names, 'renewal pass added www');
   assert.equal(fixed?.status, 'valid');
 
+  // ── a failing certificate contributor never gets its platform rows swept ──
+  {
+    const contributors = await import('./contributors');
+    let mode: 'wish' | 'throw' | 'none' = 'throw';
+    contributors.registerEdgeContributor({
+      id: 'mail-test',
+      certificates: async () => {
+        if (mode === 'throw') throw new Error('pool acquire timeout');
+        return mode === 'wish' ? [{ names: ['mail.shop-contrib.com'], preferDns01: false, tenantId: 1, accountId: null }] : [];
+      },
+    });
+    t.after(() => contributors.clearEdgeContributorsForTests());
+    await db('certificates').insert({
+      primary_name: 'mail.shop-contrib.com', names: JSON.stringify(['mail.shop-contrib.com']), status: 'valid', issuer: 'letsencrypt-staging',
+      not_before: new Date(), not_after: new Date(Date.now() + 60 * 24 * 3600_000),
+    });
+    const exists = async () => !!(await db('certificates').where({ primary_name: 'mail.shop-contrib.com' }).first());
+    await certificateService.checkRenewals();
+    assert.ok(await exists(), 'contributor failed ⇒ its rows kept this pass');
+    mode = 'wish';
+    await certificateService.checkRenewals();
+    assert.ok(await exists(), 'still wished ⇒ kept');
+    mode = 'none';
+    await certificateService.checkRenewals();
+    assert.ok(!(await exists()), 'no longer wished (contributor answered) ⇒ swept');
+    contributors.clearEdgeContributorsForTests();
+  }
+
   // ── manual renew rate limits ──
   const { AppError } = await import('../../middleware/errorHandler');
   const codeOf = async (p: Promise<unknown>) => { try { await p; return null; } catch (e) { return e instanceof AppError ? `${e.statusCode}:${e.code}` : String(e); } };

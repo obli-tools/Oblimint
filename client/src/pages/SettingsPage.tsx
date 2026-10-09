@@ -15,6 +15,7 @@ import { MEDIA, matchesMedia } from '@/hooks/useMediaQuery';
 import { HostingSettingsSections } from '@/components/settings/HostingSettingsSections';
 import { NotificationChannelsSection } from '@/components/notifications/NotificationChannelsSection';
 import { MaintenanceSettingsSections } from '@/components/maintenance/MaintenanceSettingsSections';
+import { MailSettingsSections } from '@/components/mail/MailSettingsSections';
 import { useHostingMe } from '@/store/hostingStore';
 import { cn } from '@/utils/cn';
 
@@ -253,6 +254,9 @@ export function SettingsPage() {
 
       {/* ── P3: scanner (ClamAV + YARA) and maintenance settings ── */}
       {admin && <MaintenanceSettingsSections />}
+
+      {/* ── P4: mail service (engine, webmail, DNS defaults, anti-spam, limits, bans) ── */}
+      {admin && <MailSettingsSections />}
 
       {/* ── P2: notification channels of the workspace ── */}
       {canNotify && <NotificationChannelsSection />}

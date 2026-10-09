@@ -108,6 +108,19 @@ func (a *api) setFirewallGlobal(w http.ResponseWriter, r *http.Request) {
 	reply(w, r, okBody, a.fw.SetGlobal(r.Context(), body))
 }
 
+// setMailFirewall: PUT /v1/firewall/mail (P4, mail.go) — bans on the shared mail ports.
+func (a *api) setMailFirewall(w http.ResponseWriter, r *http.Request) {
+	if a.unsupported(w) {
+		return
+	}
+	var body MailFirewallState
+	if err := decode(r, &body); err != nil {
+		writeError(w, err)
+		return
+	}
+	reply(w, r, okBody, a.fw.SetMail(r.Context(), body))
+}
+
 func (a *api) applyFirewall(w http.ResponseWriter, r *http.Request) {
 	if a.unsupported(w) {
 		return

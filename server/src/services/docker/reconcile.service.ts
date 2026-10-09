@@ -6,7 +6,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { emitHosting } from '../hosting/events';
 import {
-  accountDbNetwork, accountNetwork, EDGE_CONTAINER, fileServerContainer, LABELS, P2_LABELS, PANEL_ALIAS, previewContainer, secondaryContainer, siteContainer,
+  accountDbNetwork, accountNetwork, EDGE_CONTAINER, fileServerContainer, LABELS, MAIL_RELAY_CONTAINER, P2_LABELS, PANEL_ALIAS, previewContainer, secondaryContainer, siteContainer,
 } from '../hosting/naming';
 import { localPaths } from '../hosting/paths';
 import { planLimits, type AccountRow, type DataPathRow, type SiteRow, type SiteRuntimeRow } from '../hosting/rows';
@@ -720,7 +720,9 @@ export const reconcileService = {
       const net = accountNetwork(account.id);
       const dbNet = accountDbNetwork(account.id);
       const self = selfContainerRef();
-      for (const c of [self, EDGE_CONTAINER]) {
+      // P4: the site mail relay is attached to every account network (outbound-security,
+      // docs/P4-PLAN.md §4) and would keep it alive (removeNetwork → "active endpoints").
+      for (const c of [self, EDGE_CONTAINER, MAIL_RELAY_CONTAINER]) {
         if (!c) continue;
         try { await disconnectNetwork(docker, net, c); } catch (err) { errors.push(`disconnect ${c}: ${errText(err)}`); }
       }

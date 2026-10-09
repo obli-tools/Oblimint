@@ -13,6 +13,7 @@ import { localPaths } from '../hosting/paths';
 import { json } from '../hosting/rows';
 import { createDebouncedRunner, syncConfDir, type ConfSyncDeps } from './confSync';
 import { ensureSelfSignedFallback } from './selfSignedFallback';
+import { withContributedVhosts } from './contributors';
 import { isValidServerName, type EdgeVhost } from './nginxConfig';
 import {
   planVhosts, SERVED_ACCOUNT_STATUSES, type EdgePlanInput, type PlanCertificate, type PlanDomain, type PlanRoute, type PlanSite, type PlatformHosts,
@@ -92,12 +93,15 @@ const validHost = (v: string | null | undefined): string | null => {
  */
 export async function loadPlatformHosts(): Promise<PlatformHosts> {
   const [panel, settings] = await Promise.all([appConfigService.get('panel_hostname'), platformSettings.get()]);
+  // P4 (architect): mail host name + platform webmail host are platform names too.
+  const extra = [settings.mail.hostname, settings.mail.webmailHostname].map(validHost).filter((h): h is string => !!h);
   return {
     panel: validHost(panel),
     previewDomain: validHost(settings.preview.previewDomain),
     dbAdmin: validHost(settings.dbAdmin.hostname),
     probeV4: validHost(settings.access.probeHostV4),
     probeV6: validHost(settings.access.probeHostV6),
+    extra,
   };
 }
 
@@ -194,9 +198,12 @@ export const edgeService = {
     return enqueueSync(opts.force !== false);
   },
 
-  /** Desired vhosts of the local node, from the DB (pure read). */
+  /** Desired vhosts of the local node, from the DB (pure read). P4: + contributed vhosts (edge/contributors.ts). */
   async buildVhosts(): Promise<EdgeVhost[]> {
-    return planVhosts(await loadPlanInput());
+    const input = await loadPlanInput();
+    return withContributedVhosts(planVhosts(input), {
+      platform: input.platform, panelUpstream: input.panelUpstream, certificates: input.certificates, certFilesExist: input.certFilesExist,
+    });
   },
 
   async status(): Promise<EdgeStatus> {

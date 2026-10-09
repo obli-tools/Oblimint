@@ -85,6 +85,8 @@ type FirewallStatus struct {
 	// panel removes those of deleted accounts).
 	AccountIDs        []int64 `json:"accountIds"`
 	GatewayAccountIDs []int64 `json:"gatewayAccountIds"`
+	// MailBans: bans in force on the shared mail ports (P4).
+	MailBans int `json:"mailBans"`
 }
 
 // persistedState is the state file (<root>/run/hostd-state.json, 0600).
@@ -92,6 +94,7 @@ type persistedState struct {
 	Global   *FirewallGlobal                 `json:"global"`
 	Accounts map[string]FirewallAccountState `json:"accounts"`
 	Gateways map[string]GatewaySpec          `json:"gateways"`
+	Mail     *MailFirewallState              `json:"mail,omitempty"`
 }
 
 type firewallManager struct {
@@ -105,6 +108,9 @@ type firewallManager struct {
 	accounts map[int64]accountRules         // validated, as last applied (rendered)
 	global   *globalRules
 	rawGlob  *FirewallGlobal
+	// P4: bans on the shared mail ports (mail.go), as last applied.
+	mail    *mailRules
+	rawMail *MailFirewallState
 
 	// desired: the validated state as last PUSHED, read lock-free by the
 	// gateway's accept check (Allows) through an immutable copy-on-write
@@ -253,6 +259,20 @@ func (m *firewallManager) SetGlobal(ctx context.Context, g FirewallGlobal) error
 	return m.commitLocked(ctx, func() { m.global, m.rawGlob = prevGlobal, prevRaw })
 }
 
+// SetMail validates, stores and applies the bans on the shared mail ports
+// (replaces the whole mail state).
+func (m *firewallManager) SetMail(ctx context.Context, s MailFirewallState) error {
+	r, err := s.validate()
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prev, prevRaw := m.mail, m.rawMail
+	m.mail, m.rawMail = &r, &s
+	return m.commitLocked(ctx, func() { m.mail, m.rawMail = prev, prevRaw })
+}
+
 // accountUndoLocked returns the function that puts back the current entry
 // of an account (or its absence).
 func (m *firewallManager) accountUndoLocked(accountID int64) func() {
@@ -282,7 +302,7 @@ func (m *firewallManager) commitLocked(ctx context.Context, undo func()) error {
 	if errors.As(err, &ae) && ae.Code == codeApplyFailed {
 		undo()
 		now := m.clock.Now()
-		m.scheduleExpiryLocked(nextExpiry(m.inputLocked(now).Accounts, now), now)
+		m.scheduleExpiryLocked(nextRenderExpiry(m.inputLocked(now), now), now)
 	}
 	m.persistLocked()
 	return err
@@ -306,6 +326,7 @@ func (m *firewallManager) Status(gatewayListeners int) FirewallStatus {
 	if m.nft.Available() {
 		st.Backend = "nftables"
 	}
+	st.MailBans = m.mail.liveCount(m.clock.Now())
 	if !m.lastApplyAt.IsZero() {
 		s := m.lastApplyAt.UTC().Format(time.RFC3339)
 		st.LastApplyAt = &s
@@ -329,7 +350,7 @@ func (m *firewallManager) inputLocked(now time.Time) renderInput {
 	for _, a := range m.accounts {
 		accounts = append(accounts, a)
 	}
-	in := renderInput{Global: m.global, Accounts: accounts, Now: now, ProxiedTargets: m.proxiedTargetsLocked()}
+	in := renderInput{Global: m.global, Accounts: accounts, Now: now, ProxiedTargets: m.proxiedTargetsLocked(), Mail: m.mail}
 	// Resolvers: allowed in strict mode, and kept on port 53 when they sit
 	// in the metadata range (metadata mode too).
 	if m.global != nil && m.global.Egress != egressOff && m.resolvers != nil {
@@ -375,7 +396,7 @@ func (m *firewallManager) GatewayChanged() {
 func (m *firewallManager) applyLocked(ctx context.Context) error {
 	now := m.clock.Now()
 	in := m.inputLocked(now)
-	m.scheduleExpiryLocked(nextExpiry(in.Accounts, now), now)
+	m.scheduleExpiryLocked(nextRenderExpiry(in, now), now)
 	m.appliedTargets = fmt.Sprint(in.ProxiedTargets)
 	err := m.nft.Apply(ctx, renderRuleset(in))
 	if err != nil {
@@ -414,7 +435,7 @@ func (m *firewallManager) persistLocked() {
 	if m.statePath == "" {
 		return
 	}
-	st := persistedState{Global: m.rawGlob, Accounts: map[string]FirewallAccountState{}}
+	st := persistedState{Global: m.rawGlob, Accounts: map[string]FirewallAccountState{}, Mail: m.rawMail}
 	for id, s := range m.raw {
 		st.Accounts[fmt.Sprint(id)] = s
 	}
@@ -477,6 +498,13 @@ func (m *firewallManager) Restore(ctx context.Context, st persistedState) error 
 			m.global, m.rawGlob = &r, st.Global
 		} else {
 			slog.Warn("persisted global firewall state skipped", "err", err)
+		}
+	}
+	if st.Mail != nil {
+		if r, err := st.Mail.validate(); err == nil {
+			m.mail, m.rawMail = &r, st.Mail
+		} else {
+			slog.Warn("persisted mail firewall state skipped", "err", err)
 		}
 	}
 	for key, s := range st.Accounts {

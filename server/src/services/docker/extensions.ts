@@ -19,8 +19,15 @@ import type { AccountState, ReconcileReport } from './reconcile.service';
 //                  the file server, nftables state of the account)
 //      quarantine → quarantineReconcileHook.afterAccountPass (P3: typed-path
 //                  watch specs of the account's sites pushed to hostd)
+//      mail      → mailReconcileHook.afterAccountPass (P4 mail-core: account
+//                  status → mailboxes suspended / resumed, engine sync request)
+//      mailRelay → mailRelayReconcileHook.afterAccountPass (P4 outbound-security:
+//                  relay attached to the account network, per-site relay
+//                  credentials + msmtprc of the account's sites)
 //  - infra components: dns (PowerDNS) and dbadmin (phpMyAdmin + Adminer),
 //    scanner (P3: ClamAV + YARA + scand, module scanners),
+//    mail (P4 mail-core: the active engine's containers), mail-relay (P4
+//    outbound-security), webmail (P4 webmail),
 //    shown on the Nodes page, deployable from /api/system/infra/:id/deploy,
 //    ensured at boot.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,6 +49,9 @@ export async function runAfterAccountPassHooks(ctx: AccountPassContext): Promise
     ['firewall', async () => (await import('../firewall/reconcileHook')).firewallReconcileHook],
     // P3 (docs/P3-PLAN.md §7): typed-path watch specs of the account's sites → hostd.
     ['quarantine', async () => (await import('../quarantine/reconcileHook')).quarantineReconcileHook],
+    // P4 (docs/P4-PLAN.md §7): mail account status, then the site relay of the account.
+    ['mail', async () => (await import('../mail/reconcileHook')).mailReconcileHook],
+    ['mailRelay', async () => (await import('../mail/outbound/reconcileHook')).mailRelayReconcileHook],
   ];
   for (const [name, load] of hooks) {
     try {
@@ -54,7 +64,7 @@ export async function runAfterAccountPassHooks(ctx: AccountPassContext): Promise
 
 /** A platform component deployed by a P2 module (Nodes page, setup wizard, boot). */
 export interface InfraComponentProvider {
-  id: Extract<InfraComponentId, 'dns' | 'dbadmin' | 'scanner'>;
+  id: Extract<InfraComponentId, 'dns' | 'dbadmin' | 'scanner' | 'mail' | 'mail-relay' | 'webmail'>;
   /** Pull + (re)create when missing / drifted. Idempotent. Throws on failure (the caller logs / reports). */
   ensure(log: (line: string) => void): Promise<void>;
   /** Never throws: errors go to `detail`. docker null = engine unreachable (dockerError). */
@@ -69,5 +79,9 @@ export async function extraInfraComponents(): Promise<InfraComponentProvider[]> 
   try { out.push((await import('../databases/dbadminInfra')).dbAdminInfraComponent); } catch (err) { logger.warn({ err: (err as Error)?.message }, 'dbadmin infra component unavailable'); }
   // P3: shared change scanner (ClamAV + YARA), module scanners.
   try { out.push((await import('../scan/scannerInfra')).scannerInfraComponent); } catch (err) { logger.warn({ err: (err as Error)?.message }, 'scanner infra component unavailable'); }
+  // P4: mail engine (mail-core, delegates to the active driver), site relay (outbound-security), webmail (webmail).
+  try { out.push((await import('../mail/infra')).mailInfraComponent); } catch (err) { logger.warn({ err: (err as Error)?.message }, 'mail infra component unavailable'); }
+  try { out.push((await import('../mail/outbound/relayInfra')).mailRelayInfraComponent); } catch (err) { logger.warn({ err: (err as Error)?.message }, 'mail-relay infra component unavailable'); }
+  try { out.push((await import('../mail/webmail/webmailInfra')).webmailInfraComponent); } catch (err) { logger.warn({ err: (err as Error)?.message }, 'webmail infra component unavailable'); }
   return out;
 }

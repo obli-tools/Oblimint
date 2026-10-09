@@ -1,3 +1,5 @@
+import type { DmarcPolicy, MtaStsMode, WebmailKind } from './mail';
+
 // =============================================================================
 // Oblimint — P2 platform settings (docs/P2-PLAN.md §Réglages). Stored in
 // app_config (one key per section, JSON), read and written by
@@ -108,6 +110,62 @@ export interface MaintenanceSettings {
   typedWatcher: boolean;
 }
 
+/**
+ * P4 — mail (docs/P4-PLAN.md §Réglages). The engine itself is chosen in the
+ * setup wizard (app_config mail_engine, GET/PUT /api/system/mail/engine).
+ */
+export interface MailSettings {
+  /** Node mail host name: MX target, SMTP banner / HELO, IMAP / SMTP server and certificate. null = panel_hostname. */
+  hostname: string | null;
+  /** Shared webmail container (none = no webmail). */
+  webmail: WebmailKind;
+  /** Platform webmail host (never under the panel host), e.g. webmail.<platform domain>. null = per-domain only. */
+  webmailHostname: string | null;
+  /** Also serve webmail.<domain> for every active mail domain (certificate + DNS record). */
+  webmailPerDomain: boolean;
+  /** autoconfig.<domain> / autodiscover.<domain> (Thunderbird, Outlook) — records + HTTP endpoints. */
+  autoconfig: boolean;
+  /** SRV records _imaps._tcp / _submission._tcp / _pop3s._tcp (RFC 6186). */
+  srvRecords: boolean;
+  /** New domains also get an ed25519 DKIM key (dual signing). */
+  dkimEd25519: boolean;
+  /** Automatic DKIM rotation (days, 30 … 730), null = manual only. */
+  dkimRotationDays: number | null;
+  /** Default DMARC policy of new domains (p=none until the customer checked the reports). */
+  dmarcPolicy: DmarcPolicy;
+  /** Default DMARC aggregate report address, null = no rua. */
+  dmarcRua: string | null;
+  /** MTA-STS policy (mta-sts.<domain> + _mta-sts TXT). */
+  mtaSts: MtaStsMode;
+  /** TLS-RPT report address (_smtp._tls TXT), null = no TLS-RPT record. */
+  tlsRptRua: string | null;
+  /** Spam score from which a message is tagged (X-Spam header, Junk folder). */
+  spamTagScore: number;
+  /** Spam score from which a message is refused at SMTP time. */
+  spamRejectScore: number;
+  /** Greylisting of unknown senders (postfix-dovecot: Rspamd greylist module). */
+  greylisting: boolean;
+  /** Inbound virus scan through the shared scanner (ClamAV, P3) — postfix-dovecot only. */
+  clamav: boolean;
+  /** Platform ceiling of the message size (MiB). */
+  maxMessageSizeMb: number;
+  /** Quota of a new mailbox when none is given (MiB, capped by the plan). */
+  defaultMailboxQuotaMb: number;
+  /** Sites send PHP mail() through the authenticated relay (msmtp → oblimint-mail-relay). */
+  siteRelay: boolean;
+  /** Abuse protection: over abuseMinMessages messages in the last hour, a bounce / spam rate above this % … */
+  abuseBounceRatePct: number;
+  abuseMinMessages: number;
+  /** … notifies, or suspends the outbound mail of the account (and notifies). */
+  abuseAction: 'notify' | 'suspend';
+  /** Bans on the shared mail ports after repeated authentication failures (IPv6: per /64). */
+  authBanThreshold: number;
+  authBanWindowMinutes: number;
+  authBanDurationMinutes: number;
+  /** mail_log rows kept (days). */
+  logRetentionDays: number;
+}
+
 export interface HostingSettings {
   dns: DnsSettings;
   preview: PreviewSettings;
@@ -118,6 +176,8 @@ export interface HostingSettings {
   scanner: ScannerSettings;
   /** P3 */
   maintenance: MaintenanceSettings;
+  /** P4 */
+  mail: MailSettings;
 }
 
 export type HostingSettingsSection = keyof HostingSettings;
@@ -168,5 +228,33 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     adapterTimeoutMinutes: 30,
     adapterMemoryMb: 1024,
     typedWatcher: true,
+  },
+  mail: {
+    hostname: null,
+    webmail: 'roundcube',
+    webmailHostname: null,
+    webmailPerDomain: true,
+    autoconfig: true,
+    srvRecords: true,
+    dkimEd25519: false,
+    dkimRotationDays: null,
+    dmarcPolicy: 'none',
+    dmarcRua: null,
+    mtaSts: 'off',
+    tlsRptRua: null,
+    spamTagScore: 6,
+    spamRejectScore: 15,
+    greylisting: false,
+    clamav: true,
+    maxMessageSizeMb: 50,
+    defaultMailboxQuotaMb: 1024,
+    siteRelay: true,
+    abuseBounceRatePct: 20,
+    abuseMinMessages: 50,
+    abuseAction: 'suspend',
+    authBanThreshold: 10,
+    authBanWindowMinutes: 10,
+    authBanDurationMinutes: 60,
+    logRetentionDays: 30,
   },
 };

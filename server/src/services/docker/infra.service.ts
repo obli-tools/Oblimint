@@ -4,7 +4,7 @@ import type Docker from 'dockerode';
 import type { InfraComponentStatus, InfraStatus, QuotaMode } from '@oblimint/shared';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
-import { accountNetwork, EDGE_CONTAINER, HOSTD_CONTAINER, LABELS, PANEL_ALIAS, PANEL_NETWORK } from '../hosting/naming';
+import { accountNetwork, EDGE_CONTAINER, HOSTD_CONTAINER, LABELS, MAIL_NETWORK, PANEL_ALIAS, PANEL_NETWORK } from '../hosting/naming';
 import { localPaths } from '../hosting/paths';
 import { errText, selfContainerRef, withTimeout } from '../setup/docker';
 import { hostd, scheduleEdgeSync } from './backends';
@@ -102,6 +102,14 @@ export const infraService = {
         }
       }
       if (attached) log(`${EDGE_CONTAINER} attached to ${attached} account network(s)`);
+      // P4 (architect): the mail network (webmail vhosts), when it exists (created by mail-core ensureMailNetwork).
+      try {
+        const mailNet = (await withTimeout(docker.listNetworks({ filters: { name: [MAIL_NETWORK] } }), 30_000, 'list networks'))
+          .find((n) => n.Name === MAIL_NETWORK);
+        if (mailNet && await connectNetwork(docker, MAIL_NETWORK, EDGE_CONTAINER)) log(`${EDGE_CONTAINER} attached to ${MAIL_NETWORK}`);
+      } catch (err) {
+        log(`Could not attach ${EDGE_CONTAINER} to ${MAIL_NETWORK}: ${errText(err)}`);
+      }
       if (what !== 'unchanged') scheduleEdgeSync('edge-deployed');
     });
   },

@@ -97,8 +97,19 @@ export const RAW_UPLOAD_PATHS: readonly RegExp[] = [
 ];
 const RAW_UPLOAD_TYPES = ['application/octet-stream', 'application/sql', 'application/gzip', 'application/x-gzip'];
 
+/**
+ * P4 (docs/P4-PLAN.md §6.4): Outlook autodiscover POSTs an XML body from a
+ * mail client (no browser, no cookie, read-only answer computed from the
+ * Host / e-mail address). Public, never session-authenticated: exempt from
+ * the origin and JSON rules (the route reads the body itself, ≤ 16 KiB).
+ */
+export const PUBLIC_XML_PATHS: readonly RegExp[] = [
+  /^\/autodiscover\/autodiscover\.xml$/i,
+];
+
 export function originGuard(req: Request, res: Response, next: NextFunction): void {
   if (SAFE_METHODS.has(req.method)) { next(); return; }
+  if (req.method === 'POST' && PUBLIC_XML_PATHS.some((re) => re.test(req.path))) { next(); return; }
   if (isForeignBrowserRequest(req)) {
     res.status(403).json({ success: false, error: 'Cross-origin request refused', code: 'crossOriginRefused' });
     return;

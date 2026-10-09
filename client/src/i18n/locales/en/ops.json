@@ -417,7 +417,10 @@
       "quarantineAdded": "File quarantined",
       "adapterCompleted": "Application update published",
       "adapterFailed": "Application update failure",
-      "supervisionDigest": "Supervision digest"
+      "supervisionDigest": "Supervision digest",
+      "mailOutboundSuspended": "Outbound mail suspended",
+      "mailServiceFailed": "Mail service failure",
+      "mailQuotaWarning": "Mailbox almost full"
     },
     "form": {
       "botToken": "Bot token",

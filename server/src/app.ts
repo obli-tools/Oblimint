@@ -121,6 +121,14 @@ export function createApp(): express.Express {
       sameSite: 'lax',
     },
   });
+  // P4 (docs/P4-PLAN.md §6.4): public mail endpoints served through the edge on
+  // autoconfig.<d> / autodiscover.<d> / mta-sts.<d> (Thunderbird / Outlook
+  // autoconfiguration, MTA-STS policy). NOT under /api, no session, own rate
+  // limiter. Mounted BEFORE serveClient: its GET * SPA fallback would answer
+  // these paths with index.html otherwise.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const mailPublic = require('./routes/mailPublic.routes').default;
+  app.use(mailPublic);
   // Static files and the SPA shell first: no session, never counted by the
   // API limiter (logged-out visitors sharing an address must not lock each
   // other out of the login page).

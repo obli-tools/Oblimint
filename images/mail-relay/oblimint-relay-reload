@@ -1,0 +1,11 @@
+#!/bin/sh
+# docker exec oblimint-mail-relay oblimint-relay-reload — re-applies the panel
+# overrides (/etc/oblimint/relay/postfix.cf) and reloads Postfix after a
+# successful check. Credentials (passwd) and the policy (policy.json) need no
+# reload: Dovecot and relayd re-read them when they change.
+set -eu
+# shellcheck source=/dev/null
+. /usr/local/lib/oblimint-relay/overrides.sh
+apply_overrides /etc/oblimint/relay/postfix.cf
+postfix check
+postfix reload

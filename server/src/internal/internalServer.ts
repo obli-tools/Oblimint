@@ -19,6 +19,7 @@ import { publishScheduler } from '../services/releases/publishScheduler';
 //   POST /internal/filesrv/:accountId/:token/auth    SFTPGo external auth hook
 //   POST /internal/filesrv/:accountId/:token/event   SFTPGo action hook (upload, delete, rename…)
 //   POST /internal/dbadmin/*                         P2: DB admin SSO (module databases, services/databases/internalRoutes.ts)
+//   POST /internal/mail/*                            P4: webmail SSO redemption (module webmail, services/mail/webmail/internalRoutes.ts)
 //
 // P2 hooks (docs/P2-PLAN.md §7, ARCHITECT edit): a refused SFTP login is
 // reported to the firewall (bans: firewallService.recordAuthFailure), and an
@@ -242,6 +243,12 @@ export function createInternalApp(over: Partial<InternalDeps> = {}): Express {
       .catch(next);
   });
 
+  // P4: webmail single sign-on (module webmail), same lazy pattern.
+  app.use('/internal/mail', (req, res, next) => {
+    import('../services/mail/webmail/internalRoutes')
+      .then(({ mailInternalRouter }) => mailInternalRouter(req, res, next))
+      .catch(next);
+  });
   app.use((_req, res) => { res.status(404).end(); });
   // Malformed JSON / oversized body → 400 without a stack trace.
   app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: express.NextFunction) => {

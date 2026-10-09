@@ -7,7 +7,9 @@
 #   name: apache-php7.4 … apache-php8.4, nginx-php8.1 … nginx-php8.4,
 #         nginx-static, edge, filesrv, hostd, pdns, phpmyadmin, adminer (P2),
 #         scanner, tools-php7.4 … tools-php8.4 (P3),
-#         or a group: sites | infra | tools | all
+#         mail-postfix, mail-rspamd, mail-stalwart, mail-relay,
+#         webmail-roundcube, webmail-snappymail (P4),
+#         or a group: sites | infra | tools | mail | all
 #         (default: all).
 #
 # Environment:
@@ -34,7 +36,7 @@ APACHE_PHP="7.4 8.1 8.2 8.3 8.4"
 NGINX_PHP="8.1 8.2 8.3 8.4"
 
 usage() {
-	sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 names=""
@@ -56,11 +58,14 @@ infra="edge filesrv hostd pdns phpmyadmin adminer scanner"
 # P3: adapter tools images (WP-CLI, Composer, drush launcher), one per PHP branch of the site bases.
 tools=""
 for v in $APACHE_PHP; do tools="$tools tools-php$v"; done
+# P4: mail service (engines, site relay, webmail).
+mail="mail-postfix mail-rspamd mail-stalwart mail-relay webmail-roundcube webmail-snappymail"
 
 expanded=""
 for n in ${names:-all}; do
 	case "$n" in
-		all) expanded="$expanded $sites $infra $tools" ;;
+		all) expanded="$expanded $sites $infra $tools $mail" ;;
+		mail) expanded="$expanded $mail" ;;
 		sites) expanded="$expanded $sites" ;;
 		infra) expanded="$expanded $infra" ;;
 		tools) expanded="$expanded $tools" ;;
@@ -84,7 +89,7 @@ build() {
 }
 
 for n in $expanded; do
-	case " $sites $infra $tools " in
+	case " $sites $infra $tools $mail " in
 		*" $n "*) ;;
 		*) echo "unknown image: $n (see --help)" >&2; exit 2 ;;
 	esac
@@ -114,6 +119,14 @@ for n in $expanded; do
 			v=${n#tools-php}
 			build "$n" "$HERE" -f "$HERE/tools/Dockerfile" --build-arg "PHP_VERSION=$v"
 			;;
+		# P4: engine-postfix (images/mail-postfix/, images/mail-rspamd/), engine-stalwart (images/mail-stalwart/),
+		# outbound-security (images/mail-relay/), webmail (images/webmail-roundcube/, images/webmail-snappymail/)
+		mail-postfix) build mail-postfix "$HERE" -f "$HERE/mail-postfix/Dockerfile" ;;
+		mail-rspamd) build mail-rspamd "$HERE" -f "$HERE/mail-rspamd/Dockerfile" ;;
+		mail-stalwart) build mail-stalwart "$HERE" -f "$HERE/mail-stalwart/Dockerfile" ;;
+		mail-relay) build mail-relay "$HERE" -f "$HERE/mail-relay/Dockerfile" ;;
+		webmail-roundcube) build webmail-roundcube "$HERE" -f "$HERE/webmail-roundcube/Dockerfile" ;;
+		webmail-snappymail) build webmail-snappymail "$HERE" -f "$HERE/webmail-snappymail/Dockerfile" ;;
 		*) echo "unknown image: $n (see --help)" >&2; exit 2 ;;
 	esac
 done

@@ -148,8 +148,9 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     { label: t('nav.usage') || 'Usage',                  path: '/usage',     icon: <BarChart3 size={18} /> },
     // P3: maintenance overview (windows to review, updates, quarantine) — client space too (server scopes).
     { label: t('nav.maintenance') || 'Maintenance',      path: '/maintenance', icon: <Wrench size={18} /> },
+    // P4: mail — client space too (the server scopes every list).
+    { label: t('nav.mail') || 'Mail',                    path: '/mail',      icon: <Mail size={18} /> },
     ...(isClient ? [] : [
-      { label: t('nav.mail') || 'Mail',                  path: '/mail',      icon: <Mail size={18} /> },
       { label: t('nav.files') || 'Files',                path: '/files',     icon: <FolderOpen size={18} /> },
     ] as NavItem[]),
   ];

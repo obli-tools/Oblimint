@@ -271,6 +271,19 @@ export interface PlanLimits {
   cronMinIntervalMin: number;
   /** At 100 % of a quota (disk / traffic): warn only, block uploads (SFTP read-only), or suspend the account. */
   overQuotaAction: OverQuotaAction;
+  // ── P4 mail (docs/P4-PLAN.md §Plans) — maxMailboxes above ──
+  /** Sum of the mailbox quotas of the account (MiB, null = unlimited). */
+  mailQuotaMb: number | null;
+  /** Largest quota of ONE mailbox (MiB, null = unlimited). */
+  mailboxQuotaMaxMb: number | null;
+  /** Aliases (forward-only addresses) per account (null = unlimited, 0 = none). */
+  maxMailAliases: number | null;
+  /** Largest message (MiB, 1 … 100), capped by the platform setting mail.maxMessageSizeMb. */
+  mailMaxMessageSizeMb: number;
+  /** Outbound messages per hour of the account (mailboxes + sites), null = unlimited. */
+  mailOutboundPerHour: number | null;
+  /** Outbound messages per hour of ONE site (PHP mail() through the relay), null = unlimited. */
+  mailSiteOutboundPerHour: number | null;
 }
 
 export const DEFAULT_PLAN_LIMITS: PlanLimits = {
@@ -292,6 +305,12 @@ export const DEFAULT_PLAN_LIMITS: PlanLimits = {
   maxCronJobs: 10,
   cronMinIntervalMin: 5,
   overQuotaAction: 'warn',
+  mailQuotaMb: 5120,
+  mailboxQuotaMaxMb: 2048,
+  maxMailAliases: 50,
+  mailMaxMessageSizeMb: 25,
+  mailOutboundPerHour: 200,
+  mailSiteOutboundPerHour: 100,
 };
 
 export interface Plan {
@@ -389,15 +408,19 @@ export interface HostingAccountUpdate {
 // ─── CLIENT USERS (users.kind = 'client') ────────────────────────────────────
 
 /**
+ * P4: mail.manage (mail domains, mailboxes, aliases, forwarders,
+ * autoresponders, DKIM / mail DNS, site relay, webmail single sign-on).
  * P2: databases.manage (instances, databases, users, admin UI) and
  * dns.manage (zone editor). Cron jobs need sites.manage; the account access
  * allow-list needs files.manage; logs and usage need read (membership).
  */
 export type ClientCapability = 'sites.manage' | 'releases.publish' | 'releases.approve' | 'domains.manage' | 'files.manage'
-  | 'databases.manage' | 'dns.manage';
+  | 'databases.manage' | 'dns.manage'
+  // P4
+  | 'mail.manage';
 
 export const CLIENT_CAPABILITIES: readonly ClientCapability[] = [
-  'sites.manage', 'releases.publish', 'releases.approve', 'domains.manage', 'files.manage', 'databases.manage', 'dns.manage',
+  'sites.manage', 'releases.publish', 'releases.approve', 'domains.manage', 'files.manage', 'databases.manage', 'dns.manage', 'mail.manage',
 ];
 
 /** One client user of an account (GET /api/accounts/:id/users). */
@@ -913,8 +936,13 @@ export interface SiteRuntimeConfig {
 
 // ─── INFRA / EDGE ────────────────────────────────────────────────────────────
 
-/** P3: + scanner (ClamAV + YARA, module scanners). */
-export type InfraComponentId = 'edge' | 'hostd' | 'dns' | 'dbadmin' | 'scanner';
+/**
+ * P3: + scanner (ClamAV + YARA, module scanners).
+ * P4: + mail (the engine containers: postfix-dovecot + rspamd + redis, or
+ * stalwart), mail-relay (site relay of PHP mail()), webmail (Roundcube or
+ * SnappyMail) — docs/P4-PLAN.md.
+ */
+export type InfraComponentId = 'edge' | 'hostd' | 'dns' | 'dbadmin' | 'scanner' | 'mail' | 'mail-relay' | 'webmail';
 
 export interface InfraComponentStatus {
   /** P2: + dns (PowerDNS), dbadmin (phpMyAdmin + Adminer). */
@@ -984,6 +1012,9 @@ export const HostingSocketEvents = {
   ADAPTER_RUN_UPDATED: 'ADAPTER_RUN_UPDATED',
   /** QuarantineUpdatedPayload { accountId, itemId, status } */
   QUARANTINE_UPDATED: 'QUARANTINE_UPDATED',
+  // ── P4 (payloads: ids only, clients refetch — mail.ts) ──
+  /** MailUpdatedPayload { entity, id, accountId, action } */
+  MAIL_UPDATED: 'MAIL_UPDATED',
 } as const;
 export type HostingSocketEventName = typeof HostingSocketEvents[keyof typeof HostingSocketEvents];
 

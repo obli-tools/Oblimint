@@ -1,0 +1,63 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-mail-stalwart entrypoint: checks what the panel provides, prepares
+# the store directories, then execs Stalwart in the foreground (docker-init is
+# PID 1). The configuration is rendered by the panel into the read-only mount
+# /etc/oblimint/stalwart; nothing is generated here (no secret, no default
+# configuration: a missing file is an error, never a silent fallback).
+#
+#   oblimint-stalwart-entrypoint           normal start
+#   oblimint-stalwart-entrypoint --check   only validates the environment and
+#                                          the mounts (exit 0 / 1); used by the
+#                                          image build (must FAIL there).
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+CONF=/etc/oblimint/stalwart/config.toml
+DATA=/var/lib/stalwart
+SERVER=/usr/local/bin/oblimint-stalwart-server
+
+log() {
+	printf '%s oblimint-stalwart: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+die() {
+	log "$*"
+	exit 1
+}
+
+MODE=run
+case "${1:-}" in
+	'') ;;
+	--check) MODE=check ;;
+	*) die "unknown argument: $1" ;;
+esac
+
+# Admin secret: only its SHA512-CRYPT hash, one line, no shell / TOML metacharacter.
+HASH=${OBLIMINT_STALWART_ADMIN_HASH:-}
+[ -n "$HASH" ] || die "OBLIMINT_STALWART_ADMIN_HASH is not set (the panel sets it)"
+case "$HASH" in
+	'$6$'*) ;;
+	*) die "OBLIMINT_STALWART_ADMIN_HASH is not a SHA512-CRYPT hash" ;;
+esac
+case "$HASH" in
+	*[!A-Za-z0-9./\$=]*) die "OBLIMINT_STALWART_ADMIN_HASH contains invalid characters" ;;
+esac
+
+[ -f "$CONF" ] || die "$CONF is missing: the panel writes it before starting the container"
+[ -r "$CONF" ] || die "$CONF is not readable by uid $(id -u) (expected 0640 root:5000)"
+[ -x "$SERVER" ] || die "Stalwart binary not found"
+[ "$(id -u)" != 0 ] || die "refusing to run as root (the panel runs the container as 5000:5000)"
+
+[ -d "$DATA" ] && [ -w "$DATA" ] || die "$DATA is not writable by uid $(id -u) (the panel chowns mail/data/stalwart to 5000:5000)"
+
+if [ "$MODE" = check ]; then
+	log "environment OK"
+	exit 0
+fi
+
+umask 077
+mkdir -p "$DATA/db" "$DATA/blobs"
+
+log "starting Stalwart ($("$SERVER" --version 2>/dev/null | head -n 1 || echo 'version unknown'))"
+exec "$SERVER" --config "$CONF"

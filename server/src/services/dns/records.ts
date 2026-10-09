@@ -623,6 +623,15 @@ export function sameRecordSet(a: GeneratedRecord[], b: GeneratedRecord[]): boole
 /** Why the customer must create a record elsewhere (DnsExpectedRecord.purpose). */
 export function purposeOf(r: Pick<GeneratedRecord, 'name' | 'type' | 'content'>): string {
   if (r.type === 'MX') return 'mail';
+  // P4 (architect): mail records written by the mail-dns-tls contributor.
+  const first = r.name.split('.')[0];
+  if (r.type === 'TXT' && /(^|\.)_domainkey(\.|$)/.test(r.name)) return 'dkim';
+  if (r.type === 'TXT' && first === '_mta-sts') return 'mta-sts';
+  if (r.type === 'TXT' && r.name.startsWith('_smtp._tls')) return 'tls-rpt';
+  if (r.type === 'SRV') return 'srv';
+  if (first === 'autoconfig' || first === 'autodiscover') return 'autoconfig';
+  if (first === 'mta-sts') return 'mta-sts';
+  if (first === 'webmail') return 'webmail';
   if (r.type === 'TXT' && /^v=spf1\b/i.test(r.content)) return 'spf';
   if (r.type === 'TXT' && (r.name === '_dmarc' || r.name.startsWith('_dmarc.'))) return 'dmarc';
   if (r.name === 'www' || r.name.startsWith('www.')) return 'www';

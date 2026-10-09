@@ -182,6 +182,17 @@ function dnsDomainChanged(domainId: number, reason: string): void {
   try { dnsService.domainChanged(domainId, reason); } catch (err) { logger.warn({ err, domainId, reason }, 'dnsService.domainChanged failed'); }
 }
 
+/**
+ * P4 (MA12): a mail domain on this domain was just removed by CASCADE — the
+ * mail engine must stop authenticating / delivering for it now, not at the
+ * next periodic pass (lazy import: the mail service loads a lot).
+ */
+function mailDomainGone(domainId: number): void {
+  import('../mail/mail.service')
+    .then(({ mailService }) => mailService.requestSync(`domain ${domainId} deleted`))
+    .catch((err) => logger.warn({ err: (err as Error).message, domainId }, 'mailService.requestSync failed'));
+}
+
 /** Ownership inheritance re-evaluation (lazy import: ownership.service builds on this file). */
 function ownershipDomainChanged(domainId: number): void {
   import('../ownership/ownership.service')
@@ -461,6 +472,7 @@ export const domainsService = {
     } catch (err) { logger.warn({ err, domainId: row.id }, 'dnsService.domainDeleted failed'); }
     scheduleEdgeSync(`domain ${row.id} deleted`);
     requestReconcile(row.account_id, `domain ${row.id} deleted`);
+    mailDomainGone(row.id);
     await audit(req, row, 'domain.delete');
     emitDomain(row, 'deleted');
   },

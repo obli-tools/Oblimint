@@ -57,7 +57,13 @@ export function InfraCards() {
             ? (t('platformSettings.infra.redeployDbAdminConfirm') || 'The phpMyAdmin and Adminer containers are recreated: open database admin sessions are closed.')
             : component === 'scanner'
               ? (t('scanner.infra.redeployConfirm') || 'The scanner container is recreated: analyses in progress fall back to the heuristics and the ClamAV signatures are reloaded (a few minutes).')
-              : (t('infra.redeployHostdConfirm') || 'The hostd container is recreated: quota and provisioning operations in progress are interrupted.'),
+              : component === 'mail'
+                ? (t('mail.infra.redeployMailConfirm') || 'The mail engine containers are recreated: the mail service (SMTP, IMAP, POP3) is cut for up to a minute. Sending servers retry their messages, open mail clients reconnect.')
+                : component === 'mail-relay'
+                  ? (t('mail.infra.redeployRelayConfirm') || 'The site relay is recreated: PHP mail() of the sites fails for a few seconds.')
+                  : component === 'webmail'
+                    ? (t('mail.infra.redeployWebmailConfirm') || 'The webmail container is recreated: open webmail sessions are closed.')
+                    : (t('infra.redeployHostdConfirm') || 'The hostd container is recreated: quota and provisioning operations in progress are interrupted.'),
       confirmLabel: t('infra.redeploy') || 'Redeploy',
       danger: true,
     }))) return;
@@ -279,6 +285,9 @@ function ComponentRow({ c, busy, onDeploy }: { c: InfraComponentStatus; busy: st
     dns: t('platformSettings.infra.dns') || 'DNS server (PowerDNS)',
     dbadmin: t('platformSettings.infra.dbadmin') || 'Database admin (phpMyAdmin + Adminer)',
     scanner: t('scanner.infra.label') || 'Scanner (ClamAV + YARA)',
+    mail: t('mail.infra.mail') || 'Mail service (active engine)',
+    'mail-relay': t('mail.infra.relay') || 'Site mail relay',
+    webmail: t('mail.infra.webmail') || 'Webmail',
   } as Record<InfraComponentId, string>)[c.id] ?? c.id;
   const description = c.id === 'dns'
     ? (t('platformSettings.infra.dnsHint') || 'Authoritative DNS of the hosted zones, on port 53 (TCP + UDP) of the host. Its API stays on the internal network.')
@@ -286,7 +295,13 @@ function ComponentRow({ c, busy, onDeploy }: { c: InfraComponentStatus; busy: st
       ? (t('platformSettings.infra.dbadminHint') || 'Shared phpMyAdmin and Adminer, opened from the panel with single sign-on, on the host name of the settings.')
       : c.id === 'scanner'
         ? (t('scanner.infra.description') || 'Shared ClamAV + YARA scanner on the internal network: analyzes the releases before publication and the changes of the modification windows. It never mounts a tenant tree.')
-        : null;
+        : c.id === 'mail'
+          ? (t('mail.infra.mailHint') || 'Shared mail engine chosen at installation (Postfix + Dovecot with Rspamd, or Stalwart) on the public mail ports 25, 465, 587, 143, 993, 110, 995 and 4190. Its configuration is rebuilt from the panel.')
+          : c.id === 'mail-relay'
+            ? (t('mail.infra.relayHint') || 'Authenticated relay of the PHP mail() of the sites (msmtp), reachable only from the account networks: forces the sender and limits the volume per site.')
+            : c.id === 'webmail'
+              ? (t('mail.infra.webmailHint') || 'Shared Roundcube or SnappyMail on the mail network, served on its own host name and opened from the panel without a password.')
+              : null;
   return (
     <div className="rounded-lg bg-bg-primary p-3">
       <div className="flex flex-wrap items-center gap-2">

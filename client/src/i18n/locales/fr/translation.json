@@ -412,6 +412,8 @@
       "useObligateHint": "Déclarez Oblimint dans Obligate (type d'application oblimint) et collez son URL et sa clé API. Le SSO reste désactivé tant que vous ne l'activez pas dans les Paramètres."
     },
     "mail": {
+      "notSupported": "Pas encore pris en charge",
+      "notSupportedHint": "Ce moteur n’est pas encore pris en charge par cette version d’Oblimint.",
       "dms": {
         "cons": "Piloté par fichiers et en ligne de commande (pas d'API) ; gros conteneur monolithique.",
         "pros": "Postfix/Dovecot/Rspamd déjà assemblés et éprouvés dans un conteneur très utilisé."

@@ -92,6 +92,10 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'adapter.completed': 'Mise à jour applicative publiée',
   'adapter.failed': 'Mise à jour applicative en échec',
   'supervision.digest': 'Résumé de supervision',
+  // P4
+  'mail.outboundSuspended': 'Envoi de mails suspendu',
+  'mail.serviceFailed': 'Service mail en échec',
+  'mail.quotaWarning': 'Boîte mail presque pleine',
   test: 'Test',
 };
 

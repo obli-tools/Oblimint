@@ -99,6 +99,12 @@ export interface PlatformHosts {
   /** settings access.probeHostV4 / probeHostV6 */
   probeV4: string | null;
   probeV6: string | null;
+  /**
+   * P4: other platform host names (settings mail.hostname, mail.webmailHostname):
+   * reserved for the platform (never a tenant domain), platform certificates;
+   * their vhosts come from the edge contributors (edge/contributors.ts).
+   */
+  extra?: string[];
 }
 
 /** PlatformHosts → the shape of the hosting validation rules. */
@@ -109,6 +115,7 @@ export function platformHostNames(p: Partial<PlatformHosts> | string | null | un
     previewDomain: p.previewDomain ?? null,
     dbAdminHostname: p.dbAdmin ?? null,
     probeHosts: [p.probeV4 ?? null, p.probeV6 ?? null],
+    extraHosts: p.extra ?? [],
   };
 }
 

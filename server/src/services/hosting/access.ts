@@ -39,7 +39,9 @@ export type HostingNeed =
   // P2 (docs/P2-PLAN.md §Accès): cron → sites.manage, allow-list → files.manage,
   // logs / usage → read.
   | 'databases.manage'
-  | 'dns.manage';
+  | 'dns.manage'
+  // P4 (docs/P4-PLAN.md §Accès): mail domains, mailboxes, aliases, DKIM / mail DNS, site relay, webmail SSO.
+  | 'mail.manage';
 
 export type HostingActor =
   | {
@@ -61,7 +63,7 @@ export type HostingActor =
 
 /** Staff capability (permission set) granting each need. */
 const STAFF_CAPS: Record<HostingNeed, readonly string[]> = {
-  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage'],
+  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage', 'mail.manage'],
   'plans.manage': ['plans.manage'],
   'accounts.manage': ['accounts.manage'],
   'sites.manage': ['sites.manage'],
@@ -71,6 +73,7 @@ const STAFF_CAPS: Record<HostingNeed, readonly string[]> = {
   'releases.approve': ['sites.manage'],
   'databases.manage': ['databases.manage'],
   'dns.manage': ['dns.manage'],
+  'mail.manage': ['mail.manage'],
 };
 
 /** Client capability granting each need (null = never for a client). */
@@ -85,6 +88,7 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
   'releases.approve': 'releases.approve',
   'databases.manage': 'databases.manage',
   'dns.manage': 'dns.manage',
+  'mail.manage': 'mail.manage',
 };
 
 /**
@@ -102,6 +106,7 @@ export const CLIENT_CAP_STAFF_EQUIVALENT: Record<ClientCapability, string> = {
   'releases.approve': 'sites.manage',
   'databases.manage': 'databases.manage',
   'dns.manage': 'dns.manage',
+  'mail.manage': 'mail.manage',
 };
 
 /** Staff capabilities a set of client capabilities amounts to. */

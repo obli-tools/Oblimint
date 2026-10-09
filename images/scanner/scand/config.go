@@ -4,15 +4,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Runtime configuration from the environment (set by the panel, see
 // server/src/services/scan/scannerSpec.ts) and the clamd / freshclam
 // configuration files rendered into /run at start (the root is read-only).
+
+// ClamdTCPPort is the clamd TCP port opened by OBLIMINT_CLAMD_TCP=1 (panel:
+// naming.ts SCANNER_CLAMD_PORT).
+const ClamdTCPPort = 3310
 
 // Config of scand.
 type Config struct {
@@ -24,15 +31,26 @@ type Config struct {
 	MaxFileMB       int
 	Concurrency     int
 	ClamdAddr       string
-	RunDir          string
-	DatabaseDir     string
-	SeedDir         string
-	TmpDir          string
-	YaraBin         string
-	YaraRules       string
-	RulesInfo       string
-	ClamdBin        string
-	FreshclamBin    string
+	// ClamdTCP: clamd also listens on TCP ClamdTCPPort (OBLIMINT_CLAMD_TCP=1), for
+	// Rspamd on oblimint-mail-core (P4, engine postfix-dovecot with mail.clamav).
+	// Off by default: clamd has no authentication, the port only exists when
+	// the panel asks, and only on the container's address inside
+	// ClamdTCPNets (OBLIMINT_CLAMD_TCP_NETS, the subnets of oblimint-mail-core)
+	// — never on the panel network (risk R-CLAMD-TCP).
+	ClamdTCP     bool
+	ClamdTCPNets []netip.Prefix
+	// ClamdTCPAddr: the address clamd binds (resolved at start by
+	// ResolveClamdTCPAddr); empty ⇒ no TCP socket at all (fail closed).
+	ClamdTCPAddr string
+	RunDir       string
+	DatabaseDir  string
+	SeedDir      string
+	TmpDir       string
+	YaraBin      string
+	YaraRules    string
+	RulesInfo    string
+	ClamdBin     string
+	FreshclamBin string
 }
 
 func envInt(get func(string) string, name string, def, min, max int) (int, error) {
@@ -91,6 +109,22 @@ func LoadConfig(get func(string) string) (Config, error) {
 	}
 	if c.Yara, err = envBool(get, "SCAND_YARA", true); err != nil {
 		return c, err
+	}
+	if c.ClamdTCP, err = envBool(get, "OBLIMINT_CLAMD_TCP", false); err != nil {
+		return c, err
+	}
+	if c.ClamdTCP {
+		raw := strings.TrimSpace(get("OBLIMINT_CLAMD_TCP_NETS"))
+		if raw == "" {
+			return c, errors.New("OBLIMINT_CLAMD_TCP_NETS is required with OBLIMINT_CLAMD_TCP=1")
+		}
+		for _, p := range strings.Split(raw, ",") {
+			pfx, perr := netip.ParsePrefix(strings.TrimSpace(p))
+			if perr != nil || pfx.Bits() == 0 {
+				return c, fmt.Errorf("OBLIMINT_CLAMD_TCP_NETS: invalid subnet %q", p)
+			}
+			c.ClamdTCPNets = append(c.ClamdTCPNets, pfx.Masked())
+		}
 	}
 	if c.FreshclamChecks, err = envInt(get, "FRESHCLAM_CHECKS", 12, 1, 24); err != nil {
 		return c, err
@@ -155,6 +189,12 @@ func (c Config) ClamdConf() string {
 		"ScanHTML yes",
 		"ScanPDF yes",
 		"Bytecode yes",
+	}
+	if c.ClamdTCP && c.ClamdTCPAddr != "" {
+		// Only the container's address on oblimint-mail-core (risk
+		// R-CLAMD-TCP: clamd has no authentication; the panel network never
+		// reaches it).
+		lines = append(lines, fmt.Sprintf("TCPSocket %d", ClamdTCPPort), "TCPAddr "+c.ClamdTCPAddr)
 	}
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -265,4 +305,56 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.Rename(tmp, dst)
+}
+
+// PickClamdTCPAddr returns the first address of addrs inside one of nets
+// ("" when none): the container's address on oblimint-mail-core.
+func PickClamdTCPAddr(addrs []net.Addr, nets []netip.Prefix) string {
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		default:
+			continue
+		}
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			continue
+		}
+		addr = addr.Unmap()
+		if addr.IsLoopback() || addr.IsUnspecified() || addr.IsLinkLocalUnicast() {
+			continue
+		}
+		for _, n := range nets {
+			if n.Contains(addr) {
+				return addr.String()
+			}
+		}
+	}
+	return ""
+}
+
+// ResolveClamdTCPAddr waits (up to wait) for an interface address inside
+// c.ClamdTCPNets: the panel attaches oblimint-mail-core before starting the
+// container, the wait only covers a slow interface. "" ⇒ clamd gets no TCP
+// socket (the panel notices and recreates the container).
+func (c Config) ResolveClamdTCPAddr(wait time.Duration, interfaceAddrs func() ([]net.Addr, error)) string {
+	if !c.ClamdTCP || len(c.ClamdTCPNets) == 0 {
+		return ""
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		if addrs, err := interfaceAddrs(); err == nil {
+			if a := PickClamdTCPAddr(addrs, c.ClamdTCPNets); a != "" {
+				return a
+			}
+		}
+		if time.Now().After(deadline) {
+			return ""
+		}
+		time.Sleep(time.Second)
+	}
 }

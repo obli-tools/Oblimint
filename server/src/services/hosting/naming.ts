@@ -42,7 +42,9 @@ export type ContainerRole = 'site' | 'site-secondary' | 'site-preview' | 'filesr
   // P2
   | 'db' | 'pdns' | 'dbadmin'
   // P3: shared scanner (panel network), ephemeral adapter tools container (account networks)
-  | 'scanner' | 'tools';
+  | 'scanner' | 'tools'
+  // P4: mail engine containers (label oblimint.mail-part tells which), site relay, webmail
+  | 'mail' | 'mail-relay' | 'webmail';
 
 // ── P2 (docs/P2-PLAN.md §Conteneurs) ─────────────────────────────────────────
 
@@ -87,6 +89,53 @@ export const P3_LABELS = {
   /** adapter_runs.id of a tools container (role tools). */
   adapterRun: 'oblimint.adapter-run',
 } as const;
+
+// ── P4 (docs/P4-PLAN.md §4) ─────────────────────────────────────────────────
+
+/**
+ * Mail network: the engine containers, rspamd / redis, the site relay, the
+ * webmail; the edge (webmail vhosts) and the panel (internal hooks, alias
+ * oblimint-panel) are attached to it; the scanner too when the postfix engine
+ * uses ClamAV. NEVER the panel PostgreSQL network members otherwise; NEVER a
+ * tenant site (sites reach the relay on their own account network).
+ */
+export const MAIL_NETWORK = 'oblimint-mail';
+/** Main engine container (postfix + dovecot, or stalwart): publishes the public mail ports. */
+export const MAIL_CONTAINER = 'oblimint-mail';
+/** postfix-dovecot only. */
+export const MAIL_RSPAMD_CONTAINER = 'oblimint-mail-rspamd';
+export const MAIL_REDIS_CONTAINER = 'oblimint-mail-redis';
+/** Site relay of PHP mail(): joins the mail network AND every account network (alias MAIL_RELAY_ALIAS). */
+export const MAIL_RELAY_CONTAINER = 'oblimint-mail-relay';
+/** DNS name of the relay seen from the site containers (msmtp host). */
+export const MAIL_RELAY_ALIAS = 'oblimint-mail-relay';
+/** SMTP port of the relay on the account networks (AUTH required, no TLS inside the Docker network). */
+export const MAIL_RELAY_PORT = 2525;
+/** Shared webmail (Roundcube or SnappyMail, one at a time), reached by the edge on WEBMAIL_PORT. */
+export const WEBMAIL_CONTAINER = 'oblimint-webmail';
+export const WEBMAIL_PORT = 8080;
+
+export const P4_LABELS = {
+  /** Which part of the mail service a container is: engine | rspamd | redis | relay | webmail. */
+  mailPart: 'oblimint.mail-part',
+} as const;
+
+export const mailPostfixImage = (): string => `${config.hosting.mailPostfixImage}:${config.hosting.imageTag}`;
+export const mailRspamdImage = (): string => `${config.hosting.mailRspamdImage}:${config.hosting.imageTag}`;
+/** Official image, pinned by tag in the configuration (no Oblimint tag). */
+export const mailRedisImage = (): string => config.hosting.mailRedisImage;
+export const mailStalwartImage = (): string => `${config.hosting.mailStalwartImage}:${config.hosting.imageTag}`;
+export const mailRelayImage = (): string => `${config.hosting.mailRelayImage}:${config.hosting.imageTag}`;
+export const webmailImage = (kind: 'roundcube' | 'snappymail'): string =>
+  `${kind === 'roundcube' ? config.hosting.roundcubeImage : config.hosting.snappymailImage}:${config.hosting.imageTag}`;
+/**
+ * clamd TCP port of the shared scanner (P3) on the MAIL network, opened only
+ * when the postfix-dovecot engine uses ClamAV (module engine-postfix: scanner
+ * env OBLIMINT_CLAMD_TCP=1 + attachment to MAIL_NETWORK).
+ */
+export const SCANNER_CLAMD_PORT = 3310;
+/** SASL user of a site on the relay. */
+export const siteRelayUsername = (siteId: number): string => `site-${siteId}`;
 
 /** Blue/green preview host on the dedicated preview domain (P2): <slug>-<id>.<previewDomain>. */
 export function previewHost(site: { id: number; slug: string }, previewDomain: string): string {

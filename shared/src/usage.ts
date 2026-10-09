@@ -149,12 +149,16 @@ export type NotificationEvent =
   | 'quarantine.added'       // a file was quarantined (typed data path, supervised mode)
   | 'adapter.completed'      // an adapter run published a release
   | 'adapter.failed'         // an adapter run failed / was rolled back
-  | 'supervision.digest';    // periodic digest of a supervised site
+  | 'supervision.digest'     // periodic digest of a supervised site
+  // P4 (docs/P4-PLAN.md §Notifications)
+  | 'mail.outboundSuspended' // outbound mail of an account suspended (abuse protection / staff)
+  | 'mail.serviceFailed'     // the mail engine / relay / webmail is down or a configuration could not be applied
+  | 'mail.quotaWarning';     // a mailbox reached 90 % of its quota
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'quota.warning', 'quota.exceeded', 'quota.action', 'certificate.failed', 'dns.syncFailed', 'db.instanceFailed', 'cron.failed', 'security.banned',
   'window.pendingReview', 'window.autoValidated', 'window.failed', 'scan.threat', 'quarantine.added', 'adapter.completed', 'adapter.failed',
-  'supervision.digest',
+  'supervision.digest', 'mail.outboundSuspended', 'mail.serviceFailed', 'mail.quotaWarning',
 ];
 
 /**

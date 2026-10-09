@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-mail-relay — Postfix "relay only" (docs/P4-PLAN.md §9.5, MA2, MA3,
+# MA7, MA9). Copied into /etc/postfix (tmpfs) at start; the panel-written
+# /etc/oblimint/relay/postfix.cf overrides an allow-list of keys
+# (myhostname, relayhost, message_size_limit, smtp_tls_security_level).
+#
+#  - no local delivery at all: no local domain, no alias, local transport = error;
+#  - the ONLY public-facing listener is 2525 (master.cf), reachable from the
+#    account networks and the mail network only (no published port), SASL
+#    mandatory (Dovecot auth, passwd-file of SHA512-CRYPT hashes written by the
+#    panel), every message checked by relayd (policy: allowed sender, limits,
+#    suspension) and passed through relayd's From filter;
+#  - delivery: relayhost = the engine's internal port 10025 (DKIM signing,
+#    trusted by the relay's exact address), or direct MX delivery when the
+#    engine is "external" (relayhost empty).
+# ─────────────────────────────────────────────────────────────────────────────
+compatibility_level = 3.6
+myhostname = oblimint-mail-relay.invalid
+myorigin = $myhostname
+mydestination =
+local_recipient_maps =
+local_transport = error:5.1.1 local delivery is disabled on the relay
+alias_maps =
+alias_database =
+relay_domains =
+inet_interfaces = all
+inet_protocols = all
+# The local reinjection listener only (127.0.0.1:10026 in master.cf).
+mynetworks = 127.0.0.0/8 [::1]/128
+mynetworks_style = host
+maillog_file = /dev/stdout
+smtpd_banner = $myhostname ESMTP
+disable_vrfy_command = yes
+biff = no
+append_dot_mydomain = no
+smtputf8_enable = yes
+# Overridden by the panel (platform ceiling, MiB → bytes).
+message_size_limit = 52428800
+smtpd_recipient_limit = 50
+# Outgoing (engine 10025 or direct delivery): opportunistic TLS.
+smtp_tls_security_level = may
+smtp_tls_loglevel = 0
+relayhost =
+# Bounces go back to the envelope sender (a mailbox of the account).
+notify_classes = resource, software
+maximal_queue_lifetime = 2d
+bounce_queue_lifetime = 2d
+# Defaults for every smtpd (2525 and the reinjection listener refine them).
+smtpd_helo_required = yes
+smtpd_client_restrictions = reject
+smtpd_relay_restrictions = reject
+smtpd_recipient_restrictions = reject
+# Restrictions of the 2525 listener (master.cf): relayd decides every
+# recipient (allowed sender, suspension, limits) and counts every accepted
+# message; nothing passes without SASL. relayd unreachable → temporary failure.
+smtpd_policy_service_timeout = 10s
+smtpd_policy_service_default_action = 451 4.3.5 Relay policy service unavailable, try again later
+oblimint_relay_recipient_restrictions = reject_non_fqdn_recipient, reject_unauth_pipelining, check_policy_service inet:127.0.0.1:10031, permit_sasl_authenticated, reject
+oblimint_relay_end_of_data_restrictions = check_policy_service inet:127.0.0.1:10031

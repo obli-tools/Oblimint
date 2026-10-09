@@ -56,6 +56,8 @@ func newMux(ops Ops, l Layout, fw *firewallManager, gw *gateway, p3 P3Ops) *http
 	mux.HandleFunc("PUT /v1/accounts/{id}/db-default/{family}", a.setDefaultDbSocket)
 	mux.HandleFunc("GET /v1/firewall", a.firewallStatus)
 	mux.HandleFunc("PUT /v1/firewall/global", a.setFirewallGlobal)
+	// P4 — bans on the shared mail ports (mail.go).
+	mux.HandleFunc("PUT /v1/firewall/mail", a.setMailFirewall)
 	mux.HandleFunc("PUT /v1/firewall/accounts/{id}", a.applyFirewall)
 	mux.HandleFunc("DELETE /v1/firewall/accounts/{id}", a.removeFirewall)
 	mux.HandleFunc("PUT /v1/gateway/accounts/{id}", a.setGateway)

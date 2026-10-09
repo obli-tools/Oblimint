@@ -1,0 +1,51 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-mail-relay entrypoint (PID 1 under tini). Read-only root: Postfix's
+# configuration lives on the /etc/postfix tmpfs (copied from the image, then
+# the panel overrides applied), Dovecot's runtime on /run, the queue on the
+# bind-mounted /var/spool/postfix. Starts Dovecot (SASL only), relayd (policy
+# + From filter, as the unprivileged relayd user) and Postfix, then supervises
+# them: any of them dying stops the container (RestartPolicy restarts it).
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+SHARE=/usr/share/oblimint-relay
+CONF=/etc/oblimint/relay
+
+log() { printf '%s oblimint-relay: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
+
+# shellcheck source=/dev/null
+. /usr/local/lib/oblimint-relay/overrides.sh
+
+cp -a "$SHARE/postfix/." /etc/postfix/
+mkdir -p /var/lib/postfix /run/dovecot /run/dovecot-state
+chown postfix:postfix /var/lib/postfix
+apply_overrides "$CONF/postfix.cf"
+[ -f "$CONF/passwd" ] || log "no credential file yet ($CONF/passwd): every login is refused until the panel writes it"
+[ -f "$CONF/policy.json" ] || log "no policy file yet ($CONF/policy.json): nothing is relayed until the panel writes it"
+
+postfix check
+dovecot -F -c "$SHARE/dovecot.conf" &
+dovecot_pid=$!
+su-exec relayd /usr/local/bin/relayd -config "$CONF/policy.json" &
+relayd_pid=$!
+postfix start-fg &
+postfix_pid=$!
+
+stop() {
+	log "stopping"
+	postfix stop >/dev/null 2>&1 || true
+	kill "$relayd_pid" "$dovecot_pid" 2>/dev/null || true
+	wait 2>/dev/null || true
+	exit 0
+}
+trap stop TERM INT
+
+while kill -0 "$postfix_pid" 2>/dev/null && kill -0 "$relayd_pid" 2>/dev/null && kill -0 "$dovecot_pid" 2>/dev/null; do
+	sleep 5 &
+	wait $! || true
+done
+log "a process exited (postfix $postfix_pid, relayd $relayd_pid, dovecot $dovecot_pid): stopping the container"
+postfix stop >/dev/null 2>&1 || true
+kill "$relayd_pid" "$dovecot_pid" 2>/dev/null || true
+exit 1

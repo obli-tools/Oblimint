@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Layers, AlertTriangle } from 'lucide-react';
+import { Layers, AlertTriangle, Mail } from 'lucide-react';
 import type { DbEngine, DbTuningProfile, OverQuotaAction, Plan, PlanInput, PlanLimits, SiteBaseId, SiteEngine } from '@oblimint/shared';
 import { DB_ENGINE_VERSIONS, DB_PROFILE_MEMORY_MB, DEFAULT_PLAN_LIMITS, SITE_BASES } from '@oblimint/shared';
 import { plansApi } from '@/api/plans.api';
@@ -13,7 +13,9 @@ import { inputCls, labelCls, sectionTitleCls, Pill, hostingErrorMessage, isStepU
 import { limitToField, parseLimitField } from './hostingFormat';
 
 // P2 non-numeric / non-nullable limits are edited separately (module ui-ops).
-type NumKey = Exclude<keyof PlanLimits, 'allowedBases' | 'dbProfile' | 'dbEngines' | 'dbExternalAccess' | 'overQuotaAction' | 'cronMinIntervalMin'>;
+type NumKey = Exclude<keyof PlanLimits, 'allowedBases' | 'dbProfile' | 'dbEngines' | 'dbExternalAccess' | 'overQuotaAction' | 'cronMinIntervalMin'
+  // P4 (ui-mail adds the mail fields): non-nullable, edited outside the numeric fields.
+  | 'mailMaxMessageSizeMb'>;
 
 interface FieldDef {
   key: NumKey;
@@ -43,6 +45,9 @@ const OVER_QUOTA_FALLBACK: Record<OverQuotaAction, { label: string; hint: string
   suspend: { label: 'Suspend the account', hint: 'The account is suspended (once per period); a staff member can resume it.' },
 };
 const OVER_QUOTA_KEY: Record<OverQuotaAction, string> = { warn: 'warn', 'block-uploads': 'blockUploads', suspend: 'suspend' };
+// P4: largest message of the plan (MiB), capped by the platform setting mail.maxMessageSizeMb.
+const MAIL_SIZE_MIN = 1;
+const MAIL_SIZE_MAX = 100;
 const CRON_INTERVAL_MIN = 1;
 const CRON_INTERVAL_MAX = 1440;
 
@@ -85,7 +90,15 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
   const cronDefs: FieldDef[] = [
     { key: 'maxCronJobs', label: t('platformSettings.plan.maxCronJobs') || 'Cron jobs' },
   ];
-  const defs: FieldDef[] = [...baseDefs, ...dbDefs, ...cronDefs];
+  // P4 mail limits (maxMailboxes is in baseDefs); mailMaxMessageSizeMb is edited apart (non-nullable).
+  const mailDefs: FieldDef[] = [
+    { key: 'mailQuotaMb', label: t('mail.plan.mailQuota') || 'Total mail quota', unit: t('units.gb') || 'GB', multiplier: MIB_PER_GB, step: '0.5' },
+    { key: 'mailboxQuotaMaxMb', label: t('mail.plan.mailboxQuotaMax') || 'Largest mailbox', unit: t('units.gb') || 'GB', multiplier: MIB_PER_GB, step: '0.5' },
+    { key: 'maxMailAliases', label: t('mail.plan.maxAliases') || 'Mail aliases' },
+    { key: 'mailOutboundPerHour', label: t('mail.plan.outboundPerHour') || 'Outbound mail / hour (account)' },
+    { key: 'mailSiteOutboundPerHour', label: t('mail.plan.siteOutboundPerHour') || 'Outbound mail / hour (per site)' },
+  ];
+  const defs: FieldDef[] = [...baseDefs, ...dbDefs, ...cronDefs, ...mailDefs];
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -102,6 +115,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
   const [dbExternal, setDbExternal] = useState(DEFAULT_PLAN_LIMITS.dbExternalAccess);
   const [cronInterval, setCronInterval] = useState(String(DEFAULT_PLAN_LIMITS.cronMinIntervalMin));
   const [overQuotaAction, setOverQuotaAction] = useState<OverQuotaAction>(DEFAULT_PLAN_LIMITS.overQuotaAction);
+  const [mailMaxSize, setMailMaxSize] = useState(String(DEFAULT_PLAN_LIMITS.mailMaxMessageSizeMb));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -123,6 +137,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     setDbExternal(full.dbExternalAccess);
     setCronInterval(String(full.cronMinIntervalMin));
     setOverQuotaAction(full.overQuotaAction);
+    setMailMaxSize(String(full.mailMaxMessageSizeMb));
     setError('');
   }, [open, plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -159,6 +174,11 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
       setError(t('platformSettings.plan.cronIntervalRange', { min: CRON_INTERVAL_MIN, max: CRON_INTERVAL_MAX, defaultValue: 'Cron minimum interval: between {{min}} and {{max}} minutes.' }));
       return;
     }
+    const mailSize = Number(mailMaxSize);
+    if (!Number.isInteger(mailSize) || mailSize < MAIL_SIZE_MIN || mailSize > MAIL_SIZE_MAX) {
+      setError(t('mail.plan.maxMessageSizeRange', { min: MAIL_SIZE_MIN, max: MAIL_SIZE_MAX, defaultValue: 'Largest mail message: between {{min}} and {{max}} MB.' }));
+      return;
+    }
     const engineList = DB_ENGINES.filter((e) => engines.has(e));
     if (!allEngines && engineList.length === 0) { setError(t('platformSettings.plan.noEngine') || 'Allow at least one database engine.'); return; }
     limits.dbProfile = dbProfile;
@@ -166,6 +186,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     limits.dbExternalAccess = dbExternal;
     limits.cronMinIntervalMin = interval;
     limits.overQuotaAction = overQuotaAction;
+    limits.mailMaxMessageSizeMb = mailSize;
     const input: PlanInput = { name: name.trim(), description: description.trim() || null, limits, isActive };
     setSaving(true);
     setError('');
@@ -348,6 +369,30 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
               <p className="mt-1.5 text-[11px] text-text-muted">{t('platformSettings.plan.cronMinIntervalHint') || 'Between two runs of the same job.'}</p>
             </div>
           </div>
+        </div>
+
+        <div>
+          <div className={cn(sectionTitleCls, 'mb-2 flex items-center gap-1.5')}><Mail size={12} />{t('mail.plan.title') || 'Mail'}</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {mailDefs.map(numField)}
+            <div className="rounded-lg bg-bg-primary p-2.5">
+              <label className={cn(labelCls, 'truncate')} htmlFor="plan-mail-size">
+                {t('mail.plan.maxMessageSize') || 'Largest message'}<span className="font-mono text-[10px]"> ({t('units.mb') || 'MB'})</span>
+              </label>
+              <input
+                id="plan-mail-size"
+                type="number"
+                min={MAIL_SIZE_MIN}
+                max={MAIL_SIZE_MAX}
+                inputMode="numeric"
+                value={mailMaxSize}
+                onChange={(e) => setMailMaxSize(e.target.value)}
+                className={cn(inputCls, 'font-mono')}
+              />
+              <p className="mt-1.5 text-[11px] text-text-muted">{t('mail.plan.maxMessageSizeHint') || 'Also capped by the platform setting.'}</p>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-text-muted">{t('mail.plan.hint') || 'The mailbox count is set with the limits above. An unlimited mailbox is refused while the total mail quota is capped.'}</p>
         </div>
 
         <div>

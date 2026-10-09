@@ -144,6 +144,8 @@ export interface PlatformHostNames {
   dbAdminHostname?: string | null;
   /** settings access.probeHostV4 / probeHostV6 */
   probeHosts?: Array<string | null | undefined>;
+  /** P4: settings mail.hostname / mail.webmailHostname. */
+  extraHosts?: Array<string | null | undefined>;
 }
 
 function hostOf(v: string | null | undefined): string {
@@ -152,7 +154,7 @@ function hostOf(v: string | null | undefined): string {
 
 /** Every platform host name (panel, dbadmin, probes, preview domain), lower case, no empty entry. */
 export function platformHostList(hosts: PlatformHostNames): string[] {
-  return [hosts.panelHostname, hosts.previewDomain, hosts.dbAdminHostname, ...(hosts.probeHosts ?? [])]
+  return [hosts.panelHostname, hosts.previewDomain, hosts.dbAdminHostname, ...(hosts.probeHosts ?? []), ...(hosts.extraHosts ?? [])]
     .map(hostOf).filter((h) => h.length > 0);
 }
 

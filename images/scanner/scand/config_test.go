@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +90,64 @@ func TestRenderedConfigs(t *testing.T) {
 	}
 	if st, err := os.Stat(filepath.Join(dir, "clamav")); err != nil || !st.IsDir() {
 		t.Fatal("socket directory not created")
+	}
+}
+
+// P4: clamd TCP for Rspamd, ONLY with OBLIMINT_CLAMD_TCP=1 and only bound to
+// the container's address on oblimint-mail-core (OBLIMINT_CLAMD_TCP_NETS).
+func TestClamdTCPOption(t *testing.T) {
+	for _, v := range []string{"", "0", "false"} {
+		c, err := LoadConfig(envOf(map[string]string{"SCAND_KEY": testKey, "OBLIMINT_CLAMD_TCP": v, "OBLIMINT_CLAMD_TCP_NETS": "172.30.0.0/16"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.ClamdTCPAddr = "172.30.0.5" // even if set, never without the flag
+		if c.ClamdTCP || strings.Contains(c.ClamdConf(), "TCPSocket") || strings.Contains(c.ClamdConf(), "TCPAddr") {
+			t.Fatalf("OBLIMINT_CLAMD_TCP=%q must not open a TCP socket", v)
+		}
+	}
+	if _, err := LoadConfig(envOf(map[string]string{"SCAND_KEY": testKey, "OBLIMINT_CLAMD_TCP": "1"})); err == nil {
+		t.Fatal("TCP without its subnets accepted")
+	}
+	for _, bad := range []string{"0.0.0.0/0", "nope", "172.30.0.0/16,::/0"} {
+		if _, err := LoadConfig(envOf(map[string]string{"SCAND_KEY": testKey, "OBLIMINT_CLAMD_TCP": "1", "OBLIMINT_CLAMD_TCP_NETS": bad})); err == nil {
+			t.Fatalf("subnets %q accepted", bad)
+		}
+	}
+	c, err := LoadConfig(envOf(map[string]string{"SCAND_KEY": testKey, "OBLIMINT_CLAMD_TCP": "1", "OBLIMINT_CLAMD_TCP_NETS": "172.30.0.0/16, fd00:30::/64"}))
+	if err != nil || !c.ClamdTCP || len(c.ClamdTCPNets) != 2 {
+		t.Fatalf("%+v %v", c, err)
+	}
+	// no address on the mail back-end network ⇒ no TCP socket (fail closed)
+	if strings.Contains(c.ClamdConf(), "TCPSocket") {
+		t.Fatal("TCP socket opened without a resolved address")
+	}
+	panelAndCore := func() ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},
+			&net.IPNet{IP: net.ParseIP("172.18.0.9"), Mask: net.CIDRMask(16, 32)}, // panel network
+			&net.IPNet{IP: net.ParseIP("172.30.0.5"), Mask: net.CIDRMask(16, 32)}, // oblimint-mail-core
+		}, nil
+	}
+	c.ClamdTCPAddr = c.ResolveClamdTCPAddr(0, panelAndCore)
+	if c.ClamdTCPAddr != "172.30.0.5" {
+		t.Fatalf("resolved %q", c.ClamdTCPAddr)
+	}
+	conf := c.ClamdConf()
+	if !strings.Contains(conf, "\nTCPSocket 3310\nTCPAddr 172.30.0.5\n") {
+		t.Fatalf("clamd.conf lacks TCPSocket 3310 bound to the mail-core address:\n%s", conf)
+	}
+	if strings.Count(conf, "TCPSocket") != 1 || !strings.Contains(conf, "LocalSocket /run/clamav/clamd.sock\n") {
+		t.Fatal("the local socket used by scand must stay")
+	}
+	panelOnly := func() ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("172.18.0.9"), Mask: net.CIDRMask(16, 32)}}, nil
+	}
+	if a := c.ResolveClamdTCPAddr(0, panelOnly); a != "" {
+		t.Fatalf("panel address %q picked", a)
+	}
+	if _, err := LoadConfig(envOf(map[string]string{"SCAND_KEY": testKey, "OBLIMINT_CLAMD_TCP": "yes please"})); err == nil {
+		t.Fatal("invalid OBLIMINT_CLAMD_TCP accepted")
 	}
 }
 

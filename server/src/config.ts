@@ -221,6 +221,25 @@ export const config = {
      * is restarted (fallback, docs/P3-PLAN.md §5). 'off' = trust the propagation.
      */
     windowPropagationCheck: process.env.OBLIMINT_WINDOW_PROPAGATION_CHECK !== 'off',
+    // ── P4 (docs/P4-PLAN.md §Configuration) ──
+    /** postfix-dovecot engine: Postfix + Dovecot (one image), Rspamd, Redis (official image, pinned). */
+    mailPostfixImage: process.env.OBLIMINT_MAIL_POSTFIX_IMAGE || 'meejay/oblimint-mail-postfix',
+    mailRspamdImage: process.env.OBLIMINT_MAIL_RSPAMD_IMAGE || 'meejay/oblimint-mail-rspamd',
+    mailRedisImage: process.env.OBLIMINT_MAIL_REDIS_IMAGE || 'redis:7.4-alpine',
+    /** stalwart engine (Stalwart Mail Server + Oblimint bootstrap). */
+    mailStalwartImage: process.env.OBLIMINT_MAIL_STALWART_IMAGE || 'meejay/oblimint-mail-stalwart',
+    /** Site relay of PHP mail() (Postfix relay-only + policy daemon). */
+    mailRelayImage: process.env.OBLIMINT_MAIL_RELAY_IMAGE || 'meejay/oblimint-mail-relay',
+    /** Shared webmail containers. */
+    roundcubeImage: process.env.OBLIMINT_ROUNDCUBE_IMAGE || 'meejay/oblimint-webmail-roundcube',
+    snappymailImage: process.env.OBLIMINT_SNAPPYMAIL_IMAGE || 'meejay/oblimint-webmail-snappymail',
+    /**
+     * Host addresses the mail ports (25, 465, 587, 143, 993, 110, 995, 4190)
+     * are published on (comma / space separated). Empty = every address.
+     */
+    mailBind: (process.env.OBLIMINT_MAIL_BIND || '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
+    /** 'off': the mail workers (engine sync, log follower, DNS checks) do not run (dev box). */
+    mailWorkers: process.env.OBLIMINT_MAIL_WORKERS !== 'off',
   },
   /** Static client build served in production. */
   // server/src (tsx) → ../../client/dist ; server/dist/src (compiled) → ../../../client/dist

@@ -37,6 +37,8 @@ export async function startWorkers(): Promise<void> {
   for (const [name, w] of p2) starters.push([name, () => w.start()]);
   // P3 workers (docs/P3-PLAN.md §Workers): same contract.
   for (const [name, w] of await p3Workers()) starters.push([name, () => w.start()]);
+  // P4 workers (docs/P4-PLAN.md §Workers): same contract; OBLIMINT_MAIL_WORKERS=off skips them.
+  if (config.hosting.mailWorkers) for (const [name, w] of await p4Workers()) starters.push([name, () => w.start()]);
   for (const [name, start] of starters) {
     try { start(); } catch (err) { logger.error({ err, worker: name }, 'Worker failed to start'); }
   }
@@ -91,6 +93,28 @@ async function p3Workers(): Promise<Array<[string, Worker]>> {
   ];
 }
 
+/**
+ * P4 workers, in start order: mail (engine sync + usage + purge queue; also
+ * resolves the active driver), mail-dns (registers the DNS zone + edge
+ * contributors, DKIM rotation, periodic DNS checks), mail-outbound (log
+ * follower, abuse protection, bans → hostd, relay config), webmail (session
+ * credential expiry, edge contributor).
+ */
+async function p4Workers(): Promise<Array<[string, Worker]>> {
+  const [mail, mailDns, outbound, webmail] = await Promise.all([
+    import('../services/mail/mail.service').then((m) => m.mailService),
+    import('../services/mail/dns/mailDns.service').then((m) => m.mailDnsService),
+    import('../services/mail/outbound/outbound.service').then((m) => m.outboundService),
+    import('../services/mail/webmail/webmail.service').then((m) => m.webmailService),
+  ]);
+  return [
+    ['mail', mail],
+    ['mail-dns', mailDns],
+    ['mail-outbound', outbound],
+    ['webmail', webmail],
+  ];
+}
+
 export async function stopWorkers(): Promise<void> {
   const mods = await Promise.all([
     import('../services/docker/reconcile.service').then((m) => m.reconcileService),
@@ -103,6 +127,7 @@ export async function stopWorkers(): Promise<void> {
   for (const m of mods) { try { m.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p2Workers()) { try { w.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p3Workers()) { try { w.stop(); } catch { /* exiting */ } }
+  for (const [, w] of await p4Workers()) { try { w.stop(); } catch { /* exiting */ } }
   const { stopInternalServer } = await import('../internal/internalServer');
   try { stopInternalServer(); } catch { /* exiting */ }
 }
