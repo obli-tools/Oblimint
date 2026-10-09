@@ -48,19 +48,19 @@ test('a bad token or account id is a 404 (auth and event)', async () => {
   assert.equal(attempts.length, 0);
 });
 
-test('auth success returns the SFTPGo user (no symlink / chown / chmod right)', async () => {
+test('auth success returns the SFTPGo user (no symlink / chown right; chmod accepted, ignored by setstat_mode 1)', async () => {
   const r = await post('/internal/filesrv/7/good-token/auth', { username: 'alice', password: 'pw', ip: '1.2.3.4', protocol: 'SSH', keyboard_interactive: '' });
   assert.equal(r.status, 200);
   const u = await r.json() as Record<string, any>;
   assert.equal(u.status, 1);
   assert.equal(u.username, 'alice');
   assert.equal(u.home_dir, '/srv/files');
-  assert.deepEqual(u.permissions['/'], ['list', 'download']);
+  assert.deepEqual(u.permissions['/'], ['list', 'download', 'chmod']);
   for (const k of ['/staging', '/data']) {
-    assert.deepEqual(u.permissions[k], ['list', 'download', 'upload', 'overwrite', 'delete', 'rename', 'create_dirs', 'chtimes']);
+    assert.deepEqual(u.permissions[k], ['list', 'download', 'upload', 'overwrite', 'delete', 'rename', 'create_dirs', 'chmod', 'chtimes']);
   }
   const all = JSON.stringify(u.permissions);
-  for (const forbidden of ['create_symlinks', 'chown', 'chmod', '"*"']) assert.equal(all.includes(forbidden), false, forbidden);
+  for (const forbidden of ['create_symlinks', 'chown', '"*"']) assert.equal(all.includes(forbidden), false, forbidden);
   assert.deepEqual(u.filters.denied_protocols, ['FTP', 'DAV', 'HTTP']);
   assert.deepEqual(attempts.at(-1), { accountId: 7, attempt: { username: 'alice', password: 'pw', publicKey: null, ip: '1.2.3.4', protocol: 'SSH' } });
 });

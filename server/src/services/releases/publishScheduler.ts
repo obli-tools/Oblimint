@@ -91,7 +91,7 @@ async function fire(siteId: number): Promise<void> {
       arm(siteId, now, now + BUSY_RETRY_MS);
       return;
     }
-    if (err instanceof AppError && (err.code === 'stagingEmpty' || err.code === 'accountSuspended' || err.statusCode === 404)) return;
+    if (err instanceof AppError && (err.code === 'stagingEmpty' || err.code === 'noChanges' || err.code === 'accountSuspended' || err.statusCode === 404)) return;
     logger.warn({ err, siteId }, 'Auto-publish failed');
   }
 }

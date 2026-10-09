@@ -150,3 +150,12 @@ test('attachWithAlias: a failing reconnect is retried, then falls back to no ali
   ]);
   assert.ok(panel.networks.has('oblimint'), 'the panel stays on its network');
 });
+
+test('ensureImage: a tag already present is never pulled (shared tags like postgres:16-alpine stay put)', async () => {
+  const d = new FakeDockerCls();
+  d.images.add('postgres:16-alpine');
+  assert.equal(await ops.ensureImage(d.asDocker(), 'postgres:16-alpine'), false);
+  assert.deepEqual(d.calls, []);
+  assert.equal(await ops.ensureImage(d.asDocker(), 'alpine:3.20'), true);
+  assert.deepEqual(d.calls, ['pull alpine:3.20']);
+});

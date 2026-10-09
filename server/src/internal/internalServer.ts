@@ -34,8 +34,17 @@ import { publishScheduler } from '../services/releases/publishScheduler';
 //                 "/staging/<slug>/wp-config.php".
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Rights of a file-server user. Never create_symlinks, chown, chmod (F1). */
-const RW_PERMS = ['list', 'download', 'upload', 'overwrite', 'delete', 'rename', 'create_dirs', 'chtimes'] as const;
+/**
+ * Rights of a file-server user. Never create_symlinks nor chown (F1).
+ * 'chmod' (and 'chtimes') are granted ONLY because the file server runs with
+ * setstat_mode 1 (images/filesrv/oblimint-filesrv): SFTPGo 2.6 checks the
+ * permission BEFORE consulting setstat_mode (connection.go handleChmod), so
+ * without it every OpenSSH `sftp put -r` (final setstat of each created directory)
+ * printed 'remote setstat … Permission denied'; with it the request is
+ * accepted and IGNORED — a client can never change a mode on disk.
+ */
+const SETSTAT_ACCEPTED = ['chmod', 'chtimes'] as const;
+const RW_PERMS = ['list', 'download', 'upload', 'overwrite', 'delete', 'rename', 'create_dirs', ...SETSTAT_ACCEPTED] as const;
 
 export function sftpgoUser(username: string): Record<string, unknown> {
   return {
@@ -46,7 +55,8 @@ export function sftpgoUser(username: string): Record<string, unknown> {
     gid: 0,
     max_sessions: 10,
     permissions: {
-      '/': ['list', 'download'],
+      // chmod also on / : `put -r . /staging` ends with a setstat of /staging itself (checked against /).
+      '/': ['list', 'download', 'chmod'],
       '/staging': [...RW_PERMS],
       '/data': [...RW_PERMS],
     },

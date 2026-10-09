@@ -1,6 +1,7 @@
 import './env';
 import fs from 'fs';
 import path from 'path';
+import { DEFAULT_SITE_IMAGE_PREFIX } from '@oblimint/shared';
 
 // ── Panel configuration ──────────────────────────────────────────────────────
 //
@@ -127,6 +128,10 @@ export const config = {
     edgeImage: process.env.OBLIMINT_EDGE_IMAGE || 'meejay/oblimint-edge',
     hostdImage: process.env.OBLIMINT_HOSTD_IMAGE || 'meejay/oblimint-hostd',
     filesrvImage: process.env.OBLIMINT_FILESRV_IMAGE || 'meejay/oblimint-filesrv',
+    /** Repository prefix of the site base images: <prefix><base id>:<imageTag>
+     *  ('meejay/oblimint-' → meejay/oblimint-nginx-php8.3:latest). A private or
+     *  test registry sets e.g. 'registry.example:5000/oblimint-'. */
+    siteImagePrefix: process.env.OBLIMINT_SITE_IMAGE_PREFIX || DEFAULT_SITE_IMAGE_PREFIX,
     /** hostd API socket (same path in the panel container and on the host). */
     hostdSocket: process.env.OBLIMINT_HOSTD_SOCKET || path.join(dataDir, 'run', 'hostd.sock'),
     /** Default Let's Encrypt directory (app_config `acme_directory` overrides it). */

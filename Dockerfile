@@ -53,7 +53,11 @@ ENV NODE_ENV=production \
 EXPOSE 8443
 # 8081 = internal hook listener for the per-account file servers (reached on
 # the account networks only — never publish it with -p).
-VOLUME ["/srv/oblimint"]
+# No VOLUME: the data dir ($OBLIMINT_DATA_DIR, /srv/oblimint by default) MUST
+# be bind-mounted from the SAME host path (sibling containers mount its
+# subdirectories by host path). A VOLUME here only created a stray anonymous
+# volume, e.g. whenever OBLIMINT_DATA_DIR points elsewhere; a missing bind
+# mount is reported by the setup checks (datadir_fs / self) instead.
 
 # Self-signed TLS: probe /health with Node (busybox wget has no TLS here).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

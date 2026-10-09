@@ -36,7 +36,10 @@ Configuration rendue (clés SFTPGo 2.6) :
   hook: $OBLIMINT_HOOK_BASE/event}` (asynchrone, sauf `pre-upload` toujours synchrone) ;
 - `common.defender` activé (driver mémoire, ban 30 min, seuil 15, invalid 2 / valid 1 /
   limite 3), `idle_timeout: 15`, `max_per_host_connections: 20`, `setstat_mode: 1` (les
-  chmod/chown/mtime des clients sont ignorés sans erreur) ;
+  chmod/chown/mtime des clients sont ignorés sans erreur **à condition que la permission soit
+  accordée** : SFTPGo 2.6 vérifie la permission avant `setstat_mode` — le panel accorde donc `chmod`
+  (no-op) pour que `sftp put -r` d'OpenSSH, qui termine chaque dossier par un setstat, n'affiche
+  plus « remote setstat … Permission denied » ; `chown` reste refusé) ;
 - logs sur stdout (`SFTPGO_LOG_FILE_PATH=""`).
 
 ## Hook d'authentification — `POST $OBLIMINT_HOOK_BASE/auth`
@@ -71,16 +74,16 @@ Réponse attendue :
     "gid": 0,
     "max_sessions": 10,
     "permissions": {
-      "/": ["list", "download"],
-      "/staging": ["list", "download", "upload", "overwrite", "delete", "rename", "create_dirs", "chtimes"],
-      "/data": ["list", "download", "upload", "overwrite", "delete", "rename", "create_dirs", "chtimes"]
+      "/": ["list", "download", "chmod"],
+      "/staging": ["list", "download", "upload", "overwrite", "delete", "rename", "create_dirs", "chmod", "chtimes"],
+      "/data": ["list", "download", "upload", "overwrite", "delete", "rename", "create_dirs", "chmod", "chtimes"]
     },
     "filters": { "denied_protocols": ["FTP", "DAV", "HTTP"] }
   }
   ```
 
   `uid`/`gid` = 0 : SFTPGo n'essaie pas de changer de propriétaire, les fichiers sont créés par
-  le processus (uid du compte). Jamais `create_symlinks`, `chown`, `chmod`. `username` doit être
+  le processus (uid du compte). Jamais `create_symlinks` ni `chown` (`chmod` accordé mais sans effet : `setstat_mode: 1`). `username` doit être
   celui de la requête.
 - **refus** : tout statut ≠ 200 (le panel répond `401` corps vide), ou un utilisateur au
   `username` vide.

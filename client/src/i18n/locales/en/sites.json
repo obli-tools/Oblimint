@@ -316,6 +316,7 @@
       "extensionsRequired": "A typed data path needs at least one allowed extension.",
       "invalidCustomNginx": "Invalid custom nginx rules (16 KiB max, no NUL character).",
       "invalidPhpSettings": "PHP settings out of the allowed ranges (memory_limit is also capped by the plan's memory).",
+      "noChanges": "Nothing changed in the staging folder since the live release: there is nothing to publish.",
       "noPreview": "This site has no preview running.",
       "notFound": "This item does not exist anymore or is not visible to you.",
       "notImplemented": "This feature is not available on this server yet.",

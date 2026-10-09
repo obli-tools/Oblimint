@@ -316,6 +316,7 @@
       "extensionsRequired": "Un chemin de données typé doit autoriser au moins une extension.",
       "invalidCustomNginx": "Règles nginx personnalisées invalides (16 Kio max, sans caractère NUL).",
       "invalidPhpSettings": "Réglages PHP hors des plages autorisées (memory_limit est aussi plafonné par la mémoire du plan).",
+      "noChanges": "Rien n'a changé dans le dossier de staging depuis la release en ligne : il n'y a rien à publier.",
       "noPreview": "Ce site n'a pas de prévisualisation en cours.",
       "notFound": "Cet élément n'existe plus ou ne vous est pas visible.",
       "notImplemented": "Cette fonction n'est pas encore disponible sur ce serveur.",

@@ -342,7 +342,7 @@
       "failed": "The host checks could not be run.",
       "next": "Continue",
       "os": "Host operating system",
-      "ports": "Ports 80, 443, 53 and 25 free on the host",
+      "ports": "Ports 80 and 443 free on the host (53 and 25: needed later by DNS and mail)",
       "rerun": "Run again",
       "resources": "CPU and memory",
       "running": "Running the checks…",
@@ -356,7 +356,7 @@
       "datadir_fs": "Without XFS and the prjquota mount option, disk quotas are only measured, not enforced. Put /srv/oblimint on an XFS volume mounted with prjquota.",
       "docker": "Install or upgrade Docker Engine to version 24 or later, then restart the container.",
       "os": "Oblimint is tested on Debian, AlmaLinux and Rocky Linux. Other systems may work but are not supported.",
-      "ports": "Stop the service that uses the port (another web, DNS or mail server), then run the checks again.",
+      "ports": "Stop the service that uses the port (another web, DNS or mail server), then run the checks again. Ports 53 and 25 only have to be freed before the DNS and mail modules are enabled.",
       "resources": "At least 2 CPU cores and 4 GB of RAM are recommended.",
       "self": "Start the container with the Docker socket and /srv/oblimint mounted, as shown in the installation command.",
       "selinux": "With SELinux enforcing, label the data directory for containers (see the command)."

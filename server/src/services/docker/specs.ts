@@ -66,10 +66,25 @@ export const FILESRV_PIDS_LIMIT = 128;
 /** SFTP port inside the file server container (images/filesrv contract). */
 export const FILESRV_CONTAINER_PORT = 2022;
 export const EDGE_PIDS_LIMIT = 1024;
+/**
+ * nofile (soft = hard) of oblimint-edge. Must stay >= worker_rlimit_nofile in
+ * images/edge/nginx.conf, itself > 2 x worker_connections (a proxied request
+ * holds a client and an upstream socket). Docker's default soft limit is 1024,
+ * and the edge has no CAP_SYS_RESOURCE to raise its hard limit itself.
+ */
+export const EDGE_NOFILE_LIMIT = 65536;
 
 /** Tenant containers (site, file server) also get the seccomp profile of seccomp.ts (XFS project id, user namespaces…). */
 const NO_NEW_PRIVILEGES = 'no-new-privileges:true';
 const TMPFS_FLAGS = 'rw,noexec,nosuid,nodev';
+/**
+ * Tmpfs flags of a directory a NON-ROOT container user must write to. Without
+ * an explicit mode=, Docker gives the tmpfs the mode of the image directory it
+ * covers: /run is root:root 0755 in the base images, so the account uid could
+ * not create /run/oblimint (images/common/lib.sh) and every site crash-looped.
+ * 1777 (sticky, world-writable) as for /tmp.
+ */
+const TMPFS_SHARED_FLAGS = `${TMPFS_FLAGS},mode=1777`;
 
 const LOG_CONFIG: Docker.HostConfig['LogConfig'] = {
   Type: 'json-file',
@@ -117,8 +132,8 @@ export function siteContainerSpec(input: SiteContainerInput): Docker.ContainerCr
       { Type: 'bind', Source: path.posix.dirname(posix(input.runtimeConfigFile)), Target: CONTAINER_PATHS.siteConfigDir, ReadOnly: true },
     ],
     Tmpfs: {
-      '/tmp': `${TMPFS_FLAGS},size=256m`,
-      '/run': `${TMPFS_FLAGS},size=16m`,
+      '/tmp': `${TMPFS_SHARED_FLAGS},size=256m`,
+      '/run': `${TMPFS_SHARED_FLAGS},size=16m`,
     },
     ReadonlyRootfs: true,
     CapDrop: ['ALL'],
@@ -174,7 +189,7 @@ export function fileServerContainerSpec(input: FileServerContainerInput): Docker
       ],
       // No HostIp: Docker publishes on every IPv4 and IPv6 address of the host.
       PortBindings: { [portKey]: [{ HostPort: String(input.port) }] },
-      Tmpfs: { '/tmp': `${TMPFS_FLAGS},size=64m` },
+      Tmpfs: { '/tmp': `${TMPFS_SHARED_FLAGS},size=64m` },
       ReadonlyRootfs: true,
       CapDrop: ['ALL'],
       SecurityOpt: [NO_NEW_PRIVILEGES, TENANT_SECCOMP_OPT],
@@ -216,6 +231,7 @@ export function edgeContainerSpec(input: InfraContainerInput): Docker.ContainerC
       CapAdd: ['CHOWN', 'NET_BIND_SERVICE', 'SETGID', 'SETUID'],
       SecurityOpt: [NO_NEW_PRIVILEGES],
       PidsLimit: EDGE_PIDS_LIMIT,
+      Ulimits: [{ Name: 'nofile', Soft: EDGE_NOFILE_LIMIT, Hard: EDGE_NOFILE_LIMIT }],
       RestartPolicy: { Name: 'unless-stopped' },
       NetworkMode: PANEL_NETWORK,
       LogConfig: LOG_CONFIG,

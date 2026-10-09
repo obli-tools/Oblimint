@@ -342,7 +342,7 @@
       "failed": "Les contrôles de l'hôte n'ont pas pu être exécutés.",
       "next": "Continuer",
       "os": "Système d'exploitation de l'hôte",
-      "ports": "Ports 80, 443, 53 et 25 libres sur l'hôte",
+      "ports": "Ports 80 et 443 libres sur l'hôte (53 et 25 : requis plus tard par le DNS et le mail)",
       "rerun": "Relancer",
       "resources": "Processeur et mémoire",
       "running": "Contrôles en cours…",
@@ -356,7 +356,7 @@
       "datadir_fs": "Sans XFS et l'option de montage prjquota, les quotas disque sont seulement mesurés, pas appliqués. Placez /srv/oblimint sur un volume XFS monté avec prjquota.",
       "docker": "Installez ou mettez à jour Docker Engine en version 24 ou ultérieure, puis redémarrez le conteneur.",
       "os": "Oblimint est testé sur Debian, AlmaLinux et Rocky Linux. D'autres systèmes peuvent fonctionner mais ne sont pas pris en charge.",
-      "ports": "Arrêtez le service qui occupe le port (autre serveur web, DNS ou mail), puis relancez les contrôles.",
+      "ports": "Arrêtez le service qui occupe le port (autre serveur web, DNS ou mail), puis relancez les contrôles. Les ports 53 et 25 ne doivent être libérés qu'avant d'activer les modules DNS et mail.",
       "resources": "Au moins 2 cœurs et 4 Go de RAM sont recommandés.",
       "selinux": "Avec SELinux en mode enforcing, étiquetez le répertoire de données pour les conteneurs (voir la commande).",
       "self": "Démarrez le conteneur avec le socket Docker et /srv/oblimint montés, comme dans la commande d'installation."

@@ -23,6 +23,11 @@
 #     lets the panel see an open transfer and hold the auto-publish), upload
 #     (end of a transfer, success or failure), delete, rename, mkdir, rmdir
 #     (asynchronous);
+#   - setstat_mode 1: chmod / chtimes requests are accepted and IGNORED (the
+#     panel grants the chmod permission only so that OpenSSH `put -r`, which
+#     ends every directory with a setstat, does not print "Permission
+#     denied": SFTPGo checks the permission before setstat_mode). Never
+#     change it to 0 without removing chmod from the panel user (F1);
 #   - defender (anti brute force) on, idle timeout 15 min, logs on stdout.
 # State (host keys, generated at the first start then kept): /var/lib/sftpgo
 # (mounted rw). Visible tree: /srv/files/{staging,data} (mounted rw).

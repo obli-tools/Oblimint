@@ -9,6 +9,7 @@ import { apiErrorMessage, isStepUpHandled } from '@/api/client';
 const SITE_ERROR_FALLBACKS = {
   publishInProgress: 'A publication is already running for this site.',
   stagingEmpty: 'The staging folder is empty: there is nothing to publish.',
+  noChanges: 'Nothing changed in the staging folder since the live release: there is nothing to publish.',
   slugTaken: 'This identifier is already used by another site of the account.',
   baseNotAllowed: "This base is not allowed by the account's plan.",
   runtimeInUse: 'This runtime still serves routes: detach them first.',

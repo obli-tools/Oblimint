@@ -5,7 +5,7 @@ import path from 'path';
 import { EMPTY_TREE, runGit } from './git';
 import {
   clearStaleGitLocks, commitStaging, diffNameStatus, diffNumstat, diffStats, filePatch, headCommit, initBareRepo, lsTree, parseNameStatus,
-  parseNumstat, parsePorcelain, scanStaging, stagingChanges, writeExclude,
+  parseNumstat, parsePorcelain, scanStaging, stagingChanges, stagingMatchesCommit, writeExclude,
 } from './repo';
 import { tempDir, writeFiles } from './testUtil';
 
@@ -194,4 +194,30 @@ test('writeExclude replaces info/exclude atomically (no temp file left)', async 
   writeExclude(repo, ['up'], ['vendor/x']);
   assert.deepEqual(fs.readdirSync(`${repo}/info`), ['exclude']);
   assert.deepEqual(fs.readFileSync(`${repo}/info/exclude`, 'utf8').split('\n').slice(1, 4), ['/.git/', '/up', '/vendor/x']);
+});
+
+test('stagingMatchesCommit: same tree → true, commit rules (data paths, empty dirs); HEAD and index never move', async () => {
+  const { root, repo, staging } = await setup({ 'a.txt': 'a', 'up/x.jpg': 'x', 'new/n.txt': 'n' });
+  const c1 = await commit(repo, staging, ['up']);
+  let i = 0;
+  const match = (dataPaths: string[]) => stagingMatchesCommit({
+    repoDir: repo, stagingDir: staging, dataPaths, nestedRepos: scanStaging(staging, dataPaths).nestedRepos, commit: c1,
+    tmpIndex: path.join(root, `same-${++i}.index`),
+  });
+  const indexBefore = fs.readFileSync(`${repo}/index`);
+  assert.equal(await match(['up']), true, 'unchanged staging');
+  writeFiles(staging, { 'up/y.jpg': 'y' });
+  assert.equal(await match(['up']), true, 'a change inside a data path is not a release change');
+  fs.writeFileSync(`${staging}/a.txt`, 'A');
+  assert.equal(await match(['up']), false, 'modified file');
+  fs.writeFileSync(`${staging}/a.txt`, 'a');
+  assert.equal(await match(['up']), true, 'reverted');
+  assert.equal(await match(['up', 'new']), false, 'a committed path that became a data path leaves the tree');
+  fs.mkdirSync(`${staging}/empty-dir`);
+  assert.equal(await match(['up']), true, 'git does not version empty directories');
+  fs.rmSync(`${staging}/new/n.txt`);
+  assert.equal(await match(['up']), false, 'deleted file');
+  assert.equal(await headCommit(repo), c1, 'HEAD unchanged');
+  assert.deepEqual(fs.readFileSync(`${repo}/index`), indexBefore, 'publication index untouched');
+  assert.deepEqual(fs.readdirSync(root).filter((n) => n.startsWith('same-')), [], 'temp indexes removed');
 });

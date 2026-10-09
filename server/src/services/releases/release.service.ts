@@ -22,7 +22,7 @@ import { HostdError, type HostdSiteSpec } from '../hostd/client';
 import { EMPTY_TREE, type GitIdentity } from './git';
 import {
   clearStaleGitLocks, commitExists, commitStaging, diffNameStatus, diffNumstat, diffStats, filePatch, initBareRepo, scanStaging,
-  stagingChanges, writeExclude,
+  stagingChanges, stagingMatchesCommit, writeExclude,
 } from './repo';
 import { dataLinksMatch, materializeRelease, readCurrent, removeTmpEntries, removeUnder, staleDataExposure, switchCurrent } from './materialize';
 import { releaseDeps } from './deps';
@@ -606,6 +606,37 @@ function assertNotDeleting(ctx: SiteContext): void {
   if (ctx.account.status === 'deleting') throw new AppError(409, 'The hosting account is being deleted', 'accountDeleting');
 }
 
+/**
+ * Would a publication only re-deploy what is already live? True when the
+ * site's current release is ready, its tree is on disk and pointed to by
+ * `current`, its data links match the data paths (a data path added since
+ * still needs a publication to get its link), and committing the staging
+ * now would give exactly its tree. Any doubt (disk out of sync, git error)
+ * → false: publishing is the repair path. Caller holds the site lock.
+ */
+async function unchangedSinceLive(ctx: SiteContext, nestedRepos: string[]): Promise<boolean> {
+  if (!ctx.site.current_release_id) return false;
+  const cur = await db('releases').where({ id: ctx.site.current_release_id, site_id: ctx.site.id })
+    .first('number', 'status', 'commit_sha', 'on_disk') as Pick<ReleaseRow, 'number' | 'status' | 'commit_sha' | 'on_disk'> | undefined;
+  if (!cur || cur.status !== 'ready' || !cur.commit_sha || !cur.on_disk) return false;
+  const deps = releaseDeps();
+  const dir = path.posix.join(ctx.paths.releases, String(cur.number));
+  if (!fs.existsSync(dir) || readCurrent(ctx.paths.releases, deps.links) !== cur.number) return false;
+  const dataPaths = dataPathList(ctx);
+  const typed = ctx.dataPaths.filter((d) => d.policy === 'typed').map((d) => d.path);
+  if (!dataLinksMatch(dir, dataPaths, deps.links) || staleDataExposure(dir, cur.number, dataPaths, typed, deps.links).length > 0) return false;
+  try {
+    if (!(await commitExists(ctx.paths.repo, cur.commit_sha))) return false;
+    const tmpIndex = path.join(os.tmpdir(), `oblimint-same-${ctx.site.id}-${crypto.randomBytes(6).toString('hex')}.index`);
+    return await stagingMatchesCommit({
+      repoDir: ctx.paths.repo, stagingDir: ctx.paths.staging, dataPaths, nestedRepos, commit: cur.commit_sha, tmpIndex,
+    });
+  } catch (err) {
+    logger.warn({ err, siteId: ctx.site.id }, 'Release: cannot compare the staging with the live release');
+    return false;
+  }
+}
+
 function publishInProgress(): AppError {
   return new AppError(409, 'A publication is already in progress for this site', 'publishInProgress');
 }
@@ -793,8 +824,13 @@ export const releaseService = {
     let started = false;
     try {
       if (await hasInFlight(siteId)) throw publishInProgress();
-      if (scanStaging(ctx.paths.staging, dataPathList(ctx)).fileCount === 0) {
+      const scan = scanStaging(ctx.paths.staging, dataPathList(ctx));
+      if (scan.fileCount === 0) {
         throw new AppError(409, 'The staging directory of this site is empty', 'stagingEmpty');
+      }
+      // Same tree as the live release: no empty 'ready' release (nothing would change on line).
+      if (await unchangedSinceLive(ctx, scan.nestedRepos)) {
+        throw new AppError(409, 'Nothing changed in the staging since the live release', 'noChanges');
       }
       const message = opts.message?.trim() ? opts.message.trim().slice(0, 2000) : null;
       const id = await db.transaction(async (trx) => {

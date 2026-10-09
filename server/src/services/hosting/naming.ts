@@ -29,9 +29,9 @@ export const LABELS = {
 
 export type ContainerRole = 'site' | 'site-secondary' | 'site-preview' | 'filesrv' | 'edge' | 'hostd' | 'panel-postgres';
 
-/** Image reference of a site base (repository from the shared catalog + config tag). */
+/** Image reference of a site base: OBLIMINT_SITE_IMAGE_PREFIX + base id + OBLIMINT_IMAGE_TAG. */
 export function siteImage(base: SiteBaseId): string {
-  return `${siteBaseDef(base).image}:${config.hosting.imageTag}`;
+  return `${config.hosting.siteImagePrefix}${siteBaseDef(base).id}:${config.hosting.imageTag}`;
 }
 
 export const edgeImage = (): string => `${config.hosting.edgeImage}:${config.hosting.imageTag}`;

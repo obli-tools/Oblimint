@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import type Docker from 'dockerode';
 import { DEFAULT_PLAN_LIMITS, type PlanLimits } from '@oblimint/shared';
 import { LABELS } from '../hosting/naming';
 import {
-  canonicalJson, edgeContainerSpec, fileServerContainerSpec, hostdContainerSpec, siteContainerSpec, specHash,
+  canonicalJson, EDGE_NOFILE_LIMIT, edgeContainerSpec, fileServerContainerSpec, hostdContainerSpec, siteContainerSpec, specHash,
   type SiteContainerInput,
 } from './specs';
 
@@ -178,6 +180,22 @@ test('edge: 80/443 published, conf.d/certs/acme read-only, minimal capabilities,
   assert.equal(spec.Labels![LABELS.role], 'edge');
 });
 
+test('edge: nofile ulimit covers nginx worker_rlimit_nofile > 2 x worker_connections (no EMFILE at 1024)', () => {
+  const hc = edgeContainerSpec({ hostDataDir: ROOT }).HostConfig!;
+  assert.deepEqual(hc.Ulimits, [{ Name: 'nofile', Soft: EDGE_NOFILE_LIMIT, Hard: EDGE_NOFILE_LIMIT }]);
+  const conf = fs.readFileSync(path.resolve(__dirname, '../../../../images/edge/nginx.conf'), 'utf8')
+    .replace(/#.*$/gm, '');
+  const directive = (name: string): number => {
+    const m = new RegExp(`(?:^|[\\s;{])${name}\\s+(\\d+)\\s*;`).exec(conf);
+    assert.ok(m, `${name} missing from images/edge/nginx.conf`);
+    return Number(m[1]);
+  };
+  const connections = directive('worker_connections');
+  const rlimit = directive('worker_rlimit_nofile');
+  assert.ok(rlimit >= 2 * connections, `worker_rlimit_nofile ${rlimit} < 2 x worker_connections ${connections}`);
+  assert.ok(rlimit <= EDGE_NOFILE_LIMIT, `worker_rlimit_nofile ${rlimit} > container nofile ${EDGE_NOFILE_LIMIT}`);
+});
+
 test('hostd: privileged, host pid/network, /srv/oblimint rshared, socket env', () => {
   const spec = hostdContainerSpec({ hostDataDir: `${ROOT}/` });
   const hc = spec.HostConfig!;
@@ -235,4 +253,24 @@ test('tenant seccomp: site and file server refuse the XFS project-id ioctl and u
   for (const name of ['unshare', 'setns', 'keyctl', 'io_uring_setup', 'file_setattr', 'mount']) assert.ok(denied.includes(name), name);
   // Never deny what PHP / a web server / SFTPGo need.
   for (const name of ['ioctl', 'clone', 'execve', 'socket', 'chown', 'fchown', 'openat']) assert.ok(!denied.includes(name), name);
+});
+
+// Regression (P1 Linux run): without an explicit mode=, Docker gives a tmpfs the
+// mode of the image directory it covers (/run = root 0755), so the account uid
+// could not create /run/oblimint and every site container crash-looped.
+test('tenant tmpfs mounts are world-writable sticky (mode=1777) for the non-root account uid', () => {
+  for (const role of ['primary', 'secondary', 'preview'] as const) {
+    const spec = siteContainerSpec(siteInput({ role, runtimeId: role === 'secondary' ? 4 : null }));
+    for (const dir of ['/run', '/tmp']) {
+      const flags = (spec.HostConfig?.Tmpfs?.[dir] ?? '').split(',');
+      assert.ok(flags.includes('mode=1777'), `${role} ${dir}: ${flags.join(',')}`);
+      assert.equal(flags.filter((f) => f.startsWith('mode=')).length, 1);
+    }
+  }
+  const fs = fileServerContainerSpec({
+    accountId: 3, uid: 20001, gid: 20001, port: 30001,
+    stagingDir: `${ROOT}/accounts/3/staging`, dataDir: `${ROOT}/accounts/3/data`, stateDir: `${ROOT}/accounts/3/filesrv`,
+    hookBaseUrl: 'http://oblimint-panel:8081/internal/filesrv/3/t',
+  });
+  assert.ok((fs.HostConfig?.Tmpfs?.['/tmp'] ?? '').split(',').includes('mode=1777'));
 });

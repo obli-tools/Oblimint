@@ -29,7 +29,11 @@ export interface SiteBaseDef {
   engine: SiteEngine;
   /** PHP version ('8.3'), null for the static base. */
   php: string | null;
-  /** Image repository WITHOUT tag (the server appends config.imageTag). */
+  /**
+   * DEFAULT image repository WITHOUT tag (DEFAULT_SITE_IMAGE_PREFIX + id). The
+   * server builds the real reference from OBLIMINT_SITE_IMAGE_PREFIX + id +
+   * ':' + OBLIMINT_IMAGE_TAG (test / private registries).
+   */
   image: string;
   /** PHP branch out of security support → "unmaintained runtime" badge. */
   unmaintained: boolean;
@@ -37,8 +41,11 @@ export interface SiteBaseDef {
   htaccess: boolean;
 }
 
+/** Default repository prefix of the site base images (images/build.sh REPO=meejay). */
+export const DEFAULT_SITE_IMAGE_PREFIX = 'meejay/oblimint-';
+
 const base = (id: SiteBaseId, engine: SiteEngine, php: string | null, unmaintained: boolean): SiteBaseDef => ({
-  id, engine, php, image: `meejay/oblimint-${id}`, unmaintained, htaccess: engine === 'apache',
+  id, engine, php, image: `${DEFAULT_SITE_IMAGE_PREFIX}${id}`, unmaintained, htaccess: engine === 'apache',
 });
 
 /** Catalog of site bases, in display order. Images are built from images/. */

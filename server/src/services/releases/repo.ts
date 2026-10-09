@@ -158,6 +158,43 @@ export async function commitStaging(input: CommitInput): Promise<string> {
   return headCommit(repoDir) as Promise<string>;
 }
 
+export interface TreeMatchInput {
+  repoDir: string;
+  stagingDir: string;
+  dataPaths: string[];
+  nestedRepos: string[];
+  /** Commit to compare with (the live release). */
+  commit: string;
+  /** Throw-away index file (removed on return). */
+  tmpIndex: string;
+}
+
+/**
+ * Would committing the staging NOW produce exactly the tree of `commit`?
+ * Same rules as commitStaging (info/exclude, data paths and nested repos
+ * untracked) but on a throw-away index built from `commit`: neither the
+ * publication index nor HEAD moves. Caller holds the site lock (info/exclude
+ * is rewritten).
+ */
+export async function stagingMatchesCommit(input: TreeMatchInput): Promise<boolean> {
+  const { repoDir, stagingDir, commit, tmpIndex } = input;
+  writeExclude(repoDir, input.dataPaths, input.nestedRepos);
+  const env = { GIT_INDEX_FILE: tmpIndex };
+  const opts = { gitDir: repoDir, workTree: stagingDir, env };
+  try {
+    await runGit(['read-tree', commit], { gitDir: repoDir, env });
+    const untrack = [...input.dataPaths, ...input.nestedRepos];
+    if (untrack.length) await runGit(['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', ...untrack], opts);
+    await runGit(['add', '-A'], opts);
+    const tree = (await runGit(['write-tree'], { gitDir: repoDir, env })).stdout.toString('utf8').trim();
+    const base = (await runGit(['rev-parse', '--verify', `${commit}^{tree}`], { gitDir: repoDir })).stdout.toString('utf8').trim();
+    return tree.length > 0 && tree === base;
+  } finally {
+    fs.rmSync(tmpIndex, { force: true });
+    fs.rmSync(`${tmpIndex}.lock`, { force: true });
+  }
+}
+
 /** Sha of HEAD, null when the repository has no commit yet. */
 export async function headCommit(repoDir: string): Promise<string | null> {
   const r = await runGit(['rev-parse', '-q', '--verify', 'HEAD^{commit}'], { gitDir: repoDir, okCodes: [1, 128] });

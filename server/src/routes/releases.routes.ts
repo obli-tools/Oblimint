@@ -12,7 +12,7 @@ import { releaseService } from '../services/releases/release.service';
 // /api/sites/:id/releases*, /api/sites/:id/staging* — OWNED BY MODULE `releases`
 // (docs/P1-PLAN.md §API). Mounted on /sites after sites.routes.ts (no catch-all here).
 //   GET  /:id/releases               ?limit=&offset= → { items: Release[]; total: number } (read)
-//   POST /:id/releases               PublishRequest → Release (releases.publish; 409 publishInProgress | stagingEmpty)
+//   POST /:id/releases               PublishRequest → Release (releases.publish; 409 publishInProgress | stagingEmpty | noChanges)
 //   GET  /:id/releases/:rid          → ReleaseDetail (read)
 //   GET  /:id/releases/:rid/diff     ?against=<rid>|previous|empty &file=<path> → ReleaseDiff (read)
 //   POST /:id/releases/:rid/rollback → Site (releases.publish)

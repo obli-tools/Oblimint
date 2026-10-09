@@ -7,7 +7,7 @@ import { MASTER_TENANT_ID } from '@oblimint/shared';
 import { config, dataDir } from '../../config';
 import { logger } from '../../utils/logger';
 import { docker, errText, INTERNAL_LABELS, selfContainerRef, withTimeout } from './docker';
-import { attachWithAlias } from '../docker/dockerOps';
+import { attachWithAlias, ensureImage } from '../docker/dockerOps';
 import { PANEL_ALIAS } from '../hosting/naming';
 import { writeFileAtomic0600, writePanelConfig } from './configFile';
 
@@ -134,31 +134,13 @@ async function postgresPassword(): Promise<string> {
   return pw;
 }
 
-async function pullWithProgress(image: string, step: StepId): Promise<void> {
-  const d = docker();
-  log(step, `Pulling ${image}…`);
-  const stream = await withTimeout(d.pull(image), 60_000, `pull ${image}`);
-  const lastStatus = new Map<string, string>();
-  await withTimeout(new Promise<void>((resolve, reject) => {
-    d.modem.followProgress(
-      stream,
-      (err: Error | null) => (err ? reject(err) : resolve()),
-      (ev: { id?: string; status?: string; error?: string }) => {
-        if (ev.error) { log(step, `pull: ${ev.error}`); return; }
-        if (!ev.status) return;
-        // One line per layer status change (never the byte counters).
-        const key = ev.id ?? '';
-        if (lastStatus.get(key) === ev.status) return;
-        lastStatus.set(key, ev.status);
-        log(step, ev.id ? `${ev.id}: ${ev.status}` : ev.status);
-      },
-    );
-  }), 15 * 60_000, `pull ${image}`);
-}
-
 async function stepPostgres(): Promise<string> {
   const d = docker();
-  await pullWithProgress(POSTGRES_IMAGE, 'postgres');
+  // Pulled ONLY when absent: postgres:16-alpine is a shared tag — a pull would move it
+  // under other containers of the host (and re-pull on every setup retry).
+  if (!(await ensureImage(d, POSTGRES_IMAGE, (line) => log('postgres', line)))) {
+    log('postgres', `${POSTGRES_IMAGE} already present locally (not pulled)`);
+  }
   const password = await postgresPassword();
   const pgDir = path.join(dataDir, 'panel', 'postgres');
   await fs.promises.mkdir(pgDir, { recursive: true, mode: 0o700 });

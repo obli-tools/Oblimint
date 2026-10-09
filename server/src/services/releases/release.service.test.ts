@@ -212,6 +212,41 @@ test('guards: stagingEmpty, publishInProgress, accountSuspended', { skip: SKIP }
   }
 });
 
+test('noChanges: an unchanged staging creates no release; a change, a new data path or a broken live tree still publish', { skip: SKIP }, async () => {
+  const s = await newSite({ files: { 'index.php': 'v1', 'up/a.jpg': 'J' }, dataPaths: [['up', 'persistent']] });
+  const r1 = await publish(s.siteId);
+  assert.equal(r1.status, 'ready');
+  const count = async () => Number((await m.db('releases').where({ site_id: s.siteId }).count<{ n: string }[]>('* as n'))[0].n);
+  for (const trigger of ['manual', 'auto'] as const) {
+    await assert.rejects(m.releaseService.publish(s.siteId, { trigger, userId }), (e: any) => e.code === 'noChanges' && e.statusCode === 409);
+  }
+  writeFiles(s.staging, { 'up/b.jpg': 'K' });
+  fs.mkdirSync(`${s.staging}/empty-dir`);
+  await assert.rejects(m.releaseService.publish(s.siteId, { trigger: 'manual', userId }), (e: any) => e.code === 'noChanges', 'data / empty dirs only');
+  assert.equal(await count(), 1);
+  assert.equal(m.internals.locks.has(s.siteId), false);
+
+  fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+  const r2 = await publish(s.siteId);
+  assert.equal(r2.status, 'ready');
+  fs.writeFileSync(`${s.staging}/index.php`, 'v1'); // back to r1's content: differs from the LIVE r2
+  const r3 = await publish(s.siteId);
+  assert.equal(r3.status, 'ready');
+  assert.equal(r3.commit_sha === r1.commit_sha, false);
+
+  // A data path added since the live release: same tree, but its link is missing → publishes.
+  await m.db('site_data_paths').insert({ site_id: s.siteId, path: 'cache', policy: 'ephemeral' });
+  const r4 = await publish(s.siteId);
+  assert.equal(r4.status, 'ready', JSON.stringify(r4.log));
+  await assert.rejects(m.releaseService.publish(s.siteId, { trigger: 'manual', userId }), (e: any) => e.code === 'noChanges');
+
+  // Live tree gone from disk (out of sync): publishing is the repair path.
+  fs.rmSync(`${s.releases}/${r4.number}`, { recursive: true, force: true });
+  const r5 = await publish(s.siteId);
+  assert.equal(r5.status, 'ready');
+  assert.equal(await currentId(s.siteId), r5.id);
+});
+
 test('scan: infected → failed (nothing live); suspicious → awaiting_approval → approve resumes', { skip: SKIP }, async () => {
   const s = await newSite({ files: { 'index.php': 'v1' } });
   m.setScanner({ name: 'fake', scan: async () => ({ scanner: 'fake', verdict: 'infected', findings: [{ path: 'index.php', rule: 'x', severity: 'critical', message: 'bad' }] }) });

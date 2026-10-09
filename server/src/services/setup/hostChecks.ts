@@ -3,13 +3,13 @@ import type { HostCheck, HostCheckStatus } from '@oblimint/shared';
 import { config, dataDir } from '../../config';
 import { logger } from '../../utils/logger';
 import { docker, errText, INTERNAL_LABELS, selfContainerRef, withTimeout } from './docker';
+import { evaluatePorts } from './ports';
 
 // First-run host checks (docs/P0-PLAN.md §Mode setup). Every check returns a
 // HostCheck, whatever happens (socket missing, Docker down, timeouts): a
 // check never throws — a failure to check IS a finding ('fail' + detail).
 
 const MIN_DOCKER_MAJOR = 24;
-const REQUIRED_PORTS = [80, 443, 53, 25];
 const PORT_PROBE_IMAGE = 'alpine:3.20';
 
 const DOCKER_RUN_HINT =
@@ -156,24 +156,9 @@ async function portsCheck(): Promise<HostCheck> {
     } finally {
       await container.remove({ force: true }).catch(() => {});
     }
-    const busy = new Map<number, Set<string>>();
-    for (const line of output.split('\n')) {
-      const cols = line.trim().split(/\s+/);
-      if (cols.length < 4 || !/^(tcp|udp)6?$/.test(cols[0])) continue;
-      if (cols[0].startsWith('tcp') && !/LISTEN/i.test(line)) continue;
-      const port = Number(cols[3].slice(cols[3].lastIndexOf(':') + 1));
-      if (REQUIRED_PORTS.includes(port)) {
-        if (!busy.has(port)) busy.set(port, new Set());
-        busy.get(port)!.add(cols[0].replace(/6$/, ''));
-      }
-    }
-    if (busy.size === 0) return check('ports', 'ok', `Ports ${REQUIRED_PORTS.join(', ')} free on the host`);
-    const list = [...busy.entries()].map(([p, protos]) => `${p}/${[...protos].join('+')}`).join(', ');
-    const fixes: string[] = [];
-    if (busy.has(53)) fixes.push("sudo sed -i 's/^#\\?DNSStubListener=.*/DNSStubListener=no/' /etc/systemd/resolved.conf && sudo systemctl restart systemd-resolved");
-    if (busy.has(25)) fixes.push('sudo systemctl disable --now postfix exim4 2>/dev/null');
-    if (busy.has(80) || busy.has(443)) fixes.push('sudo systemctl disable --now nginx apache2 httpd 2>/dev/null');
-    return check('ports', 'fail', `Already in use on the host: ${list}`, { fixCommand: fixes.join('\n') || undefined });
+    // 80/443 busy → fail; 53 (DNS, P2) / 25 (mail, P4) busy → warn only (ports.ts).
+    const v = evaluatePorts(output);
+    return check('ports', v.status, v.detail, { fixCommand: v.fixCommand });
   } catch (err) {
     return check('ports', 'fail', `Host ports not checked: ${errText(err)}`);
   }
