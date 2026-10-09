@@ -11,8 +11,10 @@ let io: SocketIOServer | null = null;
 /**
  * Socket.io, authenticated by the express session (httpOnly cookie) ONLY —
  * never by identifiers the client puts in `handshake.auth`. Rooms:
- * user:<id>, sess:<sha256(sid)>, tenant:<id>, tenant:<id>:admin, role:admin.
- * Used in P0 for the header connection status; events come in P1+.
+ * user:<id>, sess:<sha256(sid)>, tenant:<id>, tenant:<id>:admin, role:admin,
+ * and for the P1 hosting events (services/hosting/events.ts):
+ * tenant:<id>:staff (staff sessions) / account:<id> (client sessions of the
+ * accounts they belong to — clients never join tenant-wide hosting rooms).
  */
 export function createSocketServer(server: HttpServer | HttpsServer): SocketIOServer {
   io = new SocketIOServer(server, {
@@ -31,7 +33,7 @@ export function createSocketServer(server: HttpServer | HttpsServer): SocketIOSe
       const sess = (socket.request as any).session as { userId?: number; currentTenantId?: number } | undefined;
       const userId = sess?.userId;
       if (!userId) return next(new Error('Unauthorized'));
-      const user = await db('users').where({ id: userId, is_active: true }).first('id', 'role');
+      const user = await db('users').where({ id: userId, is_active: true }).first('id', 'role', 'kind');
       if (!user) return next(new Error('Unauthorized'));
       const tenantId = sess?.currentTenantId ?? null;
       if (tenantId && user.role !== 'admin') {
@@ -41,6 +43,15 @@ export function createSocketServer(server: HttpServer | HttpsServer): SocketIOSe
       socket.data.userId = Number(user.id);
       socket.data.role = String(user.role);
       socket.data.tenantId = tenantId ? Number(tenantId) : null;
+      socket.data.kind = user.kind === 'client' ? 'client' : 'staff';
+      socket.data.accountIds = [];
+      if (socket.data.kind === 'client' && tenantId) {
+        const rows = await db('account_users as au')
+          .join('hosting_accounts as a', 'a.id', 'au.account_id')
+          .where({ 'au.user_id': user.id, 'a.tenant_id': tenantId })
+          .select('au.account_id') as Array<{ account_id: number }>;
+        socket.data.accountIds = rows.map((r) => Number(r.account_id));
+      }
       next();
     } catch (err) {
       logger.error(err, 'Socket auth error');
@@ -49,14 +60,18 @@ export function createSocketServer(server: HttpServer | HttpsServer): SocketIOSe
   });
 
   io.on('connection', (socket) => {
-    const { userId, tenantId, role } = socket.data as { userId: number; tenantId: number | null; role: string };
+    const { userId, tenantId, role, kind, accountIds } = socket.data as {
+      userId: number; tenantId: number | null; role: string; kind: 'staff' | 'client'; accountIds: number[];
+    };
     socket.join(`user:${userId}`);
     const sid = (socket.request as any).sessionID;
     if (typeof sid === 'string' && sid) socket.join(sessionRoom(sid));
     if (tenantId) {
       socket.join(`tenant:${tenantId}`);
       if (role === 'admin') socket.join(`tenant:${tenantId}:admin`);
+      if (kind === 'staff') socket.join(`tenant:${tenantId}:staff`);
     }
+    if (kind === 'client') for (const id of accountIds) socket.join(`account:${id}`);
     if (role === 'admin') socket.join('role:admin');
     logger.debug({ userId, tenantId }, 'Socket connected');
   });

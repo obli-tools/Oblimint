@@ -7,8 +7,12 @@ import { nodesApi } from '@/api/dashboard.api';
 import { PageContainer } from '@/components/common/PageContainer';
 import { TableScroll } from '@/components/common/TableScroll';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { InfraCards } from '@/components/hosting/InfraCards';
 
-/** Read-only list of the hosting nodes (P0: the seeded local node only). */
+/**
+ * Hosting nodes (P0: the seeded local node only) + the platform infrastructure
+ * of the local node (P1: edge, hostd, disk quota mode, reconcile, ACME).
+ */
 export function NodesPage() {
   const { t, i18n } = useTranslation();
   const [nodes, setNodes] = useState<PanelNode[]>([]);
@@ -97,6 +101,11 @@ export function NodesPage() {
           </table>
         </TableScroll>
       )}
+
+      <h2 className="mt-2 font-display text-lg font-semibold tracking-wide text-text-primary">
+        {t('infra.sectionTitle') || 'Platform services'}
+      </h2>
+      <InfraCards />
     </PageContainer>
   );
 }

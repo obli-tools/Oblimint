@@ -30,12 +30,18 @@ func listenUnix(socket string) (net.Listener, error) {
 }
 
 // fsInfo resolves p (following symlinks when it exists) and looks it up in
-// /proc/self/mountinfo.
+// /proc/self/mountinfo. Only used on the configured root (an admin choice).
 func fsInfo(p string) (FSInfo, error) {
 	resolved := p
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		resolved = r
 	}
+	return mountInfoOf(resolved)
+}
+
+// mountInfoOf looks p up in /proc/self/mountinfo as given: no resolution, so
+// it never follows a link a tenant planted below the root.
+func mountInfoOf(p string) (FSInfo, error) {
 	f, err := os.Open("/proc/self/mountinfo")
 	if err != nil {
 		return FSInfo{}, err
@@ -45,12 +51,12 @@ func fsInfo(p string) (FSInfo, error) {
 	if err != nil {
 		return FSInfo{}, err
 	}
-	m, ok := FindMount(mounts, resolved)
+	m, ok := FindMount(mounts, p)
 	if !ok {
-		return FSInfo{}, fmt.Errorf("no mount found for %s", resolved)
+		return FSInfo{}, fmt.Errorf("no mount found for %s", p)
 	}
 	return FSInfo{
-		Path:         resolved,
+		Path:         p,
 		FSType:       m.FSType,
 		MountPoint:   m.MountPoint,
 		Options:      m.AllOptions(),

@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { RefreshCw, ArrowRight, Building2, Users, Server, Mail, Database } from 'lucide-react';
+import { RefreshCw, ArrowRight, Building2, Users, Server, Mail, Database, Globe, FolderOpen, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { DashboardSummary } from '@oblimint/shared';
+import type { DashboardSummary, HostingAccount } from '@oblimint/shared';
+import { HostingSocketEvents } from '@oblimint/shared';
 import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { dashboardApi } from '@/api/dashboard.api';
+import { accountsApi } from '@/api/accounts.api';
 import { PageContainer } from '@/components/common/PageContainer';
+import { AccountStatusBadge, DiskBar, hostingErrorMessage, useHostingEvents } from '@/components/hosting/hostingUi';
 
 // ── Sparkline (filled area + line) — ported from Obliance ───────────────────
 
@@ -115,7 +118,13 @@ const EMPTY_SUMMARY: DashboardSummary = {
   accounts: 0, sites: 0, domains: 0, mailboxes: 0, databases: 0, tenants: 0, users: 0, nodes: 0,
 };
 
+/** Staff: platform / workspace counters. Client users (kind = client): their own space. */
 export function DashboardPage() {
+  const isClient = useAuthStore((s) => s.user?.kind === 'client');
+  return isClient ? <ClientDashboard /> : <StaffDashboard />;
+}
+
+function StaffDashboard() {
   const { t } = useTranslation();
   const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
   const isMaster = useIsMasterTenant();
@@ -135,6 +144,7 @@ export function DashboardPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load, currentTenantId]);
+  useHostingEvents([HostingSocketEvents.HOSTING_CHANGED], () => { void load(); }, undefined, 1000);
 
   if (isLoading) {
     return (
@@ -265,6 +275,113 @@ export function DashboardPage() {
             value={databases}
             to="/databases"
           />
+        </div>
+      )}
+    </PageContainer>
+  );
+}
+
+// ── Client space (users.kind = 'client') ────────────────────────────────────
+// No tenant / user / node figures: only the caller's accounts, their sites
+// and domains (counted from GET /accounts, which the server scopes to the
+// accounts the client belongs to).
+
+function ClientDashboard() {
+  const { t } = useTranslation();
+  const currentTenantId = useTenantStore((s) => s.currentTenantId);
+  const [accounts, setAccounts] = useState<HostingAccount[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setAccounts(await accountsApi.list());
+      setError(null);
+    } catch (err) {
+      setAccounts([]);
+      setError(hostingErrorMessage(t, err, t('clientSpace.loadFailed') || 'Failed to load your accounts'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [t]);
+
+  useEffect(() => { void load(); }, [load, currentTenantId]);
+  useHostingEvents([HostingSocketEvents.HOSTING_CHANGED], () => { void load(); }, undefined, 1000);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="w-6 h-6 animate-spin text-text-muted" />
+      </div>
+    );
+  }
+
+  const sites = accounts.reduce((n, a) => n + a.siteCount, 0);
+  const domains = accounts.reduce((n, a) => n + a.domainCount, 0);
+  const single = accounts.length === 1 ? accounts[0] : null;
+
+  return (
+    <PageContainer className="flex flex-col gap-5">
+      <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
+        <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">
+          {t('clientSpace.title') || 'My space'}
+        </h1>
+        <span className="text-xs font-mono tracking-wider text-text-muted">
+          {t('accounts.count', { count: accounts.length, defaultValue: '{{count}} account(s)' })}
+        </span>
+        <div className="ml-auto flex items-center gap-2 max-sm:flex-wrap">
+          <button
+            onClick={() => { void load(); }}
+            className="inline-flex items-center gap-2 h-9 px-3.5 rounded-md bg-bg-hover hover:bg-bg-active text-[13px] font-medium text-text-primary transition-colors whitespace-nowrap coarse:h-10"
+          >
+            <RefreshCw size={14} />
+            {t('common.refresh') || 'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {error && <p className="text-sm text-text-muted">{error}</p>}
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 items-stretch">
+        <Link to={single ? `/accounts/${single.id}` : '/accounts'} className="h-full block hover:opacity-95 transition-opacity">
+          <HeroCard label={t('clientSpace.accounts') || 'Hosting accounts'} value={accounts.length} color="text-accent" />
+        </Link>
+        <Link to="/sites" className="h-full block hover:opacity-95 transition-opacity">
+          <HeroCard label={t('clientSpace.sites') || 'Sites'} value={sites} color="text-green-400" />
+        </Link>
+        <Link to="/domains" className="h-full block hover:opacity-95 transition-opacity">
+          <HeroCard label={t('clientSpace.domains') || 'Domains'} value={domains} color="text-text-primary" />
+        </Link>
+      </div>
+
+      {accounts.length === 0 && !error ? (
+        <div className="flex flex-col items-center gap-2 rounded-xl bg-bg-secondary py-12 text-text-muted">
+          <Server size={24} className="opacity-40" />
+          <p className="text-sm">{t('clientSpace.noAccount') || 'No hosting account is linked to your login yet.'}</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-text-muted">{t('clientSpace.myAccounts') || 'My accounts'}</div>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {accounts.map((a) => (
+              <div key={a.id} className="rounded-xl bg-bg-secondary p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03),_0_6px_24px_-8px_rgba(0,0,0,0.45)]">
+                <Link to={`/accounts/${a.id}`} className="flex items-center gap-2 group">
+                  <span className="font-mono text-sm font-semibold text-text-primary group-hover:text-accent truncate">{a.username}</span>
+                  <AccountStatusBadge status={a.status} message={a.statusMessage} />
+                  <ChevronRight size={16} className="ml-auto text-text-muted shrink-0" />
+                </Link>
+                {(a.displayName || a.planName) && (
+                  <div className="mt-0.5 text-xs text-text-muted truncate">{[a.displayName, a.planName].filter(Boolean).join(' · ')}</div>
+                )}
+                <div className="mt-3"><DiskBar usedMb={a.diskUsedMb} quotaMb={a.diskQuotaMb} mode={a.quotaMode} /></div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <MiniStat icon={<Server size={15} />} label={t('clientSpace.sites') || 'Sites'} value={a.siteCount} to={`/accounts/${a.id}?tab=sites`} />
+                  <MiniStat icon={<Globe size={15} />} label={t('clientSpace.domains') || 'Domains'} value={a.domainCount} to={`/accounts/${a.id}?tab=domains`} />
+                  <MiniStat icon={<FolderOpen size={15} />} label={t('clientSpace.files') || 'Files'} value={t('clientSpace.sftp') || 'SFTP'} to={`/accounts/${a.id}?tab=files`} />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </PageContainer>

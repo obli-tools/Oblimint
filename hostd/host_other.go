@@ -17,3 +17,7 @@ func listenUnix(string) (net.Listener, error) {
 func fsInfo(string) (FSInfo, error) {
 	return FSInfo{}, errUnsupported
 }
+
+func mountInfoOf(string) (FSInfo, error) {
+	return FSInfo{}, errUnsupported
+}

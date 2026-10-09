@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "siteId": 2,
+  "accountId": 1,
+  "role": "secondary",
+  "base": "nginx-php8.3",
+  "docroot": "/srv/releases/current/public",
+  "basePath": "/blog/",
+  "servedPrefixes": ["/blog/"],
+  "dataPaths": [
+    { "path": "public/media", "policy": "typed", "allowedExtensions": ["jpg"] },
+    { "path": "storage", "policy": "persistent", "allowedExtensions": null }
+  ],
+  "php": { "memoryLimitMb": 128, "uploadMaxFilesizeMb": 8, "postMaxSizeMb": 8, "maxExecutionTime": 30 },
+  "customNginx": null,
+  "healthcheckPath": "/blog/"
+}

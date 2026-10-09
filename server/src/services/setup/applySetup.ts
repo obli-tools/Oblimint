@@ -7,6 +7,8 @@ import { MASTER_TENANT_ID } from '@oblimint/shared';
 import { config, dataDir } from '../../config';
 import { logger } from '../../utils/logger';
 import { docker, errText, INTERNAL_LABELS, selfContainerRef, withTimeout } from './docker';
+import { attachWithAlias } from '../docker/dockerOps';
+import { PANEL_ALIAS } from '../hosting/naming';
 import { writeFileAtomic0600, writePanelConfig } from './configFile';
 
 // The first-run deployment (docs/P0-PLAN.md §Mode setup, apply steps).
@@ -46,7 +48,7 @@ export const setupApplySchema = z.object({
 
 const STEP_IDS = ['network', 'postgres', 'attach', 'config', 'migrate', 'admin', 'settings', 'edge', 'hostd', 'dns', 'mail'] as const;
 type StepId = typeof STEP_IDS[number];
-const LATER_STEPS: StepId[] = ['edge', 'hostd', 'dns', 'mail'];
+const LATER_STEPS: StepId[] = ['dns', 'mail'];
 
 function freshProgress(): SetupProgress {
   return {
@@ -78,6 +80,15 @@ function log(id: StepId, line: string): void {
   s.log.push(line);
   if (s.log.length > MAX_LOG_LINES) s.log.splice(0, s.log.length - MAX_LOG_LINES);
   logger.info({ step: id }, line);
+}
+
+/** A step whose failure does not abort the setup (status 'error' + log, the run goes on). */
+async function runOptionalStep(id: StepId, fn: () => Promise<void>): Promise<void> {
+  try {
+    await runStep(id, fn);
+  } catch {
+    log(id, 'This component can be redeployed later from the Nodes page');
+  }
 }
 
 async function runStep(id: StepId, fn: () => Promise<void>): Promise<void> {
@@ -192,20 +203,23 @@ async function stepPostgres(): Promise<string> {
   return `postgres://${PG_USER}:${encodeURIComponent(password)}@${POSTGRES_CONTAINER}:5432/${PG_DB}`;
 }
 
+/** Panel container on the panel network with the alias oblimint-panel (the
+ *  edge proxies the panel host name to https://oblimint-panel:<port>). */
 async function stepAttach(): Promise<void> {
   const ref = selfContainerRef();
   if (!ref) throw new Error('HOSTNAME is not set: cannot find the panel container');
-  const net = docker().getNetwork(NETWORK_NAME);
-  try {
-    await withTimeout(net.connect({ Container: ref }), 30_000, 'connect self');
-    log('attach', `Panel container ${ref} connected to ${NETWORK_NAME}`);
-  } catch (err) {
-    if (/already exists|already attached/i.test(errText(err))) {
-      log('attach', `Panel container ${ref} already on ${NETWORK_NAME}`);
-      return;
-    }
-    throw err;
-  }
+  await withTimeout(attachWithAlias(docker(), NETWORK_NAME, ref, PANEL_ALIAS, (line) => log('attach', line)), 240_000, 'attach panel'); // disconnect + up to 3 connect attempts (30 s each) + fallback connect
+}
+
+/** oblimint-edge and oblimint-hostd (P1): imported lazily, they need the panel database (nodes). */
+async function stepEdge(): Promise<void> {
+  const { infraService } = await import('../docker/infra.service');
+  await infraService.ensureEdge((line) => log('edge', line));
+}
+
+async function stepHostd(): Promise<void> {
+  const { infraService } = await import('../docker/infra.service');
+  await infraService.ensureHostd((line) => log('hostd', line));
 }
 
 // ── Runner ───────────────────────────────────────────────────────────────────
@@ -238,9 +252,12 @@ export function startApply(req: SetupApplyRequest, opts: { exitOnDone?: boolean 
         log('config', `Configuration written to ${file} (0600)`);
       });
       await runPostDeploySteps(req);
+      // Non-fatal: the panel works without them; the operator redeploys from the Nodes page.
+      await runOptionalStep('edge', stepEdge);
+      await runOptionalStep('hostd', stepHostd);
       for (const id of LATER_STEPS) {
         stepOf(id).status = 'skipped';
-        log(id, 'Deployed in a later phase (P1+)');
+        log(id, 'Deployed in a later phase (P2+)');
       }
       progress.done = true;
       logger.info('Setup complete — restarting in normal mode in 3 s');

@@ -39,7 +39,11 @@ function resourceNameSelect() {
   COALESCE(
     (SELECT username FROM users   WHERE al.resource_type = 'user'   AND users.id::text   = al.resource_path),
     (SELECT name     FROM tenants WHERE al.resource_type = 'tenant' AND tenants.id::text = al.resource_path),
-    (SELECT name     FROM permission_sets WHERE al.resource_type = 'permission_set' AND permission_sets.id::text = al.resource_path)
+    (SELECT name     FROM permission_sets WHERE al.resource_type = 'permission_set' AND permission_sets.id::text = al.resource_path),
+    (SELECT name     FROM plans   WHERE al.resource_type = 'plan'    AND plans.id::text   = al.resource_path AND plans.tenant_id = al.tenant_id),
+    (SELECT username FROM hosting_accounts ha WHERE al.resource_type = 'account' AND ha.id::text = al.resource_path AND ha.tenant_id = al.tenant_id),
+    (SELECT name     FROM sites   WHERE al.resource_type = 'site'    AND sites.id::text   = al.resource_path AND sites.tenant_id = al.tenant_id),
+    (SELECT name     FROM domains WHERE al.resource_type = 'domain'  AND domains.id::text = al.resource_path AND domains.tenant_id = al.tenant_id)
   ) as resource_name
 `);
 }

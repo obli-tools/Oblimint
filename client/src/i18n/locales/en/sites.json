@@ -1,0 +1,441 @@
+{
+  "dataPaths": {
+    "add": "Add a path",
+    "addTitle": "New data path",
+    "added": "Data path added",
+    "applyProfile": "Apply the profile",
+    "applyProfileNamed": "Apply the {{profile}} profile",
+    "containsDocroot": "A data path cannot be or contain the document root ({{docroot}}/): the whole site would become data.",
+    "deleteConfirm": "Remove the data path {{path}}/? From the next publication it will come from the release again (read only). The files already in /data are kept.",
+    "deleted": "Data path removed",
+    "editTitle": "Data path {{path}}/",
+    "empty": "No data path: the whole site is read only.",
+    "explain": "The code is read only. Data paths are the only writable folders: in the release they point to /data/{{slug}}/<path>, where the application writes (uploads, caches…). PHP is never executed there.",
+    "extensions": {
+      "addAll": "add all",
+      "none": "No extension: nothing will be served.",
+      "phpRefused": "Refused: {{exts}}. PHP-like extensions can never be allowed in a data path.",
+      "placeholder": "jpg, png, pdf…",
+      "remove": "Remove .{{ext}}",
+      "required": "A typed path needs at least one extension.",
+      "suggestions": "Suggestions"
+    },
+    "fields": {
+      "extensions": "Allowed extensions",
+      "path": "Path",
+      "policy": "Policy",
+      "source": "Source"
+    },
+    "nextPublication": "Changes take effect at the next publication.",
+    "noProfile": "Choose an application profile in the Overview tab first.",
+    "overlapWith": "Overlaps {{path}}/",
+    "pathHint": "Relative to the root of the release (not to the document root).",
+    "pathImmutable": "The path cannot be changed: delete and add it again.",
+    "pathInvalid": "Invalid path: relative, segments of letters, digits and . _ @ + -, without \"..\".",
+    "policy": {
+      "ephemeral": "Ephemeral",
+      "ephemeralHint": "Emptied at each publication (caches, temporary files).",
+      "persistent": "Persistent",
+      "persistentHint": "Kept across publications (uploads, user content). Scripts are never executed there.",
+      "typed": "Typed",
+      "typedHint": "Persistent, but only the listed file extensions are served."
+    },
+    "profileApplied": "Profile data paths applied",
+    "publishNow": "Publish now",
+    "source": {
+      "manual": "manual",
+      "profile": "profile"
+    },
+    "updated": "Data path updated"
+  },
+  "releases": {
+    "actions": {
+      "approve": "Approve",
+      "approveConfirm": "Approve release #{{number}}? It will be published right away.",
+      "approved": "Release #{{number}} approved",
+      "reject": "Reject",
+      "rejectMessage": "The release will never be published. Reason (optional, kept in its log):",
+      "rejectReasonTooLong": "The reason is limited to {{max}} characters.",
+      "rejectTitle": "Reject release #{{number}}",
+      "rejected": "Release #{{number}} rejected",
+      "rollback": "Restore this release",
+      "rollbackConfirm": "Put release #{{number}} back online? The switch is instant; if its health check fails, the current release is kept.",
+      "rollbackShort": "Restore",
+      "rolledBack": "Release #{{number}} is back online"
+    },
+    "current": "current",
+    "diff": {
+      "added": "Added",
+      "binary": "binary",
+      "binaryNotice": "Binary file: no textual diff.",
+      "compareWith": "Compare with",
+      "deleted": "Deleted",
+      "empty": "Empty (all files)",
+      "filesCount_one": "{{count}} file",
+      "filesCount_other": "{{count}} files",
+      "listTruncated": "Only {{shown}} of {{total}} files are listed.",
+      "modified": "Modified",
+      "noChange": "No difference.",
+      "noPatch": "No textual change to show (empty file, mode or rename only).",
+      "patchTruncated": "Patch truncated: the file has too many changes to be shown in full.",
+      "previous": "Previous release",
+      "renamed": "Renamed",
+      "title": "Changes",
+      "typechange": "Type changed"
+    },
+    "drawer": {
+      "loading": "Release",
+      "log": "Log",
+      "noLog": "Empty log.",
+      "title": "Release #{{number}}"
+    },
+    "empty": "No release yet: upload the site to the staging folder, then publish.",
+    "explain": "Each publication freezes the staging folder into an immutable release. The current one is served read-only; earlier ones can be restored instantly.",
+    "fields": {
+      "actions": "Actions",
+      "approvedBy": "Approved by",
+      "author": "Author",
+      "changes": "Changes",
+      "commit": "Commit",
+      "created": "Created",
+      "date": "Date",
+      "error": "Error",
+      "message": "Message",
+      "onDisk": "On disk",
+      "published": "Published",
+      "scan": "Scan",
+      "status": "Status",
+      "trigger": "Trigger"
+    },
+    "onDiskNo": "no (pruned, rebuilt from git on restore)",
+    "onDiskYes": "yes",
+    "publish": {
+      "button": "Publish",
+      "explain": "The current content of /staging/{{slug}}/ becomes a new immutable release, then goes live once its health check passes.",
+      "message": "Message (optional)",
+      "messagePlaceholder": "What changes in this release?",
+      "needsApproval": "This site publishes with approval: the release will wait for an approval before going live.",
+      "queued": "Release #{{number}} queued",
+      "title": "Publish {{name}}"
+    },
+    "scan": {
+      "clean": "Clean",
+      "infected": "Infected",
+      "noFinding": "No finding.",
+      "severity": {
+        "critical": "critical",
+        "info": "info",
+        "warn": "warning"
+      },
+      "suspicious": "Suspicious",
+      "title": "Pre-publication scan"
+    },
+    "status": {
+      "awaiting_approval": "Awaiting approval",
+      "failed": "Failed",
+      "publishing": "Publishing",
+      "queued": "Queued",
+      "ready": "Ready",
+      "rejected": "Rejected",
+      "scanning": "Scanning"
+    },
+    "trigger": {
+      "api": "API",
+      "auto": "automatic",
+      "manual": "manual"
+    }
+  },
+  "runtime": {
+    "catalog": {
+      "current": "current",
+      "explain": "The code does not change: the same release is served by another engine or PHP version. Pick a base to see the checks before switching.",
+      "preview": "preview",
+      "title": "Change base"
+    },
+    "current": "Current base",
+    "fields": {
+      "base": "Base",
+      "container": "Container",
+      "health": "Health",
+      "limits": "Limits",
+      "role": "Role",
+      "startedAt": "Started",
+      "state": "State"
+    },
+    "groups": {
+      "apacheHint": "Honours .htaccess files: the usual choice for WordPress, PrestaShop, Joomla.",
+      "nginxHint": "Faster, but ignores .htaccess files: rewrites go in the custom nginx rules.",
+      "static": "Static (nginx)",
+      "staticHint": "HTML, CSS, JS and media only: PHP is never executed."
+    },
+    "noContainer": "No container yet (the site is being provisioned or is stopped).",
+    "notInPlan": "not in plan",
+    "notInPlanError": "This base is not allowed by the plan of the account.",
+    "preview": {
+      "badge": "Preview running",
+      "explain": "The candidate base serves the SAME current release on a private URL. Production is untouched until you promote it.",
+      "link": "preview",
+      "promote": "Promote",
+      "promoteConfirm": "Make {{base}} the base of the site? Production traffic switches to it and the old container is removed.",
+      "promoted": "Preview promoted to production",
+      "stop": "Stop the preview",
+      "stopped": "Preview stopped",
+      "title": "Preview (blue/green)"
+    },
+    "restart": "Restart",
+    "restartConfirm": "Restart the containers of the site? Visitors may get errors for a few seconds.",
+    "restarted": "Containers restarted",
+    "roles": {
+      "preview": "preview",
+      "primary": "primary",
+      "secondary": "secondary"
+    },
+    "secondary": {
+      "add": "Add",
+      "added": "Secondary runtime added",
+      "deleteConfirm": "Remove the secondary runtime {{base}}?",
+      "deleted": "Secondary runtime removed",
+      "explain": "A secondary runtime serves a path prefix of the SAME release with another engine (e.g. /legacy/ on PHP 7.4). Attach it to a prefix in the Routes tab or on the Domains page.",
+      "noRoute": "no route yet",
+      "none": "No secondary runtime.",
+      "note": "The longest matching prefix wins; the primary runtime serves everything else.",
+      "pickBase": "Choose a base…",
+      "title": "Secondary runtimes"
+    },
+    "states": {
+      "error": "error",
+      "missing": "missing",
+      "restarting": "restarting",
+      "running": "running",
+      "stopped": "stopped",
+      "unknown": "unknown"
+    },
+    "static": "static",
+    "staticShort": "Static",
+    "switch": {
+      "checking": "Checking compatibility…",
+      "direct": "Switch now",
+      "directHint": "The production container is recreated on the new base: a short interruption, then the health check.",
+      "done": "The site now runs on {{base}}",
+      "noWarning": "No compatibility warning.",
+      "preview": "Preview (blue/green)",
+      "previewHint": "Starts the new base next to production on a private preview URL; promote it once checked.",
+      "previewStarted": "Preview on {{base}} started",
+      "replacesPreview": "Replaces the running preview.",
+      "title": "Change base"
+    },
+    "unmaintained": "Unmaintained runtime",
+    "unmaintainedHint": "This PHP branch no longer receives security fixes.",
+    "unmaintainedShort": "EOL",
+    "warnings": {
+      "htaccessIgnored": "nginx ignores .htaccess files: their rewrite and access rules will no longer apply (move them to the custom nginx rules).",
+      "imageMissing": "The image of this base is not on the node yet: it will be downloaded (the switch fails if it cannot be).",
+      "phpDowngrade": "Older PHP version than the current one: the application may use features it lacks.",
+      "phpMajorChange": "Major PHP version change: check the compatibility of the application and its extensions (a preview is recommended).",
+      "staticBaseWithPhp": "The static base never executes PHP, but the release contains PHP files.",
+      "unmaintainedRuntime": "This PHP branch no longer receives security fixes."
+    }
+  },
+  "siteRoutes": {
+    "add": "Add",
+    "addTitle": "Add a route",
+    "added": "Route added",
+    "basePathNote": "A sub-site must know where it lives: the base path of this site is {{basePath}} (Overview tab).",
+    "deleteConfirm": "Remove the route {{route}}? This address will no longer serve the site.",
+    "deleted": "Route removed",
+    "empty": "No domain points to this site yet.",
+    "explain": "A route sends a domain + path prefix to this site. When several prefixes match a request, the longest one wins.",
+    "fields": {
+      "address": "Address",
+      "domain": "Domain",
+      "prefix": "Prefix",
+      "runtime": "Runtime"
+    },
+    "manageDomains": "Manage domains",
+    "noDomain": "This account has no domain yet.",
+    "pickDomain": "Choose a domain.",
+    "prefixInvalid": "Invalid prefix: \"/\" or a path such as /shop/.",
+    "primary": "primary",
+    "primaryOption": "Primary ({{base}})",
+    "secondaryOption": "Secondary ({{base}})"
+  },
+  "sites": {
+    "actions": {
+      "delete": "Delete the site",
+      "deleteConfirm": "Delete \"{{name}}\"? Its containers, releases and routes are removed, as well as /staging/{{slug}}/ and /data/{{slug}}/. This cannot be undone.",
+      "deleted": "Site deleted",
+      "start": "Start the site",
+      "started": "Site started",
+      "stop": "Stop the site",
+      "stopConfirm": "Stop \"{{name}}\"? Its containers are stopped and visitors get an error page until it is started again.",
+      "stopped": "Site stopped"
+    },
+    "backToList": "Back to sites",
+    "create": {
+      "applyDataPaths": "Create the data paths of this profile",
+      "applyDataPathsHint": "Writable folders kept outside the immutable code (uploads, caches…).",
+      "button": "New site",
+      "created": "Site \"{{name}}\" created",
+      "namePlaceholder": "My shop",
+      "noAccount": "No hosting account where you may create a site.",
+      "noDataPaths": "This profile needs no data path.",
+      "pickAccount": "Choose an account…",
+      "recommended": "recommended",
+      "slugHint": "Name of the SFTP folder of the site (/staging/<identifier>/ and /data/<identifier>/). It can never be changed.",
+      "slugInvalid": "Invalid identifier: lower-case letters, digits and dashes, 40 characters max.",
+      "suspended": "suspended",
+      "title": "New site"
+    },
+    "detect": {
+      "applied_one": "Profile applied ({{count}} data path in total)",
+      "applied_other": "Profile applied ({{count}} data paths in total)",
+      "apply": "Apply this profile (data paths)",
+      "button": "Detect the application",
+      "current": "current profile",
+      "dataPaths": "Suggested data paths",
+      "explain": "Looks for well-known files in the staging folder to recognise the application and suggest its base and data paths.",
+      "found": "Detected:",
+      "none": "No known application found in the staging folder.",
+      "suggestedBase": "Recommended base:",
+      "switchBase": "Switch…",
+      "title": "Application detection",
+      "useDocroot": "Use the document root \"{{docroot}}\""
+    },
+    "empty": "No site yet.",
+    "errors": {
+      "accountDeleting": "The hosting account is being deleted.",
+      "accountSuspended": "The hosting account is suspended.",
+      "backendUnavailable": "The container engine or the host daemon is unreachable. Try again in a moment.",
+      "baseNotAllowed": "This base is not allowed by the account's plan.",
+      "confirmMismatch": "The confirmation does not match.",
+      "dataPathForbidden": "This path cannot be a data path (segments starting with a dot, php.ini and web.config are refused, and it may not contain the document root).",
+      "dataPathLimit": "A site has at most 64 data paths.",
+      "dataPathOverlap": "This path overlaps an existing data path.",
+      "docrootInDataPath": "The document root cannot be inside a data path.",
+      "envelopeExceeded": "The workspace's resource envelope would be exceeded.",
+      "extensionsRequired": "A typed data path needs at least one allowed extension.",
+      "invalidCustomNginx": "Invalid custom nginx rules (16 KiB max, no NUL character).",
+      "invalidPhpSettings": "PHP settings out of the allowed ranges (memory_limit is also capped by the plan's memory).",
+      "noPreview": "This site has no preview running.",
+      "notFound": "This item does not exist anymore or is not visible to you.",
+      "notImplemented": "This feature is not available on this server yet.",
+      "planLimit": "The account's plan limit is reached.",
+      "publishInProgress": "A publication is already running for this site.",
+      "releaseIsCurrent": "This release is already the current one.",
+      "releaseNotAwaitingApproval": "This release is no longer awaiting approval.",
+      "releaseNotReady": "This release is not published (or not committed yet).",
+      "releaseRebuildFailed": "The live release could not be rebuilt with the new data paths: nothing was changed.",
+      "releaseSuperseded": "A newer release has already been published; this one can no longer be approved.",
+      "rollbackHealthcheckFailed": "The restored release failed its health check: the previous one was kept.",
+      "routeTaken": "This domain already has a route on this prefix.",
+      "runtimeInUse": "This runtime still serves routes: detach them first.",
+      "runtimeMismatch": "This runtime does not belong to the site.",
+      "runtimePrefixLimit": "A runtime serves at most 64 path prefixes.",
+      "runtimeSwitchFailed": "The runtime change failed: the previous runtime was restored (details for administrators in the logs).",
+      "runtimeSwitchNotRestored": "The runtime change failed and the previous runtime could not be restored: the site may be down, contact an administrator.",
+      "siteDeleting": "The site is being deleted.",
+      "slugTaken": "This identifier is already used by another site of the account.",
+      "stagingEmpty": "The staging folder is empty: there is nothing to publish.",
+      "validation": "The submitted data is invalid."
+    },
+    "fields": {
+      "account": "Hosting account",
+      "accountShort": "Account",
+      "appProfile": "Application",
+      "base": "Base",
+      "baseFull": "Base (engine + PHP)",
+      "basePath": "Base path",
+      "debounce": "Delay after the last upload (s)",
+      "docroot": "Document root",
+      "healthcheckPath": "Health check path",
+      "name": "Name",
+      "primaryDomain": "Domain",
+      "publishMode": "Publication",
+      "release": "Release",
+      "slug": "Identifier",
+      "status": "Status"
+    },
+    "files": {
+      "data": "The writable data of the site (uploads, caches…), one folder per data path. Changes here are live immediately, but PHP is never executed from it.",
+      "staging": "The code of the site. Upload it here: nothing is live until it is published as a release (automatically or with the \"Publish\" button). The live code can never be modified in place."
+    },
+    "filters": {
+      "allAccounts": "All accounts"
+    },
+    "form": {
+      "basePathHint": "For a sub-site served under a prefix (e.g. /blog/): the path the application expects. \"/\" otherwise.",
+      "basePathInvalid": "Invalid base path.",
+      "debounceInvalid": "The delay must be between 5 and 3600 seconds.",
+      "docrootHint": "Folder of the release served by the web server, relative to its root (empty = the root; \"public\" for Laravel).",
+      "docrootInDataPath": "The document root cannot be inside the data path {{path}}/.",
+      "docrootInvalid": "Invalid document root.",
+      "healthcheckHint": "Requested after each publication: an answer below 500 validates the release, otherwise the previous one is restored.",
+      "healthcheckInvalid": "The health check path must start with \"/\".",
+      "readOnly": "Read only",
+      "rootPlaceholder": "(root)",
+      "saved": "Settings saved",
+      "title": "Settings"
+    },
+    "loadFailed": "Failed to load the sites",
+    "loadSiteFailed": "Failed to load the site",
+    "nginx": {
+      "note": "Included in the server block of the site container only (never in the shared edge). Invalid rules are ignored at start-up and reported in the container log.",
+      "title": "Custom nginx rules"
+    },
+    "notFound": "This site does not exist or is not visible to you.",
+    "php": {
+      "cannotClear": "{{field}}: a saved value cannot be emptied, enter a value.",
+      "default": "default",
+      "invalid": "{{field}}: a whole number between {{min}} and {{max}}.",
+      "maxExecution": "max_execution_time",
+      "memoryLimit": "memory_limit",
+      "postBelowUpload": "{{post}} must be greater than or equal to {{upload}}.",
+      "postMax": "post_max_size",
+      "title": "PHP settings",
+      "uploadMax": "upload_max_filesize"
+    },
+    "profile": {
+      "none": "Other / none",
+      "static": "Static site"
+    },
+    "publishMode": {
+      "approval": "With approval",
+      "approvalHint": "Every release waits for the approval of a user allowed to approve before going live.",
+      "auto": "Automatic",
+      "autoHint": "A release is published automatically once uploads to the staging folder have stopped for the delay below.",
+      "manual": "Manual",
+      "manualHint": "Nothing is published until someone clicks \"Publish\" (or calls the API)."
+    },
+    "staging": {
+      "autoPublishIn": "Automatic publication in",
+      "lastUpload": "Last upload:",
+      "pending_one": "pending change",
+      "pending_other": "pending changes",
+      "title": "Staging folder",
+      "truncated": "List truncated.",
+      "warnings": {
+        "stagingMissing": "The staging folder does not exist yet.",
+        "nestedRepo": "Nested git repository (excluded from publications): {{path}}",
+        "symlink": "Symbolic link: {{path}}",
+        "moreSymlinks": "… and {{count}} more symbolic link(s)"
+      }
+    },
+    "status": {
+      "active": "Active",
+      "error": "Error",
+      "provisioning": "Provisioning",
+      "stopped": "Stopped"
+    },
+    "subtitle": "Immutable code, published from the SFTP staging folder.",
+    "tabs": {
+      "data": "Data paths",
+      "files": "File access",
+      "overview": "Overview",
+      "releases": "Releases",
+      "routes": "Routes & domains",
+      "runtime": "Runtime"
+    },
+    "title": "Sites",
+    "count": "{{count}} site(s)"
+  }
+}

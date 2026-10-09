@@ -139,8 +139,17 @@ async function startNormalMode(): Promise<void> {
   const app = createApp();
   const server = createServer(app);
   createSocketServer(server);
-  installShutdown(server, async () => { await db.destroy(); });
+  installShutdown(server, async () => {
+    const { stopWorkers } = await import('./workers');
+    await stopWorkers();
+    await db.destroy();
+  });
   listen(server, 'panel');
+
+  // P1 hosting workers (reconcile, publish debounce, certificates, usage) +
+  // the internal file-server hook listener.
+  const { startWorkers } = await import('./workers');
+  startWorkers().catch((err) => logger.error({ err }, 'Failed to start the hosting workers'));
 
   const { obligateService } = await import('./services/obligate.service');
   obligateService.announceSelfInfo().catch(() => {});

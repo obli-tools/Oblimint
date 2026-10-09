@@ -1,0 +1,263 @@
+import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Check, ChevronLeft, ChevronRight, History, RotateCcw, Rocket, X } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { HostingSocketEvents, type Release } from '@oblimint/shared';
+import { releasesApi } from '@/api/releases.api';
+import { useHostingMe } from '@/store/hostingStore';
+import { Button } from '@/components/common/Button';
+import { IconButton } from '@/components/common/IconButton';
+import { TableScroll } from '@/components/common/TableScroll';
+import { useConfirm, usePrompt } from '@/components/common/ConfirmDialog';
+import { Pill, ReleaseStatusBadge, ScanVerdictChip } from '../SiteBadges';
+import { ReleaseDrawer, triggerLabel } from '../ReleaseDrawer';
+import { formatDateTime } from '../siteForm';
+import { apiErrorCode, isNotImplemented, siteErrorMessage, toastSiteError } from '../siteErrors';
+import { useHostingEvent } from '../useHostingEvent';
+import { tdCls, thCls } from '../styles';
+import type { SiteTabProps } from './types';
+
+const PAGE_SIZE = 25;
+/** Server limit of the reject reason (releases rejectBody). */
+const REJECT_REASON_MAX = 500;
+
+export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabProps & { tick: number }) {
+  const { t, i18n } = useTranslation();
+  const confirm = useConfirm();
+  const prompt = usePrompt();
+  const { can } = useHostingMe();
+  const canPublish = can('releases.publish', site.accountId);
+  const canApprove = can('releases.approve', site.accountId);
+
+  const [items, setItems] = useState<Release[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [drawerTick, setDrawerTick] = useState(0);
+  const [busyId, setBusyId] = useState<number | null>(null);
+
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
+    try {
+      const res = await releasesApi.list(site.id, { limit: PAGE_SIZE, offset });
+      setItems(res.items);
+      setTotal(res.total);
+      setError('');
+    } catch (err) {
+      setError(isNotImplemented(err) ? (t('sites.errors.notImplemented') || 'This feature is not available on this server yet.') : siteErrorMessage(err, t));
+    } finally {
+      setLoading(false);
+    }
+  }, [site.id, offset, t]);
+
+  useEffect(() => { void load(); }, [load, tick]);
+
+  useHostingEvent<{ siteId: number; releaseId: number; status: string }>(HostingSocketEvents.RELEASE_UPDATED, (p) => {
+    if (p.siteId !== site.id) return;
+    void load(true);
+    if (p.releaseId === openId) setDrawerTick((n) => n + 1);
+  });
+
+  const afterAction = async () => {
+    await Promise.all([load(true), reloadSite()]);
+    setDrawerTick((n) => n + 1);
+  };
+
+  const approve = async (r: Release) => {
+    if (!(await confirm({
+      title: t('releases.actions.approve') || 'Approve',
+      message: t('releases.actions.approveConfirm', { number: r.number, defaultValue: 'Approve release #{{number}}? It will be published right away.' }),
+      confirmLabel: t('releases.actions.approve') || 'Approve',
+    }))) return;
+    setBusyId(r.id);
+    try {
+      await releasesApi.approve(site.id, r.id);
+      toast.success(t('releases.actions.approved', { number: r.number, defaultValue: 'Release #{{number}} approved' }));
+      await afterAction();
+    } catch (err) {
+      toastSiteError(err, t);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reject = async (r: Release) => {
+    const reason = await prompt({
+      title: t('releases.actions.rejectTitle', { number: r.number, defaultValue: 'Reject release #{{number}}' }),
+      message: t('releases.actions.rejectMessage') || 'The release will never be published. Reason (optional, kept in its log):',
+      multiline: true,
+      maxLength: REJECT_REASON_MAX,
+      plain: false,
+      confirmLabel: t('releases.actions.reject') || 'Reject',
+    });
+    if (reason === null) return;
+    if (reason.trim().length > REJECT_REASON_MAX) {
+      toast.error(t('releases.actions.rejectReasonTooLong', { max: REJECT_REASON_MAX, defaultValue: 'The reason is limited to {{max}} characters.' }));
+      return;
+    }
+    setBusyId(r.id);
+    try {
+      await releasesApi.reject(site.id, r.id, reason.trim() || undefined);
+      toast.success(t('releases.actions.rejected', { number: r.number, defaultValue: 'Release #{{number}} rejected' }));
+      await afterAction();
+    } catch (err) {
+      toastSiteError(err, t);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const rollback = async (r: Release) => {
+    if (!(await confirm({
+      title: t('releases.actions.rollback') || 'Restore this release',
+      message: t('releases.actions.rollbackConfirm', {
+        number: r.number,
+        defaultValue: 'Put release #{{number}} back online? The switch is instant; if its health check fails, the current release is kept.',
+      }),
+      confirmLabel: t('releases.actions.rollbackShort') || 'Restore',
+    }))) return;
+    setBusyId(r.id);
+    try {
+      await releasesApi.rollback(site.id, r.id);
+      toast.success(t('releases.actions.rolledBack', { number: r.number, defaultValue: 'Release #{{number}} is back online' }));
+      await afterAction();
+    } catch (err) {
+      if (apiErrorCode(err) === 'rollbackHealthcheckFailed') {
+        toast.error(siteErrorMessage(err, t), { duration: 10_000 });
+        await afterAction();
+      } else {
+        toastSiteError(err, t);
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const renderActions = (r: Release, inDrawer = false) => {
+    const busy = busyId === r.id;
+    const out = [];
+    if (r.status === 'awaiting_approval' && canApprove) {
+      out.push(
+        <Button key="approve" size="sm" onClick={() => void approve(r)} disabled={busy} className="bg-green-600 hover:bg-green-500">
+          <Check size={14} className="mr-1" />{t('releases.actions.approve') || 'Approve'}
+        </Button>,
+        <Button key="reject" size="sm" variant="secondary" onClick={() => void reject(r)} disabled={busy}>
+          <X size={14} className="mr-1" />{t('releases.actions.reject') || 'Reject'}
+        </Button>,
+      );
+    }
+    if (r.status === 'ready' && !r.isCurrent && canPublish) {
+      out.push(
+        <Button key="rollback" size="sm" variant={inDrawer ? 'primary' : 'secondary'} onClick={() => void rollback(r)} loading={busy}>
+          <RotateCcw size={14} className="mr-1" />{t('releases.actions.rollback') || 'Restore this release'}
+        </Button>,
+      );
+    }
+    return out.length ? <>{out}</> : null;
+  };
+
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const page = Math.floor(offset / PAGE_SIZE) + 1;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-text-muted">
+          {t('releases.explain') || 'Each publication freezes the staging folder into an immutable release. The current one is served read-only; earlier ones can be restored instantly.'}
+        </p>
+        {canPublish && (
+          <Button size="sm" onClick={onPublish}>
+            <Rocket size={14} className="mr-1" />{t('releases.publish.button') || 'Publish'}
+          </Button>
+        )}
+      </div>
+
+      {error ? (
+        <div className="rounded-xl bg-bg-secondary px-4 py-6 text-center text-sm text-text-muted">{error}</div>
+      ) : loading && items.length === 0 ? (
+        <p className="text-sm text-text-muted">{t('common.loading') || 'Loading...'}</p>
+      ) : items.length === 0 ? (
+        <div className="rounded-xl bg-bg-secondary px-6 py-10 text-center">
+          <History className="mx-auto mb-3 h-8 w-8 text-text-muted" />
+          <p className="text-sm text-text-secondary">{t('releases.empty') || 'No release yet: upload the site to the staging folder, then publish.'}</p>
+        </div>
+      ) : (
+        <TableScroll className="bg-bg-secondary rounded-xl" stickyFirstCol>
+          <table className="w-full min-w-[1040px] text-sm">
+            <thead>
+              <tr>
+                <th className={thCls}>#</th>
+                <th className={thCls}>{t('releases.fields.status') || 'Status'}</th>
+                <th className={thCls}>{t('releases.fields.trigger') || 'Trigger'}</th>
+                <th className={thCls}>{t('releases.fields.message') || 'Message'}</th>
+                <th className={thCls}>{t('releases.fields.changes') || 'Changes'}</th>
+                <th className={thCls}>{t('releases.fields.scan') || 'Scan'}</th>
+                <th className={thCls}>{t('releases.fields.onDisk') || 'On disk'}</th>
+                <th className={thCls}>{t('releases.fields.date') || 'Date'}</th>
+                <th className={thCls}><span className="sr-only">{t('releases.fields.actions') || 'Actions'}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((r) => (
+                <tr
+                  key={r.id}
+                  onClick={(e) => { if (!(e.target as HTMLElement).closest('button,a')) setOpenId(r.id); }}
+                  className={`cursor-pointer transition-colors hover:bg-bg-tertiary ${r.isCurrent ? 'bg-accent/[0.04]' : ''}`}
+                >
+                  <td className={`${tdCls} whitespace-nowrap`}>
+                    <span className="font-mono font-semibold text-text-primary">#{r.number}</span>
+                    {r.isCurrent && <Pill tone="accent" className="ml-2 text-[10px]">{t('releases.current') || 'current'}</Pill>}
+                  </td>
+                  <td className={tdCls}><ReleaseStatusBadge status={r.status} /></td>
+                  <td className={`${tdCls} text-xs text-text-secondary`}>
+                    <div>{triggerLabel(r.trigger, t)}</div>
+                    {r.authorName && <div className="text-text-muted">{r.authorName}</div>}
+                  </td>
+                  <td className={`${tdCls} max-w-[18rem]`}>
+                    <span className="line-clamp-2 break-words text-xs text-text-secondary" title={r.message ?? undefined}>{r.message || <span className="text-text-muted">—</span>}</span>
+                    {r.error && <span className="mt-0.5 block truncate text-[11px] text-red-400" title={r.error}>{r.error}</span>}
+                  </td>
+                  <td className={`${tdCls} whitespace-nowrap font-mono text-xs`}>
+                    <span className="text-status-up">+{r.filesAdded}</span>{' '}
+                    <span className="text-amber-400">~{r.filesModified}</span>{' '}
+                    <span className="text-red-400">−{r.filesDeleted}</span>
+                  </td>
+                  <td className={tdCls}>{r.scan ? <ScanVerdictChip verdict={r.scan.verdict} /> : <span className="text-text-muted">—</span>}</td>
+                  <td className={`${tdCls} text-xs`}>
+                    {r.onDisk ? <Check className="h-4 w-4 text-status-up" aria-label={t('releases.onDiskYes') || 'yes'} /> : <span className="text-text-muted">—</span>}
+                  </td>
+                  <td className={`${tdCls} whitespace-nowrap font-mono text-xs text-text-muted`}>
+                    <div title={t('releases.fields.created') || 'Created'}>{formatDateTime(r.createdAt, i18n.language)}</div>
+                    {r.publishedAt && <div className="text-status-up/80" title={t('releases.fields.published') || 'Published'}>↑ {formatDateTime(r.publishedAt, i18n.language)}</div>}
+                  </td>
+                  <td className={`${tdCls} whitespace-nowrap text-right`}>
+                    <div className="flex justify-end gap-1">{renderActions(r)}</div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
+      )}
+
+      {pages > 1 && (
+        <div className="flex items-center justify-end gap-2 text-xs text-text-muted">
+          <IconButton label={t('common.previous') || 'Prev'} icon={<ChevronLeft className="h-4 w-4" />} disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))} />
+          <span className="font-mono">{page} / {pages}</span>
+          <IconButton label={t('common.next') || 'Next'} icon={<ChevronRight className="h-4 w-4" />} disabled={page >= pages} onClick={() => setOffset(offset + PAGE_SIZE)} />
+        </div>
+      )}
+
+      <ReleaseDrawer
+        siteId={site.id}
+        releaseId={openId}
+        releases={items}
+        tick={drawerTick}
+        onClose={() => setOpenId(null)}
+        renderActions={(r) => renderActions(r, true)}
+      />
+    </div>
+  );
+}

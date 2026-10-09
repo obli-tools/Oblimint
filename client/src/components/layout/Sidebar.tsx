@@ -113,7 +113,7 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
   const { t } = useTranslation();
   const inDrawer = variant === 'drawer';
   const location = useLocation();
-  const { user, isAdmin } = useAuthStore();
+  const { user, isAdmin, hasCapability } = useAuthStore();
   const isMaster = useIsMasterTenant();
   const { toggleSidebarFloating, toggleSidebarCollapsed } = useUiStore();
   // Effective (device-aware) mode — see useEffectiveSidebar(). The drawer is
@@ -124,6 +124,10 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
   const canFloat = !inDrawer && effective.canFloat;
 
   const admin = isAdmin();
+  // Client users (users.kind = 'client') get the "espace client": their
+  // accounts, sites and domains only (the server scopes every list).
+  const isClient = user?.kind === 'client';
+  const canPlans = admin || (!isClient && hasCapability('plans.manage'));
 
   const [adminMenuOpen, setAdminMenuOpen] = usePersisted<boolean>('sidebar:admin-open', true);
   const [navMenuOpen, setNavMenuOpen] = usePersisted<boolean>('sidebar:nav-open', true);
@@ -134,15 +138,17 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     { label: t('nav.accounts') || 'Accounts',            path: '/accounts',  icon: <UserSquare size={18} /> },
     { label: t('nav.sites') || 'Sites',                  path: '/sites',     icon: <Globe size={18} /> },
     { label: t('nav.domains') || 'Domains & DNS',        path: '/domains',   icon: <AtSign size={18} /> },
-    { label: t('nav.databases') || 'Databases',          path: '/databases', icon: <Database size={18} /> },
-    { label: t('nav.mail') || 'Mail',                    path: '/mail',      icon: <Mail size={18} /> },
-    { label: t('nav.files') || 'Files',                  path: '/files',     icon: <FolderOpen size={18} /> },
+    ...(isClient ? [] : [
+      { label: t('nav.databases') || 'Databases',        path: '/databases', icon: <Database size={18} /> },
+      { label: t('nav.mail') || 'Mail',                  path: '/mail',      icon: <Mail size={18} /> },
+      { label: t('nav.files') || 'Files',                path: '/files',     icon: <FolderOpen size={18} /> },
+    ] as NavItem[]),
   ];
 
   // Admin-tier section — hidden entirely when the list is empty.
   const adminNavItems: NavItem[] = [
     ...(admin ? [{ label: t('nav.users') || 'Users', path: '/manage/users', icon: <Users size={18} /> } as NavItem] : []),
-    ...(admin ? [{ label: t('nav.plans') || 'Plans', path: '/manage/plans', icon: <Package size={18} /> } as NavItem] : []),
+    ...(canPlans ? [{ label: t('nav.plans') || 'Plans', path: '/manage/plans', icon: <Package size={18} /> } as NavItem] : []),
     // Workspaces — platform admin on the master tenant only (god view).
     ...(isMaster ? [{ label: t('nav.workspaces') || 'Workspaces', path: '/manage/tenants', icon: <Building2 size={18} /> } as NavItem] : []),
     ...(admin ? [{ label: t('nav.nodes') || 'Nodes', path: '/manage/nodes', icon: <Server size={18} /> } as NavItem] : []),

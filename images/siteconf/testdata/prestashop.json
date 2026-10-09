@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "siteId": 40,
+  "accountId": 7,
+  "role": "preview",
+  "base": "apache-php8.1",
+  "docroot": "/srv/releases/current",
+  "basePath": "/",
+  "servedPrefixes": [],
+  "dataPaths": [
+    { "path": "img", "policy": "typed", "allowedExtensions": ["png", "jpg", "jpeg", "webp", "svg"] },
+    { "path": "upload", "policy": "persistent", "allowedExtensions": null },
+    { "path": "var/cache", "policy": "ephemeral", "allowedExtensions": null },
+    { "path": "themes/cache", "policy": "typed", "allowedExtensions": [] }
+  ],
+  "php": { "memoryLimitMb": 512, "uploadMaxFilesizeMb": 32, "postMaxSizeMb": 48, "maxExecutionTime": 120 },
+  "customNginx": "location / { return 418; }",
+  "healthcheckPath": "/index.php"
+}

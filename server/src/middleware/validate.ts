@@ -18,6 +18,8 @@ export function validate(schema: ZodSchema, source: 'body' | 'query' | 'params' 
       res.status(400).json({
         success: false,
         error: issues.length > 0 ? `Validation failed — ${issues.join('; ')}` : 'Validation failed',
+        // Machine-readable code (the client translates the first line, P1 UI).
+        code: 'validation',
         details: result.error.flatten().fieldErrors,
       });
       return;

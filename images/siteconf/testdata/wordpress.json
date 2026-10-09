@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "siteId": 12,
+  "accountId": 3,
+  "role": "primary",
+  "base": "apache-php8.3",
+  "docroot": "/srv/releases/current",
+  "basePath": "/",
+  "servedPrefixes": [],
+  "dataPaths": [
+    { "path": "wp-content/uploads", "policy": "persistent", "allowedExtensions": null },
+    { "path": "wp-content/cache", "policy": "ephemeral", "allowedExtensions": null },
+    { "path": "wp-content/upgrade", "policy": "ephemeral", "allowedExtensions": [] }
+  ],
+  "php": { "memoryLimitMb": 256, "uploadMaxFilesizeMb": 64, "postMaxSizeMb": 64, "maxExecutionTime": 60 },
+  "customNginx": null,
+  "healthcheckPath": "/"
+}

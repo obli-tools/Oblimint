@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "siteId": 77,
+  "accountId": 9,
+  "role": "secondary",
+  "base": "nginx-php8.4",
+  "docroot": "/srv/releases/current/public",
+  "basePath": "/blog/",
+  "servedPrefixes": ["/blog/"],
+  "dataPaths": [
+    { "path": "storage", "policy": "persistent", "allowedExtensions": null },
+    { "path": "public/media", "policy": "typed", "allowedExtensions": ["png", "jpg"] },
+    { "path": "public/user@files", "policy": "persistent", "allowedExtensions": null }
+  ],
+  "php": { "memoryLimitMb": 128, "uploadMaxFilesizeMb": 16, "postMaxSizeMb": 20, "maxExecutionTime": 30 },
+  "customNginx": "# Laravel front controller with an extra header\nlocation /blog/ {\n    add_header X-Frame-Options \"SAMEORIGIN\";\n    try_files $uri $uri/ /blog/index.php?$query_string;\n}\nlocation ~* \\.(css|js)$ {\n    expires 7d;\n}\n",
+  "healthcheckPath": "/blog/"
+}

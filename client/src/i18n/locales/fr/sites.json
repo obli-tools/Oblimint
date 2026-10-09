@@ -1,0 +1,441 @@
+{
+  "dataPaths": {
+    "add": "Ajouter un chemin",
+    "addTitle": "Nouveau chemin de données",
+    "added": "Chemin de données ajouté",
+    "applyProfile": "Appliquer le profil",
+    "applyProfileNamed": "Appliquer le profil {{profile}}",
+    "containsDocroot": "Un chemin de données ne peut pas être ni contenir la racine web ({{docroot}}/) : tout le site deviendrait des données.",
+    "deleteConfirm": "Supprimer le chemin de données {{path}}/ ? Dès la prochaine publication, il proviendra de nouveau de la release (lecture seule). Les fichiers déjà présents dans /data sont conservés.",
+    "deleted": "Chemin de données supprimé",
+    "editTitle": "Chemin de données {{path}}/",
+    "empty": "Aucun chemin de données : tout le site est en lecture seule.",
+    "explain": "Le code est en lecture seule. Les chemins de données sont les seuls dossiers inscriptibles : dans la release, ils pointent vers /data/{{slug}}/<chemin>, où l'application écrit (envois, caches…). Le PHP n'y est jamais exécuté.",
+    "extensions": {
+      "addAll": "tout ajouter",
+      "none": "Aucune extension : rien ne sera servi.",
+      "phpRefused": "Refusé : {{exts}}. Les extensions de type PHP ne peuvent jamais être autorisées dans un chemin de données.",
+      "placeholder": "jpg, png, pdf…",
+      "remove": "Retirer .{{ext}}",
+      "required": "Un chemin typé exige au moins une extension.",
+      "suggestions": "Suggestions"
+    },
+    "fields": {
+      "extensions": "Extensions autorisées",
+      "path": "Chemin",
+      "policy": "Politique",
+      "source": "Origine"
+    },
+    "nextPublication": "Les modifications prennent effet à la prochaine publication.",
+    "noProfile": "Choisissez d'abord un profil applicatif dans l'onglet Vue d'ensemble.",
+    "overlapWith": "Chevauche {{path}}/",
+    "pathHint": "Relatif à la racine de la release (pas à la racine web).",
+    "pathImmutable": "Le chemin ne peut pas être modifié : supprimez-le puis ajoutez-le de nouveau.",
+    "pathInvalid": "Chemin invalide : relatif, segments de lettres, chiffres et . _ @ + -, sans « .. ».",
+    "policy": {
+      "ephemeral": "Éphémère",
+      "ephemeralHint": "Vidé à chaque publication (caches, fichiers temporaires).",
+      "persistent": "Persistant",
+      "persistentHint": "Conservé d'une publication à l'autre (envois, contenu utilisateur). Les scripts n'y sont jamais exécutés.",
+      "typed": "Typé",
+      "typedHint": "Persistant, mais seules les extensions listées sont servies."
+    },
+    "profileApplied": "Chemins de données du profil appliqués",
+    "publishNow": "Publier maintenant",
+    "source": {
+      "manual": "manuel",
+      "profile": "profil"
+    },
+    "updated": "Chemin de données mis à jour"
+  },
+  "releases": {
+    "actions": {
+      "approve": "Approuver",
+      "approveConfirm": "Approuver la release n°{{number}} ? Elle sera publiée immédiatement.",
+      "approved": "Release n°{{number}} approuvée",
+      "reject": "Refuser",
+      "rejectMessage": "La release ne sera jamais publiée. Motif (facultatif, conservé dans son journal) :",
+      "rejectReasonTooLong": "Le motif est limité à {{max}} caractères.",
+      "rejectTitle": "Refuser la release n°{{number}}",
+      "rejected": "Release n°{{number}} refusée",
+      "rollback": "Restaurer cette release",
+      "rollbackConfirm": "Remettre en ligne la release n°{{number}} ? La bascule est instantanée ; si son contrôle de santé échoue, la release courante est conservée.",
+      "rollbackShort": "Restaurer",
+      "rolledBack": "La release n°{{number}} est de nouveau en ligne"
+    },
+    "current": "courante",
+    "diff": {
+      "added": "Ajouté",
+      "binary": "binaire",
+      "binaryNotice": "Fichier binaire : pas de différence textuelle.",
+      "compareWith": "Comparer avec",
+      "deleted": "Supprimé",
+      "empty": "Vide (tous les fichiers)",
+      "filesCount_one": "{{count}} fichier",
+      "filesCount_other": "{{count}} fichiers",
+      "listTruncated": "Seuls {{shown}} fichiers sur {{total}} sont listés.",
+      "modified": "Modifié",
+      "noChange": "Aucune différence.",
+      "noPatch": "Aucune modification textuelle à afficher (fichier vide, mode ou renommage seul).",
+      "patchTruncated": "Patch tronqué : le fichier contient trop de modifications pour être affiché en entier.",
+      "previous": "Release précédente",
+      "renamed": "Renommé",
+      "title": "Modifications",
+      "typechange": "Type modifié"
+    },
+    "drawer": {
+      "loading": "Release",
+      "log": "Journal",
+      "noLog": "Journal vide.",
+      "title": "Release n°{{number}}"
+    },
+    "empty": "Aucune release : déposez le site dans le dossier de staging, puis publiez.",
+    "explain": "Chaque publication fige le dossier de staging en une release immuable. La courante est servie en lecture seule ; les précédentes se restaurent instantanément.",
+    "fields": {
+      "actions": "Actions",
+      "approvedBy": "Approuvée par",
+      "author": "Auteur",
+      "changes": "Modifications",
+      "commit": "Commit",
+      "created": "Créée",
+      "date": "Date",
+      "error": "Erreur",
+      "message": "Message",
+      "onDisk": "Sur disque",
+      "published": "Publiée",
+      "scan": "Analyse",
+      "status": "Statut",
+      "trigger": "Déclencheur"
+    },
+    "onDiskNo": "non (élaguée, reconstruite depuis git lors d’une restauration)",
+    "onDiskYes": "oui",
+    "publish": {
+      "button": "Publier",
+      "explain": "Le contenu actuel de /staging/{{slug}}/ devient une nouvelle release immuable, mise en ligne une fois son contrôle de santé réussi.",
+      "message": "Message (facultatif)",
+      "messagePlaceholder": "Que change cette release ?",
+      "needsApproval": "Ce site publie avec approbation : la release attendra une approbation avant sa mise en ligne.",
+      "queued": "Release n°{{number}} en file",
+      "title": "Publier {{name}}"
+    },
+    "scan": {
+      "clean": "Sain",
+      "infected": "Infecté",
+      "noFinding": "Aucune alerte.",
+      "severity": {
+        "critical": "critique",
+        "info": "info",
+        "warn": "alerte"
+      },
+      "suspicious": "Suspect",
+      "title": "Analyse avant publication"
+    },
+    "status": {
+      "awaiting_approval": "En attente d’approbation",
+      "failed": "Échec",
+      "publishing": "Publication",
+      "queued": "En file",
+      "ready": "Prête",
+      "rejected": "Refusée",
+      "scanning": "Analyse"
+    },
+    "trigger": {
+      "api": "API",
+      "auto": "automatique",
+      "manual": "manuelle"
+    }
+  },
+  "runtime": {
+    "catalog": {
+      "current": "actuelle",
+      "explain": "Le code ne change pas : la même release est servie par un autre moteur ou une autre version de PHP. Choisissez une base pour voir les vérifications avant de basculer.",
+      "preview": "prévisualisation",
+      "title": "Changer de base"
+    },
+    "current": "Base actuelle",
+    "fields": {
+      "base": "Base",
+      "container": "Conteneur",
+      "health": "Santé",
+      "limits": "Limites",
+      "role": "Rôle",
+      "startedAt": "Démarré",
+      "state": "État"
+    },
+    "groups": {
+      "apacheHint": "Prend en compte les fichiers .htaccess : le choix habituel pour WordPress, PrestaShop, Joomla.",
+      "nginxHint": "Plus rapide, mais ignore les .htaccess : les réécritures vont dans les règles nginx personnalisées.",
+      "static": "Statique (nginx)",
+      "staticHint": "HTML, CSS, JS et médias uniquement : le PHP n'est jamais exécuté."
+    },
+    "noContainer": "Aucun conteneur pour le moment (site en cours de provisionnement ou arrêté).",
+    "notInPlan": "hors forfait",
+    "notInPlanError": "Cette base n'est pas autorisée par le forfait du compte.",
+    "preview": {
+      "badge": "Prévisualisation active",
+      "explain": "La base candidate sert la MÊME release courante sur une URL privée. La production n'est pas touchée tant que vous ne la promouvez pas.",
+      "link": "prévisualisation",
+      "promote": "Promouvoir",
+      "promoteConfirm": "Faire de {{base}} la base du site ? Le trafic de production bascule dessus et l'ancien conteneur est supprimé.",
+      "promoted": "Prévisualisation promue en production",
+      "stop": "Arrêter la prévisualisation",
+      "stopped": "Prévisualisation arrêtée",
+      "title": "Prévisualisation (bleu/vert)"
+    },
+    "restart": "Redémarrer",
+    "restartConfirm": "Redémarrer les conteneurs du site ? Les visiteurs peuvent rencontrer des erreurs pendant quelques secondes.",
+    "restarted": "Conteneurs redémarrés",
+    "roles": {
+      "preview": "prévisualisation",
+      "primary": "principal",
+      "secondary": "secondaire"
+    },
+    "secondary": {
+      "add": "Ajouter",
+      "added": "Runtime secondaire ajouté",
+      "deleteConfirm": "Supprimer le runtime secondaire {{base}} ?",
+      "deleted": "Runtime secondaire supprimé",
+      "explain": "Un runtime secondaire sert un préfixe de chemin de la MÊME release avec un autre moteur (ex. /legacy/ en PHP 7.4). Rattachez-le à un préfixe dans l'onglet Routes ou sur la page Domaines.",
+      "noRoute": "aucune route",
+      "none": "Aucun runtime secondaire.",
+      "note": "Le préfixe le plus long l’emporte ; le runtime principal sert tout le reste.",
+      "pickBase": "Choisir une base…",
+      "title": "Runtimes secondaires"
+    },
+    "states": {
+      "error": "erreur",
+      "missing": "absent",
+      "restarting": "redémarrage",
+      "running": "en marche",
+      "stopped": "arrêté",
+      "unknown": "inconnu"
+    },
+    "static": "statique",
+    "staticShort": "Statique",
+    "switch": {
+      "checking": "Vérification de la compatibilité…",
+      "direct": "Basculer directement",
+      "directHint": "Le conteneur de production est recréé sur la nouvelle base : courte interruption, puis contrôle de santé.",
+      "done": "Le site tourne maintenant sur {{base}}",
+      "noWarning": "Aucun avertissement de compatibilité.",
+      "preview": "Prévisualiser (bleu/vert)",
+      "previewHint": "Démarre la nouvelle base à côté de la production, sur une URL de prévisualisation privée ; promouvez-la une fois vérifiée.",
+      "previewStarted": "Prévisualisation sur {{base}} démarrée",
+      "replacesPreview": "Remplace la prévisualisation en cours.",
+      "title": "Changer de base"
+    },
+    "unmaintained": "Runtime non maintenu",
+    "unmaintainedHint": "Cette branche de PHP ne reçoit plus de correctifs de sécurité.",
+    "unmaintainedShort": "Fin de vie",
+    "warnings": {
+      "htaccessIgnored": "nginx ignore les fichiers .htaccess : leurs règles de réécriture et d’accès ne s’appliqueront plus (reportez-les dans les règles nginx personnalisées).",
+      "imageMissing": "L'image de cette base n'est pas encore présente sur le nœud : elle sera téléchargée (la bascule échouera si c'est impossible).",
+      "phpDowngrade": "Version de PHP plus ancienne que l'actuelle : l'application peut utiliser des fonctions qui n'existent pas.",
+      "phpMajorChange": "Changement de version majeure de PHP : vérifiez la compatibilité de l'application et de ses extensions (prévisualisation conseillée).",
+      "staticBaseWithPhp": "La base statique n'exécute jamais de PHP, or la release contient des fichiers PHP.",
+      "unmaintainedRuntime": "Cette branche de PHP ne reçoit plus de correctifs de sécurité."
+    }
+  },
+  "siteRoutes": {
+    "add": "Ajouter",
+    "addTitle": "Ajouter une route",
+    "added": "Route ajoutée",
+    "basePathNote": "Un sous-site doit savoir où il vit : le chemin de base de ce site est {{basePath}} (onglet Vue d'ensemble).",
+    "deleteConfirm": "Supprimer la route {{route}} ? Cette adresse ne servira plus le site.",
+    "deleted": "Route supprimée",
+    "empty": "Aucun domaine ne pointe encore vers ce site.",
+    "explain": "Une route envoie un domaine + un préfixe de chemin vers ce site. Quand plusieurs préfixes correspondent à une requête, le plus long l'emporte.",
+    "fields": {
+      "address": "Adresse",
+      "domain": "Domaine",
+      "prefix": "Préfixe",
+      "runtime": "Runtime"
+    },
+    "manageDomains": "Gérer les domaines",
+    "noDomain": "Ce compte n'a encore aucun domaine.",
+    "pickDomain": "Choisissez un domaine.",
+    "prefixInvalid": "Préfixe invalide : « / » ou un chemin comme /boutique/.",
+    "primary": "principal",
+    "primaryOption": "Principal ({{base}})",
+    "secondaryOption": "Secondaire ({{base}})"
+  },
+  "sites": {
+    "actions": {
+      "delete": "Supprimer le site",
+      "deleteConfirm": "Supprimer « {{name}} » ? Ses conteneurs, releases et routes sont supprimés, ainsi que /staging/{{slug}}/ et /data/{{slug}}/. Action irréversible.",
+      "deleted": "Site supprimé",
+      "start": "Démarrer le site",
+      "started": "Site démarré",
+      "stop": "Arrêter le site",
+      "stopConfirm": "Arrêter « {{name}} » ? Ses conteneurs sont arrêtés et les visiteurs obtiennent une page d'erreur jusqu'au redémarrage.",
+      "stopped": "Site arrêté"
+    },
+    "backToList": "Retour aux sites",
+    "create": {
+      "applyDataPaths": "Créer les chemins de données de ce profil",
+      "applyDataPathsHint": "Dossiers inscriptibles gardés hors du code immuable (envois, caches…).",
+      "button": "Nouveau site",
+      "created": "Site « {{name}} » créé",
+      "namePlaceholder": "Ma boutique",
+      "noAccount": "Aucun compte d'hébergement sur lequel vous pouvez créer un site.",
+      "noDataPaths": "Ce profil n'a besoin d'aucun chemin de données.",
+      "pickAccount": "Choisir un compte…",
+      "recommended": "recommandée",
+      "slugHint": "Nom du dossier SFTP du site (/staging/<identifiant>/ et /data/<identifiant>/). Il ne pourra jamais être modifié.",
+      "slugInvalid": "Identifiant invalide : minuscules, chiffres et tirets, 40 caractères maximum.",
+      "suspended": "suspendu",
+      "title": "Nouveau site"
+    },
+    "detect": {
+      "applied_one": "Profil appliqué ({{count}} chemin de données au total)",
+      "applied_other": "Profil appliqué ({{count}} chemins de données au total)",
+      "apply": "Appliquer ce profil (chemins de données)",
+      "button": "Détecter l'application",
+      "current": "profil actuel",
+      "dataPaths": "Chemins de données suggérés",
+      "explain": "Recherche des fichiers caractéristiques dans le dossier de staging pour reconnaître l'application et suggérer sa base et ses chemins de données.",
+      "found": "Détecté :",
+      "none": "Aucune application connue trouvée dans le dossier de staging.",
+      "suggestedBase": "Base recommandée :",
+      "switchBase": "Basculer…",
+      "title": "Détection de l'application",
+      "useDocroot": "Utiliser la racine web « {{docroot}} »"
+    },
+    "empty": "Aucun site pour le moment.",
+    "errors": {
+      "accountDeleting": "Le compte d'hébergement est en cours de suppression.",
+      "accountSuspended": "Le compte d'hébergement est suspendu.",
+      "backendUnavailable": "Le moteur de conteneurs ou le démon hôte est injoignable. Réessayez dans un instant.",
+      "baseNotAllowed": "Cette base n'est pas autorisée par le plan du compte.",
+      "confirmMismatch": "La confirmation ne correspond pas.",
+      "dataPathForbidden": "Ce chemin ne peut pas être un chemin de données (segments commençant par un point, php.ini et web.config refusés, et il ne peut pas contenir la racine du site).",
+      "dataPathLimit": "Un site a au plus 64 chemins de données.",
+      "dataPathOverlap": "Ce chemin chevauche un chemin de données existant.",
+      "docrootInDataPath": "La racine du site ne peut pas se trouver dans un chemin de données.",
+      "envelopeExceeded": "L'enveloppe de ressources de l'espace serait dépassée.",
+      "extensionsRequired": "Un chemin de données typé doit autoriser au moins une extension.",
+      "invalidCustomNginx": "Règles nginx personnalisées invalides (16 Kio max, sans caractère NUL).",
+      "invalidPhpSettings": "Réglages PHP hors des plages autorisées (memory_limit est aussi plafonné par la mémoire du plan).",
+      "noPreview": "Ce site n'a pas de prévisualisation en cours.",
+      "notFound": "Cet élément n'existe plus ou ne vous est pas visible.",
+      "notImplemented": "Cette fonction n'est pas encore disponible sur ce serveur.",
+      "planLimit": "La limite du plan du compte est atteinte.",
+      "publishInProgress": "Une publication est déjà en cours pour ce site.",
+      "releaseIsCurrent": "Cette release est déjà la release en ligne.",
+      "releaseNotAwaitingApproval": "Cette release n'est plus en attente d'approbation.",
+      "releaseNotReady": "Cette release n'est pas publiée (ou pas encore enregistrée).",
+      "releaseRebuildFailed": "La release en ligne n'a pas pu être reconstruite avec les nouveaux chemins de données : rien n'a été modifié.",
+      "releaseSuperseded": "Une release plus récente a déjà été publiée : celle-ci ne peut plus être approuvée.",
+      "rollbackHealthcheckFailed": "La release restaurée a échoué à son contrôle de santé : la précédente a été conservée.",
+      "routeTaken": "Ce domaine a déjà une route sur ce préfixe.",
+      "runtimeInUse": "Ce runtime sert encore des routes : détachez-les d'abord.",
+      "runtimeMismatch": "Ce runtime n'appartient pas au site.",
+      "runtimePrefixLimit": "Un runtime sert au plus 64 préfixes de chemin.",
+      "runtimeSwitchFailed": "Le changement d'environnement d'exécution a échoué : l'environnement précédent a été restauré (détail pour les administrateurs dans les journaux).",
+      "runtimeSwitchNotRestored": "Le changement d'environnement d'exécution a échoué et l'environnement précédent n'a pas pu être restauré : le site peut être indisponible, contactez un administrateur.",
+      "siteDeleting": "Le site est en cours de suppression.",
+      "slugTaken": "Cet identifiant est déjà utilisé par un autre site du compte.",
+      "stagingEmpty": "Le dossier de staging est vide : il n'y a rien à publier.",
+      "validation": "Les données envoyées sont invalides."
+    },
+    "fields": {
+      "account": "Compte d'hébergement",
+      "accountShort": "Compte",
+      "appProfile": "Application",
+      "base": "Base",
+      "baseFull": "Base (moteur + PHP)",
+      "basePath": "Chemin de base",
+      "debounce": "Délai après le dernier dépôt (s)",
+      "docroot": "Racine web",
+      "healthcheckPath": "Chemin du contrôle de santé",
+      "name": "Nom",
+      "primaryDomain": "Domaine",
+      "publishMode": "Publication",
+      "release": "Release",
+      "slug": "Identifiant",
+      "status": "Statut"
+    },
+    "files": {
+      "data": "Les données inscriptibles du site (envois, caches…), un dossier par chemin de données. Les modifications y sont immédiatement en ligne, mais le PHP n'y est jamais exécuté.",
+      "staging": "Le code du site. Déposez-le ici : rien n'est en ligne tant qu'il n'est pas publié en release (automatiquement ou avec le bouton « Publier »). Le code en ligne ne peut jamais être modifié sur place."
+    },
+    "filters": {
+      "allAccounts": "Tous les comptes"
+    },
+    "form": {
+      "basePathHint": "Pour un sous-site servi sous un préfixe (ex. /blog/) : le chemin attendu par l'application. « / » sinon.",
+      "basePathInvalid": "Chemin de base invalide.",
+      "debounceInvalid": "Le délai doit être compris entre 5 et 3600 secondes.",
+      "docrootHint": "Dossier de la release servi par le serveur web, relatif à sa racine (vide = la racine ; « public » pour Laravel).",
+      "docrootInDataPath": "La racine web ne peut pas se trouver dans le chemin de données {{path}}/.",
+      "docrootInvalid": "Racine web invalide.",
+      "healthcheckHint": "Interrogé après chaque publication : une réponse inférieure à 500 valide la release, sinon la précédente est restaurée.",
+      "healthcheckInvalid": "Le chemin du contrôle de santé doit commencer par « / ».",
+      "readOnly": "Lecture seule",
+      "rootPlaceholder": "(racine)",
+      "saved": "Réglages enregistrés",
+      "title": "Réglages"
+    },
+    "loadFailed": "Impossible de charger les sites",
+    "loadSiteFailed": "Impossible de charger le site",
+    "nginx": {
+      "note": "Incluses dans le bloc server du conteneur du site uniquement (jamais dans l'edge partagé). Des règles invalides sont ignorées au démarrage et signalées dans le journal du conteneur.",
+      "title": "Règles nginx personnalisées"
+    },
+    "notFound": "Ce site n'existe pas ou ne vous est pas visible.",
+    "php": {
+      "cannotClear": "{{field}} : une valeur enregistrée ne peut pas être vidée, saisissez une valeur.",
+      "default": "défaut",
+      "invalid": "{{field}} : un nombre entier entre {{min}} et {{max}}.",
+      "maxExecution": "max_execution_time",
+      "memoryLimit": "memory_limit",
+      "postBelowUpload": "{{post}} doit être supérieur ou égal à {{upload}}.",
+      "postMax": "post_max_size",
+      "title": "Réglages PHP",
+      "uploadMax": "upload_max_filesize"
+    },
+    "profile": {
+      "none": "Autre / aucun",
+      "static": "Site statique"
+    },
+    "publishMode": {
+      "approval": "Avec approbation",
+      "approvalHint": "Chaque release attend l'approbation d'un utilisateur habilité avant sa mise en ligne.",
+      "auto": "Automatique",
+      "autoHint": "Une release est publiée automatiquement dès que les dépôts dans le dossier de staging se sont arrêtés pendant le délai ci-dessous.",
+      "manual": "Manuelle",
+      "manualHint": "Rien n'est publié tant que personne ne clique sur « Publier » (ou n'appelle l'API)."
+    },
+    "staging": {
+      "autoPublishIn": "Publication automatique dans",
+      "lastUpload": "Dernier dépôt :",
+      "pending_one": "modification en attente",
+      "pending_other": "modifications en attente",
+      "title": "Dossier de staging",
+      "truncated": "Liste tronquée.",
+      "warnings": {
+        "stagingMissing": "Le dossier de staging n'existe pas encore.",
+        "nestedRepo": "Dépôt git imbriqué (exclu des publications) : {{path}}",
+        "symlink": "Lien symbolique : {{path}}",
+        "moreSymlinks": "… et {{count}} autre(s) lien(s) symbolique(s)"
+      }
+    },
+    "status": {
+      "active": "Actif",
+      "error": "Erreur",
+      "provisioning": "Provisionnement",
+      "stopped": "Arrêté"
+    },
+    "subtitle": "Code immuable, publié depuis le dossier de staging SFTP.",
+    "tabs": {
+      "data": "Chemins de données",
+      "files": "Accès fichiers",
+      "overview": "Vue d'ensemble",
+      "releases": "Releases",
+      "routes": "Routes & domaines",
+      "runtime": "Runtime"
+    },
+    "title": "Sites",
+    "count": "{{count}} site(s)"
+  }
+}

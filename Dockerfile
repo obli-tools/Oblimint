@@ -29,6 +29,9 @@ RUN npm run build --workspace=@oblimint/client
 FROM node:24-alpine AS runtime
 WORKDIR /app
 
+# git: internal release repositories of the sites (P1 release pipeline).
+RUN apk add --no-cache git
+
 COPY package.json package-lock.json ./
 COPY shared/package.json ./shared/
 COPY server/package.json ./server/
@@ -48,6 +51,8 @@ ENV NODE_ENV=production \
     CLIENT_DIST=/app/client/dist
 
 EXPOSE 8443
+# 8081 = internal hook listener for the per-account file servers (reached on
+# the account networks only — never publish it with -p).
 VOLUME ["/srv/oblimint"]
 
 # Self-signed TLS: probe /health with Node (busybox wget has no TLS here).

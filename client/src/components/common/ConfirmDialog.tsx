@@ -48,6 +48,8 @@ export interface PromptOptions {
   multiline?: boolean;
   /** Disable the confirm button while the (trimmed) value is empty. */
   required?: boolean;
+  /** Maximum length of the value (maxLength of the field). */
+  maxLength?: number;
   /** Input type for single-line prompts (default 'text'). */
   inputType?: 'text' | 'number' | 'email' | 'url' | 'password';
   /** Turns off autocapitalize / autocorrect / spellcheck (identifiers, paths, IPs). Default true. */
@@ -251,6 +253,7 @@ function DialogView({ request, onSettle }: { request: Request; onSettle: (v: boo
             autoFocus
             rows={5}
             placeholder={promptOpts.placeholder}
+            maxLength={promptOpts.maxLength}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); accept(); }
@@ -264,6 +267,7 @@ function DialogView({ request, onSettle }: { request: Request; onSettle: (v: boo
             value={value}
             autoFocus
             placeholder={promptOpts.placeholder}
+            maxLength={promptOpts.maxLength}
             onFocus={(e) => e.currentTarget.select()}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {

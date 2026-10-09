@@ -1,25 +1,48 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
-// Import all locale files statically (no lazy loading needed at this app size)
-import en from './locales/en/translation.json';
-import fr from './locales/fr/translation.json';
-import es from './locales/es/translation.json';
-import de from './locales/de/translation.json';
-import ptBR from './locales/pt-BR/translation.json';
-import zhCN from './locales/zh-CN/translation.json';
-import ja from './locales/ja/translation.json';
-import ru from './locales/ru/translation.json';
-import ko from './locales/ko/translation.json';
-import ar from './locales/ar/translation.json';
-import it from './locales/it/translation.json';
-import nl from './locales/nl/translation.json';
-import pl from './locales/pl/translation.json';
-import tr from './locales/tr/translation.json';
-import sv from './locales/sv/translation.json';
-import da from './locales/da/translation.json';
-import cs from './locales/cs/translation.json';
-import uk from './locales/uk/translation.json';
+// Locale files: locales/<lng>/translation.json (P0 shell) + one file per
+// feature module (locales/<lng>/<module>.json — hosting.json, sites.json…),
+// all deep-merged into the single 'translation' namespace: t('sites.title')
+// works wherever the key lives, and each module edits only its own files.
+// A module file owns its TOP-LEVEL keys: two files never define the same
+// top-level key (docs/P1-PLAN.md §i18n). Bundled eagerly (no lazy loading
+// needed at this app size).
+type Dict = { [key: string]: unknown };
+
+const localeFiles = import.meta.glob<Dict>('./locales/*/*.json', { eager: true, import: 'default' });
+
+function isDict(v: unknown): v is Dict {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+function deepMerge(target: Dict, source: Dict): Dict {
+  for (const [k, v] of Object.entries(source)) {
+    const cur = target[k];
+    target[k] = isDict(cur) && isDict(v) ? deepMerge({ ...cur }, v) : v;
+  }
+  return target;
+}
+
+/** lng → merged dictionary (translation.json first, then the module files by name). */
+function buildResources(): Record<string, { translation: Dict }> {
+  const byLang = new Map<string, Array<[string, Dict]>>();
+  for (const [file, dict] of Object.entries(localeFiles)) {
+    const m = /\/locales\/([^/]+)\/([^/]+)\.json$/.exec(file);
+    if (!m || !isDict(dict)) continue;
+    const list = byLang.get(m[1]) ?? [];
+    list.push([m[2], dict]);
+    byLang.set(m[1], list);
+  }
+  const resources: Record<string, { translation: Dict }> = {};
+  for (const [lng, list] of byLang) {
+    list.sort(([a], [b]) => (a === 'translation' ? -1 : b === 'translation' ? 1 : a.localeCompare(b)));
+    const merged: Dict = {};
+    for (const [, dict] of list) deepMerge(merged, dict);
+    resources[lng] = { translation: merged };
+  }
+  return resources;
+}
 
 export const SUPPORTED_LANGUAGES: Array<{ code: string; name: string; nativeName: string; dir?: 'rtl' }> = [
   { code: 'en',    name: 'English',            nativeName: 'English' },
@@ -48,26 +71,7 @@ const initialLang = SUPPORTED_LANGUAGES.find(l => l.code === savedLang || l.code
 i18n
   .use(initReactI18next)
   .init({
-    resources: {
-      en:    { translation: en },
-      fr:    { translation: fr },
-      es:    { translation: es },
-      de:    { translation: de },
-      'pt-BR': { translation: ptBR },
-      'zh-CN': { translation: zhCN },
-      ja:    { translation: ja },
-      ko:    { translation: ko },
-      ru:    { translation: ru },
-      ar:    { translation: ar },
-      it:    { translation: it },
-      nl:    { translation: nl },
-      pl:    { translation: pl },
-      tr:    { translation: tr },
-      sv:    { translation: sv },
-      da:    { translation: da },
-      cs:    { translation: cs },
-      uk:    { translation: uk },
-    },
+    resources: buildResources(),
     lng: initialLang,
     fallbackLng: 'en',
     interpolation: { escapeValue: false },

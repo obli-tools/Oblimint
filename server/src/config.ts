@@ -77,6 +77,11 @@ function resolveMode(): PanelMode {
 
 const defaultPort = process.env.PANEL_TLS === 'selfsigned' ? '8443' : '3025';
 
+function intEnv(name: string, fallback: number): number {
+  const n = parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 export const config = {
   mode: resolveMode() as PanelMode,
   /** Where the panel configuration came from (logs only). */
@@ -104,6 +109,33 @@ export const config = {
   dockerSocket: process.env.DOCKER_SOCKET || '/var/run/docker.sock',
   /** Same path on the host as in the container (docker run -v /srv/oblimint:/srv/oblimint). */
   hostDataDir: path.resolve(process.env.OBLIMINT_HOST_DATA_DIR || dataDir),
+  /** P1 hosting core (docs/P1-PLAN.md §Configuration). */
+  hosting: {
+    /** OBLIMINT_WORKERS=off: no reconcile / publish / renewal / usage worker
+     *  (development on a box without Docker). The API still answers. */
+    workersEnabled: process.env.OBLIMINT_WORKERS !== 'off',
+    /** Internal HTTP listener for the file-server hooks (never published on the host; 0 = disabled). */
+    internalPort: intEnv('OBLIMINT_INTERNAL_PORT', 8081),
+    /** uid/gid range of hosting accounts (gid = uid). */
+    uidMin: intEnv('OBLIMINT_UID_MIN', 20000),
+    uidMax: intEnv('OBLIMINT_UID_MAX', 59999),
+    /** Host ports of the per-account file servers (SFTP). */
+    filesrvPortMin: intEnv('OBLIMINT_FILESRV_PORT_MIN', 30000),
+    filesrvPortMax: intEnv('OBLIMINT_FILESRV_PORT_MAX', 32767),
+    /** Tag of every managed image (site bases, edge, hostd, filesrv). */
+    imageTag: process.env.OBLIMINT_IMAGE_TAG || 'latest',
+    edgeImage: process.env.OBLIMINT_EDGE_IMAGE || 'meejay/oblimint-edge',
+    hostdImage: process.env.OBLIMINT_HOSTD_IMAGE || 'meejay/oblimint-hostd',
+    filesrvImage: process.env.OBLIMINT_FILESRV_IMAGE || 'meejay/oblimint-filesrv',
+    /** hostd API socket (same path in the panel container and on the host). */
+    hostdSocket: process.env.OBLIMINT_HOSTD_SOCKET || path.join(dataDir, 'run', 'hostd.sock'),
+    /** Default Let's Encrypt directory (app_config `acme_directory` overrides it). */
+    acmeDirectory: (process.env.ACME_DIRECTORY === 'staging' ? 'staging' : 'production') as 'production' | 'staging',
+    /** Releases kept materialized on disk per site (+ the current one). */
+    releasesKeep: intEnv('OBLIMINT_RELEASES_KEEP', 10),
+    /** git executable used by the release pipeline. */
+    gitBinary: process.env.OBLIMINT_GIT || 'git',
+  },
   /** Static client build served in production. */
   // server/src (tsx) → ../../client/dist ; server/dist/src (compiled) → ../../../client/dist
   clientDist: process.env.CLIENT_DIST

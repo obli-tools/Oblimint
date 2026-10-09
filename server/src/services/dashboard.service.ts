@@ -1,29 +1,44 @@
 import type { DashboardSummary } from '@oblimint/shared';
-import { isMasterTenant } from '@oblimint/shared';
 import { db } from '../db';
+import { actorHasNeedSomewhere, scopeToActor, type HostingActor } from './hosting/access';
 
 const count = async (q: any): Promise<number> => Number(((await q.count('* as c').first()) as { c?: unknown } | undefined)?.c ?? 0);
 
 export const dashboardService = {
   /**
-   * DashboardSummary for the caller's tenant. The hosting objects (accounts,
-   * sites, domains, mailboxes, databases) arrive in P1+: 0 for now.
-   * `tenants` / `nodes`: platform-wide in the god view (platform admin on the
-   * master tenant), else 1 / the local node. `users`: every account in the
-   * god view, else the members of the tenant.
+   * DashboardSummary scoped to the caller (services/hosting/access.ts):
+   *   - platform admin on the master tenant (god view): every tenant;
+   *   - tenant staff: the tenant's objects, 1 tenant, its members, the nodes;
+   *   - client: its own accounts / sites / domains only (tenants, users,
+   *     nodes are not theirs to know: 0).
+   * Mailboxes and databases arrive in later phases: 0.
    */
-  async summary(tenantId: number, globalView: boolean): Promise<DashboardSummary> {
-    const god = globalView && isMasterTenant(tenantId);
+  async summary(actor: HostingActor): Promise<DashboardSummary> {
+    // Staff without 'read' (no hosting capability, no overview.read — §8)
+    // see no hosting object: 0, like the lists answer 403.
+    const canRead = actor.kind === 'client' || actorHasNeedSomewhere(actor, 'read');
+    const scoped = (table: string, alias: string, accountCol: string) => !canRead ? Promise.resolve(0) :
+      count(scopeToActor(actor, db(`${table} as ${alias}`), { tenant: `${alias}.tenant_id`, account: `${alias}.${accountCol}` }));
+    const [accounts, sites, domains] = await Promise.all([
+      scoped('hosting_accounts', 'a', 'id'),
+      scoped('sites', 's', 'account_id'),
+      scoped('domains', 'd', 'account_id'),
+    ]);
+    if (actor.kind === 'client') {
+      return { accounts, sites, domains, mailboxes: 0, databases: 0, tenants: 0, users: 0, nodes: 0 };
+    }
+    const god = actor.globalView;
     const [tenants, users, nodes] = await Promise.all([
       god ? count(db('tenants')) : Promise.resolve(1),
-      god ? count(db('users')) : count(db('user_tenants').where({ tenant_id: tenantId })),
+      god ? count(db('users')) : count(db('user_tenants').where({ tenant_id: actor.tenantId })),
       count(db('nodes')),
     ]);
-    return { accounts: 0, sites: 0, domains: 0, mailboxes: 0, databases: 0, tenants, users, nodes };
+    return { accounts, sites, domains, mailboxes: 0, databases: 0, tenants, users, nodes };
   },
 
   /** Platform-wide counters (Obligate dashboard-stats). */
   async platformCounters(): Promise<{ accounts: number; sites: number; tenants: number }> {
-    return { accounts: 0, sites: 0, tenants: await count(db('tenants')) };
+    const [accounts, sites, tenants] = await Promise.all([count(db('hosting_accounts')), count(db('sites')), count(db('tenants'))]);
+    return { accounts, sites, tenants };
   },
 };

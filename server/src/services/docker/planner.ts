@@ -1,0 +1,297 @@
+import type Docker from 'dockerode';
+import type { FileServerMode, HostingAccount, PlanLimits, RuntimeRole, SiteBaseId, SiteStatus } from '@oblimint/shared';
+import { config } from '../../config';
+import {
+  accountNetwork, fileServerContainer, LABELS, PANEL_ALIAS, type ContainerRole,
+} from '../hosting/naming';
+import { hostPaths, runtimeConfigFile, type HostingLayout } from '../hosting/paths';
+import { fileServerHookToken } from '../hosting/secrets';
+import { fileServerContainerSpec, siteContainerSpec, specHashLabel } from './specs';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PURE reconcile planner (docs/P1-PLAN.md §13): desired state of one account
+// (DB rows) + what Docker reports (containers labelled oblimint.account=<id>,
+// the account network) → ordered, idempotent actions. The executor
+// (reconcile.service.ts) runs them; planner.test.ts covers the decisions.
+//
+// Rules:
+//  - account active / provisioning / error → containers running; suspended →
+//    stopped (never removed); deleting → nothing (destroyAccount owns it);
+//  - site status 'stopped' → its containers stopped;
+//  - a container is (re)created only when it has to run: a stopped container
+//    whose spec drifted is recreated the next time it must start;
+//  - file server: always → running; on-demand → running while
+//    filesrv_active_until > now (stopped otherwise); off → removed;
+//  - every container carrying the account label that is not desired is removed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PlanAccount {
+  id: number;
+  nodeId: number;
+  uid: number;
+  gid: number;
+  status: HostingAccount['status'];
+  limits: PlanLimits;
+  filesrvMode: FileServerMode;
+  filesrvPort: number | null;
+  filesrvActiveUntil: Date | null;
+}
+
+export interface PlanSite {
+  id: number;
+  slug: string;
+  status: SiteStatus;
+  base: SiteBaseId;
+  previewBase: SiteBaseId | null;
+  runtimes: Array<{ id: number; base: SiteBaseId }>;
+  /** site_data_paths.path (relative). */
+  dataPaths: string[];
+}
+
+export interface ActualContainer {
+  name: string;
+  state: string;
+  labels: Record<string, string>;
+}
+
+export interface ActualNetwork {
+  exists: boolean;
+  /** The panel container on the account network: absent, attached without the alias, attached with it. */
+  panel: 'absent' | 'attached' | 'aliased';
+  edge: 'absent' | 'attached';
+}
+
+export interface PlannerInput {
+  account: PlanAccount;
+  sites: PlanSite[];
+  actual: ActualContainer[];
+  network: ActualNetwork;
+  /** This panel's container (null: not running in a container, dev box). */
+  panelRef: string | null;
+  /** oblimint-edge exists on the node. */
+  edgePresent: boolean;
+  now: Date;
+  /** Host layout (bind sources); defaults to hostPaths. */
+  layout?: HostingLayout;
+  /** File server hook base URL builder (defaults to the panel alias + internal port + HMAC token). */
+  hookBaseUrl?: (accountId: number) => string;
+}
+
+export interface DesiredContainer {
+  name: string;
+  role: ContainerRole;
+  siteId: number | null;
+  runtimeRole: RuntimeRole | null;
+  runtimeId: number | null;
+  spec: Docker.ContainerCreateOptions;
+  hash: string;
+  image: string;
+  run: boolean;
+}
+
+interface ContainerRef {
+  name: string;
+  siteId: number | null;
+  role: ContainerRole | null;
+}
+
+export type ReconcileAction =
+  | { kind: 'createNetwork'; network: string }
+  | { kind: 'attachPanel'; network: string; container: string; aliases: string[]; reattach: boolean }
+  | { kind: 'attachEdge'; network: string }
+  | { kind: 'ensureAccountTree'; quotaMb: number | null }
+  | { kind: 'ensureSite'; siteId: number }
+  | { kind: 'ensureStorage'; siteId: number }
+  | { kind: 'ensureDataPaths'; siteId: number; paths: string[] }
+  | { kind: 'writeRuntimeConfig'; siteId: number }
+  | (ContainerRef & { kind: 'removeContainer'; reason: 'orphan' | 'disabled' })
+  | (ContainerRef & { kind: 'stopContainer' })
+  | (ContainerRef & { kind: 'createContainer'; spec: Docker.ContainerCreateOptions; image: string; start: boolean })
+  | (ContainerRef & { kind: 'recreateContainer'; spec: Docker.ContainerCreateOptions; image: string; start: boolean })
+  | (ContainerRef & { kind: 'startContainer' })
+  | { kind: 'reload'; siteId: number };
+
+export interface ReconcilePlan {
+  actions: ReconcileAction[];
+  desired: DesiredContainer[];
+  /** Non-fatal findings (missing file server port, panel outside Docker…). */
+  notes: string[];
+}
+
+/** Accounts whose containers must run. */
+export function accountRuns(status: HostingAccount['status']): boolean {
+  return status === 'active' || status === 'provisioning' || status === 'error';
+}
+
+export function defaultHookBaseUrl(accountId: number): string {
+  return `http://${PANEL_ALIAS}:${config.hosting.internalPort}/internal/filesrv/${accountId}/${fileServerHookToken(accountId)}`;
+}
+
+/** Should the file server of this account be running now? (null: it must not exist at all). */
+export function fileServerShouldRun(account: Pick<PlanAccount, 'status' | 'filesrvMode' | 'filesrvActiveUntil'>, now: Date): boolean | null {
+  if (account.filesrvMode === 'off') return null;
+  if (!accountRuns(account.status)) return false;
+  if (account.filesrvMode === 'always') return true;
+  return !!account.filesrvActiveUntil && account.filesrvActiveUntil.getTime() > now.getTime();
+}
+
+/** Every container the account should have, with its spec and whether it must run. */
+export function desiredContainers(input: PlannerInput, notes: string[] = []): DesiredContainer[] {
+  const { account } = input;
+  const layout = input.layout ?? hostPaths;
+  const runs = accountRuns(account.status);
+  const out: DesiredContainer[] = [];
+
+  for (const site of [...input.sites].sort((a, b) => a.id - b.id)) {
+    const siteRuns = runs && site.status !== 'stopped';
+    const add = (role: RuntimeRole, base: SiteBaseId, runtimeId: number | null) => {
+      const spec = siteContainerSpec({
+        siteId: site.id,
+        accountId: account.id,
+        uid: account.uid,
+        gid: account.gid,
+        slug: site.slug,
+        role,
+        runtimeId,
+        base,
+        limits: account.limits,
+        releasesDir: layout.releases(account.id, site.id),
+        dataDir: layout.siteData(account.id, site.slug),
+        runtimeConfigFile: `${layout.runtime(account.id, site.id)}/${runtimeConfigFile(role, runtimeId)}`,
+      });
+      out.push({
+        name: spec.name!,
+        role: (spec.Labels?.[LABELS.role] ?? 'site') as ContainerRole,
+        siteId: site.id,
+        runtimeRole: role,
+        runtimeId,
+        spec,
+        hash: specHashLabel(spec),
+        image: spec.Image!,
+        run: siteRuns,
+      });
+    };
+    add('primary', site.base, null);
+    for (const rt of [...site.runtimes].sort((a, b) => a.id - b.id)) add('secondary', rt.base, rt.id);
+    if (site.previewBase) add('preview', site.previewBase, null);
+  }
+
+  const fsRun = fileServerShouldRun(account, input.now);
+  if (fsRun !== null) {
+    if (account.filesrvPort === null) {
+      notes.push(`File server of account ${account.id}: no port allocated (filesrv_port is null)`);
+    } else {
+      const spec = fileServerContainerSpec({
+        accountId: account.id,
+        uid: account.uid,
+        gid: account.gid,
+        port: account.filesrvPort,
+        stagingDir: layout.staging(account.id),
+        dataDir: layout.data(account.id),
+        stateDir: layout.fileServerState(account.id),
+        hookBaseUrl: (input.hookBaseUrl ?? defaultHookBaseUrl)(account.id),
+      });
+      out.push({
+        name: fileServerContainer(account.id),
+        role: 'filesrv',
+        siteId: null,
+        runtimeRole: null,
+        runtimeId: null,
+        spec,
+        hash: specHashLabel(spec),
+        image: spec.Image!,
+        run: fsRun,
+      });
+    }
+  }
+  return out;
+}
+
+const isRunningState = (state: string): boolean => state === 'running' || state === 'restarting';
+
+/** The ordered plan of one account. */
+export function planAccount(input: PlannerInput): ReconcilePlan {
+  const { account } = input;
+  const notes: string[] = [];
+  const actions: ReconcileAction[] = [];
+  if (account.status === 'deleting') return { actions, desired: [], notes: ['account is being deleted'] };
+
+  // 1. Network of the account, panel (alias oblimint-panel) and edge attached.
+  const net = accountNetwork(account.id);
+  if (!input.network.exists) actions.push({ kind: 'createNetwork', network: net });
+  if (!input.panelRef) {
+    notes.push('panel container unknown (HOSTNAME unset): not attached to the account network');
+  } else if (!input.network.exists || input.network.panel !== 'aliased') {
+    actions.push({
+      kind: 'attachPanel', network: net, container: input.panelRef, aliases: [PANEL_ALIAS],
+      reattach: input.network.exists && input.network.panel === 'attached',
+    });
+  }
+  if (input.edgePresent && (!input.network.exists || input.network.edge === 'absent')) {
+    actions.push({ kind: 'attachEdge', network: net });
+  }
+
+  // 2. Host tree (hostd) + per-site storage, data dirs and runtime configs.
+  actions.push({ kind: 'ensureAccountTree', quotaMb: account.limits.diskMb });
+  const sites = [...input.sites].sort((a, b) => a.id - b.id);
+  for (const site of sites) {
+    actions.push({ kind: 'ensureSite', siteId: site.id });
+    actions.push({ kind: 'ensureStorage', siteId: site.id });
+    actions.push({ kind: 'ensureDataPaths', siteId: site.id, paths: [...site.dataPaths].sort() });
+    actions.push({ kind: 'writeRuntimeConfig', siteId: site.id });
+  }
+
+  // 3. Containers: removals first (free names / ports), then stops, then (re)creations and starts.
+  const desired = desiredContainers(input, notes);
+  const byName = new Map(desired.map((d) => [d.name, d]));
+  const actualByName = new Map(input.actual.map((a) => [a.name, a]));
+  const ref = (d: DesiredContainer): ContainerRef => ({ name: d.name, siteId: d.siteId, role: d.role });
+
+  for (const a of [...input.actual].sort((x, y) => x.name.localeCompare(y.name))) {
+    if (byName.has(a.name)) continue;
+    const siteId = a.labels[LABELS.site] ? Number(a.labels[LABELS.site]) : null;
+    const role = (a.labels[LABELS.role] ?? null) as ContainerRole | null;
+    const disabled = role === 'filesrv' && account.filesrvMode === 'off';
+    actions.push({ kind: 'removeContainer', name: a.name, siteId, role, reason: disabled ? 'disabled' : 'orphan' });
+  }
+  for (const d of desired) {
+    const a = actualByName.get(d.name);
+    if (!d.run && a && isRunningState(a.state)) actions.push({ kind: 'stopContainer', ...ref(d) });
+  }
+  for (const d of desired) {
+    if (!d.run) continue;
+    const a = actualByName.get(d.name);
+    if (!a) {
+      actions.push({ kind: 'createContainer', ...ref(d), spec: d.spec, image: d.image, start: true });
+    } else if ((a.labels[LABELS.specHash] ?? null) !== d.hash) {
+      actions.push({ kind: 'recreateContainer', ...ref(d), spec: d.spec, image: d.image, start: true });
+    } else if (!isRunningState(a.state)) {
+      actions.push({ kind: 'startContainer', ...ref(d) });
+    }
+  }
+
+  // 4. Reload the running containers of a site whose runtime config changed (decided at execution).
+  for (const site of sites) actions.push({ kind: 'reload', siteId: site.id });
+
+  return { actions, desired, notes };
+}
+
+/** One-line description of an action (report / logs). */
+export function describeAction(a: ReconcileAction): string {
+  switch (a.kind) {
+    case 'createNetwork': return `create network ${a.network}`;
+    case 'attachPanel': return `${a.reattach ? 're-attach' : 'attach'} panel ${a.container} to ${a.network} (alias ${a.aliases.join(',')})`;
+    case 'attachEdge': return `attach edge to ${a.network}`;
+    case 'ensureAccountTree': return `hostd ensureAccount (quota ${a.quotaMb ?? 'none'} MiB)`;
+    case 'ensureSite': return `hostd ensureSite ${a.siteId}`;
+    case 'ensureStorage': return `release storage of site ${a.siteId}`;
+    case 'ensureDataPaths': return `data paths of site ${a.siteId} (${a.paths.length})`;
+    case 'writeRuntimeConfig': return `runtime configs of site ${a.siteId}`;
+    case 'removeContainer': return `remove ${a.name} (${a.reason})`;
+    case 'stopContainer': return `stop ${a.name}`;
+    case 'createContainer': return `create ${a.name}`;
+    case 'recreateContainer': return `recreate ${a.name} (spec changed)`;
+    case 'startContainer': return `start ${a.name}`;
+    case 'reload': return `reload site ${a.siteId} if its config changed`;
+  }
+}

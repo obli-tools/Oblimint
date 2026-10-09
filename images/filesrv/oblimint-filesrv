@@ -1,0 +1,130 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# meejay/oblimint-filesrv entrypoint — one SFTPGo per hosting account.
+#
+# Environment (set by the panel, module orchestration — fileServerContainerSpec):
+#   OBLIMINT_HOOK_BASE   http://oblimint-panel:8081/internal/filesrv/<accountId>/<token>
+#   OBLIMINT_ACCOUNT_ID  <accountId>
+#
+# Renders the SFTPGo configuration into /tmp (tmpfs; the root is read-only)
+# and execs SFTPGo:
+#   - SFTP only, port 2022; FTP, WebDAV, HTTP (web admin / client / REST) and
+#     telemetry disabled;
+#   - in-memory data provider, NO stored user: every login goes to the
+#     external auth hook  $OBLIMINT_HOOK_BASE/auth  (password + public key);
+#   - ATOMIC uploads (upload_mode 1, temp_path empty): a file is written as
+#     .sftpgo-upload.<id>.<name> NEXT TO its final name (same filesystem →
+#     plain rename at the end, also for /data) and only renamed once complete;
+#     an interrupted transfer (client gone, container stopped) deletes the
+#     temp file. A publication can never commit a half-written file: the
+#     releases module excludes .sftpgo-upload.* from the commit;
+#   - custom actions hook  $OBLIMINT_HOOK_BASE/event  on pre-upload (SYNC:
+#     SFTPGo waits for it and refuses the upload unless the answer is 200 —
+#     lets the panel see an open transfer and hold the auto-publish), upload
+#     (end of a transfer, success or failure), delete, rename, mkdir, rmdir
+#     (asynchronous);
+#   - defender (anti brute force) on, idle timeout 15 min, logs on stdout.
+# State (host keys, generated at the first start then kept): /var/lib/sftpgo
+# (mounted rw). Visible tree: /srv/files/{staging,data} (mounted rw).
+# Runs as the account uid:gid (no passwd entry needed, no capability).
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+log() {
+	printf '%s oblimint-filesrv: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+die() {
+	log "$*"
+	exit 1
+}
+
+HOOK_BASE=${OBLIMINT_HOOK_BASE:-}
+ACCOUNT_ID=${OBLIMINT_ACCOUNT_ID:-}
+STATE_DIR=/var/lib/sftpgo
+CONF_DIR=/tmp/oblimint-filesrv
+
+case "$ACCOUNT_ID" in
+	'' | *[!0-9]* | 0*) die "OBLIMINT_ACCOUNT_ID must be a positive integer" ;;
+esac
+# Written verbatim into JSON: only URL-safe characters, no quote/backslash.
+printf '%s' "$HOOK_BASE" | grep -Eq '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)+/?$' ||
+	die "OBLIMINT_HOOK_BASE must be an http(s) URL with a path (got '$(printf '%s' "$HOOK_BASE" | cut -c1-40)…')"
+HOOK_BASE=${HOOK_BASE%/}
+case "$HOOK_BASE" in
+	*"/$ACCOUNT_ID/"*) ;;
+	*) die "OBLIMINT_HOOK_BASE does not belong to account $ACCOUNT_ID" ;;
+esac
+
+[ -d "$STATE_DIR" ] && [ -w "$STATE_DIR" ] || die "$STATE_DIR must be a writable mount (host keys)"
+for d in /srv/files/staging /srv/files/data; do
+	[ -d "$d" ] || die "$d is not mounted"
+done
+
+umask 077
+mkdir -p "$CONF_DIR" || die "/tmp must be a writable tmpfs"
+
+cat >"$CONF_DIR/sftpgo.json" <<EOF
+{
+  "common": {
+    "idle_timeout": 15,
+    "upload_mode": 1,
+    "setstat_mode": 1,
+    "temp_path": "",
+    "proxy_protocol": 0,
+    "max_total_connections": 0,
+    "max_per_host_connections": 20,
+    "actions": {
+      "execute_on": ["pre-upload", "upload", "delete", "rename", "mkdir", "rmdir"],
+      "execute_sync": [],
+      "hook": "$HOOK_BASE/event"
+    },
+    "defender": {
+      "enabled": true,
+      "driver": "memory",
+      "ban_time": 30,
+      "ban_time_increment": 50,
+      "threshold": 15,
+      "score_invalid": 2,
+      "score_valid": 1,
+      "score_limit_exceeded": 3,
+      "score_no_auth": 0,
+      "observation_time": 30,
+      "entries_soft_limit": 100,
+      "entries_hard_limit": 150
+    }
+  },
+  "sftpd": {
+    "bindings": [{ "port": 2022, "address": "" }],
+    "max_auth_tries": 4,
+    "host_keys": [],
+    "enabled_ssh_commands": ["md5sum", "sha1sum", "sha256sum", "cd", "pwd"],
+    "keyboard_interactive_authentication": false,
+    "password_authentication": true
+  },
+  "ftpd": { "bindings": [{ "port": 0 }] },
+  "webdavd": { "bindings": [{ "port": 0 }] },
+  "httpd": { "bindings": [{ "port": 0 }] },
+  "telemetry": { "bind_port": 0 },
+  "data_provider": {
+    "driver": "memory",
+    "name": "",
+    "users_base_dir": "/srv/files",
+    "create_default_admin": false,
+    "external_auth_hook": "$HOOK_BASE/auth",
+    "external_auth_scope": 3,
+    "pre_login_hook": "",
+    "post_login_hook": "",
+    "check_password_hook": ""
+  },
+  "plugins": []
+}
+EOF
+
+# Logs on stdout (empty log file path), never the token: the hook URL is only
+# in the config file (tmpfs, 0600).
+export SFTPGO_LOG_FILE_PATH=""
+export SFTPGO_LOG_LEVEL="${SFTPGO_LOG_LEVEL:-info}"
+export HOME="$STATE_DIR"
+
+log "starting SFTPGo for account $ACCOUNT_ID (SFTP on 2022)"
+exec sftpgo serve --config-dir "$STATE_DIR" --config-file "$CONF_DIR/sftpgo.json"

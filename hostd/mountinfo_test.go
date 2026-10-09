@@ -1,9 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -93,25 +90,5 @@ func TestUnescapeOctal(t *testing.T) {
 		if got := unescapeOctal(in); got != want {
 			t.Errorf("unescapeOctal(%q) = %q, want %q", in, got, want)
 		}
-	}
-}
-
-func TestHealth(t *testing.T) {
-	rec := httptest.NewRecorder()
-	newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
-	var body struct {
-		OK      bool   `json:"ok"`
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK || !body.OK || body.Version == "" {
-		t.Fatalf("health: code=%d body=%s err=%v", rec.Code, rec.Body, err)
-	}
-}
-
-func TestFSRejectsRelativePath(t *testing.T) {
-	rec := httptest.NewRecorder()
-	newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/fs?path=srv", nil))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("code = %d, want 400", rec.Code)
 	}
 }

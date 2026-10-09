@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "siteId": 5,
+  "accountId": 2,
+  "role": "primary",
+  "base": "nginx-static",
+  "docroot": "/srv/releases/current/dist",
+  "basePath": "/",
+  "servedPrefixes": [],
+  "dataPaths": [
+    { "path": "dist/downloads", "policy": "persistent", "allowedExtensions": null }
+  ],
+  "php": { "memoryLimitMb": 256, "uploadMaxFilesizeMb": 64, "postMaxSizeMb": 64, "maxExecutionTime": 60 },
+  "customNginx": "location = /old-page.html {\n    return 301 /new-page.html;\n}\n",
+  "healthcheckPath": "/"
+}

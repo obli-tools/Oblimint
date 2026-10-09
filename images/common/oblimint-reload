@@ -1,0 +1,101 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-reload — run by the panel with `docker exec <container> oblimint-reload`
+# after every release switch (`current` repointed) and every config change.
+#
+#   1. re-render the configuration from OBLIMINT_SITE_CONFIG (siteconf);
+#   2. test it (httpd -t / nginx -t, php-fpm -t; invalid custom nginx rules
+#      are dropped, never fatal);
+#   3. web server: graceful reload; then, only once it succeeded, php-fpm: USR2
+#      (graceful re-exec: opcache + realpath cache flushed, pool config re-read).
+#
+# Exit 0 on success ("reloaded mode=site|placeholder" on stdout). Failures:
+#   - unusable new configuration, or web server reload refused: the previous
+#     rendered files are restored and NO process is signalled (php-fpm and the
+#     web server keep running the same, previous configuration);
+#   - php-fpm cannot be signalled after a successful web server reload: the new
+#     files stay (they are what the web server runs), php-fpm keeps its old
+#     pool until its next restart; reported on stderr.
+# A message goes to stderr and the exit code is non-zero in every failure case.
+# ─────────────────────────────────────────────────────────────────────────────
+set -u
+
+# OBLIMINT_LIB: override for tests only.
+. "${OBLIMINT_LIB:-/usr/local/lib/oblimint/lib.sh}"
+
+check_env
+
+LOCK="$OBLIMINT_RUN/reload.lock"
+PREV="$OBLIMINT_RUN/.prev"
+
+# One reload at a time (mkdir is atomic). A stale lock (> 60 s) is broken.
+i=0
+until mkdir "$LOCK" 2>/dev/null; do
+	i=$((i + 1))
+	if [ $i -ge 60 ]; then
+		log "breaking a stale reload lock"
+		rm -rf "$LOCK"
+		i=0
+		continue
+	fi
+	sleep 1
+done
+trap 'rm -rf "$LOCK"' EXIT
+trap 'exit 130' INT TERM
+
+# Backup of the current rendered files (restored if the new ones are unusable).
+rm -rf "$PREV"
+mkdir -p "$PREV"
+for f in httpd.conf nginx.conf php-fpm.conf custom.conf placeholder www; do
+	[ -e "$OBLIMINT_RUN/$f" ] || [ -L "$OBLIMINT_RUN/$f" ] || continue
+	cp -a "$OBLIMINT_RUN/$f" "$PREV/" || die "cannot back up $OBLIMINT_RUN/$f"
+done
+
+restore() {
+	for f in httpd.conf nginx.conf php-fpm.conf custom.conf placeholder www; do
+		rm -rf "$OBLIMINT_RUN/$f"
+		[ -e "$PREV/$f" ] || [ -L "$PREV/$f" ] || continue
+		cp -a "$PREV/$f" "$OBLIMINT_RUN/" || log "cannot restore $f"
+	done
+}
+
+if ! render_and_test; then
+	restore
+	die "reload refused: the new configuration is unusable (previous configuration kept)"
+fi
+
+# Web server first: if it refuses the reload, nothing has changed anywhere
+# (php-fpm not signalled yet) and the previous files are put back, so disk and
+# running processes stay consistent.
+case "$OBLIMINT_ENGINE" in
+	apache)
+		# Graceful: children finish their current request, then the new config applies.
+		if ! out=$(httpd -k graceful -f "$OBLIMINT_RUN/httpd.conf" 2>&1); then
+			restore
+			die "reload refused: httpd graceful failed (previous configuration kept): $out"
+		fi
+		;;
+	*)
+		if ! out=$(nginx -e stderr -c "$OBLIMINT_RUN/nginx.conf" -s reload 2>&1); then
+			restore
+			die "reload refused: nginx reload failed (previous configuration kept): $out"
+		fi
+		;;
+esac
+rm -rf "$PREV"
+
+# Then php-fpm: fresh opcache / realpath caches for the new release. The web
+# server already runs the new files, so they are kept even if this fails.
+status=0
+if [ "$OBLIMINT_PHP" = "1" ]; then
+	if fpm_pid=$(read_pid "$OBLIMINT_RUN/php-fpm.pid"); then
+		kill -USR2 "$fpm_pid" || { log "web server reloaded, but cannot signal php-fpm (pid $fpm_pid): it keeps its previous pool"; status=1; }
+	else
+		log "web server reloaded, but the php-fpm pid file is missing ($OBLIMINT_RUN/php-fpm.pid): php-fpm keeps its previous pool"
+		status=1
+	fi
+fi
+
+[ $status -eq 0 ] || exit 1
+echo "reloaded mode=$(current_mode)"
+exit 0

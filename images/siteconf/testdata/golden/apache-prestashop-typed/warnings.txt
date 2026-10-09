@@ -1,0 +1,1 @@
+customNginx ignored: this base runs Apache (use .htaccess)

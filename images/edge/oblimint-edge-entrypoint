@@ -1,0 +1,35 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-edge entrypoint: prepares the tmpfs mounts, generates the default
+# self-signed certificate (served by the default 443 server, never a real
+# site) and runs nginx in the foreground as PID 1 (nginx handles signals;
+# STOPSIGNAL SIGQUIT = graceful stop).
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+log() {
+	printf '%s oblimint-edge: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+CERT_DIR=/run/oblimint-edge
+umask 077
+mkdir -p "$CERT_DIR" /var/cache/nginx
+
+if [ ! -s "$CERT_DIR/default.crt" ] || [ ! -s "$CERT_DIR/default.key" ]; then
+	openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+		-days 3650 -subj "/CN=oblimint-default" \
+		-keyout "$CERT_DIR/default.key" -out "$CERT_DIR/default.crt" 2>/dev/null ||
+		{ log "cannot generate the default certificate"; exit 1; }
+	chmod 0600 "$CERT_DIR/default.key"
+	chmod 0644 "$CERT_DIR/default.crt"
+	log "default self-signed certificate generated"
+fi
+
+# A broken vhost must not keep the edge down forever: report it loudly, then
+# let nginx itself decide (it refuses to start on an invalid config, and the
+# panel restores the previous conf.d on a failed sync).
+if ! out=$(nginx -t 2>&1); then
+	log "configuration test failed: $out"
+fi
+
+exec nginx -g 'daemon off;'

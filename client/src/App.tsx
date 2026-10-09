@@ -2,9 +2,7 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
-import {
-  UserSquare, Globe, AtSign, Database, Mail, FolderOpen, Package,
-} from 'lucide-react';
+import { Database, Mail, FolderOpen } from 'lucide-react';
 import type { SetupMode } from '@oblimint/shared';
 import { useNativeTopOffset } from '@/hooks/useNativeTopOffset';
 import { useAuthStore } from '@/store/authStore';
@@ -22,6 +20,13 @@ import { SettingsPage } from '@/pages/SettingsPage';
 import { ComingSoonPage } from '@/pages/ComingSoonPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { SetupWizardPage } from '@/pages/SetupWizardPage';
+// P1 — hosting core (docs/P1-PLAN.md §UI)
+import { AccountsPage } from '@/pages/hosting/AccountsPage';
+import { AccountDetailPage } from '@/pages/hosting/AccountDetailPage';
+import { PlansPage } from '@/pages/hosting/PlansPage';
+import { DomainsPage } from '@/pages/hosting/DomainsPage';
+import { SitesPage } from '@/pages/sites/SitesPage';
+import { SiteDetailPage } from '@/pages/sites/SiteDetailPage';
 import { TwoFactorGate } from '@/components/common/TwoFactorGate';
 import { ConfirmProvider } from '@/components/common/ConfirmDialog';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
@@ -47,12 +52,19 @@ function NormalRoutes() {
         <Route element={<AppLayout />}>
           {/* Hosting */}
           <Route path="/" element={<DashboardPage />} />
-          <Route path="/accounts" element={<ComingSoonPage icon={<UserSquare />} titleKey="nav.accounts" titleFallback="Accounts" descriptionKey="comingSoon.accounts" descriptionFallback="Create hosting accounts from a plan: a Linux user with its disk quota, its sites, domains, mailboxes and databases." />} />
-          <Route path="/sites" element={<ComingSoonPage icon={<Globe />} titleKey="nav.sites" titleFallback="Sites" descriptionKey="comingSoon.sites" descriptionFallback="Deploy each site in its own container with the base of your choice (PHP, Node.js, static…), immutable code and a controlled update window." />} />
-          <Route path="/domains" element={<ComingSoonPage icon={<AtSign />} titleKey="nav.domains" titleFallback="Domains & DNS" descriptionKey="comingSoon.domains" descriptionFallback="Manage main, addon and alias domains, subdomains and their DNS zones, with automatic TLS certificates." />} />
+          <Route path="/accounts" element={<AccountsPage />} />
+          <Route path="/accounts/:id" element={<AccountDetailPage />} />
+          <Route path="/sites" element={<SitesPage />} />
+          <Route path="/sites/:id" element={<SiteDetailPage />} />
+          <Route path="/domains" element={<DomainsPage />} />
           <Route path="/databases" element={<ComingSoonPage icon={<Database />} titleKey="nav.databases" titleFallback="Databases" descriptionKey="comingSoon.databases" descriptionFallback="Start MariaDB, MySQL or PostgreSQL instances per account on demand, with their databases and users." />} />
           <Route path="/mail" element={<ComingSoonPage icon={<Mail />} titleKey="nav.mail" titleFallback="Mail" descriptionKey="comingSoon.mail" descriptionFallback="Manage mailboxes, aliases, forwards, quotas and DKIM keys on the mail engine chosen at installation." />} />
           <Route path="/files" element={<ComingSoonPage icon={<FolderOpen />} titleKey="nav.files" titleFallback="Files" descriptionKey="comingSoon.files" descriptionFallback="Browse and edit the files of an account, and open an SFTP/FTPS server on demand for it." />} />
+
+          {/* Plans: platform admin or the plans.manage capability of the tenant */}
+          <Route element={<ProtectedRoute requiredCapabilities={['plans.manage']} />}>
+            <Route path="/manage/plans" element={<PlansPage />} />
+          </Route>
 
           {/* User */}
           <Route path="/profile" element={<ProfilePage />} />
@@ -60,7 +72,6 @@ function NormalRoutes() {
           {/* Admin-only */}
           <Route element={<ProtectedRoute requiredRole="admin" />}>
             <Route path="/manage/users" element={<AdminUsersPage />} />
-            <Route path="/manage/plans" element={<ComingSoonPage icon={<Package />} titleKey="nav.plans" titleFallback="Plans" descriptionKey="comingSoon.plans" descriptionFallback="Define hosting plans (disk, traffic, sites, mailboxes, databases…) within the resource envelope of the workspace." />} />
             <Route path="/manage/nodes" element={<NodesPage />} />
             <Route path="/manage/audit-log" element={<AuditLogPage />} />
             <Route path="/settings" element={<SettingsPage />} />

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "siteId": 1,
+  "accountId": 1,
+  "role": "primary",
+  "base": "apache-php8.3",
+  "docroot": "/srv/releases/current",
+  "basePath": "/",
+  "servedPrefixes": [],
+  "dataPaths": [
+    { "path": "uploads", "policy": "persistent", "allowedExtensions": null },
+    { "path": "media", "policy": "typed", "allowedExtensions": ["jpg", "png"] }
+  ],
+  "php": { "memoryLimitMb": 256, "uploadMaxFilesizeMb": 64, "postMaxSizeMb": 64, "maxExecutionTime": 60 },
+  "customNginx": "location = /smoke-custom { return 204; }\n",
+  "healthcheckPath": "/"
+}

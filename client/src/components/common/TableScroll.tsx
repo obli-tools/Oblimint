@@ -37,7 +37,9 @@ export const TableScroll = forwardRef<HTMLDivElement, TableScrollProps>(function
     <div ref={ref} className={cn('min-w-0 overflow-hidden rounded-xl', className)} style={style} {...rest}>
       <div
         className={cn(
-          'overflow-x-auto overscroll-x-contain',
+          // relative: absolutely positioned descendants (e.g. an sr-only label
+          // in a <th>) stay inside the scroller instead of widening the page.
+          'relative overflow-x-auto overscroll-x-contain',
           stickyFirstCol && 'table-sticky-first',
           innerClassName,
         )}

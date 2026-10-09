@@ -1,0 +1,2 @@
+base nginx-php8.4 expects the nginx engine but this image runs apache: rendering for apache
+customNginx ignored: this base runs Apache (use .htaccess)

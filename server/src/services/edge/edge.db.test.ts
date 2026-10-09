@@ -1,0 +1,236 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import selfsigned from 'selfsigned';
+import { createPrivateKey } from 'crypto';
+import type * as acme from 'acme-client';
+
+// Integration test of the DB side of the edge module (queries of buildVhosts,
+// certificate rows, renewal pass) against the PGlite harness. Opt-in:
+//   PG_PORT=55435 node <scratchpad>/pg/pgserver.mjs
+//   EDGE_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55435/postgres \
+//     npx tsx --test src/services/edge/edge.db.test.ts
+// No Docker (fake engine: edge "not running"), no network (fake ACME client).
+
+const url = process.env.EDGE_TEST_DATABASE_URL;
+
+test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', { skip: !url && 'EDGE_TEST_DATABASE_URL not set' }, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oblimint-edge-db-'));
+  process.env.DATABASE_URL = url;
+  process.env.OBLIMINT_DATA_DIR = root;
+  const { db } = await import('../../db');
+  t.after(async () => {
+    await db.destroy();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  await db.migrate.latest();
+
+  const engine = await import('../docker/engine');
+  const notFound = Object.assign(new Error('no such container'), { statusCode: 404 });
+  engine.setEngineFactoryForTests(() => ({ getContainer: () => ({ inspect: async () => { throw notFound; } }) }) as never, 1);
+  t.after(() => engine.setEngineFactoryForTests(null));
+
+  const { edgeService } = await import('./edge.service');
+  const { certificateService } = await import('./certificate.service');
+  const { localPaths } = await import('../hosting/paths');
+
+  // ── seed ──
+  await db('app_config').insert([
+    { key: 'panel_hostname', value: 'panel.host.example' },
+    { key: 'acme_email', value: 'ops@host.example' },
+  ]).onConflict('key').merge();
+  const [plan] = await db('plans').insert({ tenant_id: 1, name: 'Edge plan', limits: JSON.stringify({}) }).returning('id');
+  const [acct] = await db('hosting_accounts').insert({
+    tenant_id: 1, node_id: 1, plan_id: plan.id, username: 'edgeacct', uid: 41000, gid: 41000, status: 'active',
+  }).returning('id');
+  const [gone] = await db('hosting_accounts').insert({
+    tenant_id: 1, node_id: 1, plan_id: plan.id, username: 'edgegone', uid: 41001, gid: 41001, status: 'deleting',
+  }).returning('id');
+  const [site] = await db('sites').insert({
+    tenant_id: 1, account_id: acct.id, name: 'Main', slug: 'main', base: 'php-8.3', preview_base: 'php-8.4',
+    php_settings: JSON.stringify({ postMaxSizeMb: 2048 }),
+  }).returning('id');
+  const [goneSite] = await db('sites').insert({ tenant_id: 1, account_id: gone.id, name: 'Gone', slug: 'gone', base: 'php-8.3' }).returning('id');
+  const [dom] = await db('domains').insert({
+    tenant_id: 1, account_id: acct.id, name: 'example.com', include_www: true, tls_mode: 'letsencrypt', force_https: true,
+  }).returning('id');
+  const [goneDom] = await db('domains').insert({ tenant_id: 1, account_id: gone.id, name: 'gone.example' }).returning('id');
+  await db('site_routes').insert([
+    { account_id: acct.id, domain_id: dom.id, path_prefix: '/', site_id: site.id },
+    { account_id: gone.id, domain_id: goneDom.id, path_prefix: '/', site_id: goneSite.id },
+  ]);
+
+  // ── buildVhosts ──
+  const vhosts = await edgeService.buildVhosts();
+  const ids = vhosts.map((v) => v.id);
+  assert.deepEqual(ids, ['panel', `p-${site.id}`, `d-${dom.id}`]);
+  const d = vhosts.find((v) => v.id === `d-${dom.id}`)!;
+  assert.deepEqual(d.serverNames, ['example.com', 'www.example.com']);
+  assert.equal(d.tls, null);
+  assert.equal(d.clientMaxBodyMb, 2048);
+
+  // ── sync without an edge container: files written, error kept ──
+  const sync = await edgeService.syncNow();
+  assert.equal(sync.ok, false);
+  assert.equal(sync.error, 'edge not running');
+  assert.deepEqual(fs.readdirSync(localPaths.edgeConfD()).sort(), [`d-${dom.id}.conf`, `p-${site.id}.conf`, 'panel.conf']);
+  const status = await edgeService.status();
+  assert.equal(status.running, false);
+  assert.equal(status.lastSyncError, 'edge not running');
+  assert.equal(status.vhostCount, 3);
+
+  // ── settings ──
+  await edgeService.setAcmeDirectory('staging');
+  assert.equal(await edgeService.acmeDirectory(), 'staging');
+
+  // ── issuance with a fake ACME client ──
+  const names = ['example.com', 'www.example.com'];
+  const pems = selfsigned.generate([{ name: 'commonName', value: names[0] }], {
+    days: 90, keySize: 2048, algorithm: 'sha256',
+    extensions: [{ name: 'subjectAltName', altNames: names.map((value) => ({ type: 2, value })) }],
+  });
+  const key = createPrivateKey(pems.private).export({ type: 'pkcs8', format: 'pem' }).toString();
+  let fail = false;
+  certificateService._setDeps({
+    selfTest: undefined,
+    // The certificate key must match the fake certificate.
+    createCertificateKey: async () => key,
+    createClient: () => ({
+      async createAccount() { return {}; },
+      async createOrder() { return { url: 'o' } as unknown as acme.Order; },
+      async getAuthorizations() { return [] as acme.Authorization[]; },
+      async getChallengeKeyAuthorization() { return 'ka'; },
+      async completeChallenge() { return {}; },
+      async waitForValidStatus(item) { return item; },
+      async finalizeOrder(o) { if (fail) throw new Error('rate limited'); return o; },
+      async getCertificate() { return pems.cert; },
+    }),
+  });
+
+  const detail = await certificateService.request(dom.id);
+  assert.equal(detail.status, 'valid', detail.lastError ?? '');
+  assert.equal(detail.issuer, 'letsencrypt-staging');
+  assert.deepEqual(detail.names, names);
+  assert.ok(detail.notAfter && new Date(detail.notAfter).getTime() > Date.now() + 80 * 24 * 3600_000);
+  assert.ok(detail.log.some((l) => l.message.includes('Certificate installed')));
+  assert.ok(fs.existsSync(path.join(localPaths.edgeCerts(), 'example.com', 'privkey.pem')));
+
+  const withTls = (await edgeService.buildVhosts()).find((v) => v.id === `d-${dom.id}`)!;
+  assert.ok(withTls.tls, 'valid cert + files → tls');
+
+  // No panel / preview issuance from here on (the fake certificate only covers example.com).
+  await db('app_config').where({ key: 'panel_hostname' }).del();
+
+  // ── renewal failure keeps the still-valid certificate served + alerts ──
+  await db('certificates').where({ domain_id: dom.id }).update({ not_after: new Date(Date.now() + 5 * 24 * 3600_000) });
+  fail = true;
+  await certificateService.checkRenewals();
+  const afterFail = await certificateService.getForDomain(dom.id);
+  assert.equal(afterFail?.status, 'valid');
+  assert.match(afterFail?.lastError ?? '', /rate limited/);
+  const row = await db('certificates').where({ domain_id: dom.id }).first();
+  assert.equal(row.failure_count, 1);
+  const alert = await db('audit_logs').where({ action: 'certificate.renewal_failed', tenant_id: 1 }).first();
+  assert.ok(alert, 'renewal_failed audited in the tenant of the domain');
+  assert.equal(alert.resource_path, String(dom.id));
+
+  // Backoff: the next pass does not retry.
+  const attemptsBefore = row.last_attempt_at;
+  await certificateService.checkRenewals();
+  const row2 = await db('certificates').where({ domain_id: dom.id }).first();
+  assert.equal(new Date(row2.last_attempt_at).getTime(), new Date(attemptsBefore).getTime());
+
+  // ── the tenant-visible log never carries the platform-wide nginx output ──
+  assert.ok(!afterFail?.log.some((l) => l.message.includes('edge not running')), 'raw sync error not in the certificate log');
+
+  // ── adding www fails: the still-valid row keeps the names its cert covers ──
+  const far = new Date(Date.now() + 60 * 24 * 3600_000);
+  await db('certificates').where({ domain_id: dom.id }).update({
+    names: JSON.stringify(['example.com']), status: 'valid', not_after: far, failure_count: 0, last_attempt_at: null,
+  });
+  const wwwFail = await certificateService.request(dom.id);
+  assert.equal(wwwFail.status, 'valid');
+  assert.deepEqual(wwwFail.names, ['example.com'], 'old names kept until the new cert is installed');
+  const rowW = await db('certificates').where({ domain_id: dom.id }).first();
+  assert.equal(rowW.failure_count, 1);
+  // The renewal pass retries it once the backoff is over (not before).
+  const lastW = new Date(rowW.last_attempt_at).getTime();
+  await certificateService.checkRenewals();
+  assert.equal(new Date((await db('certificates').where({ domain_id: dom.id }).first()).last_attempt_at).getTime(), lastW);
+  await db('certificates').where({ domain_id: dom.id }).update({ last_attempt_at: new Date(Date.now() - 7 * 3600_000) });
+  fail = false;
+  await certificateService.checkRenewals();
+  const fixed = await certificateService.getForDomain(dom.id);
+  assert.deepEqual(fixed?.names, names, 'renewal pass added www');
+  assert.equal(fixed?.status, 'valid');
+
+  // ── manual renew rate limits ──
+  const { AppError } = await import('../../middleware/errorHandler');
+  const codeOf = async (p: Promise<unknown>) => { try { await p; return null; } catch (e) { return e instanceof AppError ? `${e.statusCode}:${e.code}` : String(e); } };
+  // Cooldown right after an attempt (everyone).
+  assert.equal(await codeOf(certificateService.startRequest(dom.id, { force: true, staff: true })), '429:certificateRateLimited');
+  await db('certificates').where({ domain_id: dom.id }).update({ last_attempt_at: new Date(Date.now() - 3600_000) });
+  // Valid, covers the names, far from expiry: client force refused, plain request is a no-op.
+  assert.equal(await codeOf(certificateService.startRequest(dom.id, { force: true })), '409:certificateNotDue');
+  assert.equal(await codeOf(certificateService.startRequest(dom.id)), null);
+  assert.equal(new Date((await db('certificates').where({ domain_id: dom.id }).first()).last_attempt_at).getTime() < Date.now() - 3000_000, true, 'nothing queued');
+  // Failure backoff: clients wait, staff may retry.
+  await db('certificates').where({ domain_id: dom.id }).update({ status: 'failed', failure_count: 2 });
+  assert.equal(await codeOf(certificateService.startRequest(dom.id)), '429:certificateRateLimited');
+  assert.equal(await codeOf(certificateService.startRequest(dom.id, { staff: true })), null);
+  await certificateService.request(dom.id); // waits for the queued attempt
+  assert.equal((await certificateService.getForDomain(dom.id))?.status, 'valid');
+
+  // ── a hung ACME call: the overall deadline records a failure and frees the serial queue ──
+  certificateService._setDeps({
+    deadlineMs: 300,
+    createClient: () => ({
+      async createAccount() { return {}; },
+      async createOrder() { return { url: 'o' } as unknown as acme.Order; },
+      async getAuthorizations() { return [] as acme.Authorization[]; },
+      async getChallengeKeyAuthorization() { return 'ka'; },
+      async completeChallenge() { return {}; },
+      async waitForValidStatus(item) { return item; },
+      finalizeOrder: () => new Promise<acme.Order>(() => { /* never settles (dropped TCP connection) */ }),
+      async getCertificate() { return pems.cert; },
+    }),
+  });
+  await db('certificates').where({ domain_id: dom.id }).update({ status: 'failed', failure_count: 0, last_attempt_at: null });
+  const hung = await certificateService.request(dom.id, { force: true });
+  assert.equal(hung.status, 'failed');
+  assert.match(hung.lastError ?? '', /timed out/);
+  certificateService._setDeps({
+    deadlineMs: 10 * 60_000,
+    createClient: () => ({
+      async createAccount() { return {}; },
+      async createOrder() { return { url: 'o' } as unknown as acme.Order; },
+      async getAuthorizations() { return [] as acme.Authorization[]; },
+      async getChallengeKeyAuthorization() { return 'ka'; },
+      async completeChallenge() { return {}; },
+      async waitForValidStatus(item) { return item; },
+      async finalizeOrder(o) { return o; },
+      async getCertificate() { return pems.cert; },
+    }),
+  });
+  assert.equal((await certificateService.request(dom.id, { force: true })).status, 'valid', 'the queue moved on');
+
+  // ── explicit requests: one error code per reason (never a false "suspended") ──
+  const [offDom] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'notls.example', tls_mode: 'none' }).returning('id');
+  assert.equal(await codeOf(certificateService.startRequest(offDom.id)), '409:tlsDisabled');
+  const [goneLe] = await db('domains').insert({ tenant_id: 1, account_id: gone.id, name: 'gone-le.example', tls_mode: 'letsencrypt' }).returning('id');
+  assert.equal(await codeOf(certificateService.startRequest(goneLe.id)), '409:accountDeleting');
+  await db('app_config').insert({ key: 'panel_hostname', value: 'panel.host.example' }).onConflict('key').merge();
+  const [reserved] = await db('domains').insert({ tenant_id: 1, account_id: acct.id, name: 'x.preview.panel.host.example', tls_mode: 'letsencrypt' }).returning('id');
+  assert.equal(await codeOf(certificateService.startRequest(reserved.id)), '409:domainReserved');
+  await db('app_config').where({ key: 'panel_hostname' }).del();
+  await db('domains').whereIn('id', [offDom.id, goneLe.id, reserved.id]).del();
+  assert.equal(await codeOf(certificateService.startRequest(999_999)), '404:notFound');
+
+  // ── removal ──
+  await certificateService.removeForDomain(dom.id);
+  assert.equal(await certificateService.getForDomain(dom.id), null);
+  assert.equal(fs.existsSync(path.join(localPaths.edgeCerts(), 'example.com')), false);
+  edgeService.stop();
+});

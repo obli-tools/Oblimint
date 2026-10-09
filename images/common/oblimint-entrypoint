@@ -1,0 +1,92 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# Oblimint site container entrypoint (run by tini as PID 1:
+# ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/oblimint-entrypoint"]).
+#
+#   1. render the configuration from OBLIMINT_SITE_CONFIG with siteconf into
+#      /run/oblimint (placeholder mode when /srv/releases/current is missing);
+#   2. start php-fpm (PHP images) and the web server, both in the foreground;
+#   3. supervise them: if either dies, stop the other and exit non-zero so
+#      Docker restarts the container; SIGTERM/SIGINT stop both gracefully;
+#      SIGHUP runs oblimint-reload.
+# ─────────────────────────────────────────────────────────────────────────────
+set -u
+
+# OBLIMINT_LIB: override for tests only.
+. "${OBLIMINT_LIB:-/usr/local/lib/oblimint/lib.sh}"
+
+check_env
+prepare_dirs
+
+if ! render_and_test; then
+	die "unusable configuration for $OBLIMINT_SITE_CONFIG, refusing to start"
+fi
+log "starting $OBLIMINT_ENGINE (php-fpm: $OBLIMINT_PHP, mode: $(current_mode))"
+
+FPM_PID=""
+WEB_PID=""
+
+if [ "$OBLIMINT_PHP" = "1" ]; then
+	php-fpm -F -y "$OBLIMINT_RUN/php-fpm.conf" &
+	FPM_PID=$!
+fi
+
+case "$OBLIMINT_ENGINE" in
+	apache) httpd -DFOREGROUND -f "$OBLIMINT_RUN/httpd.conf" & ;;
+	*) nginx -e stderr -c "$OBLIMINT_RUN/nginx.conf" -g 'daemon off;' & ;;
+esac
+WEB_PID=$!
+
+stopping=0
+
+stop_all() {
+	stopping=1
+	# Graceful first: nginx QUIT, httpd WINCH (graceful-stop), php-fpm QUIT.
+	case "$OBLIMINT_ENGINE" in
+		apache) kill -WINCH "$WEB_PID" 2>/dev/null ;;
+		*) kill -QUIT "$WEB_PID" 2>/dev/null ;;
+	esac
+	[ -n "$FPM_PID" ] && kill -QUIT "$FPM_PID" 2>/dev/null
+	i=0
+	while [ $i -lt 16 ]; do
+		if ! alive "$WEB_PID" && { [ -z "$FPM_PID" ] || ! alive "$FPM_PID"; }; then
+			break
+		fi
+		sleep 0.5 2>/dev/null || sleep 1
+		i=$((i + 1))
+	done
+	kill -TERM "$WEB_PID" ${FPM_PID:+"$FPM_PID"} 2>/dev/null
+	wait 2>/dev/null
+}
+
+on_term() {
+	log "stopping"
+	stop_all
+	exit 0
+}
+
+on_hup() {
+	oblimint-reload || log "reload on SIGHUP failed (previous configuration kept)"
+}
+
+trap on_term TERM INT QUIT
+trap on_hup HUP
+
+while :; do
+	if ! alive "$WEB_PID"; then
+		[ "$stopping" = "1" ] && exit 0
+		log "web server ($OBLIMINT_ENGINE, pid $WEB_PID) exited, stopping the container"
+		stop_all
+		exit 1
+	fi
+	if [ -n "$FPM_PID" ] && ! alive "$FPM_PID"; then
+		[ "$stopping" = "1" ] && exit 0
+		log "php-fpm (pid $FPM_PID) exited, stopping the container"
+		stop_all
+		exit 1
+	fi
+	# `wait` on a background sleep: traps run immediately, and finished
+	# children get reaped (so alive() sees them gone).
+	sleep 2 &
+	wait $! 2>/dev/null
+done
