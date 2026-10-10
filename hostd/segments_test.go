@@ -203,8 +203,9 @@ func TestSegmentManagerApplyPersistRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := renderSegments(mustSeg(t, segFixture(segModeEnforce)))
-	if nft.last() != want {
-		t.Fatalf("applied ruleset differs")
+	// The kernel counter of the replaced table is carried over (cumulative across pushes).
+	if carried := renderSegmentsCarry(mustSeg(t, segFixture(segModeEnforce)), segCarry{Drop: segCounterValue{42, 2520}}); nft.last() != carried {
+		t.Fatalf("applied ruleset differs:\n%s", nft.last())
 	}
 	st = m.Status()
 	if st.Mode != segModeEnforce || st.Bridges != 3 || st.Rules != 5 || st.Dropped == nil || *st.Dropped != 42 || st.LastApplyAt == nil || st.LastApplyError != nil {
@@ -520,5 +521,56 @@ func TestSegmentStatusPlatform(t *testing.T) {
 	plain, _ := json.Marshal(segFixture(segModeEnforce))
 	if !strings.Contains(string(b), `"fabric":"platform"`) || strings.Contains(string(plain), "isolation") || strings.Contains(string(plain), "restricted") {
 		t.Errorf("json: %s / %s", b, plain)
+	}
+}
+
+// Round-4 finding: every push deleted and recreated the tables, resetting
+// the drop counters (GET /v1/segments showed dropped=0 right after a matrix
+// that filtered hundreds of probes). The counters read just before a push
+// are declared again in the new tables.
+func TestSegmentCountersCarriedAcrossPushes(t *testing.T) {
+	r := mustSeg(t, segPlatformFixture(segModeEnforce))
+	if renderSegmentsCarry(r, segCarry{}) != renderSegments(r) {
+		t.Fatal("a zero carry must render the plain ruleset")
+	}
+	out := renderSegmentsCarry(r, segCarry{Drop: segCounterValue{317, 19020}, Host: segCounterValue{12, 720}})
+	for _, want := range []string{
+		"table bridge oblimint_seg {\n\tcounter dropped {\n\t\tpackets 317 bytes 19020\n\t}\n",
+		"table inet oblimint_seghost {\n\tcounter host_dropped {\n\t\tpackets 12 bytes 720\n\t}\n",
+		"delete table bridge oblimint_seg\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+
+	nft := &fakeNft{available: true}
+	m := newSegmentManager(nft, "")
+	kernel := segCounterValue{}
+	m.counter = func(context.Context) (string, error) {
+		return fmt.Sprintf("table bridge oblimint_seg {\n\tcounter dropped {\n\t\tpackets %d bytes %d\n\t}\n}\n", kernel.Packets, kernel.Bytes), nil
+	}
+	m.hostCounter = func(context.Context) (string, error) { return "", errors.New("No such file or directory") }
+	// First push: no table yet → zero counters.
+	if err := m.Apply(context.Background(), segPlatformFixture(segModeEnforce)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(nft.last(), "packets 0 bytes") || !strings.Contains(nft.last(), "counter dropped {\n\t}") {
+		t.Fatalf("first push:\n%s", nft.last())
+	}
+	// Frames dropped, then a periodic push: the value survives.
+	kernel = segCounterValue{250, 15000}
+	if err := m.Apply(context.Background(), segPlatformFixture(segModeEnforce)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(nft.last(), "counter dropped {\n\t\tpackets 250 bytes 15000\n\t}") {
+		t.Fatalf("second push lost the counter:\n%s", nft.last())
+	}
+	// Unreadable host counter: plain declaration, never an error.
+	if !strings.Contains(nft.last(), "counter host_dropped {\n\t}") {
+		t.Fatalf("host counter:\n%s", nft.last())
+	}
+	if v, ok := parseSegCounterValue("counter dropped {\n\tpackets 7 bytes 420\n}"); !ok || v != (segCounterValue{7, 420}) {
+		t.Errorf("parse: %+v %v", v, ok)
 	}
 }

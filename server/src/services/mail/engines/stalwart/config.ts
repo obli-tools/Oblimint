@@ -14,15 +14,17 @@ import { certName, domainName, invalid, ipAddress, positiveInt, selector } from 
 // rebuilds from the copy loaded at boot — verified on the Linux test host), see driver.ts.
 //
 // Except the DOMAIN-dependent settings (report P4, docs/P4b-PLAN.md §19: a
-// mail domain / DKIM key never restarts the engine): the DKIM signatures
-// (signature.*), the signing rules (auth.dkim.sign, report.dsn.sign), the
-// message size (session.data.limits.size) and the expressions holding the site
-// relay's exact addresses (session.rcpt.relay, auth.spf.verify.*,
-// auth.dmarc.verify) are rendered as flat SETTINGS (output.settings,
+// mail domain / DKIM key / mailbox never restarts the engine): the DKIM
+// signatures (signature.*), the signing rules (auth.dkim.sign,
+// report.dsn.sign), the message size (session.data.limits.size), the
+// expressions holding the site relay's exact addresses (session.rcpt.relay,
+// auth.spf.verify.*, auth.dmarc.verify) and the hourly sending limiters
+// (queue.limiter.inbound.oblimint-*, limits.ts) are rendered as flat SETTINGS (output.settings,
 // DYNAMIC_SETTINGS) that the driver stores in Stalwart's settings store
 // (POST /api/settings) and applies with GET /api/reload — live, no restart,
 // verified on the Linux test host 0.12.4 (a message signed with a key added this way,
-// a size lowered this way enforced at once). They are NOT local keys (the
+// a size lowered this way enforced at once, a sending limiter added /
+// raised / lowered / removed this way enforced at once). They are NOT local keys (the
 // exclusions in LOCAL_KEYS). Macros are not resolved in stored values
 // (the Linux test host: "%{file:…}%" read literally), so the DKIM private key is stored
 // inline (the engine already reads it; never logged, redactSecrets masks PEM).
@@ -79,8 +81,10 @@ import { certName, domainName, invalid, ipAddress, positiveInt, selector } from 
 //   report.{dmarc,tls}.aggregate.send, auth.{spf.verify.ehlo,spf.verify.mail-from,
 //   dkim.verify,dmarc.verify,arc.verify,arc.seal,dkim.sign}, signature.<id>.*,
 //   imap.auth.allow-plain-text, sieve.untrusted.limits.redirects,
-//   queue.limiter.inbound.<id>.{key,rate,match,enable} (match: ends_with(authenticated_as, '@<domain>'),
-//   hypothesis H-LIMIT: the expression function ends_with — limits.ts, checked on the Linux test host),
+//   queue.limiter.inbound.oblimint-<id>.{key,rate,match,enable} (settings store; match:
+//   ends_with(authenticated_as, '@<domain>'), hypothesis H-LIMIT: the expression function
+//   ends_with — limits.ts, checked on the Linux test host), report.dsn.sign (sender_domain = domain of the
+//   bounced message's sender in the DSN context, checked on the Linux test host),
 //   spam-filter.score.{spam,reject}, spam-filter.grey-list.duration.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -89,8 +93,9 @@ export interface StalwartRenderInput {
   domains: DesiredMailDomain[];
   /**
    * Hourly limits per mail domain + the fallback for the other authenticated
-   * senders (limits.ts): never the mailbox list, so a mailbox create / delete
-   * or a send toggle leaves the file unchanged (report P4, no restart).
+   * senders (limits.ts): never the mailbox list, so only the first / last
+   * mailbox of an account moves them; rendered as settings (store, live
+   * reload), never into config.toml (report P4, no restart).
    */
   sendLimits: SendLimits;
   dkim: DesiredDkimKey[];
@@ -129,13 +134,23 @@ export const REPORT_SEND_KEYS = {
 } as const;
 
 /**
- * Domain-dependent settings applied live through the settings store (see the
- * header): `root` and every key under `root.`, read back with
- * GET /api/settings/list?prefix=<list> (keys come back relative to it).
- * Stalwart refuses an expression made of a lone else ("Found 'else' before
- * 'if'", the Linux test host): without a branch the root key holds the plain value.
+ * A group of settings applied live through the settings store (see the
+ * header): `root` and every key under `root.` — with `prefix`, every key
+ * starting with `root` — read back with GET /api/settings/list?prefix=<list>
+ * (keys come back relative to it).
  */
-export const DYNAMIC_SETTINGS = [
+export interface DynamicSetting {
+  root: string;
+  list: string;
+  prefix?: boolean;
+}
+
+/**
+ * Domain-dependent settings applied live through the settings store (see the
+ * header). Stalwart refuses an expression made of a lone else ("Found 'else'
+ * before 'if'", the Linux test host): without a branch the root key holds the plain value.
+ */
+export const DYNAMIC_SETTINGS: readonly DynamicSetting[] = [
   { root: 'signature', list: 'signature' },
   { root: 'auth.dkim.sign', list: 'auth.dkim' },
   { root: 'session.data.limits.size', list: 'session.data.limits' },
@@ -146,15 +161,25 @@ export const DYNAMIC_SETTINGS = [
   { root: 'session.rcpt.relay', list: 'session.rcpt' },
   { root: 'auth.spf.verify', list: 'auth.spf.verify' },
   { root: 'auth.dmarc.verify', list: 'auth.dmarc' },
-  // DSN / bounce signing with the panel's signatures of the default domain
-  // (Stalwart's default expects "rsa-<domain>" / "ed25519-<domain>" signers
-  // that never exist here: "DKIM signer not found", unsigned bounces).
+  // DSN / bounce signing with the panel's signatures of the bounced sender's
+  // domain (Stalwart's default expects "rsa-<domain>" / "ed25519-<domain>"
+  // signers that never exist here: "DKIM signer not found", unsigned bounces).
   { root: 'report.dsn.sign', list: 'report.dsn' },
-] as const;
+  // Hourly sending limiters (MA9, limits.ts): the first mailbox of an account
+  // brings its rate — live, never a restart (report P4: the Linux test host, the first
+  // mailbox restarted the engine while they were in config.toml). Only the
+  // panel's own limiters: Stalwart's defaults (ip, sender…) stay its own.
+  { root: 'queue.limiter.inbound.oblimint-', list: 'queue.limiter.inbound', prefix: true },
+];
 
 /** A key under one of DYNAMIC_SETTINGS. */
 export function isDynamicSetting(key: string): boolean {
-  return DYNAMIC_SETTINGS.some((d) => key === d.root || key.startsWith(`${d.root}.`));
+  return DYNAMIC_SETTINGS.some((d) => (d.prefix ? key.startsWith(d.root) : key === d.root || key.startsWith(`${d.root}.`)));
+}
+
+/** Prefixes cleared in the settings store before the dynamic settings are written again (POST /api/settings). */
+export function dynamicClearPrefixes(): string[] {
+  return DYNAMIC_SETTINGS.map((d) => (d.prefix ? d.root : d.root === 'signature' ? 'signature.' : d.root));
 }
 
 /**
@@ -178,7 +203,6 @@ export const LOCAL_KEYS = [
   '!auth.dmarc.verify', '!auth.dmarc.verify.*',
   'session.*',
   'auth.*',
-  'queue.limiter.inbound.oblimint-*',
   'imap.*',
   'sieve.untrusted.*',
   'spam-filter.score.*', 'spam-filter.grey-list.*',
@@ -480,10 +504,17 @@ export function renderStalwartConfig(input: StalwartRenderInput): StalwartRender
   const signBranches = [...signers.entries()].sort((a, b) => a[0].localeCompare(b[0]))
     .map(([domain, ids]) => ({ if: `${outbound} && sender_domain == ${lit(domain)}`, then: `[${ids.map(lit).join(', ')}]` }));
   setExpression(settings, 'auth.dkim.sign', signBranches, 'false');
-  // DSNs / bounces leave as MAILER-DAEMON@<default domain> (lookup.default.domain):
-  // signed with the panel's active keys of that domain when it has any.
-  const dsnSigners = signers.get(defaultDomain) ?? [];
-  settings['report.dsn.sign'] = dsnSigners.length ? `[${dsnSigners.map(lit).join(', ')}]` : 'false';
+  // DSNs / bounces: Stalwart 0.12.4 sends them From MAILER-DAEMON@<domain of
+  // the bounced message's sender> — NOT lookup.default.domain — and evaluates
+  // report.dsn.sign with sender_domain = that same domain (the Linux test host: a bounce
+  // for dave@p4b-mail.test left From MAILER-DAEMON@p4b-mail.test, signed
+  // d=p4b-mail.test under "sender_domain == 'p4b-mail.test'", unsigned under
+  // another domain's branch). One branch per signing domain, like
+  // auth.dkim.sign, so the signature aligns with the DSN's From (DMARC). No
+  // outbound condition: a DSN is generated by the engine itself.
+  const dsnBranches = [...signers.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([domain, ids]) => ({ if: `sender_domain == ${lit(domain)}`, then: `[${ids.map(lit).join(', ')}]` }));
+  setExpression(settings, 'report.dsn.sign', dsnBranches, 'false');
 
   // ── inbound authentication checks (MA14): port 25, and 10025 from anything
   // but the relay. SPF / DMARC depend on the relay addresses: settings store.
@@ -508,15 +539,15 @@ export function renderStalwartConfig(input: StalwartRenderInput): StalwartRender
 
   // ── hourly limits (MA9): per account rate, matched on the mail domains
   // (the login is the address), grouped by rate; then the fallback (strictest
-  // rate) for any authenticated sender of a domain without a rule.
+  // rate) for any authenticated sender of a domain without a rule. Settings
+  // store (DYNAMIC_SETTINGS): exact at every sync, applied by a reload.
   const endsWithAny = (domains: string[]): string => domains.map((d) => `ends_with(authenticated_as, ${lit(`@${d}`)})`).join(' || ');
   const limiter = (id: string, rate: number, match: string) => {
-    out.push(table('queue', 'limiter', 'inbound', id));
-    kv('key', tomlList(['authenticated_as']));
-    kv('rate', tomlString(`${Math.max(rate, 1)}/1h`));
-    kv('match', tomlString(match));
-    kv('enable', 'true');
-    blank();
+    const key = `queue.limiter.inbound.${id}`;
+    settings[`${key}.key.${idx(0)}`] = 'authenticated_as';
+    settings[`${key}.rate`] = `${Math.max(rate, 1)}/1h`;
+    settings[`${key}.match`] = match;
+    settings[`${key}.enable`] = 'true';
   };
   const byRate = new Map<number, string[]>();
   const limitedDomains: string[] = [];

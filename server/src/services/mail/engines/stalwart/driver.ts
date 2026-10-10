@@ -18,13 +18,13 @@ import { MAIL_CONTAINER } from '../../../hosting/naming';
 import { hostingLayout, localPaths } from '../../../hosting/paths';
 import { errText } from '../../../setup/docker';
 import { StalwartApi, StalwartApiError } from './api';
-import { DYNAMIC_SETTINGS, isDynamicSetting, renderStalwartConfig } from './config';
+import { DYNAMIC_SETTINGS, dynamicClearPrefixes, isDynamicSetting, renderStalwartConfig } from './config';
 import {
   ADMIN_USER, MASTER_USER, PERM_LOGIN, SIEVE_SCRIPT_NAME, STALWART_GID, STALWART_PUBLIC_PORTS, STALWART_RELAY_PORT, STALWART_UID,
   STALWART_VERSION, SYNC_STATE_FILE,
 } from './constants';
 import { ensureDir, fileExists, readJsonFile, removeStale, writeIfChanged, type FileOwner } from './files';
-import { desiredSendLimits, limitsCovered, limitsStale, NO_LIMITS, parseLimits, staleRestartDue, type SendLimits } from './limits';
+import { desiredSendLimits, NO_LIMITS } from './limits';
 import { parseLogLine } from './logs';
 import { buildDesiredPrincipals, diffPrincipals, planSize, STALWART_PASSWORD_SCHEMES, type PrincipalOp } from './principals';
 import { queueFromApi, QUEUE_ID_RE, usageFromPrincipals } from './runtime';
@@ -55,19 +55,17 @@ import { domainName, isDomainName, isMailAddress } from './validate';
 // no /api/reload either, EXCEPT after a revocation (address / member removed,
 // mailbox detached or deleted, permission disabled): Stalwart caches positive
 // directory lookups and only a reload drops them (stale RCPT 250 otherwise,
-// see sync — directoryReloadPending). The configuration file holds no mailbox: the hourly limits
-// are per account rate on the mail DOMAINS + a strictest-rate fallback
-// (limits.ts), so the file only changes with the structure (listeners, TLS,
-// host name, settings) or when a limit must become stricter
-// than what the running engine enforces (MA9) — the only immediate restarts.
-// A mail domain, its DKIM keys, its message size and the site relay's
-// addresses (relay / SPF / DMARC expressions, DSN signing) are LIVE too: those
-// settings live in Stalwart's settings store (config.ts DYNAMIC_SETTINGS),
-// diffed against what the engine holds, replaced through POST /api/settings
-// and applied by GET /api/reload (no restart, open sessions kept); limits left STRICTER than
-// desired restart in a quiet window after 6 h, at the latest after 24 h
-// (limitsStaleSince, limits.ts). Otherwise the file on disk is kept equal to
-// what the engine loaded (appliedLimits).
+// see sync — directoryReloadPending). The configuration file holds no mailbox
+// and no sending limit: it only changes with the structure (listeners, TLS,
+// host name, platform settings) — the only restarts.
+// A mail domain, its DKIM keys, its message size, the site relay's addresses
+// (relay / SPF / DMARC expressions), the DSN signing and the hourly sending
+// limiters (per account rate on the mail DOMAINS + a strictest-rate fallback,
+// limits.ts — MA9 exact at every sync) are LIVE too: those settings live in
+// Stalwart's settings store (config.ts DYNAMIC_SETTINGS), diffed against what
+// the engine holds, replaced through POST /api/settings and applied by
+// GET /api/reload (no restart, open sessions kept). So the first mailbox of a
+// fresh install (its account's limiter) is a reload, never a restart.
 // Sync bookkeeping lives in the panel-only configuration directory, never in
 // the container-writable store.
 //
@@ -98,16 +96,14 @@ interface SyncState {
   /** mailbox → sha256 of its sieve script as last installed ('' = none). */
   sieve: Record<string, string>;
   /**
-   * Fingerprint of the STRUCTURE of config.toml (rendered without any sending
-   * limit) + DKIM keys as last ACCEPTED after a restart ('' = unknown / a
-   * restart or reload failed): the sync restarts whenever the structure
-   * differs from it, so a failed restart is retried on the next pass.
+   * Fingerprint of config.toml (its structure: no mailbox, no domain setting,
+   * no sending limit) as last ACCEPTED after a restart ('' = unknown / a
+   * restart or reload failed): the sync restarts whenever the file differs
+   * from it, so a failed restart is retried on the next pass. (Bookkeeping
+   * written by older versions may still hold appliedLimits /
+   * limitsStaleSince: ignored, dropped at the next write.)
    */
   appliedConfig: string;
-  /** Hourly limits the running engine loaded at its last accepted restart (limits.ts). */
-  appliedLimits: SendLimits;
-  /** ISO time of the first sync that found appliedLimits STRICTER than desired (limitsStale), null = up to date. */
-  limitsStaleSince: string | null;
   /** Domain settings written to the engine's store but not yet accepted by a reload (retried on the next pass). */
   settingsPending: boolean;
   /**
@@ -229,8 +225,6 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
       secrets: j?.secrets && typeof j.secrets === 'object' ? { ...j.secrets } : {},
       sieve: j?.sieve && typeof j.sieve === 'object' ? { ...j.sieve } : {},
       appliedConfig: typeof j?.appliedConfig === 'string' ? j.appliedConfig : '',
-      appliedLimits: parseLimits(j?.appliedLimits),
-      limitsStaleSince: typeof j?.limitsStaleSince === 'string' ? j.limitsStaleSince : null,
       settingsPending: j?.settingsPending === true,
       directoryReloadPending: j?.directoryReloadPending === true,
     };
@@ -459,19 +453,17 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
         const { api, creds } = await client();
         // Pure part first: an invalid state changes nothing.
         const desired = buildDesiredPrincipals(state, now());
-        const desiredLimits = desiredSendLimits(state);
-        const render = (sendLimits: SendLimits) => renderStalwartConfig({
+        const rendered = renderStalwartConfig({
           settings: state.settings,
           domains: state.domains,
-          sendLimits,
+          sendLimits: desiredSendLimits(state),
           dkim: state.dkim,
           tls: state.tls,
           relayAddresses: state.relay.relayAddresses,
           certRoots: deps.certRoots,
         });
-        const rendered = render(desiredLimits);
-        // Fingerprint of the structure only (no limit): a mailbox change never moves it.
-        const structureFp = configFingerprint(render(NO_LIMITS));
+        // config.toml holds the structure only (no mailbox, domain setting nor limit): a mailbox change never moves it.
+        const structureFp = configFingerprint(rendered);
         for (const w of rendered.warnings) logger.warn(`mail stalwart: ${w}`);
 
         let current;
@@ -500,27 +492,13 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
         await local('preparing the engine directories', ensureDirs);
         // Restart only when the structure differs from what the engine
         // ACCEPTED (a failed or rejected restart is retried on the next pass
-        // even though the files are unchanged by then), or when a sending limit
-        // must become stricter than what it enforces (MA9). Otherwise the file
-        // stays what the engine loaded: the data changes are live (header).
+        // even though the files are unchanged by then). Everything else —
+        // mailboxes, domains, DKIM, sizes, relay addresses, sending limits — is
+        // live (header).
         let reloaded = false;
         let configChanged: boolean;
-        let loaded: ReturnType<typeof renderStalwartConfig> | null = null;
-        // Stricter than desired (safe) is tolerated for a bounded time only (limits.ts).
-        const stale = limitsStale(syncState.appliedLimits, desiredLimits);
-        if (!stale) syncState.limitsStaleSince = null;
-        else syncState.limitsStaleSince ??= now().toISOString();
-        const staleDue = stale && staleRestartDue(syncState.limitsStaleSince ? new Date(syncState.limitsStaleSince) : null, now());
-        if (staleDue) logger.info({ since: syncState.limitsStaleSince }, 'mail stalwart: restart to load the exact sending limits (stricter limits kept too long)');
-        const restart = syncState.appliedConfig !== structureFp || !limitsCovered(syncState.appliedLimits, desiredLimits) || staleDue;
-        if (!restart) {
-          try {
-            loaded = render(syncState.appliedLimits);
-          } catch {
-            loaded = null; // bookkeeping no longer renderable: apply the desired limits
-          }
-        }
-        // Domain settings (DKIM signatures + signing rule, message sizes): diffed against the engine's
+        const restart = syncState.appliedConfig !== structureFp;
+        // Domain settings (DKIM signatures + signing rules, message sizes, relay expressions, sending limiters): diffed against the engine's
         // store, replaced there when they differ, then loaded by the restart below or by a reload — never a
         // restart of their own (report P4, §19).
         let held: Record<string, string>;
@@ -534,14 +512,14 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
           syncState.settingsPending = true;
           await persist();
           try {
-            await api.replaceSettings(DYNAMIC_SETTINGS.map((d) => (d.root === 'signature' ? 'signature.' : d.root)), rendered.settings);
+            await api.replaceSettings(dynamicClearPrefixes(), rendered.settings);
           } catch (err) {
             throw toDriverError(err, 'writing the domain settings');
           }
           settingsChanged = true;
         }
-        if (loaded) {
-          configChanged = await local('writing the configuration', () => writeConfig(loaded!));
+        if (!restart) {
+          configChanged = await local('writing the configuration', () => writeConfig(rendered));
           if (syncState.settingsPending) {
             try {
               const { warnings } = await api.reload();
@@ -559,7 +537,7 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
           await reloadConfig(api, 'reloading the configuration');
           reloaded = true;
           // Keys that were LOCAL before this restart (an upgrade moving them to
-          // the store, e.g. the relay expressions) may have been listed with
+          // the store, e.g. the relay expressions or the sending limiters) may have been listed with
           // their file values above and thus not written: the engine now reads
           // them from its store, so it is checked again (a stale or missing
           // value would fall back to Stalwart's defaults — site relay refused).
@@ -571,7 +549,7 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
           }
           if (!sameSettings(after, rendered.settings)) {
             try {
-              await api.replaceSettings(DYNAMIC_SETTINGS.map((d) => (d.root === 'signature' ? 'signature.' : d.root)), rendered.settings);
+              await api.replaceSettings(dynamicClearPrefixes(), rendered.settings);
               const { warnings } = await api.reload();
               for (const w of warnings.slice(0, 20)) logger.warn(`mail stalwart: configuration warning: ${w}`);
             } catch (err) {
@@ -582,8 +560,6 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
             settingsChanged = true;
           }
           syncState.appliedConfig = structureFp;
-          syncState.appliedLimits = desiredLimits;
-          syncState.limitsStaleSince = null;
           syncState.settingsPending = false;
           await persist();
         }

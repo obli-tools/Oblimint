@@ -530,8 +530,11 @@ test('stalwart sync (report P4): mailbox create / delete, send toggle, password,
   await driver.sync(baseState(), { reason: 'test' });
   assert.equal(fake.restarts, 1);
   const tomlBefore = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
-  assert.match(tomlBefore, /ends_with\(authenticated_as, '@exemple\.fr'\)/, 'limits per domain, not per mailbox');
-  assert.ok(!/authenticated_as == /.test(tomlBefore));
+  const limiters = () => [...fake.settings].filter(([k]) => k.startsWith('queue.limiter.inbound.oblimint-')).map(([k, v]) => `${k}=${v}`).join('\n');
+  assert.match(limiters(), /ends_with\(authenticated_as, '@exemple\.fr'\)/, 'limits per domain, not per mailbox');
+  assert.ok(!/authenticated_as == /.test(limiters()));
+  assert.ok(!tomlBefore.includes('queue.limiter'), 'no limiter in config.toml');
+  const limitersBefore = limiters();
   const reloads = () => fake.calls.filter((c) => c.path.startsWith('/api/reload')).length;
   let reloadsBefore = reloads();
 
@@ -547,6 +550,7 @@ test('stalwart sync (report P4): mailbox create / delete, send toggle, password,
     reloadsBefore = reloads();
     assert.ok(fake.calls.slice(calls).some((c) => c.method !== 'GET'), `${what}: through the admin API`);
     assert.equal(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), tomlBefore, `${what}: config.toml untouched`);
+    assert.equal(limiters(), limitersBefore, `${what}: same account, same limiters`);
     check();
   };
 
@@ -605,30 +609,114 @@ test('stalwart sync: a failed reload after a revocation is retried on the next p
   assert.equal(reloads(), r0 + 2, 'accepted: no more reload');
 });
 
-test('stalwart sync (report P4): only a stricter sending limit or a structural change restarts', async () => {
+test('stalwart sync (report P4): the FIRST mailbox of a fresh install never restarts the engine — its limiter is live', async () => {
+  // Regression (the Linux test host P4b): the limiters lived in config.toml, so the first limited
+  // mailbox (nothing loaded yet) rewrote the file and restarted Stalwart.
+  const { fake, driver, dirs } = setup();
+  // Stalwart's own default limiters (written at its first boot) are never touched by the panel.
+  fake.settings.set('queue.limiter.inbound.ip.rate', '5/1s');
+  fake.settings.set('queue.limiter.inbound.sender.rate', '25/1h');
+  const st = baseState();
+  st.mailboxes = [];
+  st.aliases = [];
+  st.appPasswords = [];
+  st.dkim = [];
+  st.domains = [{ id: 1, accountId: 7, name: 'exemple.fr', active: true, catchAll: null, maxMessageSizeMb: 50 }];
+  await driver.sync(st, { reason: 'fresh install, first domain' });
+  assert.equal(fake.restarts, 1, 'the first sync loads the panel\'s config.toml');
+  const limiters = () => Object.fromEntries([...fake.settings].filter(([k]) => k.startsWith('queue.limiter.inbound.oblimint-')));
+  assert.deepEqual(limiters(), {}, 'no mailbox: no limit yet');
+  const toml = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
+  const reloads = () => fake.calls.filter((c) => c.path.startsWith('/api/reload')).length;
+  const r0 = reloads();
+
+  st.mailboxes.push({ ...mailbox(1, 'carol@exemple.fr', contactHash), sendPerHour: 100 });
+  const r = await driver.sync(st, { reason: 'first mailbox' });
+  assert.equal(r.ok, true);
+  assert.equal(fake.restarts, 1, 'first mailbox: NO restart');
+  assert.equal(reloads(), r0 + 1, 'its limiter applied by one /api/reload');
+  assert.equal(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), toml, 'config.toml untouched');
+  assert.deepEqual(limiters(), {
+    'queue.limiter.inbound.oblimint-rate-100-0.enable': 'true',
+    'queue.limiter.inbound.oblimint-rate-100-0.key.0000': 'authenticated_as',
+    'queue.limiter.inbound.oblimint-rate-100-0.match': "ends_with(authenticated_as, '@exemple.fr')",
+    'queue.limiter.inbound.oblimint-rate-100-0.rate': '100/1h',
+    'queue.limiter.inbound.oblimint-rate-default.enable': 'true',
+    'queue.limiter.inbound.oblimint-rate-default.key.0000': 'authenticated_as',
+    'queue.limiter.inbound.oblimint-rate-default.match': "!is_empty(authenticated_as) && !(ends_with(authenticated_as, '@exemple.fr'))",
+    'queue.limiter.inbound.oblimint-rate-default.rate': '100/1h',
+  }, 'MA9 enforced at once (exact rate, not a bounded catch-up)');
+  assert.ok(fake.principals.get('carol@exemple.fr'), 'mailbox created');
+  // Settings written BEFORE the principal: the mailbox never exists without its limit.
+  const settingsWrite = fake.calls.findIndex((c) => c.method === 'POST' && c.path === '/api/settings' && JSON.stringify(c.body ?? '').includes('oblimint-rate-100'));
+  const principalWrite = fake.calls.findIndex((c) => c.method === 'POST' && c.path === '/api/principal' && JSON.stringify(c.body ?? '').includes('carol@exemple.fr'));
+  assert.ok(settingsWrite >= 0 && principalWrite > settingsWrite, 'limiter stored before the mailbox is created');
+  assert.equal(fake.settings.get('queue.limiter.inbound.ip.rate'), '5/1s', "Stalwart's own limiters kept");
+  assert.equal(fake.settings.get('queue.limiter.inbound.sender.rate'), '25/1h');
+
+  // A second mailbox of the same account: no limiter change, no reload.
+  st.mailboxes.push({ ...mailbox(2, 'dave@exemple.fr', contactHash), sendPerHour: 100 });
+  await driver.sync(st, { reason: 'second mailbox' });
+  assert.equal(fake.restarts, 1);
+  assert.equal(reloads(), r0 + 1);
+  // A new account (second domain + first mailbox, looser plan) and a plan downgrade: exact, live, never a restart.
+  st.domains.push({ id: 3, accountId: 8, name: 'client2.fr', active: true, catchAll: null, maxMessageSizeMb: 50 });
+  st.mailboxes.push({ ...mailbox(20, 'a@client2.fr', contactHash), accountId: 8, domainId: 3, sendPerHour: 500 });
+  await driver.sync(st, { reason: 'new account' });
+  assert.equal(fake.settings.get('queue.limiter.inbound.oblimint-rate-500-0.match'), "ends_with(authenticated_as, '@client2.fr')");
+  for (const m of st.mailboxes) if (m.accountId === 7) m.sendPerHour = 50;
+  await driver.sync(st, { reason: 'downgrade' });
+  assert.equal(fake.settings.get('queue.limiter.inbound.oblimint-rate-50-0.rate'), '50/1h');
+  assert.equal(fake.settings.get('queue.limiter.inbound.oblimint-rate-100-0.rate'), undefined, 'old rate removed');
+  assert.equal(fake.settings.get('queue.limiter.inbound.oblimint-rate-default.rate'), '50/1h');
+  // Last mailbox of every account deleted: limiters removed, still live.
+  st.mailboxes = [];
+  await driver.sync(st, { reason: 'all deleted', allowMassRemoval: true });
+  assert.deepEqual(limiters(), {});
+  assert.equal(fake.restarts, 1, 'no restart at any step');
+  assert.equal(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), toml);
+  // Idempotent.
+  const r1 = reloads();
+  assert.equal((await driver.sync(st, { reason: 'again' })).changed, false);
+  assert.equal(reloads(), r1);
+});
+
+test('stalwart sync: upgrade from limiters in config.toml (old bookkeeping) — one structural restart, limiters moved to the store', async () => {
   const { fake, driver, dirs } = setup();
   await driver.sync(baseState(), { reason: 'test' });
   assert.equal(fake.restarts, 1);
-  // A new account's first mailbox: its domain runs under the fallback (strictest rate, 200/h here) — no restart.
+  // Older panel: limiters were local keys of the file, the store holds none, the bookkeeping has appliedLimits.
+  const stateFile = 'oblimint-sync.json';
+  const old = JSON.parse(fs.readFileSync(path.join(dirs.config, stateFile), 'utf8'));
+  fs.writeFileSync(path.join(dirs.config, stateFile), JSON.stringify({ ...old, appliedConfig: 'old-fingerprint', appliedLimits: { byDomain: { 'exemple.fr': 200 }, fallback: 200 }, limitsStaleSince: null }));
+  for (const k of [...fake.settings.keys()]) if (k.startsWith('queue.limiter.inbound.oblimint-')) fake.settings.delete(k);
+  await driver.sync(baseState(), { reason: 'upgrade' });
+  assert.equal(fake.restarts, 2, 'the file changed: one restart');
+  assert.equal(fake.settings.get('queue.limiter.inbound.oblimint-rate-200-0.rate'), '200/1h');
+  const saved = JSON.parse(fs.readFileSync(path.join(dirs.config, stateFile), 'utf8'));
+  assert.equal('appliedLimits' in saved || 'limitsStaleSince' in saved, false, 'obsolete bookkeeping dropped');
+  await driver.sync(baseState(), { reason: 'again' });
+  assert.equal(fake.restarts, 2);
+});
+
+test('stalwart sync (report P4): a structural change restarts; domains, DKIM keys and sizes are live', async () => {
+  const { fake, driver, dirs } = setup();
+  await driver.sync(baseState(), { reason: 'test' });
+  assert.equal(fake.restarts, 1);
   let st = baseState();
   st.domains.push({ id: 3, accountId: 8, name: 'client2.fr', active: true, catchAll: null, maxMessageSizeMb: 50 });
   await driver.sync(st, { reason: 'domain' });
   assert.equal(fake.restarts, 1, 'a domain without DKIM key nor specific size is a principal only: live');
   assert.equal(fake.principals.get('client2.fr')?.type, 'domain');
   st.mailboxes.push({ ...mailbox(20, 'a@client2.fr', contactHash), accountId: 8, domainId: 3, sendPerHour: 500 });
-  await driver.sync(st, { reason: 'first mailbox, looser plan' });
-  assert.equal(fake.restarts, 1, 'covered by the stricter fallback: no restart');
-  const toml = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
-  assert.match(toml, /\[queue\.limiter\.inbound\.oblimint-rate-default\]\nkey = \["authenticated_as"\]\nrate = "200\/1h"/);
-  assert.ok(!toml.includes("'@client2.fr'"), 'file = what the engine loaded');
-  // A plan downgrade (stricter than what the engine enforces): restart (MA9).
+  await driver.sync(st, { reason: 'first mailbox of a new account' });
+  assert.equal(fake.restarts, 1, 'its limiter is live');
+  // A structural change (platform setting rendered into config.toml): restart.
   st = JSON.parse(JSON.stringify(st)) as MailDesiredState;
-  for (const m of st.mailboxes) if (m.accountId === 7) m.sendPerHour = 50;
-  await driver.sync(st, { reason: 'downgrade' });
+  st.settings.spamRejectScore = 12;
+  await driver.sync(st, { reason: 'spam score' });
   assert.equal(fake.restarts, 2);
-  const toml2 = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
-  assert.match(toml2, /\[queue\.limiter\.inbound\.oblimint-rate-50-0\]/);
-  assert.match(toml2, /\[queue\.limiter\.inbound\.oblimint-rate-500-0\]/, 'exact limits loaded with the restart');
+  assert.match(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), /reject = 12\.0/);
   // Then idempotent.
   await driver.sync(st, { reason: 'again' });
   assert.equal(fake.restarts, 2);
@@ -645,6 +733,7 @@ test('stalwart sync (report P4): only a stricter sending limit or a structural c
   assert.equal(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), tomlBefore);
   assert.ok([...fake.settings].some(([k, v]) => /^signature\.[^.]+\.domain$/.test(k) && v === 'client2.fr'));
   assert.ok([...fake.settings.values()].includes("rcpt_domain == 'client2.fr'"));
+  assert.ok([...fake.settings.values()].includes("sender_domain == 'client2.fr'"), 'its bounces are signed with its own key');
   // Idempotent: nothing written, no reload.
   const w0 = fake.writes().length;
   await driver.sync(st, { reason: 'again' });
@@ -662,31 +751,9 @@ test('stalwart sync (report P4): only a stricter sending limit or a structural c
   assert.ok(![...fake.settings.values()].includes('client2.fr'), 'the removed key is gone from the store');
   assert.equal(fake.restarts, 2);
   // A store that lost the settings (wiped / restored engine data) gets them back.
-  for (const k of [...fake.settings.keys()]) if (k.startsWith('signature.')) fake.settings.delete(k);
+  for (const k of [...fake.settings.keys()]) if (k.startsWith('signature.') || k.startsWith('queue.limiter.inbound.oblimint-')) fake.settings.delete(k);
   await driver.sync(st, { reason: 'healed' });
   assert.ok([...fake.settings].some(([k, v]) => /^signature\.[^.]+\.domain$/.test(k) && v === 'exemple.fr'));
+  assert.equal(fake.settings.get('queue.limiter.inbound.oblimint-rate-500-0.rate'), '500/1h');
   assert.equal(fake.restarts, 2);
-});
-
-test('stalwart sync: limits left stricter than the plan are loaded by a bounded restart (quiet window / 24 h)', async () => {
-  let clock = NOW; // 10:00 UTC
-  const { fake, driver, dirs } = setup(() => clock);
-  await driver.sync(baseState(), { reason: 'test' });
-  assert.equal(fake.restarts, 1);
-  const st = baseState();
-  st.domains.push({ id: 3, accountId: 8, name: 'client2.fr', active: true, catchAll: null, maxMessageSizeMb: 50 });
-  st.mailboxes.push({ ...mailbox(20, 'a@client2.fr', contactHash), accountId: 8, domainId: 3, sendPerHour: 500 });
-  await driver.sync(st, { reason: 'new account' });
-  assert.equal(fake.restarts, 1, 'under the stricter fallback: no immediate restart');
-  const later = (h: number) => { clock = new Date(NOW.getTime() + h * 3_600_000); };
-  later(7); // 17:00 UTC
-  await driver.sync(st, { reason: 'periodic' });
-  assert.equal(fake.restarts, 1, '7 h, outside the quiet window');
-  later(16.5); // 02:30 UTC the next day
-  await driver.sync(st, { reason: 'periodic' });
-  assert.equal(fake.restarts, 2, 'quiet window after 6 h: exact limits loaded');
-  assert.match(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), /\[queue\.limiter\.inbound\.oblimint-rate-500-0\]/);
-  later(40);
-  await driver.sync(st, { reason: 'periodic' });
-  assert.equal(fake.restarts, 2, 'up to date: no further restart');
 });

@@ -155,26 +155,42 @@ test('stalwart config: MA14 inbound checks, DKIM signing of outbound only, limit
   assert.equal(bare['auth.dkim.sign'], 'false');
   assert.equal(bare['session.data.limits.size'], String(50 * 1048576));
   assert.equal(bare['report.dsn.sign'], 'false');
-  assert.deepEqual(Object.keys(bare).filter((k) => !/^(session\.rcpt\.relay|auth\.spf\.verify|auth\.dmarc\.verify)\./.test(k)).sort(),
+  assert.deepEqual(Object.keys(bare).filter((k) => !/^(session\.rcpt\.relay|auth\.spf\.verify|auth\.dmarc\.verify|queue\.limiter\.inbound\.oblimint-)/.test(k)).sort(),
     ['auth.dkim.sign', 'report.dsn.sign', 'session.data.limits.size']);
   // A domain / DKIM key never changes config.toml (no restart).
   assert.equal(renderStalwartConfig({ ...base, dkim: [], domains: [] }).toml, out.toml);
 
   // Hourly limits per account rate on the mail domains (never the mailbox list), unlimited domains
   // without a rule but excluded from the fallback (strictest rate) of the other authenticated senders.
-  const lim = tomlGet(doc, 'queue', 'limiter', 'inbound') as Record<string, Record<string, TomlValue>>;
-  assert.deepEqual(Object.keys(lim), ['oblimint-rate-20-0', 'oblimint-rate-200-0', 'oblimint-rate-default']);
-  assert.equal(lim['oblimint-rate-200-0'].rate, '200/1h');
-  assert.deepEqual(lim['oblimint-rate-200-0'].key, ['authenticated_as']);
-  assert.equal(lim['oblimint-rate-200-0'].match, "ends_with(authenticated_as, '@autre.fr') || ends_with(authenticated_as, '@exemple.fr')");
-  assert.equal(lim['oblimint-rate-20-0'].match, "ends_with(authenticated_as, '@petit.fr')");
-  assert.equal(lim['oblimint-rate-default'].rate, '20/1h');
-  assert.equal(lim['oblimint-rate-default'].match,
-    "!is_empty(authenticated_as) && !(ends_with(authenticated_as, '@autre.fr') || ends_with(authenticated_as, '@exemple.fr') || ends_with(authenticated_as, '@libre.fr') || ends_with(authenticated_as, '@petit.fr'))");
+  // Settings of the engine's store (report P4: the first mailbox of an account brings its limiter live,
+  // never a restart — the Linux test host), never in config.toml.
+  assert.equal(tomlGet(doc, 'queue'), undefined, 'no limiter in config.toml');
+  const lim = Object.fromEntries(Object.entries(st).filter(([k]) => k.startsWith('queue.limiter.inbound.')));
+  assert.deepEqual(lim, {
+    'queue.limiter.inbound.oblimint-rate-20-0.enable': 'true',
+    'queue.limiter.inbound.oblimint-rate-20-0.key.0000': 'authenticated_as',
+    'queue.limiter.inbound.oblimint-rate-20-0.match': "ends_with(authenticated_as, '@petit.fr')",
+    'queue.limiter.inbound.oblimint-rate-20-0.rate': '20/1h',
+    'queue.limiter.inbound.oblimint-rate-200-0.enable': 'true',
+    'queue.limiter.inbound.oblimint-rate-200-0.key.0000': 'authenticated_as',
+    'queue.limiter.inbound.oblimint-rate-200-0.match': "ends_with(authenticated_as, '@autre.fr') || ends_with(authenticated_as, '@exemple.fr')",
+    'queue.limiter.inbound.oblimint-rate-200-0.rate': '200/1h',
+    'queue.limiter.inbound.oblimint-rate-default.enable': 'true',
+    'queue.limiter.inbound.oblimint-rate-default.key.0000': 'authenticated_as',
+    'queue.limiter.inbound.oblimint-rate-default.match':
+      "!is_empty(authenticated_as) && !(ends_with(authenticated_as, '@autre.fr') || ends_with(authenticated_as, '@exemple.fr') || ends_with(authenticated_as, '@libre.fr') || ends_with(authenticated_as, '@petit.fr'))",
+    'queue.limiter.inbound.oblimint-rate-default.rate': '20/1h',
+  });
+  for (const k of Object.keys(lim)) assert.ok(isDynamicSetting(k) && !isLocal(k, LOCAL_KEYS), `${k}: live setting, never local`);
+  // Stalwart's own default limiters stay its own (neither cleared nor diffed by the panel).
+  assert.ok(!isDynamicSetting('queue.limiter.inbound.ip.rate') && !isDynamicSetting('queue.limiter.inbound.sender.key.0'));
   assert.ok(!/[a-z0-9]@[a-z]/.test(JSON.stringify(lim)), 'no mailbox address in the limits');
   // No limit at all: no limiter.
-  const none = parseTomlLite(renderStalwartConfig({ ...base, sendLimits: { byDomain: { 'a.fr': null }, fallback: null } }).toml);
-  assert.equal(tomlGet(none, 'queue', 'limiter'), undefined);
+  const none = renderStalwartConfig({ ...base, sendLimits: { byDomain: { 'a.fr': null }, fallback: null } });
+  assert.deepEqual(Object.keys(none.settings).filter((k) => k.startsWith('queue.')), []);
+  // Limits never change config.toml: a first / last mailbox of an account is never a restart.
+  assert.equal(none.toml, out.toml);
+  assert.equal(renderStalwartConfig({ ...base, sendLimits: { byDomain: {}, fallback: null } }).toml, out.toml);
 
   // Certificates: SNI subjects, default one, container paths.
   const certs = tomlGet(doc, 'certificate') as Record<string, Record<string, TomlValue>>;
@@ -309,16 +325,30 @@ test('stalwart config: no report is ever sent to a third party (DMARC / DKIM / S
   for (const [, v] of reports) assert.equal(v, 'false');
 });
 
-test('stalwart config: DSNs / bounces are signed with the panel signatures of the default domain, never Stalwart\'s rsa-<domain>', () => {
-  // Default domain host.net (mail.host.net) has no key: unsigned, no "DKIM signer not found".
-  assert.equal(renderStalwartConfig(base).settings['report.dsn.sign'], 'false');
+test('stalwart config: DSNs / bounces are signed with the keys of the bounced sender\'s domain (DMARC-aligned), never Stalwart\'s rsa-<domain>', () => {
+  // Stalwart 0.12.4 (the Linux test host): a DSN leaves From MAILER-DAEMON@<domain of the bounced
+  // message's sender>, whatever lookup.default.domain; report.dsn.sign sees that domain as
+  // sender_domain. Regression: the signers of the panel's parent domain (host.net, rarely a
+  // mail domain) left every tenant's bounces unsigned, or signed d=<parent> (DMARC fail).
+  assert.deepEqual(settingBranches(renderStalwartConfig({ ...base, dkim: [] }).settings, 'report.dsn.sign'), [{ else: 'false' }], 'no key: unsigned, no "DKIM signer not found"');
   const ed = { domain: 'exemple.fr', selector: 'om202612', algorithm: 'ed25519' as const, privateKeyPem: rsaPem, signing: true };
-  const out = renderStalwartConfig({ ...base, settings: { ...settings, hostname: 'mail.exemple.fr' }, dkim: [...base.dkim, ed] });
-  const ids = Object.keys(out.settings).filter((k) => /^signature\.[^.]+\.domain$/.test(k)).map((k) => k.split('.')[1]).sort();
-  assert.equal(ids.length, 2, 'active keys only (om202611 is not signing)');
-  const dsn = out.settings['report.dsn.sign'];
-  assert.match(dsn, /^\['k[0-9a-f]{16}', 'k[0-9a-f]{16}'\]$/);
-  assert.deepEqual(dsn.match(/k[0-9a-f]{16}/g)!.sort(), ids);
-  assert.ok(!/rsa-|ed25519-/.test(dsn));
-  assert.ok(isDynamicSetting('report.dsn.sign') && !(LOCAL_KEYS as readonly string[]).some((k) => k === 'report.*' || k.startsWith('report.dsn')), 'live, in the settings store');
+  const other = { domain: 'autre.fr', selector: 'om202610', algorithm: 'rsa-2048' as const, privateKeyPem: rsaPem, signing: true };
+  const out = renderStalwartConfig({ ...base, dkim: [...base.dkim, ed, other] });
+  const sigDomain = (id: string) => out.settings[`signature.${id}.domain`];
+  const dsn = settingBranches(out.settings, 'report.dsn.sign');
+  assert.deepEqual(dsn.map((b) => b.if ?? `else ${b.else}`), ["sender_domain == 'autre.fr'", "sender_domain == 'exemple.fr'", 'else false']);
+  // Each branch: the active keys of THAT domain only (om202611 is not signing).
+  for (const b of dsn.slice(0, -1)) {
+    const domain = /'([^']+)'$/.exec(b.if!)![1];
+    const ids = b.then!.match(/k[0-9a-f]{16}/g)!;
+    assert.match(b.then!, /^\['k[0-9a-f]{16}'(, 'k[0-9a-f]{16}')*\]$/);
+    assert.equal(ids.length, domain === 'exemple.fr' ? 2 : 1);
+    for (const id of ids) assert.equal(sigDomain(id), domain, `${domain}: signed by its own key only`);
+    assert.ok(!/rsa-|ed25519-/.test(b.then!));
+  }
+  // The panel's parent domain plays no role (hostname mail.host.net, host.net has no mail domain).
+  assert.deepEqual(settingBranches(renderStalwartConfig({ ...base, settings: { ...settings, hostname: 'mail.exemple.fr' }, dkim: [...base.dkim, ed, other] }).settings, 'report.dsn.sign'), dsn);
+  assert.ok(isDynamicSetting('report.dsn.sign.0000.if') && !(LOCAL_KEYS as readonly string[]).some((k) => k === 'report.*' || k.startsWith('report.dsn')), 'live, in the settings store');
+  // Hostile domain names never reach the expression.
+  assert.throws(() => renderStalwartConfig({ ...base, dkim: [{ ...other, domain: "x.fr' || true || '" }] }), MailDriverError);
 });
