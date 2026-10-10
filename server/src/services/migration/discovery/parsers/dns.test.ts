@@ -43,7 +43,7 @@ zone "." IN { type hint; file "named.ca"; };`);
   assert.doesNotThrow(() => parseNamedConf('zone "x" { "unterminated'));
 });
 
-test('zone: the real CWP sample file (docs/cwp/zone-sample.anon.db)', () => {
+test('zone: the real CWP sample file (docs/cwp/zone-sample.anon.db)', { skip: fs.existsSync(path.join(DOCS, 'zone-sample.anon.db')) ? false : 'local-only sample (docs/cwp is not versioned)' }, () => {
   const z = parseZoneText(fs.readFileSync(path.join(DOCS, 'zone-sample.anon.db'), 'utf8'), 'example.tld');
   assert.equal(z.serial, 2025090843);
   assert.equal(z.defaultTtl, 14400);

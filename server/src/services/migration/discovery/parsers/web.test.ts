@@ -11,7 +11,7 @@ import { parseSuphpHandlers } from './cwpConf';
 
 const DOCS = path.resolve(__dirname, '../../../../../../docs/cwp');
 
-test('nginx: the real CWP sample (docs/cwp/vhost-nginx-sample.anon.conf)', () => {
+test('nginx: the real CWP sample (docs/cwp/vhost-nginx-sample.anon.conf)', { skip: fs.existsSync(path.join(DOCS, 'vhost-nginx-sample.anon.conf')) ? false : 'local-only sample (docs/cwp is not versioned)' }, () => {
   const servers = parseNginxVhost(fs.readFileSync(path.join(DOCS, 'vhost-nginx-sample.anon.conf'), 'utf8'));
   assert.equal(servers.length, 8);
   const main = servers[0];
@@ -62,7 +62,7 @@ test('nginx: proxy, websocket, fastcgi, redirects, upstreams, hostile input', ()
   assert.doesNotThrow(() => parseNginxConfig('{'.repeat(5000)));
 });
 
-test('apache: the real CWP sample + FPM SetHandler + suPHP', () => {
+test('apache: the real CWP sample + FPM SetHandler + suPHP', { skip: fs.existsSync(path.join(DOCS, 'vhost-apache-sample.anon.conf')) ? false : 'local-only sample (docs/cwp is not versioned)' }, () => {
   const vh = parseApacheVhosts(fs.readFileSync(path.join(DOCS, 'vhost-apache-sample.anon.conf'), 'utf8'));
   const main = vh[0];
   assert.equal(main.serverName, 'example.tld');
