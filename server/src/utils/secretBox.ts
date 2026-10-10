@@ -18,7 +18,10 @@ export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
   | 'scanner'
   // P4: DKIM private keys, site relay credentials, engine admin secrets
   // (Stalwart admin API, internal keys of the mail / webmail containers).
-  | 'mail-dkim' | 'mail-relay' | 'mail-admin' | 'webmail';
+  | 'mail-dkim' | 'mail-relay' | 'mail-admin' | 'webmail'
+  // P4b: app .env / registry passwords / git tokens, forward-auth secrets, imported
+  // certificate keys, automation secrets (SSH keys, SFTP passwords), Obliguard token cache.
+  | 'apps' | 'proxy-auth' | 'proxy-cert' | 'automation';
 
 export class SecretBoxError extends Error {
   constructor(message: string) {

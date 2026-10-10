@@ -4,7 +4,8 @@ import type Docker from 'dockerode';
 import type { InfraComponentStatus, InfraStatus, QuotaMode } from '@oblimint/shared';
 import { config } from '../../config';
 import { logger } from '../../utils/logger';
-import { accountNetwork, EDGE_CONTAINER, HOSTD_CONTAINER, LABELS, MAIL_NETWORK, PANEL_ALIAS, PANEL_NETWORK } from '../hosting/naming';
+import { accountNetwork, AUTH_NETWORK, EDGE_CONTAINER, HOSTD_CONTAINER, LABELS, MAIL_NETWORK, PANEL_ALIAS, PANEL_NETWORK } from '../hosting/naming';
+import { platformSettings } from '../platformSettings';
 import { localPaths } from '../hosting/paths';
 import { errText, selfContainerRef, withTimeout } from '../setup/docker';
 import { hostd, scheduleEdgeSync } from './backends';
@@ -82,11 +83,16 @@ export const infraService = {
   /** Pull + (re)create oblimint-edge when missing or drifted; base dirs; joins every account network. Idempotent. */
   async ensureEdge(log: InfraLog = () => undefined): Promise<void> {
     await withLock(infraLockKey('edge'), async () => {
-      for (const dir of [localPaths.edgeConfD(), localPaths.edgeCerts(), path.posix.join(localPaths.edgeAcme(), '.well-known', 'acme-challenge')]) {
+      for (const dir of [localPaths.edgeConfD(), localPaths.edgeCerts(), path.posix.join(localPaths.edgeAcme(), '.well-known', 'acme-challenge'),
+        // P4b (docs/P4b-PLAN.md §8): every bind source must exist before the container is created.
+        localPaths.edgeStreamD(), localPaths.edgeGlobalD(), localPaths.edgeAux(), localPaths.edgeSandbox(), localPaths.edgeGood()]) {
         await fs.promises.mkdir(dir, { recursive: true, mode: 0o755 });
       }
       const docker = await engineFor(await localNodeId());
-      const spec = edgeContainerSpec({ hostDataDir: hostRoot() });
+      // P4b: approved stream ports are published by the edge (a change recreates it: settings edge.streamPorts).
+      let streamPorts: Array<{ port: number; protocol: 'tcp' | 'udp' }> = [];
+      try { streamPorts = (await platformSettings.section('edge')).streamPorts; } catch (err) { log(`Stream ports unreadable (none published): ${errText(err)}`); }
+      const spec = edgeContainerSpec({ hostDataDir: hostRoot(), streamPorts });
       const what = await ensureInfraContainer(docker, spec, log);
       // Every account network (label oblimint.account) gets the edge attached.
       const nets = await withTimeout(docker.listNetworks({ filters: { label: [LABELS.account] } }), 30_000, 'list networks');
@@ -109,6 +115,14 @@ export const infraService = {
         if (mailNet && await connectNetwork(docker, MAIL_NETWORK, EDGE_CONTAINER)) log(`${EDGE_CONTAINER} attached to ${MAIL_NETWORK}`);
       } catch (err) {
         log(`Could not attach ${EDGE_CONTAINER} to ${MAIL_NETWORK}: ${errText(err)}`);
+      }
+      // P4b (architect): the forward-auth network (oauth2-proxy sidecars), when it exists (created by proxy-hosts).
+      try {
+        const authNet = (await withTimeout(docker.listNetworks({ filters: { name: [AUTH_NETWORK] } }), 30_000, 'list networks'))
+          .find((n) => n.Name === AUTH_NETWORK);
+        if (authNet && await connectNetwork(docker, AUTH_NETWORK, EDGE_CONTAINER)) log(`${EDGE_CONTAINER} attached to ${AUTH_NETWORK}`);
+      } catch (err) {
+        log(`Could not attach ${EDGE_CONTAINER} to ${AUTH_NETWORK}: ${errText(err)}`);
       }
       if (what !== 'unchanged') scheduleEdgeSync('edge-deployed');
     });

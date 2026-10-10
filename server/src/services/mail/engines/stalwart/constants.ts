@@ -21,7 +21,7 @@ export const STALWART_GID = 5000;
 
 /** Paths inside the container (images/mail-stalwart contract). */
 export const STALWART_PATHS = {
-  /** paths.mailEngineConfig('stalwart'), READ-ONLY: config.toml + dkim/*.pem rendered by the panel. */
+  /** paths.mailEngineConfig('stalwart'), READ-ONLY: config.toml rendered by the panel (DKIM keys: settings store, config.ts DYNAMIC_SETTINGS; dkim/ stays empty). */
   config: '/etc/oblimint/stalwart',
   configFile: '/etc/oblimint/stalwart/config.toml',
   dkim: '/etc/oblimint/stalwart/dkim',

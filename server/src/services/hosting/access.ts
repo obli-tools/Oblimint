@@ -41,7 +41,14 @@ export type HostingNeed =
   | 'databases.manage'
   | 'dns.manage'
   // P4 (docs/P4-PLAN.md §Accès): mail domains, mailboxes, aliases, DKIM / mail DNS, site relay, webmail SSO.
-  | 'mail.manage';
+  | 'mail.manage'
+  // P4b (docs/P4b-PLAN.md §12): apps (stacks, catalog, registries, network links), app console,
+  // proxy objects (hosts, redirections, dead hosts, lists, pages, providers, certificates, account bans),
+  // monitoring (uptime, status pages, workflows, SSH keys / SFTP targets, maintenance windows).
+  | 'apps.manage'
+  | 'apps.console'
+  | 'proxy.manage'
+  | 'monitoring.manage';
 
 export type HostingActor =
   | {
@@ -63,7 +70,8 @@ export type HostingActor =
 
 /** Staff capability (permission set) granting each need. */
 const STAFF_CAPS: Record<HostingNeed, readonly string[]> = {
-  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage', 'mail.manage'],
+  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage', 'mail.manage',
+    'apps.manage', 'proxy.manage', 'monitoring.manage'],
   'plans.manage': ['plans.manage'],
   'accounts.manage': ['accounts.manage'],
   'sites.manage': ['sites.manage'],
@@ -74,6 +82,10 @@ const STAFF_CAPS: Record<HostingNeed, readonly string[]> = {
   'databases.manage': ['databases.manage'],
   'dns.manage': ['dns.manage'],
   'mail.manage': ['mail.manage'],
+  'apps.manage': ['apps.manage'],
+  'apps.console': ['apps.console'],
+  'proxy.manage': ['proxy.manage'],
+  'monitoring.manage': ['monitoring.manage'],
 };
 
 /** Client capability granting each need (null = never for a client). */
@@ -89,6 +101,10 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
   'databases.manage': 'databases.manage',
   'dns.manage': 'dns.manage',
   'mail.manage': 'mail.manage',
+  'apps.manage': 'apps.manage',
+  'apps.console': 'apps.console',
+  'proxy.manage': 'proxy.manage',
+  'monitoring.manage': 'monitoring.manage',
 };
 
 /**
@@ -107,6 +123,10 @@ export const CLIENT_CAP_STAFF_EQUIVALENT: Record<ClientCapability, string> = {
   'databases.manage': 'databases.manage',
   'dns.manage': 'dns.manage',
   'mail.manage': 'mail.manage',
+  'apps.manage': 'apps.manage',
+  'apps.console': 'apps.console',
+  'proxy.manage': 'proxy.manage',
+  'monitoring.manage': 'monitoring.manage',
 };
 
 /** Staff capabilities a set of client capabilities amounts to. */

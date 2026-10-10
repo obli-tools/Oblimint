@@ -107,6 +107,66 @@ export interface HostdMailFirewallState {
   bans: Array<{ cidr: string; expiresAt: string }>;
 }
 
+/**
+ * P4b — segment policy of the account fabrics (docs/P4b-PLAN.md §4.4; module
+ * segmentation implements the Go side, hostd/segments.go). hostd renders ONE
+ * nftables table `bridge oblimint_seg` (replaced atomically with nft -f):
+ * frames bridged between two ports of a listed bridge are dropped (enforce)
+ * or counted + logged (monitor) unless (src, dst, proto, dport) is allowed;
+ * replies are matched statelessly (src/dst swapped, sport = port, TCP without
+ * a bare SYN). Frames to / from the bridge itself (gateway: Internet, host)
+ * are never touched (egress stays the P2 firewall's job).
+ */
+export interface HostdSegmentState {
+  mode: 'enforce' | 'monitor' | 'off';
+  /**
+   * Bridge interface names of the managed fabrics (≤ 15 chars, [a-zA-Z0-9_.-]).
+   * 'platform' (accountId 0): a platform network ('oblimint', 'oblimint-mail'…,
+   * network/platform.ts); isolation 'listed' lets frames between two
+   * NON-restricted containers through (account fabrics: always 'all').
+   */
+  bridges: Array<{ name: string; accountId: number; fabric: 'front' | 'back' | 'platform'; isolation?: 'all' | 'listed' }>;
+  /** Allowed flows; src / dst are IPv4 addresses of containers on that bridge. */
+  allow: Array<{ bridge: string; src: string; dst: string; protocol: 'tcp' | 'udp'; port: number }>;
+  /** IPv4 of the containers a 'listed' platform bridge filters (edge, phpMyAdmin / Adminer). */
+  restricted?: string[];
+  /**
+   * Node ports reachable from the platform bridges (table inet oblimint_seghost:
+   * any other NEW connection from a platform bridge to a local address of the
+   * node is dropped). src: one container only (absent: every container of the bridge).
+   */
+  host?: Array<{ bridge: string; src?: string; protocol: 'tcp' | 'udp'; port: number }>;
+}
+
+export interface HostdSegmentStatus {
+  backend: 'nftables' | 'none';
+  mode: 'enforce' | 'monitor' | 'off';
+  bridges: number;
+  rules: number;
+  /** Frames dropped (enforce) / that would have been dropped (monitor) since the last apply. */
+  dropped: number | null;
+  /** Platform bridges filtered (hostd ≥ 0.6.1; absent on older builds). */
+  platformBridges?: number;
+  /** New connections from platform bridges to the node itself dropped (logged in monitor). */
+  hostDropped?: number | null;
+  lastApplyAt: string | null;
+  lastApplyError: string | null;
+}
+
+/**
+ * P4b — platform web bans on the edge ports (docs/P4b-PLAN.md §9.4; module
+ * honeypot-bans implements the Go side, hostd/webbans.go): table
+ * `inet oblimint_web`, drops only, before Docker (forward on ct original
+ * proto-dst ∈ ports, input for the same ports), sets with timeouts (no
+ * timeout = permanent). Replaces the whole state.
+ */
+export interface HostdWebFirewallState {
+  /** 80 and 443 (+ approved stream ports when wanted). */
+  ports: number[];
+  /** IPv4 address or IPv6 /64; expiresAt null = permanent. */
+  bans: Array<{ cidr: string; expiresAt: string | null }>;
+}
+
 export interface HostdFirewallStatus {
   backend: 'nftables' | 'none';
   accounts: number;
@@ -355,6 +415,14 @@ export interface HostdClient {
   /** PUT /v1/firewall/mail — replaces the mail ports + bans state (idempotent). */
   setMailFirewall(state: HostdMailFirewallState): Promise<void>;
 
+  // ── P4b — segment policy (module segmentation) + web bans (module honeypot-bans), hostd ≥ 0.6.0 ──
+  /** PUT /v1/segments — replaces the whole segment policy (idempotent). */
+  setSegments(state: HostdSegmentState): Promise<void>;
+  /** GET /v1/segments */
+  segmentsStatus(): Promise<HostdSegmentStatus>;
+  /** PUT /v1/firewall/web — replaces the platform web bans (idempotent). */
+  setWebFirewall(state: HostdWebFirewallState): Promise<void>;
+
   // ── P3 — windows, workspaces, staging reflection, typed watcher, quarantine (module overlay-hostd) ──
   /** Idempotent: mounts (or switches the mode of) the window overlay over releases/<releaseNumber>. 409 conflict: another window / release mounted. */
   ensureWindow(spec: HostdWindowSpec): Promise<HostdWindowStatus>;
@@ -584,6 +652,15 @@ export function createHostdClient(opts: HostdClientOptions): HostdClient {
       await call('PUT', '/v1/firewall/mail', state);
     },
 
+    // P4b
+    setSegments: async (state) => {
+      await call('PUT', '/v1/segments', state);
+    },
+    segmentsStatus: () => call<HostdSegmentStatus>('GET', '/v1/segments'),
+    setWebFirewall: async (state) => {
+      await call('PUT', '/v1/firewall/web', state);
+    },
+
     setGateway: async (spec) => {
       await call('PUT', `/v1/gateway/accounts/${id(spec.accountId, 'account id')}`, spec);
     },
@@ -760,6 +837,9 @@ export function hostdFor(nodeId: number): HostdClient {
     setFirewallGlobal: async (global) => (await target()).setFirewallGlobal(global),
     firewallStatus: async () => (await target()).firewallStatus(),
     setMailFirewall: async (state) => (await target()).setMailFirewall(state),
+    setSegments: async (state) => (await target()).setSegments(state),
+    segmentsStatus: async () => (await target()).segmentsStatus(),
+    setWebFirewall: async (state) => (await target()).setWebFirewall(state),
     setGateway: async (spec) => (await target()).setGateway(spec),
     removeGateway: async (accountId) => (await target()).removeGateway(accountId),
     gatewayEvents: async (waitSec) => (await target()).gatewayEvents(waitSec),

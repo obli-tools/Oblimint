@@ -89,6 +89,10 @@ export function createSocketServer(server: HttpServer | HttpsServer): SocketIOSe
     void import('./services/logs/socketHandlers')
       .then((m) => m.registerLogSocketHandlers(socket))
       .catch((err) => logger.error({ err }, 'Log socket handlers failed to register'));
+    // P4b (apps-core): deploy output rooms, container log follow, console (docs/P4b-PLAN.md §6.1).
+    void import('./services/apps/socketHandlers')
+      .then((m) => m.registerAppSocketHandlers(socket))
+      .catch((err) => logger.error({ err }, 'App socket handlers failed to register'));
     logger.debug({ userId, tenantId }, 'Socket connected');
   });
 

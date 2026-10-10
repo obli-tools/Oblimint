@@ -117,6 +117,37 @@ test('originGuard: a same-origin request must still send its body as JSON (no fo
   });
 });
 
+test('originGuard: the app ZIP source is a raw upload (application/zip), still origin-checked', async () => {
+  const app = express();
+  app.use(originGuard);
+  app.post('/api/apps/stacks/:id/source/zip', (req, res) => { req.resume(); req.on('end', () => res.json({ ok: true })); });
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as AddressInfo;
+  const base = `127.0.0.1:${port}`;
+  try {
+    for (const type of ['application/zip', 'application/x-zip-compressed', 'application/octet-stream']) {
+      const ok = await send(base, '/api/apps/stacks/7/source/zip', {
+        headers: { host: 'panel.example.com', origin: 'https://panel.example.com', 'content-type': type, 'content-length': '4' },
+        body: 'PK\x03\x04',
+      });
+      assert.equal(ok.status, 200, type);
+    }
+    const foreign = await send(base, '/api/apps/stacks/7/source/zip', {
+      headers: { host: 'panel.example.com', origin: 'https://a-1.preview.panel.example.com', 'content-type': 'application/zip', 'content-length': '4' },
+      body: 'PK\x03\x04',
+    });
+    assert.equal(foreign.status, 403);
+    const text = await send(base, '/api/apps/stacks/7/source/zip', {
+      headers: { host: 'panel.example.com', origin: 'https://panel.example.com', 'content-type': 'text/plain', 'content-length': '4' },
+      body: 'PK\x03\x04',
+    });
+    assert.equal(text.status, 415);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test('isAllowedOrigin: exact host match only (no suffix / prefix tricks), default ports tolerated', () => {
   assert.equal(isAllowedOrigin('https://panel.example.com', 'panel.example.com'), true);
   assert.equal(isAllowedOrigin('https://panel.example.com', 'panel.example.com:443'), true);

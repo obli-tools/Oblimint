@@ -414,10 +414,11 @@ test('state builder: bans capped below the hostd limit (the latest-expiring kept
   assert.ok(!s.bans.some((b) => b.ip === '10.0.0.0'), 'the earliest-expiring ban is the one dropped');
 });
 
-test('egress filter covers the account networks AND the account DATABASE networks', async () => {
+test('egress filter covers the account networks, the account DATABASE networks and the app private networks (P4b)', async () => {
   const byLabel: Record<string, Array<{ IPAM?: { Config?: Array<{ Subnet?: string }> } }>> = {
     'oblimint.account': [{ IPAM: { Config: [{ Subnet: '172.21.0.0/16' }, { Subnet: 'fd00:21::/64' }] } }, { IPAM: {} }],
     'oblimint.db-network': [{ IPAM: { Config: [{ Subnet: '172.22.0.0/16' }] } }, { IPAM: { Config: [{ Subnet: '172.21.0.0/16' }] } }],
+    'oblimint.app-network': [{ IPAM: { Config: [{ Subnet: '10.240.0.32/27' }] } }],
   };
   const asked: unknown[] = [];
   const docker = {
@@ -426,7 +427,7 @@ test('egress filter covers the account networks AND the account DATABASE network
       return opts.filters.label.length === 1 ? byLabel[opts.filters.label[0]] ?? [] : [];
     },
   } as unknown as Pick<Docker, 'listNetworks'>;
-  assert.deepEqual(await egressSubnets(docker), ['172.21.0.0/16', 'fd00:21::/64', '172.22.0.0/16']);
+  assert.deepEqual(await egressSubnets(docker), ['172.21.0.0/16', 'fd00:21::/64', '172.22.0.0/16', '10.240.0.32/27']);
   // One label per query (several values of one filter key are ANDed by Docker).
-  assert.deepEqual(asked, [['oblimint.account'], ['oblimint.db-network']]);
+  assert.deepEqual(asked, [['oblimint.account'], ['oblimint.db-network'], ['oblimint.app-network']]);
 });

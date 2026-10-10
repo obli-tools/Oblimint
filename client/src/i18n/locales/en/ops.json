@@ -420,7 +420,17 @@
       "supervisionDigest": "Supervision digest",
       "mailOutboundSuspended": "Outbound mail suspended",
       "mailServiceFailed": "Mail service failure",
-      "mailQuotaWarning": "Mailbox almost full"
+      "mailQuotaWarning": "Mailbox almost full",
+      "certificateExpiringSoon": "Certificate expiring soon",
+      "uptimeDown": "Monitor down",
+      "uptimeUp": "Monitor recovered",
+      "appUpdateAvailable": "Application update available",
+      "appUpdated": "Application updated",
+      "appUpdateFailed": "Application update failed",
+      "appDeployFailed": "Application deployment failed",
+      "edgeUnitQuarantined": "Proxy configuration refused",
+      "edgeRollback": "Proxy configuration rolled back",
+      "workflowFailed": "Workflow failed"
     },
     "form": {
       "botToken": "Bot token",

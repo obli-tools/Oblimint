@@ -32,6 +32,17 @@ export function eventLabel(t: TFunction, e: NotificationEvent): string {
     'mail.outboundSuspended': 'Outbound mail suspended',
     'mail.serviceFailed': 'Mail service failure',
     'mail.quotaWarning': 'Mailbox almost full',
+    // P4b
+    'certificate.expiringSoon': 'Certificate expiring soon',
+    'uptime.down': 'Monitor down',
+    'uptime.up': 'Monitor recovered',
+    'app.updateAvailable': 'Application update available',
+    'app.updated': 'Application updated',
+    'app.updateFailed': 'Application update failed',
+    'app.deployFailed': 'Application deployment failed',
+    'edge.unitQuarantined': 'Proxy configuration refused',
+    'edge.rollback': 'Proxy configuration rolled back',
+    'workflow.failed': 'Workflow failed',
   };
   return t(`notifications.event.${eventKey(e)}`) || fallback[e];
 }

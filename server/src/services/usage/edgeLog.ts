@@ -49,8 +49,21 @@ export interface EdgeLogEntry {
   siteId: number | null;
   accountId: number | null;
   tenantId: number | null;
-  /** $oblimint_kind: site | secondary | preview | panel | placeholder | suspended | dbadmin | probe | redirect | default. */
+  /** $oblimint_kind: site | secondary | preview | panel | placeholder | suspended | dbadmin | probe | redirect | default
+   *  | mail | webmail (P4) | proxy | proxy-redirect | dead | stub | stream (P4b, docs/P4b-PLAN.md §8.7). */
   kind: string;
+  // ── P4b (docs/P4b-PLAN.md §8.7) — null / '' with an older edge image ──
+  /** $oblimint_host: proxy_hosts.id (kind proxy), proxy_redirections.id (proxy-redirect), proxy_dead_hosts.id (dead). */
+  proxyHostId?: number | null;
+  /** $oblimint_app: app_stacks.id of the location's target (sleep / wake activity, traffic per stack). */
+  appStackId?: number | null;
+  /** $oblimint_hp: 'path' (bait path hit) | 'acl' (refused by an IP access rule, ACL trap armed) | null. */
+  honeypot?: 'path' | 'acl' | null;
+  /** $upstream_response_time / $upstream_connect_time (s; the last value when several upstreams were tried). */
+  upstreamResponseTime?: number | null;
+  upstreamConnectTime?: number | null;
+  /** $scheme */
+  scheme?: 'http' | 'https' | null;
 }
 
 export type EdgeLogListener = (entry: EdgeLogEntry) => void;
@@ -80,6 +93,18 @@ function count(v: unknown): number {
 function seconds(v: unknown): number {
   const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v.trim()) : NaN;
   return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/**
+ * Last value of an nginx upstream timing list ("0.004, 0.120" or "0.004 : 0.120"
+ * when several upstreams were tried); null for '-' / '' / garbage.
+ */
+function lastSeconds(v: unknown): number | null {
+  const s = typeof v === 'number' ? String(v) : typeof v === 'string' ? v : '';
+  const parts = s.split(/[,:]/).map((p) => p.trim()).filter((p) => p && p !== '-');
+  if (parts.length === 0) return null;
+  const n = Number(parts[parts.length - 1]);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 /** Positive integer id from a number or numeric string ($oblimint_* are strings, '' by default). */
@@ -135,6 +160,12 @@ export function parseEdgeLogLine(line: string): EdgeLogEntry | null {
     accountId: id(r.account),
     tenantId: id(r.tenant),
     kind: kindRaw || (siteId ? 'site' : 'default'),
+    proxyHostId: id(r.ph),
+    appStackId: id(r.app),
+    honeypot: r.hp === 'path' || r.hp === 'acl' ? r.hp : null,
+    upstreamResponseTime: lastSeconds(r.urt),
+    upstreamConnectTime: lastSeconds(r.uct),
+    scheme: r.scheme === 'http' || r.scheme === 'https' ? r.scheme : null,
   };
 }
 

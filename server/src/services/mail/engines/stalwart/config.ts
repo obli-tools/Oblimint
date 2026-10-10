@@ -3,7 +3,8 @@ import path from 'path';
 import type { DesiredDkimKey, DesiredMailDomain, DesiredMailSettings, DesiredTlsCertificate } from '../../driver';
 import { MailDriverError } from '../../driver';
 import { ADMIN_HASH_ENV, ADMIN_USER, MASTER_USER, STALWART_API_PORT, STALWART_PATHS, STALWART_RELAY_PORT } from './constants';
-import { certName, domainName, invalid, ipAddress, mailAddress, positiveInt, selector } from './validate';
+import type { SendLimits } from './limits';
+import { certName, domainName, invalid, ipAddress, positiveInt, selector } from './validate';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PURE renderer of the Stalwart configuration (config.test.ts). The panel
@@ -11,6 +12,20 @@ import { certName, domainName, invalid, ipAddress, mailAddress, positiveInt, sel
 // at /etc/oblimint/stalwart) and RESTARTS the engine to apply it: Stalwart
 // 0.12.4 reads its local configuration file at start only (GET /api/reload
 // rebuilds from the copy loaded at boot — verified on the Linux test host), see driver.ts.
+//
+// Except the DOMAIN-dependent settings (report P4, docs/P4b-PLAN.md §19: a
+// mail domain / DKIM key never restarts the engine): the DKIM signatures
+// (signature.*), the signing rules (auth.dkim.sign, report.dsn.sign), the
+// message size (session.data.limits.size) and the expressions holding the site
+// relay's exact addresses (session.rcpt.relay, auth.spf.verify.*,
+// auth.dmarc.verify) are rendered as flat SETTINGS (output.settings,
+// DYNAMIC_SETTINGS) that the driver stores in Stalwart's settings store
+// (POST /api/settings) and applies with GET /api/reload — live, no restart,
+// verified on the Linux test host 0.12.4 (a message signed with a key added this way,
+// a size lowered this way enforced at once). They are NOT local keys (the
+// exclusions in LOCAL_KEYS). Macros are not resolved in stored values
+// (the Linux test host: "%{file:…}%" read literally), so the DKIM private key is stored
+// inline (the engine already reads it; never logged, redactSecrets masks PEM).
 //
 // Every key the panel renders is a "local" key (config.local-keys =
 // LOCAL_KEYS, the prefixes rendered here): the read-only file stays the only
@@ -64,15 +79,20 @@ import { certName, domainName, invalid, ipAddress, mailAddress, positiveInt, sel
 //   report.{dmarc,tls}.aggregate.send, auth.{spf.verify.ehlo,spf.verify.mail-from,
 //   dkim.verify,dmarc.verify,arc.verify,arc.seal,dkim.sign}, signature.<id>.*,
 //   imap.auth.allow-plain-text, sieve.untrusted.limits.redirects,
-//   queue.limiter.inbound.<id>.{key,rate,match,enable},
+//   queue.limiter.inbound.<id>.{key,rate,match,enable} (match: ends_with(authenticated_as, '@<domain>'),
+//   hypothesis H-LIMIT: the expression function ends_with — limits.ts, checked on the Linux test host),
 //   spam-filter.score.{spam,reject}, spam-filter.grey-list.duration.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface StalwartRenderInput {
   settings: DesiredMailSettings;
   domains: DesiredMailDomain[];
-  /** Authenticated senders and their hourly limit (null = unlimited). */
-  senders: Array<{ address: string; sendPerHour: number | null }>;
+  /**
+   * Hourly limits per mail domain + the fallback for the other authenticated
+   * senders (limits.ts): never the mailbox list, so a mailbox create / delete
+   * or a send toggle leaves the file unchanged (report P4, no restart).
+   */
+  sendLimits: SendLimits;
   dkim: DesiredDkimKey[];
   tls: DesiredTlsCertificate[];
   /** Exact addresses of the site relay on the mail network ([] = relay not deployed: nobody may relay through 10025). */
@@ -84,8 +104,12 @@ export interface StalwartRenderInput {
 export interface StalwartRenderOutput {
   /** config.toml content. */
   toml: string;
-  /** dkim/<file> → PKCS#8 PEM (written 0640 root:<engine gid>, never logged). */
-  dkimFiles: Record<string, string>;
+  /**
+   * Settings kept in Stalwart's store (key → raw value, Stalwart's flattened
+   * form: arrays as <key>.0000…): every key under DYNAMIC_SETTINGS, nothing
+   * else. Holds the DKIM private keys: never logged.
+   */
+  settings: Record<string, string>;
   /** Certificates skipped (path outside mail/certs): staff warnings. */
   warnings: string[];
 }
@@ -105,6 +129,35 @@ export const REPORT_SEND_KEYS = {
 } as const;
 
 /**
+ * Domain-dependent settings applied live through the settings store (see the
+ * header): `root` and every key under `root.`, read back with
+ * GET /api/settings/list?prefix=<list> (keys come back relative to it).
+ * Stalwart refuses an expression made of a lone else ("Found 'else' before
+ * 'if'", the Linux test host): without a branch the root key holds the plain value.
+ */
+export const DYNAMIC_SETTINGS = [
+  { root: 'signature', list: 'signature' },
+  { root: 'auth.dkim.sign', list: 'auth.dkim' },
+  { root: 'session.data.limits.size', list: 'session.data.limits' },
+  // The expressions holding the site relay's EXACT addresses (MA2, MA14): the
+  // relay (re)joins the mail network after the engine's first syncs on a fresh
+  // install and its address may change on any recreation — a restart each time
+  // otherwise (the Linux test host: the first mail domain restarted the engine).
+  { root: 'session.rcpt.relay', list: 'session.rcpt' },
+  { root: 'auth.spf.verify', list: 'auth.spf.verify' },
+  { root: 'auth.dmarc.verify', list: 'auth.dmarc' },
+  // DSN / bounce signing with the panel's signatures of the default domain
+  // (Stalwart's default expects "rsa-<domain>" / "ed25519-<domain>" signers
+  // that never exist here: "DKIM signer not found", unsigned bounces).
+  { root: 'report.dsn.sign', list: 'report.dsn' },
+] as const;
+
+/** A key under one of DYNAMIC_SETTINGS. */
+export function isDynamicSetting(key: string): boolean {
+  return DYNAMIC_SETTINGS.some((d) => key === d.root || key.startsWith(`${d.root}.`));
+}
+
+/**
  * config.local-keys: the prefixes of every key rendered below (and nothing
  * Stalwart writes on its own, see the header). Exclusions first, as in
  * Stalwart's own default list.
@@ -117,9 +170,14 @@ export const LOCAL_KEYS = [
   'authentication.fallback-admin.*', 'authentication.master.*',
   'tracer.*', 'tracing.level.*',
   'certificate.*',
+  // Domain-dependent settings: in Stalwart's store (DYNAMIC_SETTINGS), never local.
+  '!session.data.limits.size', '!session.data.limits.size.*',
+  '!auth.dkim.sign', '!auth.dkim.sign.*',
+  '!session.rcpt.relay', '!session.rcpt.relay.*',
+  '!auth.spf.verify', '!auth.spf.verify.*',
+  '!auth.dmarc.verify', '!auth.dmarc.verify.*',
   'session.*',
   'auth.*',
-  'signature.*',
   'queue.limiter.inbound.oblimint-*',
   'imap.*',
   'sieve.untrusted.*',
@@ -190,6 +248,27 @@ function chunks<T>(items: T[], size = EXPR_CHUNK): T[][] {
 /** "<var> == 'a' || <var> == 'b'" over validated values. */
 const anyOf = (variable: string, values: string[]): string => values.map((v) => `${variable} == ${lit(v)}`).join(' || ');
 
+const DKIM_HEADERS = ['From', 'To', 'Cc', 'Date', 'Subject', 'Message-ID', 'Reply-To', 'In-Reply-To', 'References', 'MIME-Version', 'Content-Type'];
+
+/** Index of a flattened array entry (Stalwart's form: 0000, 0001…). */
+const idx = (i: number): string => String(i).padStart(4, '0');
+
+/**
+ * An expression as flat settings: <key>.<n>.if / .then …, then <key>.<n>.else;
+ * without any branch the plain value in <key> (a lone else is refused).
+ */
+function setExpression(out: Record<string, string>, key: string, branches: Array<{ if: string; then: string }>, otherwise: string): void {
+  if (!branches.length) {
+    out[key] = otherwise;
+    return;
+  }
+  branches.forEach((b, i) => {
+    out[`${key}.${idx(i)}.if`] = b.if;
+    out[`${key}.${idx(i)}.then`] = b.then;
+  });
+  out[`${key}.${idx(branches.length)}.else`] = otherwise;
+}
+
 /** Stable short id for config keys (signature / certificate ids). */
 export function stableId(prefix: string, ...parts: string[]): string {
   return `${prefix}${crypto.createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 16)}`;
@@ -239,9 +318,10 @@ export function renderStalwartConfig(input: StalwartRenderInput): StalwartRender
   kv('hostname', tomlString(hostname));
   kv('max-connections', '8192');
   blank();
+  const defaultDomain = hostname.split('.').slice(1).join('.') || hostname;
   out.push('[lookup.default]');
   kv('hostname', tomlString(hostname));
-  kv('domain', tomlString(hostname.split('.').slice(1).join('.') || hostname));
+  kv('domain', tomlString(defaultDomain));
   blank();
 
   // Listeners: public ports + the internal relay port + the admin API.
@@ -347,10 +427,6 @@ export function renderStalwartConfig(input: StalwartRenderInput): StalwartRender
 
   out.push('[session.rcpt]');
   kv('directory', tomlString("'internal'"));
-  // MA2: relay = authenticated user, or the site relay on 10025 from its exact address(es).
-  const relayBranches: Array<{ if: string; then: string }> = [{ if: '!is_empty(authenticated_as)', then: 'true' }];
-  if (fromRelay) relayBranches.push({ if: `local_port == ${STALWART_RELAY_PORT} && ${fromRelay}`, then: 'true' });
-  kv('relay', ifBlock(relayBranches, 'false'));
   kv('catch-all', 'true');
   kv('sub-addressing', 'true');
   blank();
@@ -367,15 +443,18 @@ export function renderStalwartConfig(input: StalwartRenderInput): StalwartRender
   for (const [mb, names] of [...bySize.entries()].sort((a, b) => a[0] - b[0])) {
     for (const part of chunks(names.sort())) sizeBranches.push({ if: anyOf('rcpt_domain', part), then: String(mb * 1048576) });
   }
-  out.push('[session.data.limits]');
-  kv('size', sizeBranches.length ? ifBlock(sizeBranches, String(platformMax * 1048576)) : String(platformMax * 1048576));
-  blank();
+  const settings: Record<string, string> = {};
+  setExpression(settings, 'session.data.limits.size', sizeBranches, String(platformMax * 1048576));
+
+  // MA2: relay = authenticated user, or the site relay on 10025 from its exact
+  // address(es). Settings store (relay addresses: see DYNAMIC_SETTINGS).
+  const relayBranches: Array<{ if: string; then: string }> = [{ if: '!is_empty(authenticated_as)', then: 'true' }];
+  if (fromRelay) relayBranches.push({ if: `local_port == ${STALWART_RELAY_PORT} && ${fromRelay}`, then: 'true' });
+  setExpression(settings, 'session.rcpt.relay', relayBranches, 'false');
 
   // ── DKIM signing: active keys of each domain, only for mail submitted by a
-  // mailbox or handed over by the site relay (never for inbound mail).
-  const dkimFiles: Record<string, string> = {};
+  // mailbox or handed over by the site relay (never for inbound mail). Settings store (header).
   const signers = new Map<string, string[]>();
-  const sigLines: string[] = [];
   for (const k of [...input.dkim].sort((a, b) => `${a.domain}/${a.selector}`.localeCompare(`${b.domain}/${b.selector}`))) {
     if (!k.signing) continue;
     const domain = domainName(k.domain, 'DKIM domain');
@@ -384,35 +463,36 @@ export function renderStalwartConfig(input: StalwartRenderInput): StalwartRender
     if (!/^-----BEGIN (?:RSA )?PRIVATE KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END (?:RSA )?PRIVATE KEY-----\s*$/.test(pem)) throw invalid('DKIM private key');
     if (k.algorithm !== 'rsa-2048' && k.algorithm !== 'ed25519') throw invalid('DKIM algorithm');
     const id = stableId('k', domain, sel);
-    const file = `${id}.pem`;
-    dkimFiles[file] = pem.endsWith('\n') ? pem : `${pem}\n`;
-    sigLines.push(table('signature', id));
-    sigLines.push(`algorithm = ${tomlString(k.algorithm === 'ed25519' ? 'ed25519-sha256' : 'rsa-sha256')}`);
-    sigLines.push(`domain = ${tomlString(domain)}`);
-    sigLines.push(`selector = ${tomlString(sel)}`);
-    sigLines.push(`private-key = ${fileMacro(`${STALWART_PATHS.dkim}/${file}`)}`);
-    sigLines.push(`headers = ${tomlList(['From', 'To', 'Cc', 'Date', 'Subject', 'Message-ID', 'Reply-To', 'In-Reply-To', 'References', 'MIME-Version', 'Content-Type'])}`);
-    sigLines.push(`canonicalization = ${tomlString('relaxed/relaxed')}`);
-    sigLines.push('set-body-length = false');
-    sigLines.push('report = false');
-    sigLines.push('');
+    const sig = `signature.${id}`;
+    settings[`${sig}.algorithm`] = k.algorithm === 'ed25519' ? 'ed25519-sha256' : 'rsa-sha256';
+    settings[`${sig}.domain`] = domain;
+    settings[`${sig}.selector`] = sel;
+    settings[`${sig}.private-key`] = pem.endsWith('\n') ? pem : `${pem}\n`;
+    DKIM_HEADERS.forEach((h, i) => { settings[`${sig}.headers.${idx(i)}`] = h; });
+    settings[`${sig}.canonicalization`] = 'relaxed/relaxed';
+    settings[`${sig}.set-body-length`] = 'false';
+    settings[`${sig}.report`] = 'false';
     signers.set(domain, [...(signers.get(domain) ?? []), id]);
   }
   const outbound = fromRelay
     ? `(!is_empty(authenticated_as) || (local_port == ${STALWART_RELAY_PORT} && ${fromRelay}))`
     : '!is_empty(authenticated_as)';
   const signBranches = [...signers.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([domain, ids]) => ({ if: `${outbound} && sender_domain == ${lit(domain)}`, then: tomlString(`[${ids.map(lit).join(', ')}]`) }));
+    .map(([domain, ids]) => ({ if: `${outbound} && sender_domain == ${lit(domain)}`, then: `[${ids.map(lit).join(', ')}]` }));
+  setExpression(settings, 'auth.dkim.sign', signBranches, 'false');
+  // DSNs / bounces leave as MAILER-DAEMON@<default domain> (lookup.default.domain):
+  // signed with the panel's active keys of that domain when it has any.
+  const dsnSigners = signers.get(defaultDomain) ?? [];
+  settings['report.dsn.sign'] = dsnSigners.length ? `[${dsnSigners.map(lit).join(', ')}]` : 'false';
 
-  // ── inbound authentication checks (MA14): port 25, and 10025 from anything but the relay ──
+  // ── inbound authentication checks (MA14): port 25, and 10025 from anything
+  // but the relay. SPF / DMARC depend on the relay addresses: settings store.
   const verifyWhen = fromRelay ? `local_port == 25 || (local_port == ${STALWART_RELAY_PORT} && !${fromRelay})` : `local_port == 25 || local_port == ${STALWART_RELAY_PORT}`;
-  out.push('[auth.spf.verify]');
-  kv('ehlo', ifBlock([{ if: verifyWhen, then: tomlString('relaxed') }], tomlString('disable')));
-  kv('mail-from', ifBlock([{ if: verifyWhen, then: tomlString('relaxed') }], tomlString('disable')));
-  blank();
+  setExpression(settings, 'auth.spf.verify.ehlo', [{ if: verifyWhen, then: 'relaxed' }], 'disable');
+  setExpression(settings, 'auth.spf.verify.mail-from', [{ if: verifyWhen, then: 'relaxed' }], 'disable');
+  setExpression(settings, 'auth.dmarc.verify', [{ if: verifyWhen, then: 'relaxed' }], 'disable');
   out.push('[auth.dkim]');
   kv('verify', tomlString('relaxed'));
-  kv('sign', signBranches.length ? ifBlock(signBranches, 'false') : 'false');
   blank();
   out.push('[auth.arc]');
   kv('verify', tomlString('relaxed'));
@@ -420,34 +500,41 @@ export function renderStalwartConfig(input: StalwartRenderInput): StalwartRender
   // signature that never exists here ("ARC sealer not found" on every message).
   kv('seal', 'false');
   blank();
-  out.push('[auth.dmarc]');
-  kv('verify', ifBlock([{ if: verifyWhen, then: tomlString('relaxed') }], tomlString('disable')));
-  blank();
 
   // ── outgoing reports: none (privacy, see the header) ──
   out.push('[report]');
   for (const [key, value] of Object.entries(REPORT_SEND_KEYS)) kv(key.slice('report.'.length), value);
   blank();
 
-  // ── per-mailbox hourly limits (MA9), grouped by rate ──
+  // ── hourly limits (MA9): per account rate, matched on the mail domains
+  // (the login is the address), grouped by rate; then the fallback (strictest
+  // rate) for any authenticated sender of a domain without a rule.
+  const endsWithAny = (domains: string[]): string => domains.map((d) => `ends_with(authenticated_as, ${lit(`@${d}`)})`).join(' || ');
+  const limiter = (id: string, rate: number, match: string) => {
+    out.push(table('queue', 'limiter', 'inbound', id));
+    kv('key', tomlList(['authenticated_as']));
+    kv('rate', tomlString(`${Math.max(rate, 1)}/1h`));
+    kv('match', tomlString(match));
+    kv('enable', 'true');
+    blank();
+  };
   const byRate = new Map<number, string[]>();
-  for (const sdr of input.senders) {
-    if (sdr.sendPerHour === null) continue;
-    const rate = positiveInt(sdr.sendPerHour, 'hourly sending limit', 1_000_000);
-    byRate.set(rate, [...(byRate.get(rate) ?? []), mailAddress(sdr.address, 'sender address')]);
+  const limitedDomains: string[] = [];
+  for (const [d, r] of Object.entries(input.sendLimits.byDomain)) {
+    const domain = domainName(d, 'sender domain');
+    limitedDomains.push(domain);
+    if (r === null) continue;
+    const rate = positiveInt(r, 'hourly sending limit', 1_000_000);
+    byRate.set(rate, [...(byRate.get(rate) ?? []), domain]);
   }
-  for (const [rate, addrs] of [...byRate.entries()].sort((a, b) => a[0] - b[0])) {
-    chunks(addrs.sort()).forEach((part, i) => {
-      out.push(table('queue', 'limiter', 'inbound', `oblimint-rate-${rate}-${i}`));
-      kv('key', tomlList(['authenticated_as']));
-      kv('rate', tomlString(`${Math.max(rate, 1)}/1h`));
-      kv('match', tomlString(anyOf('authenticated_as', part)));
-      kv('enable', 'true');
-      blank();
-    });
+  for (const [rate, domains] of [...byRate.entries()].sort((a, b) => a[0] - b[0])) {
+    chunks([...new Set(domains)].sort()).forEach((part, i) => limiter(`oblimint-rate-${rate}-${i}`, rate, endsWithAny(part)));
   }
-
-  out.push(...sigLines);
+  if (input.sendLimits.fallback !== null) {
+    const rate = positiveInt(input.sendLimits.fallback, 'fallback hourly sending limit', 1_000_000);
+    const known = chunks([...new Set(limitedDomains)].sort()).map((part) => ` && !(${endsWithAny(part)})`).join('');
+    limiter('oblimint-rate-default', rate, `!is_empty(authenticated_as)${known}`);
+  }
 
   // ── IMAP / sieve ──
   out.push('[imap.auth]');
@@ -469,5 +556,9 @@ export function renderStalwartConfig(input: StalwartRenderInput): StalwartRender
     blank();
   }
 
-  return { toml: `${out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`, dkimFiles, warnings };
+  for (const [k, v] of Object.entries(settings)) {
+    if (!isDynamicSetting(k)) throw new MailDriverError('invalidState', `stalwart: setting ${k} outside the dynamic settings`);
+    if (v.includes('%{')) throw new MailDriverError('invalidState', 'stalwart: a configuration value contains a macro sequence "%{"');
+  }
+  return { toml: `${out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`, settings, warnings };
 }

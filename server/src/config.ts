@@ -240,6 +240,32 @@ export const config = {
     mailBind: (process.env.OBLIMINT_MAIL_BIND || '').split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
     /** 'off': the mail workers (engine sync, log follower, DNS checks) do not run (dev box). */
     mailWorkers: process.env.OBLIMINT_MAIL_WORKERS !== 'off',
+    // ── P4b (docs/P4b-PLAN.md §16) ──
+    /** 'off': the P4b workers (apps reconcile / updates / git poll, edge units apply, bans, traffic, uptime, workflows, segments) do not run. */
+    p4bWorkers: process.env.OBLIMINT_P4B_WORKERS !== 'off',
+    /** Pool of the account fabrics (front / back bridges created from P4b on) and their prefix length. */
+    fabricPool: process.env.OBLIMINT_FABRIC_POOL || '10.224.0.0/12',
+    fabricPrefix: Number(process.env.OBLIMINT_FABRIC_PREFIX || 24),
+    /** Pool of the private networks of the app stacks and their prefix length. */
+    appNetworkPool: process.env.OBLIMINT_APP_NETWORK_POOL || '10.240.0.0/12',
+    appNetworkPrefix: Number(process.env.OBLIMINT_APP_NETWORK_PREFIX || 27),
+    /**
+     * Writable layer of every app container (MiB, 0 = unbounded): Docker StorageOpt size, which needs the
+     * overlay2 driver on XFS mounted with pquota. Without it a container could fill /var/lib/docker for
+     * every tenant: the deployment is REFUSED unless OBLIMINT_ALLOW_UNBOUNDED_APP_ROOTFS=true (dev box).
+     */
+    appRootfsMaxMb: intEnv('OBLIMINT_APP_ROOTFS_MAX_MB', 10240),
+    allowUnboundedAppRootfs: ['1', 'true', 'yes', 'on'].includes((process.env.OBLIMINT_ALLOW_UNBOUNDED_APP_ROOTFS || '').trim().toLowerCase()),
+    /** Largest image an app may pull or build (MiB, 0 = no cap): a bigger one fails the deployment (built ones are removed). */
+    appImageMaxMb: intEnv('OBLIMINT_APP_IMAGE_MAX_MB', 10240),
+    /**
+     * cgroup parent of the classic builder's RUN containers (empty = Docker's default): a slice / cgroup
+     * prepared on the host with a pids (and memory) ceiling, e.g. oblimint-build.slice with TasksMax
+     * (systemd driver) — the build API has no pids limit of its own.
+     */
+    appBuildCgroupParent: (process.env.OBLIMINT_APP_BUILD_CGROUP_PARENT || '').trim(),
+    /** oauth2-proxy image of the forward-auth sidecars (official, pinned). */
+    oauth2ProxyImage: process.env.OBLIMINT_OAUTH2_PROXY_IMAGE || 'quay.io/oauth2-proxy/oauth2-proxy:v7.7.1',
   },
   /** Static client build served in production. */
   // server/src (tsx) → ../../client/dist ; server/dist/src (compiled) → ../../../client/dist

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  DEFAULT_HOSTING_SETTINGS, type HostingSettings, type HostingSettingsSection, type HostingSettingsUpdate,
+  APP_CAP_ADD_ALLOWED, DEFAULT_HOSTING_SETTINGS, type HostingSettings, type HostingSettingsSection, type HostingSettingsUpdate,
 } from '@oblimint/shared';
 import type { Knex } from 'knex';
 import { db } from '../db';
@@ -108,7 +108,64 @@ const sectionSchemas = {
     authBanDurationMinutes: z.number().int().min(1).max(43200),
     logRetentionDays: z.number().int().min(1).max(366),
   }).strict(),
+  // P4b (docs/P4b-PLAN.md §Réglages)
+  apps: z.object({
+    enabled: z.boolean(),
+    allowedRegistries: z.array(z.string().trim().toLowerCase().min(1).max(253).regex(/^[a-z0-9.-]+(:[0-9]{1,5})?$/, 'a registry host')).max(64),
+    deniedImages: z.array(z.string().trim().min(1).max(255)).max(256),
+    allowBuild: z.boolean(),
+    consoleEnabled: z.boolean(),
+    capAddAllowed: z.array(z.enum(APP_CAP_ADD_ALLOWED as unknown as [string, ...string[]])).max(APP_CAP_ADD_ALLOWED.length),
+    defaultServiceMemoryMb: z.number().int().min(16).max(65536),
+    defaultServiceCpus: z.number().min(0.05).max(64),
+    maxServicesPerStack: z.number().int().min(1).max(100),
+    gitPollMinSec: z.number().int().min(30).max(86400),
+    updateCheckMinMinutes: z.number().int().min(15).max(10080),
+    zipMaxMb: z.number().int().min(1).max(1024),
+    zipMaxExpandedMb: z.number().int().min(1).max(8192),
+    deploymentRetention: z.number().int().min(10).max(1000),
+    deploymentRetentionDays: z.number().int().min(1).max(3650),
+  }).strict(),
+  edge: z.object({
+    streamPorts: z.array(z.object({ port: z.number().int().min(1).max(65535), protocol: z.enum(['tcp', 'udp']) }).strict()).max(64),
+    allowAdvancedConfig: z.boolean(),
+    defaultBodySizeMb: z.number().int().min(1).max(10240),
+    maxBodySizeMb: z.number().int().min(1).max(10240),
+    probeUpstreams: z.boolean(),
+    canary: z.boolean(),
+    canarySampleSize: z.number().int().min(0).max(100),
+    defaultErrorPageId: z.number().int().positive().nullable(),
+    defaultWakingPageId: z.number().int().positive().nullable(),
+  }).strict(), // + defaultBodySizeMb ≤ maxBodySizeMb, stream ports ∉ {80, 443, 22, 25, 53, 8443, mail ports} (update())
+  bans: z.object({
+    enabled: z.boolean(),
+    escalation: z.array(z.number().int().min(1).max(525600).nullable()).min(1).max(10),
+    escalationWindowDays: z.number().int().min(1).max(365),
+    neverBan: z.array(ipOrCidr).max(256),
+    nftables: z.boolean(),
+    obliguardEnabled: z.boolean(),
+    obliguardUrl: z.string().trim().url().max(512).nullable(),
+    geoipProvider: z.enum(['off', 'ip-api', 'mmdb']),
+    geoipMmdbPath: z.string().trim().min(1).max(1024).nullable(),
+    retentionDays: z.number().int().min(1).max(3650),
+  }).strict(),
+  monitoring: z.object({
+    trafficMinuteDays: z.number().int().min(1).max(31),
+    trafficHourDays: z.number().int().min(1).max(730),
+    uptimeRetentionDays: z.number().int().min(1).max(365),
+    uptimeMinIntervalSec: z.number().int().min(10).max(3600),
+    allowPrivateTargets: z.boolean(),
+    statusPagesEnabled: z.boolean(),
+    workflowsEnabled: z.boolean(),
+    certExpiryWarningDays: z.number().int().min(1).max(60),
+  }).strict(),
+  network: z.object({
+    mode: z.enum(['enforce', 'monitor', 'off']),
+  }).strict(),
 } as const;
+
+/** Host ports a stream may never take (edge, panel, SSH, DNS, mail). */
+export const RESERVED_STREAM_PORTS: ReadonlySet<number> = new Set([22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 4190, 8081, 8443]);
 
 const SECTIONS = Object.keys(sectionSchemas) as HostingSettingsSection[];
 
@@ -195,6 +252,14 @@ export const platformSettings = {
       if (parsed.success && s === 'mail') {
         const v = parsed.data as unknown as { spamTagScore: number; spamRejectScore: number };
         if (v.spamTagScore >= v.spamRejectScore) throw new AppError(400, 'Validation failed — mail: spamTagScore must be < spamRejectScore', 'validation');
+      }
+      if (parsed.success && s === 'edge') {
+        const v = parsed.data as { defaultBodySizeMb: number; maxBodySizeMb: number; streamPorts: Array<{ port: number; protocol: string }> };
+        if (v.defaultBodySizeMb > v.maxBodySizeMb) throw new AppError(400, 'Validation failed — edge: defaultBodySizeMb must be ≤ maxBodySizeMb', 'validation');
+        const bad = v.streamPorts.find((p) => RESERVED_STREAM_PORTS.has(p.port));
+        if (bad) throw new AppError(400, `Validation failed — edge: port ${bad.port} is reserved`, 'validation');
+        const keys = v.streamPorts.map((p) => `${p.port}/${p.protocol}`);
+        if (new Set(keys).size !== keys.length) throw new AppError(400, 'Validation failed — edge: duplicate stream port', 'validation');
       }
       if (!parsed.success) {
         throw new AppError(400, `Validation failed — ${s}: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ')}`, 'validation');

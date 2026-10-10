@@ -1,9 +1,11 @@
+import type Docker from 'dockerode';
 import { db } from '../../db';
 import { logger } from '../../utils/logger';
 import { engineFor, localNodeId } from '../docker/engine';
+import { P4B_LABELS } from '../hosting/naming';
 import { platformSettings } from '../platformSettings';
 import { commitEdgeLogCheckpoint, edgeLogPosition, subscribeEdgeLog } from './edgeLog';
-import { collectSamples, insertSamples, purgeResources, rollupHours } from './resources';
+import { collectSamples, insertSamples, purgeResources, rollupHours, type SampleRow } from './resources';
 import { TrafficAggregator, flushTraffic } from './traffic';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13,7 +15,9 @@ import { TrafficAggregator, flushTraffic } from './traffic';
 //     flushed every 60 s (additive upsert); the follower checkpoint is
 //     committed only after a successful flush (exact resume after a restart);
 //   - resources: one-shot docker stats of the tenant containers every 60 s,
-//     hourly roll-up, retention purge (hourly);
+//     hourly roll-up, retention purge (hourly); P4b: a sample of an app
+//     container (label oblimint.app) carries its stack (app_stack_id,
+//     docs/P4b-PLAN.md §10.4 — module monitoring-automation);
 //   - disk: hosting/usage.service.ts measures every 10 min and writes the
 //     daily point (usage_disk_daily) — nothing to do here.
 // start() returns at once and never throws; every pass survives an absent
@@ -62,6 +66,28 @@ export function flushNow(): Promise<void> {
   return flushing;
 }
 
+/** Container name → app_stacks.id of the running app containers (label oblimint.app). Empty when Docker fails. */
+async function appContainerStacks(docker: Docker): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  try {
+    const list = await docker.listContainers({ all: false, filters: { label: [P4B_LABELS.app] } } as never) as unknown as
+      Array<{ Id: string; Names?: string[]; Labels?: Record<string, string> }>;
+    for (const c of list) {
+      const id = Number(c.Labels?.[P4B_LABELS.app]);
+      if (!Number.isInteger(id) || id <= 0) continue;
+      out.set((c.Names?.[0] ?? c.Id).replace(/^\//, '').slice(0, 128), id);
+    }
+  } catch (err) {
+    logger.debug({ err: (err as Error)?.message }, 'App containers not listed: samples without app_stack_id');
+  }
+  return out;
+}
+
+/** Sets app_stack_id on the samples of app containers (pure; same container naming as collectSamples). */
+export function attributeAppStacks(rows: SampleRow[], stacks: ReadonlyMap<string, number>): Array<SampleRow & { app_stack_id: number | null }> {
+  return rows.map((r) => ({ ...r, app_stack_id: stacks.get(r.container) ?? null }));
+}
+
 async function samplePass(now: Date = new Date()): Promise<void> {
   if (sampling) return;
   sampling = true;
@@ -70,7 +96,8 @@ async function samplePass(now: Date = new Date()): Promise<void> {
     try {
       const docker = await engineFor(await localNodeId());
       const rows = await collectSamples(docker, at);
-      await insertSamples(rows);
+      const stacks = rows.length > 0 ? await appContainerStacks(docker) : new Map<string, number>();
+      await insertSamples(attributeAppStacks(rows, stacks));
       dockerWarned = false;
     } catch (err) {
       if (!dockerWarned) logger.warn({ err: (err as Error)?.message ?? err }, 'Resource sampling failed (Docker unavailable?)');

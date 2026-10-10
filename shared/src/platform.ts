@@ -166,6 +166,106 @@ export interface MailSettings {
   logRetentionDays: number;
 }
 
+/**
+ * P4b — Docker applications (docs/P4b-PLAN.md §Réglages). Per-tenant overrides:
+ * tenant_app_policies (TenantAppPolicy, apps.ts); per-account: plan limits.
+ */
+export interface AppsSettings {
+  /** Master switch of the apps feature (stacks, catalog). */
+  enabled: boolean;
+  /** Registries an image may come from (host names; docker.io covers Docker Hub). */
+  allowedRegistries: string[];
+  /** Image patterns refused for everyone (glob on the normalized reference). */
+  deniedImages: string[];
+  /** Builds from source allowed at all (then plan appsBuild + tenant policy). */
+  allowBuild: boolean;
+  /** Interactive console (exec) allowed at all (then plan appsConsole + capability apps.console). */
+  consoleEnabled: boolean;
+  /** Capabilities a compose may add (subset of APP_CAP_ADD_ALLOWED). */
+  capAddAllowed: string[];
+  /** Limits given to a service that declares none (capped by what is left of the plan). */
+  defaultServiceMemoryMb: number;
+  defaultServiceCpus: number;
+  maxServicesPerStack: number;
+  /** Minimum git poll interval (s). */
+  gitPollMinSec: number;
+  /** Minimum digest check interval of a stack (minutes). */
+  updateCheckMinMinutes: number;
+  /** Uploaded ZIP source limit (MiB, compressed) and expanded limit (MiB). */
+  zipMaxMb: number;
+  zipMaxExpandedMb: number;
+  /** Deployments kept per stack (count) and at most this many days. */
+  deploymentRetention: number;
+  deploymentRetentionDays: number;
+}
+
+/** Capabilities a compose may ever add (the settings narrow it, never widen it). */
+export const APP_CAP_ADD_ALLOWED = ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'FSETID', 'KILL', 'SETGID', 'SETUID', 'SETPCAP', 'NET_BIND_SERVICE', 'SYS_CHROOT', 'AUDIT_WRITE'] as const;
+
+/** P4b — shared edge (proxy objects, robustness), docs/P4b-PLAN.md §8. */
+export interface EdgeSettings {
+  /** Platform-approved TCP / UDP ports of the streams, PUBLISHED by oblimint-edge (changing the list recreates the edge). */
+  streamPorts: Array<{ port: number; protocol: 'tcp' | 'udp' }>;
+  /** Raw advancedConfig of proxy hosts (platform staff only, linted, validated in isolation). */
+  allowAdvancedConfig: boolean;
+  /** client_max_body_size of a proxy host without one (MiB) and the ceiling of any (MiB). */
+  defaultBodySizeMb: number;
+  maxBodySizeMb: number;
+  /** Probe the upstreams (TCP connect from the edge) before activating a changed unit. */
+  probeUpstreams: boolean;
+  /** Health of the default server + a sample of hosts after each reload; failure ⇒ global rollback. */
+  canary: boolean;
+  canarySampleSize: number;
+  /** Platform default custom page (custom_pages.id, null = built-in pages). */
+  defaultErrorPageId: number | null;
+  defaultWakingPageId: number | null;
+}
+
+/** P4b — honeypot + web bans (docs/P4b-PLAN.md §9). */
+export interface BansSettings {
+  enabled: boolean;
+  /**
+   * Escalation ladder (minutes) by offence level within escalationWindowDays:
+   * 1st offence → [0], 2nd → [1]…; null = permanent; past the end → last value.
+   */
+  escalation: Array<number | null>;
+  escalationWindowDays: number;
+  /** Never banned (CIDRs), on top of the always-excluded private / loopback / link-local / CGNAT / ULA ranges. */
+  neverBan: string[];
+  /** Platform bans also dropped by nftables on 80/443 (hostd). */
+  nftables: boolean;
+  /** Obliguard synchronisation (Obligate delegation token, POST/DELETE /api/external-bans). url null = discovered through Obligate. */
+  obliguardEnabled: boolean;
+  obliguardUrl: string | null;
+  /** GeoIP of the bans / traffic: off, ip-api.com free tier (cached 30 days), or a local MaxMind GeoLite2-City file. */
+  geoipProvider: 'off' | 'ip-api' | 'mmdb';
+  geoipMmdbPath: string | null;
+  /** Inactive bans deleted after (days). */
+  retentionDays: number;
+}
+
+/** P4b — monitoring + automation (docs/P4b-PLAN.md §10, §11). */
+export interface MonitoringSettings {
+  /** Per-minute traffic aggregates kept (days), then hourly (days). */
+  trafficMinuteDays: number;
+  trafficHourDays: number;
+  uptimeRetentionDays: number;
+  /** Lowest check interval a client may set (s). */
+  uptimeMinIntervalSec: number;
+  /** Uptime / SFTP targets may be private addresses (platform staff objects only). */
+  allowPrivateTargets: boolean;
+  statusPagesEnabled: boolean;
+  workflowsEnabled: boolean;
+  /** Certificate expiry notification threshold (days). */
+  certExpiryWarningDays: number;
+}
+
+/** P4b — network segmentation (docs/P4b-PLAN.md §4). */
+export interface NetworkSettings {
+  /** enforce: default deny inside the account fabrics; monitor: count + log only; off: no filtering (P1–P4 behaviour). */
+  mode: 'enforce' | 'monitor' | 'off';
+}
+
 export interface HostingSettings {
   dns: DnsSettings;
   preview: PreviewSettings;
@@ -178,6 +278,12 @@ export interface HostingSettings {
   maintenance: MaintenanceSettings;
   /** P4 */
   mail: MailSettings;
+  /** P4b */
+  apps: AppsSettings;
+  edge: EdgeSettings;
+  bans: BansSettings;
+  monitoring: MonitoringSettings;
+  network: NetworkSettings;
 }
 
 export type HostingSettingsSection = keyof HostingSettings;
@@ -257,4 +363,55 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     authBanDurationMinutes: 60,
     logRetentionDays: 30,
   },
+  apps: {
+    enabled: true,
+    allowedRegistries: ['docker.io', 'ghcr.io', 'quay.io', 'lscr.io', 'registry.gitlab.com', 'mcr.microsoft.com', 'gcr.io', 'public.ecr.aws', 'codeberg.org'],
+    deniedImages: [],
+    allowBuild: false,
+    consoleEnabled: false,
+    capAddAllowed: ['CHOWN', 'DAC_OVERRIDE', 'FOWNER', 'FSETID', 'KILL', 'SETGID', 'SETUID', 'NET_BIND_SERVICE'],
+    defaultServiceMemoryMb: 256,
+    defaultServiceCpus: 0.5,
+    maxServicesPerStack: 20,
+    gitPollMinSec: 60,
+    updateCheckMinMinutes: 60,
+    zipMaxMb: 50,
+    zipMaxExpandedMb: 200,
+    deploymentRetention: 100,
+    deploymentRetentionDays: 90,
+  },
+  edge: {
+    streamPorts: [],
+    allowAdvancedConfig: true,
+    defaultBodySizeMb: 100,
+    maxBodySizeMb: 2048,
+    probeUpstreams: true,
+    canary: true,
+    canarySampleSize: 10,
+    defaultErrorPageId: null,
+    defaultWakingPageId: null,
+  },
+  bans: {
+    enabled: true,
+    escalation: [60, 1440, 10080, 43200, null],
+    escalationWindowDays: 30,
+    neverBan: [],
+    nftables: true,
+    obliguardEnabled: false,
+    obliguardUrl: null,
+    geoipProvider: 'ip-api',
+    geoipMmdbPath: null,
+    retentionDays: 90,
+  },
+  monitoring: {
+    trafficMinuteDays: 7,
+    trafficHourDays: 90,
+    uptimeRetentionDays: 30,
+    uptimeMinIntervalSec: 30,
+    allowPrivateTargets: false,
+    statusPagesEnabled: true,
+    workflowsEnabled: true,
+    certExpiryWarningDays: 14,
+  },
+  network: { mode: 'enforce' },
 };

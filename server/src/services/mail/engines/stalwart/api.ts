@@ -126,6 +126,7 @@ export class StalwartApiError extends Error {
 /** Masks anything shaped like a password hash in a server message (MA4). */
 export function redactSecrets(text: string): string {
   return text
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[private key redacted]')
     .replace(/\{[A-Z0-9-]{2,20}\}[^\s"',;\]}]+/g, '{…}[redacted]')
     .replace(/\$(?:1|2[abxy]|5|6|argon2(?:id|i|d)?|pbkdf2[^$]*|scrypt|7)\$[^\s"',;\]}]+/g, '$…[redacted]');
 }
@@ -353,6 +354,28 @@ export class StalwartApi {
       throw new StalwartApiError(`Stalwart API GET /api/reload: configuration rejected (${errors.length} error(s)): ${errors.slice(0, 5).join('; ')}`, 400, 'configError');
     }
     return { warnings: entries(d && typeof d === 'object' ? d.warnings : undefined) };
+  }
+
+  // ── settings store (domain-dependent settings, config.ts DYNAMIC_SETTINGS) ──
+  /**
+   * Stored settings under `prefix` (local keys included), as FULL keys. 0.12.4
+   * (the Linux test host): keys come back relative to "<prefix>.", the whole list without
+   * a limit (301 items checked).
+   */
+  async listSettings(prefix: string): Promise<Record<string, string>> {
+    const d = await this.data<{ items?: unknown } | null>('GET', `/api/settings/list?prefix=${encodeURIComponent(prefix)}`);
+    const items = d && typeof d === 'object' && d.items && typeof d.items === 'object' ? d.items as Record<string, unknown> : {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(items)) out[`${prefix}.${k}`] = typeof v === 'string' ? v : JSON.stringify(v);
+    return out;
+  }
+
+  /** Replaces every stored key under each `clearPrefixes` entry by `values` (one request; applied by the next reload()). */
+  async replaceSettings(clearPrefixes: string[], values: Record<string, string>): Promise<void> {
+    await this.data('POST', '/api/settings', [
+      ...clearPrefixes.map((prefix) => ({ type: 'clear', prefix })),
+      { type: 'insert', prefix: null, values: Object.entries(values).sort((a, b) => a[0].localeCompare(b[0])), assert_empty: false },
+    ]);
   }
 
   // ── queue (H9) ──

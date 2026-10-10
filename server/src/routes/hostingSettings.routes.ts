@@ -62,6 +62,12 @@ async function settingsChanged(sections: string[]): Promise<void> {
       const { notifyMailSettingsChanged } = await import('../services/mail/contracts');
       await notifyMailSettingsChanged();
     }
+    // P4b (docs/P4b-PLAN.md §Réglages): each settingsChanged() never throws.
+    if (sections.includes('apps')) (await import('../services/apps/apps.service')).appsService.settingsChanged();
+    if (sections.includes('edge')) (await import('../services/edge/edgeUnits.service')).edgeUnitsService.settingsChanged();
+    if (sections.includes('bans')) (await import('../services/security/bans.service')).webBanService.settingsChanged();
+    if (sections.includes('monitoring')) (await import('../services/monitoring/uptime.service')).uptimeService.settingsChanged();
+    if (sections.includes('network')) (await import('../services/network/segments.service')).segmentService.settingsChanged();
   } catch (err) {
     logger.warn({ err }, 'hosting settings change hooks failed');
   }

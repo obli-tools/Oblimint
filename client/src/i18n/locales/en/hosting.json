@@ -17,7 +17,15 @@
       "dns_manage": "Manage DNS zones",
       "dns_manage_hint": "Edit the DNS records of the account zones.",
       "mail_manage": "Manage mail",
-      "mail_manage_hint": "Create mail domains, mailboxes, aliases and forwards, manage DKIM and the site relay, open the webmail."
+      "mail_manage_hint": "Create mail domains, mailboxes, aliases and forwards, manage DKIM and the site relay, open the webmail.",
+      "apps_manage": "Manage applications",
+      "apps_manage_hint": "Deploy Docker applications (compose, git, catalog), update them, declare network links.",
+      "apps_console": "Application console",
+      "apps_console_hint": "Open an interactive console in the application containers (when the plan allows it).",
+      "proxy_manage": "Manage proxy hosts",
+      "proxy_manage_hint": "Create proxy hosts, redirections, dead hosts, access lists, error pages and manage the bans of the account.",
+      "monitoring_manage": "Manage monitoring",
+      "monitoring_manage_hint": "Create uptime monitors, status pages, workflows, SFTP targets and maintenance windows."
     },
     "changePlan": "Change plan",
     "changePlanFailed": "Failed to change the plan",
@@ -391,6 +399,7 @@
       "certificateRateLimited": "A certificate request was made recently: wait a few minutes before retrying.",
       "confirmMismatch": "The confirmation text does not match.",
       "domainReserved": "This name belongs to the panel and cannot be used.",
+      "domainServedByProxy": "This domain is already served by {{servedBy}}: a site route cannot be added to it. Unbind it there first.",
       "domainTaken": "This domain is already declared on the platform.",
       "emailTaken": "This e-mail address is already used by another user.",
       "envelopeExceeded": "The workspace resource envelope would be exceeded.",
@@ -420,6 +429,7 @@
     "generate": "Generate",
     "hide": "Hide",
     "perMonth": "/month",
+    "servedByAny": "a proxy host, a redirection or a dead host",
     "show": "Show",
     "siteStatus": {
       "active": "Active",

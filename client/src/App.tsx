@@ -39,6 +39,22 @@ import { WindowReviewPage } from '@/pages/maintenance/WindowReviewPage';   // ui
 import { MailPage } from '@/pages/mail/MailPage';                  // ui-mail
 import { MailDomainPage } from '@/pages/mail/MailDomainPage';      // ui-mail
 import { MailboxPage } from '@/pages/mail/MailboxPage';            // ui-mail
+// P4b — apps + proxy (docs/P4b-PLAN.md §13)
+import { AppsPage } from '@/pages/apps/AppsPage';                          // ui-apps
+import { AppCreatePage } from '@/pages/apps/AppCreatePage';                // ui-apps
+import { AppDetailPage } from '@/pages/apps/AppDetailPage';                // ui-apps
+import { AppEditorPage } from '@/pages/apps/AppEditorPage';                // ui-apps
+import { NetworkLinksPage } from '@/pages/network/NetworkLinksPage';       // ui-apps
+import { UptimePage } from '@/pages/uptime/UptimePage';                    // ui-apps
+import { UptimeMonitorPage } from '@/pages/uptime/UptimeMonitorPage';      // ui-apps
+import { AutomationPage } from '@/pages/automation/AutomationPage';        // ui-apps
+import { WorkflowPage } from '@/pages/automation/WorkflowPage';            // ui-apps
+import { StatusPublicPage } from '@/pages/public/StatusPublicPage';        // ui-apps (public)
+import { ProxyPage } from '@/pages/proxy/ProxyPage';                       // ui-proxy
+import { ProxyHostEditorPage } from '@/pages/proxy/ProxyHostEditorPage';   // ui-proxy
+import { BansPage } from '@/pages/security/BansPage';                      // ui-proxy
+import { TrafficPage } from '@/pages/traffic/TrafficPage';                 // ui-proxy
+import { EdgeUnitsPage } from '@/pages/edge/EdgeUnitsPage';                // ui-proxy
 import { TwoFactorGate } from '@/components/common/TwoFactorGate';
 import { ConfirmProvider } from '@/components/common/ConfirmDialog';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
@@ -56,6 +72,8 @@ function NormalRoutes() {
     <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
+      {/* P4b: public status pages (no session) */}
+      <Route path="/status/:slug" element={<StatusPublicPage />} />
       {/* The wizard is gone once the server runs in normal mode. */}
       <Route path="/setup" element={<Navigate to="/login" replace />} />
 
@@ -81,6 +99,22 @@ function NormalRoutes() {
           <Route path="/mail" element={<MailPage />} />
           <Route path="/mail/domains/:id" element={<MailDomainPage />} />
           <Route path="/mail/mailboxes/:id" element={<MailboxPage />} />
+          {/* P4b: apps, network links, proxy, bans, traffic, uptime, automation — client space too (server scopes) */}
+          <Route path="/apps" element={<AppsPage />} />
+          <Route path="/apps/new" element={<AppCreatePage />} />
+          <Route path="/apps/:id" element={<AppDetailPage />} />
+          <Route path="/apps/:id/edit" element={<AppEditorPage />} />
+          <Route path="/network" element={<NetworkLinksPage />} />
+          <Route path="/proxy" element={<ProxyPage />} />
+          <Route path="/proxy/hosts/new" element={<ProxyHostEditorPage />} />
+          <Route path="/proxy/hosts/:id" element={<ProxyHostEditorPage />} />
+          <Route path="/security/bans" element={<BansPage />} />
+          <Route path="/traffic" element={<TrafficPage />} />
+          <Route path="/traffic/:hostId" element={<TrafficPage />} />
+          <Route path="/uptime" element={<UptimePage />} />
+          <Route path="/uptime/monitors/:id" element={<UptimeMonitorPage />} />
+          <Route path="/automation" element={<AutomationPage />} />
+          <Route path="/automation/workflows/:id" element={<WorkflowPage />} />
           <Route path="/files" element={<ComingSoonPage icon={<FolderOpen />} titleKey="nav.files" titleFallback="Files" descriptionKey="comingSoon.files" descriptionFallback="Browse and edit the files of an account, and open an SFTP/FTPS server on demand for it." />} />
 
           {/* Plans: platform admin or the plans.manage capability of the tenant */}
@@ -96,6 +130,8 @@ function NormalRoutes() {
             <Route path="/manage/users" element={<AdminUsersPage />} />
             <Route path="/manage/nodes" element={<NodesPage />} />
             <Route path="/manage/audit-log" element={<AuditLogPage />} />
+            {/* P4b: edge configuration units (platform admin) */}
+            <Route path="/manage/edge" element={<EdgeUnitsPage />} />
           </Route>
 
           {/* Settings: platform admin (every section), or tenant staff with the 'settings'

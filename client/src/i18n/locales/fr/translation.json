@@ -184,7 +184,16 @@
     "users": "Utilisateurs",
     "workspaces": "Workspaces",
     "usage": "Consommation",
-    "maintenance": "Maintenance"
+    "maintenance": "Maintenance",
+    "apps": "Applications",
+    "proxy": "Proxy",
+    "network": "Liaisons réseau",
+    "uptime": "Disponibilité",
+    "automation": "Automatisation",
+    "bans": "Bannissements",
+    "traffic": "Trafic",
+    "edge": "Edge",
+    "apps_section": "Applications & proxy"
   },
   "nodes": {
     "col": {

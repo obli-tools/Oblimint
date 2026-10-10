@@ -65,6 +65,8 @@ func newMux(ops Ops, l Layout, fw *firewallManager, gw *gateway, p3 P3Ops) *http
 	mux.HandleFunc("GET /v1/gateway/events", a.gatewayEvents)
 	// P3 — windows, staging, workspaces, watch, quarantine, events (api_p3.go).
 	registerP3(mux, a)
+	// P4b — segment policy, web bans (api_p4b.go).
+	registerP4b(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, &apiError{http.StatusNotFound, codeNotFound, "no route " + r.Method + " " + r.URL.Path})
 	})

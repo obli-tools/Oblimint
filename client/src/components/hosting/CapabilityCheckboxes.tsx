@@ -14,6 +14,10 @@ export function capabilityLabel(t: TFunction, c: ClientCapability): string {
     'databases.manage': 'Manage databases',
     'dns.manage': 'Manage DNS zones',
     'mail.manage': 'Manage mail',
+    'apps.manage': 'Manage applications',
+    'apps.console': 'Application console',
+    'proxy.manage': 'Manage proxy hosts',
+    'monitoring.manage': 'Manage monitoring',
   };
   return t(`accounts.capabilities.${c.replace('.', '_')}`) || fallback[c];
 }
@@ -28,6 +32,10 @@ function capabilityHint(t: TFunction, c: ClientCapability): string {
     'databases.manage': 'Create database instances, databases and users, open phpMyAdmin / Adminer.',
     'dns.manage': 'Edit the DNS records of the account zones.',
     'mail.manage': 'Create mail domains, mailboxes, aliases and forwards, manage DKIM and the site relay, open the webmail.',
+    'apps.manage': 'Deploy Docker applications (compose, git, catalog), update them, declare network links.',
+    'apps.console': 'Open an interactive console in the application containers (when the plan allows it).',
+    'proxy.manage': 'Create proxy hosts, redirections, dead hosts, access lists, error pages and manage the bans of the account.',
+    'monitoring.manage': 'Create uptime monitors, status pages, workflows, SFTP targets and maintenance windows.',
   };
   return t(`accounts.capabilities.${c.replace('.', '_')}_hint`) || fallback[c];
 }

@@ -49,6 +49,11 @@ export class FakeStalwart {
   reloadErrors: Record<string, string> | null = null;
   /** Successful-or-not /api/reload calls that reached the handler. */
   reloads = 0;
+  /**
+   * Settings store (0.12.4 shapes, the Linux test host): list answers the keys relative to "<prefix>." (local keys
+   * included — one is seeded); POST /api/settings applies clear / insert / delete in order.
+   */
+  settings = new Map<string, string>([['auth.dkim.verify', 'relaxed']]);
   /** Engine restarts (the driver applies config.toml by restarting: Stalwart 0.12 reads it at start only). */
   restarts = 0;
   /** Fails the next restart with this message (null = succeeds). */
@@ -167,6 +172,20 @@ export class FakeStalwart {
         }
         return json(200, { data: null });
       }
+    }
+    if (p === '/api/settings/list' && method === 'GET') {
+      const prefix = `${url.searchParams.get('prefix') ?? ''}.`;
+      const items = Object.fromEntries([...this.settings].filter(([k]) => k.startsWith(prefix)).map(([k, v]) => [k.slice(prefix.length), v]));
+      return json(200, { data: { total: Object.keys(items).length, items } });
+    }
+    if (p === '/api/settings' && method === 'POST') {
+      for (const op of body as Array<{ type: string; prefix?: string | null; values?: Array<[string, string]>; keys?: string[] }>) {
+        if (op.type === 'clear') { for (const k of [...this.settings.keys()]) if (k.startsWith(op.prefix ?? '')) this.settings.delete(k); }
+        else if (op.type === 'insert') { for (const [k, v] of op.values ?? []) this.settings.set(op.prefix ? `${op.prefix}.${k}` : k, v); }
+        else if (op.type === 'delete') { for (const k of op.keys ?? []) this.settings.delete(k); }
+        else return json(400, { error: 'invalidType' });
+      }
+      return json(200, { data: null });
     }
     if (p === '/api/reload' && method === 'GET') {
       this.reloads++;

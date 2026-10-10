@@ -274,6 +274,12 @@ export const accountsService = {
       requestAccount(row.id, suspended ? 'suspended' : 'unsuspended');
       dnsAccountChanged(row.id, suspended ? 'suspended' : 'unsuspended');
       scheduleEdgeSync(suspended ? `account ${row.id} suspended` : `account ${row.id} unsuspended`);
+      // P4b: open app consoles of a suspended account close now (their 30 s re-check would close them anyway).
+      if (suspended) {
+        void import('../apps/socketHandlers')
+          .then((m) => { m.closeAccountConsoles(row.id); })
+          .catch((err) => logger.warn({ err, accountId: row.id }, 'Could not close the app consoles of a suspended account'));
+      }
       await applyFileServerMode(row.id);
     }
     return fetchAccount(row.id);

@@ -94,8 +94,13 @@ function hasBody(req: Request): boolean {
  */
 export const RAW_UPLOAD_PATHS: readonly RegExp[] = [
   /^\/api\/databases\/instances\/\d+\/databases\/\d+\/restore$/,
+  // P4b (docs/P4b-PLAN.md §5.3): ZIP source of an app stack (streamed by yauzl).
+  /^\/api\/apps\/stacks\/\d+\/source\/zip$/,
 ];
-const RAW_UPLOAD_TYPES = ['application/octet-stream', 'application/sql', 'application/gzip', 'application/x-gzip'];
+const RAW_UPLOAD_TYPES = [
+  'application/octet-stream', 'application/sql', 'application/gzip', 'application/x-gzip',
+  'application/zip', 'application/x-zip-compressed',
+];
 
 /**
  * P4 (docs/P4-PLAN.md §6.4): Outlook autodiscover POSTs an XML body from a

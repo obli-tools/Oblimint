@@ -1,4 +1,5 @@
 import { normalizePathPrefix } from '@oblimint/shared';
+import { banCheckLines } from '../security/honeypotRender';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PURE nginx config generation for oblimint-edge (ported from Oblihub
@@ -25,6 +26,11 @@ import { normalizePathPrefix } from '@oblimint/shared';
 //     re-runs the server-level rewrites and would reset the site of the
 //     location that failed; the internal error-page location sets nothing
 //     and keeps the values of the location that redirected to it.
+//     P4b (docs/P4b-PLAN.md §8.7): + $oblimint_host / $oblimint_app /
+//     $oblimint_hp, always "" on these vhosts (proxy objects set them);
+//   - P4b ban check (honeypot-bans banCheckLines) right after server_name in
+//     every server block; the variables come from the global unit g-bans;
+//   - every vhost becomes an edge UNIT (edge-robustness, pipeline.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** P4: + mail (autoconfig / autodiscover / MTA-STS policy → panel), webmail (→ webmail container) — edge/contributors.ts. */
@@ -41,13 +47,15 @@ export type EdgeLocationKind = 'site' | 'secondary' | 'preview' | 'panel' | 'dba
 export type EdgeVhostKind = 'site' | 'placeholder' | 'preview' | 'panel' | 'dbadmin' | 'probe' | 'mail' | 'webmail';
 
 /** $oblimint_kind of the access log (plan §6.8). */
-export type EdgeLogKind = EdgeLocationKind | 'placeholder' | 'suspended' | 'redirect' | 'default';
+export type EdgeLogKind = EdgeLocationKind | 'placeholder' | 'suspended' | 'redirect' | 'default' | 'stub';
 
 /** 'suspended': the suspension page of a suspended account (never billed as traffic). */
-export const EDGE_LOG_KINDS: readonly EdgeLogKind[] = ['site', 'secondary', 'preview', 'panel', 'placeholder', 'suspended', 'dbadmin', 'probe', 'redirect', 'default', 'mail', 'webmail'];
+/** 'stub': the 503 page of a refused / disabled edge unit (edge-robustness, docs/P4b-PLAN.md §8.3). */
+export const EDGE_LOG_KINDS: readonly EdgeLogKind[] = ['site', 'secondary', 'preview', 'panel', 'placeholder', 'suspended', 'dbadmin', 'probe', 'redirect', 'default', 'mail', 'webmail', 'stub'];
 
 /** Variables of the access log set by every generated location. */
-export const EDGE_LOG_VARIABLES = ['$oblimint_kind', '$oblimint_site', '$oblimint_account', '$oblimint_tenant'] as const;
+/** P4b (docs/P4b-PLAN.md §8.7): + $oblimint_host (proxy object id), $oblimint_app (target stack), $oblimint_hp (honeypot hit). */
+export const EDGE_LOG_VARIABLES = ['$oblimint_kind', '$oblimint_site', '$oblimint_account', '$oblimint_tenant', '$oblimint_host', '$oblimint_app', '$oblimint_hp'] as const;
 
 export interface EdgeLocation {
   /**
@@ -155,6 +163,11 @@ export function isValidServerNameEntry(name: string): boolean {
   return name.startsWith('*.') ? isValidServerName(name.slice(2)) : isValidServerName(name);
 }
 
+/** Certificate file as seen inside the edge: /etc/nginx/oblimint/certs/<dir>/{fullchain,privkey}.pem, no '..'. */
+export function isValidCertPath(p: string): boolean {
+  return typeof p === 'string' && CERT_FILE_RE.test(p) && !p.includes('..');
+}
+
 /** True when `upstream` is `http(s)://<container-name>:<port>` (no path, no user info). */
 export function isValidUpstream(upstream: string): boolean {
   const m = typeof upstream === 'string' ? UPSTREAM_RE.exec(upstream) : null;
@@ -240,7 +253,7 @@ function serverLogKind(v: EdgeVhost): EdgeLogKind {
   return v.kind;
 }
 
-/** The four `set` lines of the access log variables (inside a location, rewrite phase). */
+/** The `set` lines of the access log variables (inside a location, rewrite phase). */
 export function logVariableLines(v: Pick<EdgeVhost, 'accountId' | 'tenantId'>, kind: EdgeLogKind, siteId: number | null): string[] {
   const val = (n: number | null) => (n === null ? '""' : `"${Number(n)}"`);
   return [
@@ -248,6 +261,10 @@ export function logVariableLines(v: Pick<EdgeVhost, 'accountId' | 'tenantId'>, k
     `${I2}set $oblimint_site ${val(siteId)};`,
     `${I2}set $oblimint_account ${val(v.accountId)};`,
     `${I2}set $oblimint_tenant ${val(v.tenantId)};`,
+    // P4b: proxy object / app stack / honeypot hit — never set by these vhosts.
+    `${I2}set $oblimint_host "";`,
+    `${I2}set $oblimint_app "";`,
+    `${I2}set $oblimint_hp "";`,
   ];
 }
 
@@ -391,6 +408,8 @@ function serverBody(v: EdgeVhost): string {
 function commonServerLines(v: EdgeVhost, names: string): string[] {
   return [
     `${I1}server_name ${names};`,
+    // P4b: web bans (platform + this account) — right after server_name (honeypot-bans).
+    ...banCheckLines(v.accountId, I1),
     `${I1}client_max_body_size ${v.clientMaxBodyMb}m;`,
   ];
 }

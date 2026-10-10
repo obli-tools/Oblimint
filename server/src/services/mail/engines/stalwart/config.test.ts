@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import crypto from 'crypto';
 import type { DesiredMailSettings } from '../../driver';
 import { MailDriverError } from '../../driver';
-import { certContainerPath, LOCAL_KEYS, renderStalwartConfig, REPORT_SEND_KEYS, tomlString, type StalwartRenderInput } from './config';
+import { certContainerPath, DYNAMIC_SETTINGS, isDynamicSetting, LOCAL_KEYS, renderStalwartConfig, REPORT_SEND_KEYS, tomlString, type StalwartRenderInput } from './config';
 import { renderSieveScript, sieveString } from './sieve';
 import { parseTomlLite, tomlGet, type TomlValue } from './testing';
 
@@ -18,7 +18,7 @@ const base: StalwartRenderInput = {
     { id: 1, accountId: 7, name: 'exemple.fr', active: true, catchAll: null, maxMessageSizeMb: 25 },
     { id: 2, accountId: 7, name: 'autre.fr', active: true, catchAll: null, maxMessageSizeMb: 50 },
   ],
-  senders: [{ address: 'contact@exemple.fr', sendPerHour: 200 }, { address: 'b@autre.fr', sendPerHour: 200 }, { address: 'c@autre.fr', sendPerHour: null }],
+  sendLimits: { byDomain: { 'autre.fr': 200, 'exemple.fr': 200, 'libre.fr': null, 'petit.fr': 20 }, fallback: 20 },
   dkim: [
     { domain: 'exemple.fr', selector: 'om202610', algorithm: 'rsa-2048', privateKeyPem: rsaPem, signing: true },
     { domain: 'exemple.fr', selector: 'om202611', algorithm: 'rsa-2048', privateKeyPem: rsaPem, signing: false },
@@ -35,6 +35,18 @@ const base: StalwartRenderInput = {
 function branches(v: TomlValue | undefined): Array<{ if?: string; then?: TomlValue; else?: TomlValue }> {
   assert.ok(Array.isArray(v), 'expression is an if/else array');
   return v as Array<{ if?: string; then?: TomlValue; else?: TomlValue }>;
+}
+
+/** The branches of an expression stored as flat settings (<key>.<nnnn>.if / .then / .else), or [{ else: plain }]. */
+function settingBranches(st: Record<string, string>, key: string): Array<{ if?: string; then?: string; else?: string }> {
+  if (key in st) return [{ else: st[key] }];
+  const out: Array<{ if?: string; then?: string; else?: string }> = [];
+  for (let i = 0; ; i++) {
+    const p = `${key}.${String(i).padStart(4, '0')}`;
+    if (`${p}.else` in st) return [...out, { else: st[`${p}.else`] }];
+    assert.ok(`${p}.if` in st, `${key}: branch ${i} or else missing`);
+    out.push({ if: st[`${p}.if`], then: st[`${p}.then`] });
+  }
 }
 
 test('stalwart config: valid TOML, deterministic, listeners and admin API', () => {
@@ -75,16 +87,28 @@ test('stalwart config: MA1 — AUTH only on 587/465 over TLS, never on 25 nor on
 });
 
 test('stalwart config: MA2 — relay only when authenticated or from the EXACT relay addresses on 10025', () => {
-  const doc = parseTomlLite(renderStalwartConfig(base).toml);
-  const relay = branches(tomlGet(doc, 'session', 'rcpt', 'relay'));
-  assert.deepEqual(relay[0], { if: '!is_empty(authenticated_as)', then: true });
-  assert.deepEqual(relay[1], { if: "local_port == 10025 && (remote_ip == '172.30.0.5' || remote_ip == 'fd00::5')", then: true });
-  assert.deepEqual(relay[2], { else: false });
+  const out = renderStalwartConfig(base);
+  // In the engine's settings store (live, never in config.toml): the relay's address may change without a restart.
+  assert.equal(tomlGet(parseTomlLite(out.toml), 'session', 'rcpt', 'relay'), undefined);
+  const relay = settingBranches(out.settings, 'session.rcpt.relay');
+  assert.deepEqual(relay, [
+    { if: '!is_empty(authenticated_as)', then: 'true' },
+    { if: "local_port == 10025 && (remote_ip == '172.30.0.5' || remote_ip == 'fd00::5')", then: 'true' },
+    { else: 'false' },
+  ]);
   assert.ok(!/\/\d+/.test(JSON.stringify(relay)), 'never a subnet');
 
   // Relay not deployed: nobody relays through 10025.
-  const none = parseTomlLite(renderStalwartConfig({ ...base, relayAddresses: [] }).toml);
-  assert.deepEqual(branches(tomlGet(none, 'session', 'rcpt', 'relay')), [{ if: '!is_empty(authenticated_as)', then: true }, { else: false }]);
+  const none = renderStalwartConfig({ ...base, relayAddresses: [] });
+  assert.deepEqual(settingBranches(none.settings, 'session.rcpt.relay'), [{ if: '!is_empty(authenticated_as)', then: 'true' }, { else: 'false' }]);
+  // The relay (re)joining the mail network or changing address never changes config.toml (no restart, the Linux test host:
+  // the relay is created after the engine's first syncs on a fresh install).
+  assert.equal(none.toml, out.toml);
+  assert.equal(renderStalwartConfig({ ...base, relayAddresses: ['172.30.0.9'] }).toml, out.toml);
+  // Those keys are never local (the read-only file would win over the store).
+  for (const k of ['session.rcpt.relay', 'auth.spf.verify', 'auth.dmarc.verify']) {
+    assert.ok(LOCAL_KEYS.includes(`!${k}` as never) && LOCAL_KEYS.includes(`!${k}.*` as never), `${k} excluded from the local keys`);
+  }
   // A subnet / garbage is refused, not rendered.
   assert.throws(() => renderStalwartConfig({ ...base, relayAddresses: ['172.30.0.0/16'] }), (e: unknown) => e instanceof MailDriverError && e.code === 'invalidState');
   assert.throws(() => renderStalwartConfig({ ...base, relayAddresses: ["1.2.3.4' || true || '"] }), MailDriverError);
@@ -93,34 +117,64 @@ test('stalwart config: MA2 — relay only when authenticated or from the EXACT r
 test('stalwart config: MA14 inbound checks, DKIM signing of outbound only, limits, sizes', () => {
   const out = renderStalwartConfig(base);
   const doc = parseTomlLite(out.toml);
-  const spf = branches(tomlGet(doc, 'auth', 'spf', 'verify', 'mail-from'));
-  assert.equal(spf[0].if, "local_port == 25 || (local_port == 10025 && !(remote_ip == '172.30.0.5' || remote_ip == 'fd00::5'))");
-  assert.equal(spf[0].then, 'relaxed');
-  assert.equal(branches(tomlGet(doc, 'auth', 'dmarc', 'verify'))[0].then, 'relaxed');
+  const inbound = "local_port == 25 || (local_port == 10025 && !(remote_ip == '172.30.0.5' || remote_ip == 'fd00::5'))";
+  for (const key of ['auth.spf.verify.ehlo', 'auth.spf.verify.mail-from', 'auth.dmarc.verify']) {
+    assert.deepEqual(settingBranches(out.settings, key), [{ if: inbound, then: 'relaxed' }, { else: 'disable' }], key);
+  }
+  assert.equal(tomlGet(doc, 'auth', 'spf'), undefined);
+  assert.equal(tomlGet(doc, 'auth', 'dmarc'), undefined);
+  assert.equal(tomlGet(doc, 'auth', 'dkim', 'verify'), 'relaxed');
 
-  // Only the signing key; its PEM in a separate file referenced by a file macro.
-  const sigs = tomlGet(doc, 'signature') as Record<string, Record<string, TomlValue>>;
-  assert.equal(Object.keys(sigs).length, 1);
-  const [id, sig] = Object.entries(sigs)[0];
-  assert.equal(sig.domain, 'exemple.fr');
-  assert.equal(sig.selector, 'om202610');
-  assert.equal(sig['private-key'], `%{file:/etc/oblimint/stalwart/dkim/${id}.pem}%`);
-  assert.deepEqual(Object.keys(out.dkimFiles), [`${id}.pem`]);
+  // Only the signing key, as settings of the engine's store (report P4: a DKIM key / domain is live, never a
+  // restart), never in config.toml; the PEM inline (macros are not resolved in stored values, the Linux test host).
+  assert.equal(tomlGet(doc, 'signature'), undefined);
+  assert.equal(tomlGet(doc, 'auth', 'dkim', 'sign'), undefined);
+  assert.equal(tomlGet(doc, 'session', 'data'), undefined);
   assert.ok(!out.toml.includes('PRIVATE KEY'), 'no key material in config.toml');
-  const sign = branches(tomlGet(doc, 'auth', 'dkim', 'sign'));
-  assert.match(sign[0].if!, /^\(!is_empty\(authenticated_as\) \|\| \(local_port == 10025 && \(remote_ip == '172\.30\.0\.5'/);
-  assert.match(sign[0].if!, /sender_domain == 'exemple\.fr'$/);
-  assert.equal(sign[0].then, `['${id}']`);
+  const st = out.settings;
+  const ids = [...new Set(Object.keys(st).filter((k) => k.startsWith('signature.')).map((k) => k.split('.')[1]))];
+  assert.equal(ids.length, 1);
+  const id = ids[0];
+  assert.equal(st[`signature.${id}.domain`], 'exemple.fr');
+  assert.equal(st[`signature.${id}.selector`], 'om202610');
+  assert.equal(st[`signature.${id}.algorithm`], 'rsa-sha256');
+  assert.equal(st[`signature.${id}.private-key`], rsaPem.endsWith('\n') ? rsaPem : `${rsaPem}\n`);
+  assert.equal(st[`signature.${id}.headers.0000`], 'From');
+  assert.equal(st[`signature.${id}.headers.0010`], 'Content-Type');
+  assert.equal(st[`signature.${id}.report`], 'false');
+  assert.match(st['auth.dkim.sign.0000.if'], /^\(!is_empty\(authenticated_as\) \|\| \(local_port == 10025 && \(remote_ip == '172\.30\.0\.5'/);
+  assert.match(st['auth.dkim.sign.0000.if'], /sender_domain == 'exemple\.fr'$/);
+  assert.equal(st['auth.dkim.sign.0000.then'], `['${id}']`);
+  assert.equal(st['auth.dkim.sign.0001.else'], 'false');
+  // Message size per recipient domain (25 MB for exemple.fr), platform ceiling otherwise.
+  assert.equal(st['session.data.limits.size.0000.if'], "rcpt_domain == 'exemple.fr'");
+  assert.equal(st['session.data.limits.size.0000.then'], String(25 * 1048576));
+  assert.equal(st['session.data.limits.size.0001.else'], String(50 * 1048576));
+  // Without any branch: the plain value (Stalwart refuses an expression made of a lone else).
+  const bare = renderStalwartConfig({ ...base, dkim: [], domains: [] }).settings;
+  assert.equal(bare['auth.dkim.sign'], 'false');
+  assert.equal(bare['session.data.limits.size'], String(50 * 1048576));
+  assert.equal(bare['report.dsn.sign'], 'false');
+  assert.deepEqual(Object.keys(bare).filter((k) => !/^(session\.rcpt\.relay|auth\.spf\.verify|auth\.dmarc\.verify)\./.test(k)).sort(),
+    ['auth.dkim.sign', 'report.dsn.sign', 'session.data.limits.size']);
+  // A domain / DKIM key never changes config.toml (no restart).
+  assert.equal(renderStalwartConfig({ ...base, dkim: [], domains: [] }).toml, out.toml);
 
-  // Hourly limits grouped by rate; unlimited senders absent.
+  // Hourly limits per account rate on the mail domains (never the mailbox list), unlimited domains
+  // without a rule but excluded from the fallback (strictest rate) of the other authenticated senders.
   const lim = tomlGet(doc, 'queue', 'limiter', 'inbound') as Record<string, Record<string, TomlValue>>;
-  assert.deepEqual(Object.keys(lim), ['oblimint-rate-200-0']);
+  assert.deepEqual(Object.keys(lim), ['oblimint-rate-20-0', 'oblimint-rate-200-0', 'oblimint-rate-default']);
   assert.equal(lim['oblimint-rate-200-0'].rate, '200/1h');
-  assert.equal(lim['oblimint-rate-200-0'].match, "authenticated_as == 'b@autre.fr' || authenticated_as == 'contact@exemple.fr'");
-
-  // Size: exemple.fr below the platform ceiling, the rest = ceiling.
-  const size = branches(tomlGet(doc, 'session', 'data', 'limits', 'size'));
-  assert.deepEqual(size, [{ if: "rcpt_domain == 'exemple.fr'", then: 25 * 1048576 }, { else: 50 * 1048576 }]);
+  assert.deepEqual(lim['oblimint-rate-200-0'].key, ['authenticated_as']);
+  assert.equal(lim['oblimint-rate-200-0'].match, "ends_with(authenticated_as, '@autre.fr') || ends_with(authenticated_as, '@exemple.fr')");
+  assert.equal(lim['oblimint-rate-20-0'].match, "ends_with(authenticated_as, '@petit.fr')");
+  assert.equal(lim['oblimint-rate-default'].rate, '20/1h');
+  assert.equal(lim['oblimint-rate-default'].match,
+    "!is_empty(authenticated_as) && !(ends_with(authenticated_as, '@autre.fr') || ends_with(authenticated_as, '@exemple.fr') || ends_with(authenticated_as, '@libre.fr') || ends_with(authenticated_as, '@petit.fr'))");
+  assert.ok(!/[a-z0-9]@[a-z]/.test(JSON.stringify(lim)), 'no mailbox address in the limits');
+  // No limit at all: no limiter.
+  const none = parseTomlLite(renderStalwartConfig({ ...base, sendLimits: { byDomain: { 'a.fr': null }, fallback: null } }).toml);
+  assert.equal(tomlGet(none, 'queue', 'limiter'), undefined);
 
   // Certificates: SNI subjects, default one, container paths.
   const certs = tomlGet(doc, 'certificate') as Record<string, Record<string, TomlValue>>;
@@ -146,9 +200,11 @@ test('stalwart config: hostile values are refused or escaped, never injected', (
   bad({ settings: { ...settings, hostname: 'mail.host.net"\n[server.listener.x]' } });
   bad({ settings: { ...settings, hostname: '%{env:X}%' } });
   bad({ domains: [{ id: 1, accountId: 1, name: "x.fr' || true || 'a", active: true, catchAll: null, maxMessageSizeMb: 10 }] });
-  bad({ senders: [{ address: "a'@x.fr", sendPerHour: 10 }] });
-  bad({ senders: [{ address: 'a@x.fr\nb', sendPerHour: 10 }] });
-  bad({ senders: [{ address: '${jndi}@x.fr', sendPerHour: 10 }] });
+  bad({ sendLimits: { byDomain: { "x.fr') || true || ('": 10 }, fallback: 10 } });
+  bad({ sendLimits: { byDomain: { 'x.fr\nb': 10 }, fallback: 10 } });
+  bad({ sendLimits: { byDomain: { '${jndi}.fr': 10 }, fallback: 10 } });
+  bad({ sendLimits: { byDomain: { 'x.fr': -3 }, fallback: 10 } });
+  bad({ sendLimits: { byDomain: {}, fallback: -1 } });
   bad({ dkim: [{ ...base.dkim[0], selector: 'om"x' }] });
   bad({ dkim: [{ ...base.dkim[0], domain: 'exemple.fr\n[x]' }] });
   bad({ dkim: [{ ...base.dkim[0], privateKeyPem: `${rsaPem}"\n[server]` }] });
@@ -204,6 +260,15 @@ test('stalwart config: every rendered key is local, nothing Stalwart stores on i
   const keys = leafKeys(parseTomlLite(out.toml), '', []);
   assert.ok(keys.length > 50);
   for (const k of keys) assert.ok(isLocal(k, LOCAL_KEYS), `${k} is rendered but not in config.local-keys`);
+  // The domain settings go to Stalwart's store: never local (a local key would be written into the read-only file).
+  const dyn = Object.keys(out.settings);
+  assert.ok(dyn.length > 15);
+  for (const k of dyn) {
+    assert.ok(isDynamicSetting(k), `${k} is a dynamic setting`);
+    assert.ok(!isLocal(k, LOCAL_KEYS), `${k} must not be local`);
+  }
+  for (const d of DYNAMIC_SETTINGS) assert.ok(!isLocal(d.root, LOCAL_KEYS), `${d.root} must not be local`);
+  assert.ok(isLocal('auth.dkim.verify', LOCAL_KEYS) && isLocal('session.data.limits.messages', LOCAL_KEYS), 'only the dynamic keys are excluded');
   // Written by Stalwart 0.12.4 at boot / at run time (the Linux test host): must go to its
   // store, a local key would be written into the read-only file and fail.
   for (const k of ['oauth.key', 'report.analysis.addresses', 'report.domain', 'report.dmarc.from-name', 'report.dmarc.aggregate.org-name', 'version.spam-filter', 'spam-filter.rule.x.enable', 'spam-filter.list.x',
@@ -238,5 +303,22 @@ test('stalwart config: no report is ever sent to a third party (DMARC / DKIM / S
   // … but never the whole report.* prefix: Stalwart writes its other report keys itself.
   assert.ok(!(LOCAL_KEYS as readonly string[]).some((p) => p.startsWith('report') && p.endsWith('*')));
   // The DKIM signatures never request failure reports either.
-  for (const sig of Object.values(tomlGet(doc, 'signature') as Record<string, Record<string, TomlValue>>)) assert.equal(sig.report, false);
+  const settingsOut = renderStalwartConfig(base).settings;
+  const reports = Object.entries(settingsOut).filter(([k]) => /^signature\.[^.]+\.report$/.test(k));
+  assert.ok(reports.length > 0);
+  for (const [, v] of reports) assert.equal(v, 'false');
+});
+
+test('stalwart config: DSNs / bounces are signed with the panel signatures of the default domain, never Stalwart\'s rsa-<domain>', () => {
+  // Default domain host.net (mail.host.net) has no key: unsigned, no "DKIM signer not found".
+  assert.equal(renderStalwartConfig(base).settings['report.dsn.sign'], 'false');
+  const ed = { domain: 'exemple.fr', selector: 'om202612', algorithm: 'ed25519' as const, privateKeyPem: rsaPem, signing: true };
+  const out = renderStalwartConfig({ ...base, settings: { ...settings, hostname: 'mail.exemple.fr' }, dkim: [...base.dkim, ed] });
+  const ids = Object.keys(out.settings).filter((k) => /^signature\.[^.]+\.domain$/.test(k)).map((k) => k.split('.')[1]).sort();
+  assert.equal(ids.length, 2, 'active keys only (om202611 is not signing)');
+  const dsn = out.settings['report.dsn.sign'];
+  assert.match(dsn, /^\['k[0-9a-f]{16}', 'k[0-9a-f]{16}'\]$/);
+  assert.deepEqual(dsn.match(/k[0-9a-f]{16}/g)!.sort(), ids);
+  assert.ok(!/rsa-|ed25519-/.test(dsn));
+  assert.ok(isDynamicSetting('report.dsn.sign') && !(LOCAL_KEYS as readonly string[]).some((k) => k === 'report.*' || k.startsWith('report.dsn')), 'live, in the settings store');
 });

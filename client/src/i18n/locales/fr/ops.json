@@ -420,7 +420,17 @@
       "supervisionDigest": "Résumé de supervision",
       "mailOutboundSuspended": "Envoi de mails suspendu",
       "mailServiceFailed": "Service mail en échec",
-      "mailQuotaWarning": "Boîte mail presque pleine"
+      "mailQuotaWarning": "Boîte mail presque pleine",
+      "certificateExpiringSoon": "Certificat bientôt expiré",
+      "uptimeDown": "Service injoignable",
+      "uptimeUp": "Service rétabli",
+      "appUpdateAvailable": "Mise à jour d’application disponible",
+      "appUpdated": "Application mise à jour",
+      "appUpdateFailed": "Échec de mise à jour d’application",
+      "appDeployFailed": "Échec de déploiement d’application",
+      "edgeUnitQuarantined": "Configuration de proxy refusée",
+      "edgeRollback": "Configuration du proxy restaurée",
+      "workflowFailed": "Workflow en échec"
     },
     "form": {
       "botToken": "Jeton du bot",

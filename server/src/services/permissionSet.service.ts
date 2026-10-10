@@ -22,6 +22,11 @@ const AVAILABLE_CAPABILITIES: CapabilityDef[] = [
   { key: 'mail.manage',      label: 'Mail' },
   { key: 'databases.manage', label: 'Databases' },
   { key: 'files.manage',     label: 'Files' },
+  // P4b (docs/P4b-PLAN.md §12)
+  { key: 'apps.manage',      label: 'Applications (Docker)' },
+  { key: 'apps.console',     label: 'Application console' },
+  { key: 'proxy.manage',     label: 'Proxy hosts & bans' },
+  { key: 'monitoring.manage', label: 'Monitoring & automation' },
   { key: 'plans.manage',     label: 'Plans' },
   { key: 'users.manage',     label: 'User management' },   // (P0) /api/users
   { key: 'settings',         label: 'Settings' },

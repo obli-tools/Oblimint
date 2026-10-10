@@ -65,6 +65,8 @@ test('stalwart API client: envelopes, paging, errors without secrets', async () 
   assert.ok(await api.ready());
 
   assert.equal(redactSecrets('bad secret $6$rounds=5000$salt$hash and {SSHA512}abc== and $2y$10$xyz'), 'bad secret $…[redacted] and {…}[redacted] and $…[redacted]');
+  assert.equal(redactSecrets('key -----BEGIN PRIVATE KEY----- MIIEv abc -----END PRIVATE KEY----- rejected'), 'key [private key redacted] rejected');
+  assert.equal(redactSecrets('cut -----BEGIN RSA PRIVATE KEY----- MIIEv'), 'cut [private key redacted]');
 });
 
 test('stalwart API: u64 ids kept exact (queue ids above 2^53)', async () => {

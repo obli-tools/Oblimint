@@ -1,0 +1,97 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-edge-probe — probes run by the panel from INSIDE the edge
+# (docker exec, argv only, never a shell string; docs/P4b-PLAN.md §8.4, §8.6).
+#
+#   oblimint-edge-probe tcp <host> <port>
+#       TCP connect (3 s): exit 0 = reachable, 1 = refused / unreachable /
+#       timeout, 2 = invalid arguments. UDP is never probed.
+#   oblimint-edge-probe http <host>
+#       GET http://127.0.0.1/ with "Host: <host>" (5 s): prints the HTTP
+#       status, "slow" when the edge accepted the connection but no
+#       response came in time (slow upstream), 000 when nothing answered at
+#       all. Exit 0 (2 = invalid).
+#   oblimint-edge-probe ping
+#       GET /__oblimint/ping of the default server: prints the status.
+#
+# Arguments are validated here again (the panel validates them first):
+# host = [a-z0-9.:-], never starting with '-', <= 253 chars; port 1-65535.
+# ─────────────────────────────────────────────────────────────────────────────
+set -u
+
+valid_host() {
+	case "$1" in
+	'' | -* | *[!a-z0-9.:-]*) return 1 ;;
+	esac
+	[ "${#1}" -le 253 ]
+}
+
+valid_port() {
+	case "$1" in
+	'' | *[!0-9]*) return 1 ;;
+	esac
+	[ "${#1}" -le 5 ] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+http_status() {
+	# $1 = Host header (empty: none), $2 = path. Prints the status; "slow"
+	# when the edge ACCEPTED the connection but no response came within 5 s
+	# (curl exit 28 after connect: a slow / cold upstream, the edge itself is
+	# alive — the ping of the default server tells a wedged edge apart);
+	# 000 when nothing answered at all (refused, reset, empty reply).
+	if [ -n "$1" ]; then
+		out=$(curl -s -o /dev/null -m 5 --connect-timeout 3 -H "Host: $1" -w "%{http_code} %{time_connect}" "http://127.0.0.1$2" 2>/dev/null)
+		rc=$?
+	else
+		out=$(curl -s -o /dev/null -m 5 --connect-timeout 3 -w "%{http_code} %{time_connect}" "http://127.0.0.1$2" 2>/dev/null)
+		rc=$?
+	fi
+	code=${out%% *}
+	connect=${out#* }
+	case "$code" in
+	[1-5][0-9][0-9])
+		printf '%s\n' "$code"
+		return 0
+		;;
+	esac
+	if [ "$rc" -eq 28 ]; then
+		case "$connect" in
+		*[1-9]*)
+			echo slow
+			return 0
+			;;
+		esac
+	fi
+	echo 000
+}
+
+case "${1:-}" in
+tcp)
+	if [ "$#" -ne 3 ] || ! valid_host "$2" || ! valid_port "$3"; then
+		echo "usage: oblimint-edge-probe tcp <host> <port>" >&2
+		exit 2
+	fi
+	if nc -z -w 3 "$2" "$3" </dev/null >/dev/null 2>&1; then
+		exit 0
+	fi
+	exit 1
+	;;
+http)
+	if [ "$#" -ne 2 ] || ! valid_host "$2"; then
+		echo "usage: oblimint-edge-probe http <host>" >&2
+		exit 2
+	fi
+	http_status "$2" /
+	;;
+ping)
+	if [ "$#" -ne 1 ]; then
+		echo "usage: oblimint-edge-probe ping" >&2
+		exit 2
+	fi
+	http_status "" /__oblimint/ping
+	;;
+*)
+	echo "usage: oblimint-edge-probe tcp <host> <port> | http <host> | ping" >&2
+	exit 2
+	;;
+esac

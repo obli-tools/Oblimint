@@ -16,6 +16,8 @@ import { HostingSettingsSections } from '@/components/settings/HostingSettingsSe
 import { NotificationChannelsSection } from '@/components/notifications/NotificationChannelsSection';
 import { MaintenanceSettingsSections } from '@/components/maintenance/MaintenanceSettingsSections';
 import { MailSettingsSections } from '@/components/mail/MailSettingsSections';
+import { AppsSettingsSections } from '@/components/settings/AppsSettingsSections';
+import { ProxySettingsSections } from '@/components/settings/ProxySettingsSections';
 import { useHostingMe } from '@/store/hostingStore';
 import { cn } from '@/utils/cn';
 
@@ -257,6 +259,10 @@ export function SettingsPage() {
 
       {/* ── P4: mail service (engine, webmail, DNS defaults, anti-spam, limits, bans) ── */}
       {admin && <MailSettingsSections />}
+
+      {/* ── P4b: applications, monitoring, network segmentation (ui-apps) — edge and bans (ui-proxy) ── */}
+      {admin && <AppsSettingsSections />}
+      {admin && <ProxySettingsSections />}
 
       {/* ── P2: notification channels of the workspace ── */}
       {canNotify && <NotificationChannelsSection />}

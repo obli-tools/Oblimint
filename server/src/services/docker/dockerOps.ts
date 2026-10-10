@@ -137,9 +137,28 @@ export async function inspectNetwork(docker: Docker, name: string): Promise<Dock
   }
 }
 
-export async function createNetwork(docker: Docker, name: string, labels: Record<string, string>): Promise<void> {
+/**
+ * P4b (docs/P4b-PLAN.md §4): explicit IPv4 subnet (panel pools — Docker's
+ * default pools hold ~30 networks only), bridge interface name (hostd filters
+ * the frames bridged inside the account fabrics by bridge name), internal flag.
+ */
+export interface NetworkCreateOptions {
+  subnet?: string | null;
+  gateway?: string | null;
+  /** com.docker.network.bridge.name (≤ 15 chars). */
+  bridgeName?: string | null;
+  internal?: boolean;
+  /** Extra labels merged over `labels`. */
+  labels?: Record<string, string>;
+}
+
+export async function createNetwork(docker: Docker, name: string, labels: Record<string, string>, opts: NetworkCreateOptions = {}): Promise<void> {
   try {
-    await withTimeout(docker.createNetwork({ Name: name, Driver: 'bridge', CheckDuplicate: true, Labels: labels }), CALL_TIMEOUT_MS, `create network ${name}`);
+    const spec: Docker.NetworkCreateOptions = { Name: name, Driver: 'bridge', CheckDuplicate: true, Labels: { ...labels, ...(opts.labels ?? {}) } };
+    if (opts.subnet) spec.IPAM = { Driver: 'default', Config: [{ Subnet: opts.subnet, ...(opts.gateway ? { Gateway: opts.gateway } : {}) }] };
+    if (opts.bridgeName) spec.Options = { 'com.docker.network.bridge.name': opts.bridgeName };
+    if (opts.internal) spec.Internal = true;
+    await withTimeout(docker.createNetwork(spec), CALL_TIMEOUT_MS, `create network ${name}`);
   } catch (err) {
     if (statusOf(err) === 409 || /already exists/i.test(errText(err))) return;
     throw err;

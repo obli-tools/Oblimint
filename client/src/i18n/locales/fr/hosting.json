@@ -17,7 +17,15 @@
       "dns_manage": "Gérer les zones DNS",
       "dns_manage_hint": "Modifier les enregistrements DNS des zones du compte.",
       "mail_manage": "Gérer le mail",
-      "mail_manage_hint": "Créer des domaines mail, des boîtes, des alias et des redirections, gérer DKIM et le relais des sites, ouvrir le webmail."
+      "mail_manage_hint": "Créer des domaines mail, des boîtes, des alias et des redirections, gérer DKIM et le relais des sites, ouvrir le webmail.",
+      "apps_manage": "Gérer les applications",
+      "apps_manage_hint": "Déployer des applications Docker (compose, git, catalogue), les mettre à jour, déclarer des liaisons réseau.",
+      "apps_console": "Console des applications",
+      "apps_console_hint": "Ouvrir une console interactive dans les conteneurs d’application (si le plan l’autorise).",
+      "proxy_manage": "Gérer les hôtes proxy",
+      "proxy_manage_hint": "Créer des hôtes proxy, redirections, hôtes morts, listes d’accès, pages d’erreur et gérer les bannissements du compte.",
+      "monitoring_manage": "Gérer la supervision",
+      "monitoring_manage_hint": "Créer des sondes de disponibilité, pages de statut, workflows, cibles SFTP et fenêtres de maintenance."
     },
     "changePlan": "Changer de plan",
     "changePlanFailed": "Échec du changement de plan",
@@ -391,6 +399,7 @@
       "certificateRateLimited": "Une demande de certificat a été faite récemment : patientez quelques minutes avant de réessayer.",
       "confirmMismatch": "Le texte de confirmation ne correspond pas.",
       "domainReserved": "Ce nom appartient au panneau et ne peut pas être utilisé.",
+      "domainServedByProxy": "Ce domaine est déjà servi par {{servedBy}} : impossible d'y ajouter une route de site. Détachez-le d'abord.",
       "domainTaken": "Ce domaine est déjà déclaré sur la plateforme.",
       "emailTaken": "Cette adresse e-mail est déjà utilisée par un autre utilisateur.",
       "envelopeExceeded": "L'enveloppe de ressources de l'espace serait dépassée.",
@@ -420,6 +429,7 @@
     "generate": "Générer",
     "hide": "Masquer",
     "perMonth": "/mois",
+    "servedByAny": "un hôte proxy, une redirection ou un hôte mort",
     "show": "Afficher",
     "siteStatus": {
       "active": "Actif",

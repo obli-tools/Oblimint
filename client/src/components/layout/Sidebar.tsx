@@ -24,6 +24,15 @@ import {
   ScrollText,
   Wrench,
   X,
+  // P4b
+  Boxes,
+  Waypoints,
+  Network,
+  Activity,
+  Workflow,
+  ShieldBan,
+  LineChart,
+  ServerCog,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/utils/cn';
@@ -150,6 +159,14 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     { label: t('nav.maintenance') || 'Maintenance',      path: '/maintenance', icon: <Wrench size={18} /> },
     // P4: mail — client space too (the server scopes every list).
     { label: t('nav.mail') || 'Mail',                    path: '/mail',      icon: <Mail size={18} /> },
+    // P4b: apps + proxy — client space too (the server scopes every list; capabilities gate the actions).
+    { label: t('nav.apps') || 'Applications',            path: '/apps',      icon: <Boxes size={18} /> },
+    { label: t('nav.proxy') || 'Proxy',                  path: '/proxy',     icon: <Waypoints size={18} /> },
+    { label: t('nav.network') || 'Network links',        path: '/network',   icon: <Network size={18} /> },
+    { label: t('nav.traffic') || 'Traffic',              path: '/traffic',   icon: <LineChart size={18} /> },
+    { label: t('nav.uptime') || 'Uptime',                path: '/uptime',    icon: <Activity size={18} /> },
+    { label: t('nav.automation') || 'Automation',        path: '/automation', icon: <Workflow size={18} /> },
+    { label: t('nav.bans') || 'Bans',                    path: '/security/bans', icon: <ShieldBan size={18} /> },
     ...(isClient ? [] : [
       { label: t('nav.files') || 'Files',                path: '/files',     icon: <FolderOpen size={18} /> },
     ] as NavItem[]),
@@ -162,6 +179,8 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     // Workspaces — platform admin on the master tenant only (god view).
     ...(isMaster ? [{ label: t('nav.workspaces') || 'Workspaces', path: '/manage/tenants', icon: <Building2 size={18} /> } as NavItem] : []),
     ...(admin ? [{ label: t('nav.nodes') || 'Nodes', path: '/manage/nodes', icon: <Server size={18} /> } as NavItem] : []),
+    // P4b: edge configuration units (quarantine, applies, rollback) — platform admin.
+    ...(admin ? [{ label: t('nav.edge') || 'Edge', path: '/manage/edge', icon: <ServerCog size={18} /> } as NavItem] : []),
     ...(admin ? [{ label: t('nav.auditLog') || 'Audit log', path: '/manage/audit-log', icon: <ScrollText size={18} /> } as NavItem] : []),
     ...(canSettings ? [{ label: t('nav.settings') || 'Settings', path: '/settings', icon: <Settings size={18} /> } as NavItem] : []),
   ];

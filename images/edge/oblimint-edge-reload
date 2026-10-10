@@ -1,0 +1,56 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# oblimint-edge-reload — run by the panel (docker exec, argv only) after its
+# own tests: makes the master read the LIVE configuration again (it may have
+# started on a fallback, see oblimint-edge-entrypoint), tests it, then signals
+# the reload. The exit code is meaningful:
+#   - the live configuration is tested first (non-zero ⇒ nothing changed, the
+#     master keeps its current configuration);
+#   - `nginx -s reload` alone only says that the signal was SENT: when the
+#     master then fails to build the new cycle (shared memory zone resized,
+#     listen bind conflict…) it logs an error and keeps the old workers. So
+#     the script waits for at least one NEW worker process (pid not seen
+#     before the signal); none within ~5 s ⇒ exit 1 (reload not applied).
+# ─────────────────────────────────────────────────────────────────────────────
+set -eu
+
+ACTIVE=/run/oblimint-edge/active.conf
+LIVE=/etc/nginx/nginx.conf
+
+# Pids of the serving workers (title "nginx: worker process"; the old ones
+# become "nginx: worker process is shutting down" after a successful reload).
+workers() {
+	for d in /proc/[0-9]*; do
+		cmd=$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null) || continue
+		case "$cmd" in
+		*'shutting down'*) ;;
+		'nginx: worker process'*) printf '%s\n' "${d#/proc/}" ;;
+		esac
+	done
+}
+
+if ! out=$(nginx -t -c "$LIVE" 2>&1); then
+	printf '%s\n' "$out" >&2
+	exit 1
+fi
+
+umask 022
+printf 'include %s;\n' "$LIVE" >"$ACTIVE.tmp"
+mv -f "$ACTIVE.tmp" "$ACTIVE"
+
+before=" $(workers | tr '\n' ' ') "
+nginx -s reload
+
+i=0
+while [ "$i" -lt 25 ]; do
+	sleep 0.2
+	for p in $(workers); do
+		case "$before" in
+		*" $p "*) ;;
+		*) exit 0 ;;
+		esac
+	done
+	i=$((i + 1))
+done
+echo "nginx reload not applied: the master started no new worker (see the edge logs: the new configuration cycle was rejected)" >&2
+exit 1

@@ -44,6 +44,17 @@ import { config, dataDir } from '../../config';
 //   <root>/mail/                                    (P4, docs/P4-PLAN.md §4: panel + mail containers only, never a tenant)
 //     data/<engine>/  config/<engine>/  dkim/  certs/<name>/  redis/  relay/  webmail/<kind>/
 //   <root>/edge/conf.d/  edge/certs/  edge/acme/   (edge module)
+//   (P4b, docs/P4b-PLAN.md §8 — module edge-robustness; mounted READ-ONLY in oblimint-edge except good/ which is not mounted)
+//   <root>/edge/stream.d/   stream{} units          <root>/edge/global.d/   http{}-level units (maps, zones)
+//   <root>/edge/aux/<unit>/ auxiliary files (htpasswd, error / waking pages)
+//   <root>/edge/sandbox/<run>/  candidate trees tested in isolation (nginx -t -c)
+//   <root>/edge/good/       last-known-good copy of conf.d / stream.d / global.d / aux (fallback at edge start)
+//   (P4b, docs/P4b-PLAN.md §5 — module apps-core; inside the account tree → XFS project quota)
+//   <root>/accounts/<id>/apps/                      root:root 0711
+//     <stackId>/                                    root:root 0711
+//       src/        git checkout / extracted ZIP / rendered template (panel writes, no-follow reads)
+//       files/      files referenced by relative binds of an editor stack (panel writes)
+//       volumes/<name>/   named volumes (Docker local driver, o=bind) — written by the containers
 //   <root>/dns/                                     (P2: PowerDNS state, panel only)
 //   <root>/logs/<accountId>/<siteId>/              (P2: persisted access logs, panel only)
 //   <root>/run/hostd.sock                           (never mounted in tenant containers)
@@ -160,6 +171,24 @@ export function hostingLayout(root: string) {
     webmailData: (kind: 'roundcube' | 'snappymail') => joinPosix(r, 'mail', 'webmail', kind),
     /** msmtp configuration of a site (written by the outbound module), inside the RO runtime dir (/etc/oblimint/site/msmtprc). */
     siteMsmtprc: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'runtime', 'msmtprc'),
+    // ── P4b (docs/P4b-PLAN.md §5, §8)
+    /** Apps of an account (root:root 0711), inside the account quota. */
+    apps: (accountId: number) => joinPosix(account(accountId), 'apps'),
+    appStack: (accountId: number, stackId: number) => joinPosix(account(accountId), 'apps', stackId),
+    /** Source tree of a stack: git checkout / extracted ZIP / rendered catalog files. */
+    appSource: (accountId: number, stackId: number) => joinPosix(account(accountId), 'apps', stackId, 'src'),
+    /** Files of an editor stack referenced by relative binds. */
+    appFiles: (accountId: number, stackId: number) => joinPosix(account(accountId), 'apps', stackId, 'files'),
+    appVolumes: (accountId: number, stackId: number) => joinPosix(account(accountId), 'apps', stackId, 'volumes'),
+    appVolume: (accountId: number, stackId: number, name: string) => joinPosix(account(accountId), 'apps', stackId, 'volumes', name),
+    edgeStreamD: () => joinPosix(r, 'edge', 'stream.d'),
+    edgeGlobalD: () => joinPosix(r, 'edge', 'global.d'),
+    edgeAux: () => joinPosix(r, 'edge', 'aux'),
+    edgeAuxUnit: (unitId: string) => joinPosix(r, 'edge', 'aux', unitId),
+    edgeSandbox: () => joinPosix(r, 'edge', 'sandbox'),
+    edgeGood: () => joinPosix(r, 'edge', 'good'),
+    /** oauth2-proxy sidecars: nothing on disk (config by env), kept for symmetry. */
+    authDir: () => joinPosix(r, 'auth'),
   };
 }
 

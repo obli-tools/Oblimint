@@ -61,6 +61,18 @@ func main() {
 	restoreState(fw, gw, statePath)
 	defer gw.Close()
 
+	// P4b: segment policy of the account fabrics + platform web bans (api_p4b.go),
+	// each with its own state file, re-applied at start before the panel pushes again.
+	nft := newExecNft()
+	p4bManagers.segments = newSegmentManager(nft, path.Join(layout.RunDir(), "hostd-segments.json"))
+	p4bManagers.webBans = newWebBanManager(nft, path.Join(layout.RunDir(), "hostd-webbans.json"))
+	if err := p4bManagers.segments.Restore(context.Background()); err != nil {
+		log.Warn("segment policy not applied at start", "err", err)
+	}
+	if err := p4bManagers.webBans.Restore(context.Background()); err != nil {
+		log.Warn("web bans not applied at start", "err", err)
+	}
+
 	ln, err := listenUnix(socket)
 	if err != nil {
 		log.Error("listen failed", "socket", socket, "err", err)

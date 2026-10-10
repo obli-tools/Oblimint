@@ -39,6 +39,8 @@ export async function startWorkers(): Promise<void> {
   for (const [name, w] of await p3Workers()) starters.push([name, () => w.start()]);
   // P4 workers (docs/P4-PLAN.md §Workers): same contract; OBLIMINT_MAIL_WORKERS=off skips them.
   if (config.hosting.mailWorkers) for (const [name, w] of await p4Workers()) starters.push([name, () => w.start()]);
+  // P4b workers (docs/P4b-PLAN.md §17): same contract; OBLIMINT_P4B_WORKERS=off skips them.
+  if (config.hosting.p4bWorkers) for (const [name, w] of await p4bWorkers()) starters.push([name, () => w.start()]);
   for (const [name, start] of starters) {
     try { start(); } catch (err) { logger.error({ err, worker: name }, 'Worker failed to start'); }
   }
@@ -115,6 +117,34 @@ async function p4Workers(): Promise<Array<[string, Worker]>> {
   ];
 }
 
+/**
+ * P4b workers, in start order: segments (Docker events → segment policy, legacy migration), apps
+ * (reconcile, git poll, digest checks / auto-updates in windows, sleep / wake, retention), proxy (edge
+ * unit provider, forward-auth sidecars), bans (edge unit provider g-bans, honeypot log worker, hostd web
+ * firewall, Obliguard), traffic (per-host aggregation), uptime (checks, status pages, certificate expiry),
+ * workflows (scheduler, cert-renewal trigger). The edge units pipeline itself runs in edgeService (P1
+ * worker 'edge', rebuilt by edge-robustness).
+ */
+async function p4bWorkers(): Promise<Array<[string, Worker]>> {
+  const [segments, apps, proxy, bans, monitoring, uptime] = await Promise.all([
+    import('../services/network/segments.service').then((m) => m.segmentService),
+    import('../services/apps/apps.service').then((m) => m.appsService),
+    import('../services/proxy/worker').then((m) => m.proxyWorker),
+    import('../services/security/bans.service').then((m) => m.webBanService),
+    import('../services/monitoring/worker'),
+    import('../services/monitoring/uptime.service').then((m) => m.uptimeService),
+  ]);
+  return [
+    ['segments', segments],
+    ['apps', apps],
+    ['proxy', proxy],
+    ['bans', bans],
+    ['traffic', monitoring.trafficWorker],
+    ['uptime', uptime],
+    ['workflows', monitoring.workflowWorker],
+  ];
+}
+
 export async function stopWorkers(): Promise<void> {
   const mods = await Promise.all([
     import('../services/docker/reconcile.service').then((m) => m.reconcileService),
@@ -128,6 +158,7 @@ export async function stopWorkers(): Promise<void> {
   for (const [, w] of await p2Workers()) { try { w.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p3Workers()) { try { w.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p4Workers()) { try { w.stop(); } catch { /* exiting */ } }
+  for (const [, w] of await p4bWorkers()) { try { w.stop(); } catch { /* exiting */ } }
   const { stopInternalServer } = await import('../internal/internalServer');
   try { stopInternalServer(); } catch { /* exiting */ }
 }

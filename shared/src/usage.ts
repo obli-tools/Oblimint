@@ -153,12 +153,25 @@ export type NotificationEvent =
   // P4 (docs/P4-PLAN.md §Notifications)
   | 'mail.outboundSuspended' // outbound mail of an account suspended (abuse protection / staff)
   | 'mail.serviceFailed'     // the mail engine / relay / webmail is down or a configuration could not be applied
-  | 'mail.quotaWarning';     // a mailbox reached 90 % of its quota
+  | 'mail.quotaWarning'      // a mailbox reached 90 % of its quota
+  // P4b (docs/P4b-PLAN.md §Notifications)
+  | 'certificate.expiringSoon' // a certificate expires within monitoring.certExpiryWarningDays (max 1 / 7 days)
+  | 'uptime.down'            // a monitor went down (after its retries)
+  | 'uptime.up'              // a monitor recovered
+  | 'app.updateAvailable'    // new image digest for a stack (once per digest)
+  | 'app.updated'            // automatic update applied
+  | 'app.updateFailed'       // automatic update failed (rolled back)
+  | 'app.deployFailed'       // a deployment failed
+  | 'edge.unitQuarantined'   // a proxy / site configuration was refused: last good version served
+  | 'edge.rollback'          // the canary failed after a reload: whole edge configuration rolled back
+  | 'workflow.failed';       // a workflow run failed
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'quota.warning', 'quota.exceeded', 'quota.action', 'certificate.failed', 'dns.syncFailed', 'db.instanceFailed', 'cron.failed', 'security.banned',
   'window.pendingReview', 'window.autoValidated', 'window.failed', 'scan.threat', 'quarantine.added', 'adapter.completed', 'adapter.failed',
   'supervision.digest', 'mail.outboundSuspended', 'mail.serviceFailed', 'mail.quotaWarning',
+  'certificate.expiringSoon', 'uptime.down', 'uptime.up', 'app.updateAvailable', 'app.updated', 'app.updateFailed', 'app.deployFailed',
+  'edge.unitQuarantined', 'edge.rollback', 'workflow.failed',
 ];
 
 /**

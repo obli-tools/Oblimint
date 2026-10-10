@@ -321,6 +321,11 @@ async function assertNoForeignParent(name: string, accountId: number): Promise<v
 
 /** Route count limits (each route is a location of the shared edge config). Run under the account row lock. */
 async function assertRouteRoom(trx: Knex.Transaction, domain: { id: number; account_id: number }): Promise<void> {
+  // P4b (docs/P4b-PLAN.md §8.1): a domain bound to a proxy host / redirection / dead host has no site route.
+  const served = await trx('domains').where({ id: domain.id }).first('served_by') as { served_by: string } | undefined;
+  if (served && served.served_by !== 'sites') {
+    throw new AppError(409, 'This domain is served by a proxy host, a redirection or a dead host', 'domainServedByProxy', { servedBy: served.served_by });
+  }
   const perDomain = await trx('site_routes').where({ domain_id: domain.id }).count('* as c').first() as { c: string | number };
   if (Number(perDomain.c) >= MAX_ROUTES_PER_DOMAIN) {
     throw new AppError(409, `A domain has at most ${MAX_ROUTES_PER_DOMAIN} routes`, 'routeLimit', { max: MAX_ROUTES_PER_DOMAIN, scope: 'domain' });

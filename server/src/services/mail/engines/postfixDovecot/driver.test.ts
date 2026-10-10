@@ -9,7 +9,7 @@ import { hostingLayout } from '../../../hosting/paths';
 import type { ExecResult } from '../../../docker/engine';
 import { createPostfixDovecotDriver, ensureCoreNetwork, mailNetworkTopology, type PostfixDovecotDeps } from './driver';
 import { MAIL_CORE_NETWORK, MAIL_CTL, RSPAMD_CTL } from './layout';
-import { baseState, lines, tempDir } from './testUtil';
+import { baseState, box, lines, tempDir } from './testUtil';
 
 // Driver behaviour with a fake Docker and a simulated `docker exec`
 // (sync idempotence, reload only on change, rollback, mass-removal guard,
@@ -408,4 +408,30 @@ test('scanner: clamd TCP redeployed only when its bound subnets differ from what
   await flush();
   const i = c.calls.indexOf(`remove network ${MAIL_CORE_NETWORK}`);
   assert.ok(i >= 0 && c.calls.indexOf('refresh scanner') > i);
+});
+
+test('sync (report P4): mailbox / alias / send / password / forward changes are reload-only — never a container restart or recreation', async (t) => {
+  const { driver, calls } = setup(t);
+  await driver.sync(baseState(), { reason: 'first' });
+  const lifecycle = (c: string) => /^(restart|stop|remove|create|recreate) /.test(c);
+  const step = async (what: string, st: MailDesiredState) => {
+    calls.length = 0;
+    const r = await driver.sync(st, { reason: what });
+    assert.equal(r.changed, true, `${what}: applied`);
+    assert.deepEqual(calls.filter(lifecycle), [], `${what}: no container lifecycle call`);
+    assert.deepEqual(reloads(calls), [`exec ${MAIL_CONTAINER} reload`], `${what}: postmap + postfix reload + doveadm reload only (oblimint-mail-ctl reload)`);
+  };
+  let st = baseState();
+  st.mailboxes.push(box(301, 'nouveau', 'exemple.fr'));
+  await step('create', st);
+  st = baseState();
+  st.mailboxes.push(box(301, 'nouveau', 'exemple.fr', { sendEnabled: false }));
+  await step('send off', st);
+  st.mailboxes[st.mailboxes.length - 1] = box(301, 'nouveau', 'exemple.fr', { sendEnabled: false, passwordHash: baseState().mailboxes[1].passwordHash, passwordScheme: baseState().mailboxes[1].passwordScheme });
+  await step('password', st);
+  st.aliases.push({ ...st.aliases[0], id: 99, address: 'support@exemple.fr', targets: ['nouveau@exemple.fr'] });
+  await step('alias', st);
+  st.mailboxes[st.mailboxes.length - 1] = { ...st.mailboxes[st.mailboxes.length - 1], forward: { targets: ['x@gmail.com'], keepCopy: true } };
+  await step('forward', st);
+  await step('delete', baseState());
 });

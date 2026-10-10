@@ -63,6 +63,19 @@ export const planLimitsSchema = z.object({
   mailMaxMessageSizeMb: z.number().int().min(1).max(100).default(DEFAULT_PLAN_LIMITS.mailMaxMessageSizeMb),
   mailOutboundPerHour: z.number().int().min(0).max(1000000).nullable().default(DEFAULT_PLAN_LIMITS.mailOutboundPerHour),
   mailSiteOutboundPerHour: z.number().int().min(0).max(1000000).nullable().default(DEFAULT_PLAN_LIMITS.mailSiteOutboundPerHour),
+  // P4b (docs/P4b-PLAN.md §3): same rule (optional on input, defaults filled).
+  maxAppStacks: z.number().int().min(0).max(1000).nullable().default(DEFAULT_PLAN_LIMITS.maxAppStacks),
+  maxAppContainers: z.number().int().min(0).max(10000).nullable().default(DEFAULT_PLAN_LIMITS.maxAppContainers),
+  appsCpuCores: z.number().min(0.1).max(256).nullable().default(DEFAULT_PLAN_LIMITS.appsCpuCores),
+  appsMemoryMb: z.number().int().min(64).max(1048576).nullable().default(DEFAULT_PLAN_LIMITS.appsMemoryMb),
+  appsPidsPerContainer: z.number().int().min(32).max(32768).default(DEFAULT_PLAN_LIMITS.appsPidsPerContainer),
+  appsBuild: z.boolean().default(DEFAULT_PLAN_LIMITS.appsBuild),
+  appsConsole: z.boolean().default(DEFAULT_PLAN_LIMITS.appsConsole),
+  maxProxyHosts: z.number().int().min(0).max(100000).nullable().default(DEFAULT_PLAN_LIMITS.maxProxyHosts),
+  maxRedirections: z.number().int().min(0).max(100000).nullable().default(DEFAULT_PLAN_LIMITS.maxRedirections),
+  proxyExternalTargets: z.boolean().default(DEFAULT_PLAN_LIMITS.proxyExternalTargets),
+  maxUptimeMonitors: z.number().int().min(0).max(100000).nullable().default(DEFAULT_PLAN_LIMITS.maxUptimeMonitors),
+  maxWorkflows: z.number().int().min(0).max(10000).nullable().default(DEFAULT_PLAN_LIMITS.maxWorkflows),
 }).strict();
 
 export const planInputSchema = z.object({

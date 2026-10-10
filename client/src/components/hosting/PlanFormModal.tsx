@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Layers, AlertTriangle, Mail } from 'lucide-react';
+import { Layers, AlertTriangle, Mail, Boxes } from 'lucide-react';
 import type { DbEngine, DbTuningProfile, OverQuotaAction, Plan, PlanInput, PlanLimits, SiteBaseId, SiteEngine } from '@oblimint/shared';
 import { DB_ENGINE_VERSIONS, DB_PROFILE_MEMORY_MB, DEFAULT_PLAN_LIMITS, SITE_BASES } from '@oblimint/shared';
 import { plansApi } from '@/api/plans.api';
@@ -15,7 +15,9 @@ import { limitToField, parseLimitField } from './hostingFormat';
 // P2 non-numeric / non-nullable limits are edited separately (module ui-ops).
 type NumKey = Exclude<keyof PlanLimits, 'allowedBases' | 'dbProfile' | 'dbEngines' | 'dbExternalAccess' | 'overQuotaAction' | 'cronMinIntervalMin'
   // P4 (ui-mail adds the mail fields): non-nullable, edited outside the numeric fields.
-  | 'mailMaxMessageSizeMb'>;
+  | 'mailMaxMessageSizeMb'
+  // P4b (ui-apps adds the apps / proxy / monitoring fields): non-nullable or boolean, edited outside the numeric fields.
+  | 'appsPidsPerContainer' | 'appsBuild' | 'appsConsole' | 'proxyExternalTargets'>;
 
 interface FieldDef {
   key: NumKey;
@@ -50,6 +52,9 @@ const MAIL_SIZE_MIN = 1;
 const MAIL_SIZE_MAX = 100;
 const CRON_INTERVAL_MIN = 1;
 const CRON_INTERVAL_MAX = 1440;
+// P4b: processes of ONE app container (server zod: 32 … 32768).
+const APPS_PIDS_MIN = 32;
+const APPS_PIDS_MAX = 32768;
 
 function toForm(l: PlanLimits, defs: FieldDef[]): FormState {
   const f = {} as FormState;
@@ -98,7 +103,20 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     { key: 'mailOutboundPerHour', label: t('mail.plan.outboundPerHour') || 'Outbound mail / hour (account)' },
     { key: 'mailSiteOutboundPerHour', label: t('mail.plan.siteOutboundPerHour') || 'Outbound mail / hour (per site)' },
   ];
-  const defs: FieldDef[] = [...baseDefs, ...dbDefs, ...cronDefs, ...mailDefs];
+  // P4b apps / proxy / monitoring limits (ui-apps); appsPidsPerContainer and the booleans are edited apart.
+  const appsDefs: FieldDef[] = [
+    { key: 'maxAppStacks', label: t('apps.plan.maxAppStacks') || 'Applications' },
+    { key: 'maxAppContainers', label: t('apps.plan.maxAppContainers') || 'Application containers' },
+    { key: 'appsCpuCores', label: t('apps.plan.appsCpu') || 'CPU of all the applications', unit: t('units.cores') || 'cores', integer: false, step: '0.25', nullLabel: t('apps.plan.nodeCeiling') || 'node ceiling' },
+    { key: 'appsMemoryMb', label: t('apps.plan.appsMemory') || 'Memory of all the applications', unit: t('units.gb') || 'GB', multiplier: MIB_PER_GB, step: '0.5', nullLabel: t('apps.plan.nodeCeiling') || 'node ceiling' },
+  ];
+  const proxyDefs: FieldDef[] = [
+    { key: 'maxProxyHosts', label: t('apps.plan.maxProxyHosts') || 'Proxy hosts' },
+    { key: 'maxRedirections', label: t('apps.plan.maxRedirections') || 'Redirections and dead hosts' },
+    { key: 'maxUptimeMonitors', label: t('apps.plan.maxUptimeMonitors') || 'Uptime monitors' },
+    { key: 'maxWorkflows', label: t('apps.plan.maxWorkflows') || 'Workflows' },
+  ];
+  const defs: FieldDef[] = [...baseDefs, ...dbDefs, ...cronDefs, ...mailDefs, ...appsDefs, ...proxyDefs];
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -116,6 +134,11 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
   const [cronInterval, setCronInterval] = useState(String(DEFAULT_PLAN_LIMITS.cronMinIntervalMin));
   const [overQuotaAction, setOverQuotaAction] = useState<OverQuotaAction>(DEFAULT_PLAN_LIMITS.overQuotaAction);
   const [mailMaxSize, setMailMaxSize] = useState(String(DEFAULT_PLAN_LIMITS.mailMaxMessageSizeMb));
+  // P4b non-nullable / boolean limits (outside NumKey).
+  const [appsPids, setAppsPids] = useState(String(DEFAULT_PLAN_LIMITS.appsPidsPerContainer));
+  const [appsBuild, setAppsBuild] = useState(DEFAULT_PLAN_LIMITS.appsBuild);
+  const [appsConsole, setAppsConsole] = useState(DEFAULT_PLAN_LIMITS.appsConsole);
+  const [proxyExternal, setProxyExternal] = useState(DEFAULT_PLAN_LIMITS.proxyExternalTargets);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -138,6 +161,10 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     setCronInterval(String(full.cronMinIntervalMin));
     setOverQuotaAction(full.overQuotaAction);
     setMailMaxSize(String(full.mailMaxMessageSizeMb));
+    setAppsPids(String(full.appsPidsPerContainer));
+    setAppsBuild(full.appsBuild);
+    setAppsConsole(full.appsConsole);
+    setProxyExternal(full.proxyExternalTargets);
     setError('');
   }, [open, plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -179,6 +206,11 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
       setError(t('mail.plan.maxMessageSizeRange', { min: MAIL_SIZE_MIN, max: MAIL_SIZE_MAX, defaultValue: 'Largest mail message: between {{min}} and {{max}} MB.' }));
       return;
     }
+    const pids = Number(appsPids);
+    if (!Number.isInteger(pids) || pids < APPS_PIDS_MIN || pids > APPS_PIDS_MAX) {
+      setError(t('apps.plan.pidsRange', { min: APPS_PIDS_MIN, max: APPS_PIDS_MAX, defaultValue: 'Processes per application container: between {{min}} and {{max}}.' }));
+      return;
+    }
     const engineList = DB_ENGINES.filter((e) => engines.has(e));
     if (!allEngines && engineList.length === 0) { setError(t('platformSettings.plan.noEngine') || 'Allow at least one database engine.'); return; }
     limits.dbProfile = dbProfile;
@@ -187,6 +219,10 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     limits.cronMinIntervalMin = interval;
     limits.overQuotaAction = overQuotaAction;
     limits.mailMaxMessageSizeMb = mailSize;
+    limits.appsPidsPerContainer = pids;
+    limits.appsBuild = appsBuild;
+    limits.appsConsole = appsConsole;
+    limits.proxyExternalTargets = proxyExternal;
     const input: PlanInput = { name: name.trim(), description: description.trim() || null, limits, isActive };
     setSaving(true);
     setError('');
@@ -393,6 +429,39 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
             </div>
           </div>
           <p className="mt-2 text-xs text-text-muted">{t('mail.plan.hint') || 'The mailbox count is set with the limits above. An unlimited mailbox is refused while the total mail quota is capped.'}</p>
+        </div>
+
+        <div>
+          <div className={cn(sectionTitleCls, 'mb-2 flex items-center gap-1.5')}><Boxes size={12} />{t('apps.plan.title') || 'Applications, proxy and monitoring'}</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {appsDefs.map(numField)}
+            <div className="rounded-lg bg-bg-primary p-2.5">
+              <label className={cn(labelCls, 'truncate')} htmlFor="plan-apps-pids">{t('apps.plan.appsPids') || 'Processes per application container'}</label>
+              <input
+                id="plan-apps-pids"
+                type="number"
+                min={APPS_PIDS_MIN}
+                max={APPS_PIDS_MAX}
+                inputMode="numeric"
+                value={appsPids}
+                onChange={(e) => setAppsPids(e.target.value)}
+                className={cn(inputCls, 'font-mono')}
+              />
+            </div>
+            {proxyDefs.map(numField)}
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="rounded-lg bg-bg-primary p-3">
+              <ToggleSwitch checked={appsBuild} onChange={setAppsBuild} label={t('apps.plan.appsBuild') || 'Build images from source'} description={t('apps.plan.appsBuildHint') || 'Also gated by the platform setting and the workspace policy.'} />
+            </div>
+            <div className="rounded-lg bg-bg-primary p-3">
+              <ToggleSwitch checked={appsConsole} onChange={setAppsConsole} label={t('apps.plan.appsConsole') || 'Application console'} description={t('apps.plan.appsConsoleHint') || 'Interactive shell in the containers (+ capability, setting and policy).'} />
+            </div>
+            <div className="rounded-lg bg-bg-primary p-3">
+              <ToggleSwitch checked={proxyExternal} onChange={setProxyExternal} label={t('apps.plan.proxyExternal') || 'Proxy to external targets'} description={t('apps.plan.proxyExternalHint') || 'Proxy hosts towards an IP / host name outside the platform (+ workspace policy).'} />
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-text-muted">{t('apps.plan.hint') || 'CPU and memory are the sum of every application container of the account; each container gets at most the processes above.'}</p>
         </div>
 
         <div>

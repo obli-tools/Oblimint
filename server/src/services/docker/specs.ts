@@ -79,6 +79,12 @@ export interface InfraContainerInput {
    *  has no XFS project quota (OBLIMINT_ALLOW_MEASURED_QUOTA). Default: hostd
    *  refuses them (the account is not provisioned). */
   allowMeasuredQuota?: boolean;
+  /**
+   * P4b edge only: platform-approved stream ports (settings edge.streamPorts),
+   * published by oblimint-edge. Empty / absent = 80 and 443 only. (The P4b
+   * mounts change the spec hash once: one edge recreation at the upgrade.)
+   */
+  streamPorts?: ReadonlyArray<{ port: number; protocol: 'tcp' | 'udp' }>;
 }
 
 /**
@@ -270,24 +276,44 @@ export function fileServerContainerSpec(input: FileServerContainerInput): Docker
   });
 }
 
-/** oblimint-edge: host ports 80/443, conf.d + certs + acme RO, joins every account network (reconcile). */
+/**
+ * oblimint-edge: host ports 80/443 (+ P4b approved stream ports), conf.d +
+ * certs + acme RO, joins every account network (reconcile). P4b (docs/P4b-PLAN.md
+ * §8): + stream.d, global.d, aux, sandbox (candidate trees tested with
+ * nginx -t -c) and good (last-known-good copy, fallback of the entrypoint) — all
+ * READ-ONLY; proxy cache on the /var/cache/nginx tmpfs (512 MiB).
+ */
 export function edgeContainerSpec(input: InfraContainerInput): Docker.ContainerCreateOptions {
   const layout = hostingLayout(input.hostDataDir);
+  const streams = [...(input.streamPorts ?? [])].sort((a, b) => a.port - b.port || a.protocol.localeCompare(b.protocol));
+  const exposed: Record<string, Record<string, never>> = { '80/tcp': {}, '443/tcp': {} };
+  const bindings: Record<string, Array<{ HostPort: string }>> = { '80/tcp': [{ HostPort: '80' }], '443/tcp': [{ HostPort: '443' }] };
+  for (const s of streams) {
+    const key = `${s.port}/${s.protocol}`;
+    exposed[key] = {};
+    bindings[key] = [{ HostPort: String(s.port) }];
+  }
   return withHash({
     name: EDGE_CONTAINER,
     Image: edgeImage(),
     Labels: { [LABELS.internal]: 'true', [LABELS.role]: 'edge' },
-    ExposedPorts: { '80/tcp': {}, '443/tcp': {} },
+    ExposedPorts: exposed,
     HostConfig: {
       // No HostIp: published on every IPv4 and IPv6 address of the host.
-      PortBindings: { '80/tcp': [{ HostPort: '80' }], '443/tcp': [{ HostPort: '443' }] },
+      PortBindings: bindings,
       Mounts: [
         { Type: 'bind', Source: layout.edgeConfD(), Target: '/etc/nginx/oblimint/conf.d', ReadOnly: true },
         { Type: 'bind', Source: layout.edgeCerts(), Target: '/etc/nginx/oblimint/certs', ReadOnly: true },
         { Type: 'bind', Source: layout.edgeAcme(), Target: '/var/www/acme', ReadOnly: true },
+        // P4b
+        { Type: 'bind', Source: layout.edgeStreamD(), Target: '/etc/nginx/oblimint/stream.d', ReadOnly: true },
+        { Type: 'bind', Source: layout.edgeGlobalD(), Target: '/etc/nginx/oblimint/global.d', ReadOnly: true },
+        { Type: 'bind', Source: layout.edgeAux(), Target: '/etc/nginx/oblimint/aux', ReadOnly: true },
+        { Type: 'bind', Source: layout.edgeSandbox(), Target: '/etc/nginx/oblimint/sandbox', ReadOnly: true },
+        { Type: 'bind', Source: layout.edgeGood(), Target: '/etc/nginx/oblimint/good', ReadOnly: true },
       ],
       Tmpfs: {
-        '/var/cache/nginx': 'rw,nosuid,nodev,size=128m',
+        '/var/cache/nginx': 'rw,nosuid,nodev,size=512m',
         '/run': `${TMPFS_FLAGS},size=16m`,
         '/tmp': `${TMPFS_FLAGS},size=64m`,
       },

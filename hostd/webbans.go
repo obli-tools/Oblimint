@@ -1,0 +1,316 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"net/netip"
+	"os"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Platform web bans on the edge ports (docs/P4b-PLAN.md §9.4, BN3) — module
+// honeypot-bans (webbans_test.go).
+//
+// Table `inet oblimint_web`, its own table (independent of `inet oblimint`
+// the firewall manager replaces), replaced atomically by one `nft -f`
+// transaction (declare + delete + recreate: a refused ruleset leaves the
+// previous one in force). Sets web_bans4 / web_bans6 (flags interval,
+// timeout; permanent = no timeout). DROPS only, before Docker (priority -10):
+//   - chain forward: traffic DNAT-ed by Docker to the edge container
+//     (published 80 / 443), matched on the ORIGINAL destination port
+//     (`ct original proto-dst`), new flows from the banned source only
+//     (`ct direction original`: replies to an outgoing connection pass);
+//   - chain input: the same ports reaching the host itself (userland proxy,
+//     host-network edge).
+// prerouting is NOT used: nothing is rewritten, only dropped.
+//
+// Validation (defence in depth, the panel has its own): ports 1–65535, ≤ 64;
+// bans IPv4 /32 or IPv6 /48…/64 (a host rotates through its /64), never
+// loopback / link-local / private / CGNAT / ULA / multicast / unspecified
+// (validWebBanAddr = validMailBanAddr + CGNAT), ≤ 50 000; expiresAt RFC 3339
+// or null = permanent. State persisted in <root>/run/hostd-webbans.json
+// (0600) and re-applied at start (Restore); the ruleset is re-rendered one
+// second after the next expiry (covered entries come back, gone ones leave —
+// also the panel's job every 5 min).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const (
+	webTable       = "oblimint_web"
+	maxWebPorts    = 64
+	maxWebBans     = 50000
+	minWebBanBits6 = 48
+	maxWebBanBits6 = 64
+	// maxWebBodyBytes bounds PUT /v1/firewall/web: the generic 1 MiB limit
+	// (maxBodyBytes) holds only ~14 000 entries of the worst size (an IPv6 /64
+	// with a millisecond expiry ≈ 73 bytes); maxWebBans of them need ≈ 3.7 MB.
+	maxWebBodyBytes = 8 << 20
+)
+
+// cgnatV4 is the shared address space of carrier-grade NAT (RFC 6598): one
+// address there is a whole ISP's subscribers.
+var cgnatV4 = netip.MustParsePrefix("100.64.0.0/10")
+
+// WebBanEntry mirrors HostdWebFirewallState.bans[] (expiresAt null = permanent).
+type WebBanEntry struct {
+	CIDR      string  `json:"cidr"`
+	ExpiresAt *string `json:"expiresAt"`
+}
+
+// WebFirewallState is the body of PUT /v1/firewall/web.
+type WebFirewallState struct {
+	Ports []int         `json:"ports"`
+	Bans  []WebBanEntry `json:"bans"`
+}
+
+// decodeWebFirewallState reads the body of PUT /v1/firewall/web with its own
+// limit (maxWebBodyBytes, see above) instead of decode()'s 1 MiB.
+func decodeWebFirewallState(w http.ResponseWriter, r *http.Request) (WebFirewallState, error) {
+	var s WebFirewallState
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebBodyBytes)
+	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
+		return WebFirewallState{}, badRequest("invalid JSON body: %v", err)
+	}
+	return s, nil
+}
+
+// webRules is the validated form of a WebFirewallState.
+type webRules struct {
+	Ports []int
+	Bans  []timedPrefix
+}
+
+// validWebBanAddr refuses every address that is never ONE remote client.
+func validWebBanAddr(a netip.Addr) bool {
+	return validMailBanAddr(a) && !cgnatV4.Contains(a.Unmap())
+}
+
+func (s WebFirewallState) validate() (webRules, error) {
+	var r webRules
+	if len(s.Ports) > maxWebPorts {
+		return webRules{}, badRequest("too many web ports (max %d)", maxWebPorts)
+	}
+	ports, err := validatePorts("web port", s.Ports)
+	if err != nil {
+		return webRules{}, err
+	}
+	r.Ports = ports
+	if len(s.Bans) > maxWebBans {
+		return webRules{}, badRequest("too many web bans (max %d)", maxWebBans)
+	}
+	for _, b := range s.Bans {
+		p, err := parsePrefix(strings.TrimSpace(b.CIDR), 32, minWebBanBits6)
+		if err != nil {
+			return webRules{}, err
+		}
+		if p.Addr().Is6() && p.Bits() > maxWebBanBits6 {
+			return webRules{}, badRequest("IPv6 web ban %q must be a /48 … /64 prefix", b.CIDR)
+		}
+		if !validWebBanAddr(p.Addr()) {
+			return webRules{}, badRequest("address %q may not be banned (loopback, link-local, private, CGNAT or multicast)", b.CIDR)
+		}
+		tp := timedPrefix{Prefix: p}
+		if b.ExpiresAt != nil {
+			t, err := parseExpiry(*b.ExpiresAt)
+			if err != nil {
+				return webRules{}, err
+			}
+			tp.Expires = &t
+		}
+		r.Bans = append(r.Bans, tp)
+	}
+	return r, nil
+}
+
+// renderWebRuleset renders the whole `inet oblimint_web` table, preceded by
+// the lines that make `nft -f` replace it atomically. PURE. No port = the
+// empty table (nothing dropped).
+func renderWebRuleset(r webRules, now time.Time) string {
+	var w nftWriter
+	w.line(0, "# Generated by oblimint-hostd (platform web bans): do not edit (replaced on every apply).")
+	w.line(0, "table inet %s", webTable)
+	w.line(0, "delete table inet %s", webTable)
+	w.line(0, "table inet %s {", webTable)
+	if len(r.Ports) > 0 {
+		for _, v6 := range []bool{false, true} {
+			addrType, _ := family(v6)
+			name := "web_bans4"
+			if v6 {
+				name = "web_bans6"
+			}
+			var elems []string
+			for _, e := range liveSet(r.Bans, v6, now) {
+				elems = append(elems, elemString(e))
+			}
+			w.set(name, addrType, "interval,timeout", elems)
+		}
+		ports := portList(r.Ports)
+		w.line(1, "chain input {")
+		w.line(2, "type filter hook input priority %d; policy accept;", nftPriority)
+		for _, proto := range []string{"tcp", "udp"} {
+			match := fmt.Sprintf("ct direction original %s dport %s", proto, ports)
+			w.line(2, "%s ip saddr @web_bans4 drop", match)
+			w.line(2, "%s ip6 saddr @web_bans6 drop", match)
+		}
+		w.line(1, "}")
+		w.line(1, "chain forward {")
+		w.line(2, "type filter hook forward priority %d; policy accept;", nftPriority)
+		for _, proto := range []string{"tcp", "udp"} {
+			match := fmt.Sprintf("ct direction original ct status dnat meta l4proto %s ct original proto-dst %s", proto, ports)
+			w.line(2, "%s ip saddr @web_bans4 drop", match)
+			w.line(2, "%s ip6 saddr @web_bans6 drop", match)
+		}
+		w.line(1, "}")
+	}
+	w.line(0, "}")
+	return w.b.String()
+}
+
+// nextWebExpiry is the earliest future expiry of a ban (zero = none).
+func nextWebExpiry(r webRules, now time.Time) time.Time {
+	var next time.Time
+	for _, b := range r.Bans {
+		if b.Expires != nil && b.Expires.After(now) && (next.IsZero() || b.Expires.Before(next)) {
+			next = *b.Expires
+		}
+	}
+	return next
+}
+
+type webBanManager struct {
+	mu        sync.Mutex
+	nft       nftRunner
+	clock     clock
+	statePath string
+
+	applied   *webRules         // as last applied (rendered)
+	raw       *WebFirewallState // as last applied (persisted)
+	expiry    timer
+	lastAt    time.Time
+	lastError string
+}
+
+func newWebBanManager(nft nftRunner, statePath string) *webBanManager {
+	return &webBanManager{nft: nft, clock: realClock{}, statePath: statePath}
+}
+
+// Apply validates and applies the whole state. A refused ruleset (nft) keeps
+// the previous one in force, in the kernel and in the persisted state.
+func (m *webBanManager) Apply(ctx context.Context, s WebFirewallState) error {
+	r, err := s.validate()
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.applyLocked(ctx, r); err != nil {
+		return err
+	}
+	raw := WebFirewallState{Ports: slices.Clone(r.Ports), Bans: slices.Clone(s.Bans)}
+	m.raw = &raw
+	m.persistLocked()
+	return nil
+}
+
+func (m *webBanManager) applyLocked(ctx context.Context, r webRules) error {
+	now := m.clock.Now()
+	if err := m.nft.Apply(ctx, renderWebRuleset(r, now)); err != nil {
+		m.lastError = err.Error()
+		slog.Error("web bans apply failed (the previous ruleset stays in force)", "err", err)
+		if errors.Is(err, errUnsupported) {
+			return err
+		}
+		return &apiError{http.StatusBadGateway, codeApplyFailed, err.Error()}
+	}
+	m.applied = &r
+	m.lastAt = now
+	m.lastError = ""
+	m.scheduleExpiryLocked(nextWebExpiry(r, now), now)
+	return nil
+}
+
+// scheduleExpiryLocked re-renders one second after the next expiry.
+func (m *webBanManager) scheduleExpiryLocked(next, now time.Time) {
+	if m.expiry != nil {
+		m.expiry.Stop()
+		m.expiry = nil
+	}
+	if next.IsZero() {
+		return
+	}
+	m.expiry = m.clock.AfterFunc(next.Sub(now)+time.Second, func() {
+		if err := m.Reapply(context.Background()); err != nil {
+			slog.Warn("web bans re-apply at expiry failed", "err", err)
+		}
+	})
+}
+
+// Reapply renders and applies the last applied state again (expiry).
+func (m *webBanManager) Reapply(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.applied == nil {
+		return nil
+	}
+	return m.applyLocked(ctx, *m.applied)
+}
+
+// Ruleset renders the current state (tests, debugging).
+func (m *webBanManager) Ruleset() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := webRules{}
+	if m.applied != nil {
+		r = *m.applied
+	}
+	return renderWebRuleset(r, m.clock.Now())
+}
+
+func (m *webBanManager) persistLocked() {
+	if m.statePath == "" || m.raw == nil {
+		return
+	}
+	if err := writeFileAtomic(m.statePath, m.raw); err != nil {
+		slog.Warn("web bans state not persisted", "path", m.statePath, "err", err)
+	}
+}
+
+// Restore re-applies the persisted state at start (errors logged by the
+// caller). Missing file = nothing to do; an unreadable / invalid file is an
+// error (the panel pushes the state again within 5 min). Expired bans are
+// simply not rendered.
+func (m *webBanManager) Restore(ctx context.Context) error {
+	if m.statePath == "" {
+		return nil
+	}
+	b, err := os.ReadFile(m.statePath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("web bans state: %w", err)
+	}
+	var s WebFirewallState
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("web bans state %s: %w", m.statePath, err)
+	}
+	r, err := s.validate()
+	if err != nil {
+		return fmt.Errorf("web bans state %s: %w", m.statePath, err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.applyLocked(ctx, r); err != nil {
+		return err
+	}
+	m.raw = &s
+	return nil
+}

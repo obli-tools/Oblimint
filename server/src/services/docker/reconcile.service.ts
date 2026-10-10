@@ -24,6 +24,24 @@ import {
 } from './planner';
 import { clearReloadPending, readReloadPending } from './runtimeConfig';
 import { reloadSiteContainers, writeSiteRuntimeConfigs } from './siteOps';
+import { runAccountTeardownHooks } from './extensions';
+import type { NetworkCreateOptions } from './dockerOps';
+
+/**
+ * P4b: creation options of an account fabric (segmentation module,
+ * services/network/fabric.ts). A failure falls back to Docker's defaults
+ * (P1–P4 behaviour): the network is still created, the migration pass of the
+ * segmentation module registers it later.
+ */
+async function fabricOptions(accountId: number, which: 'front' | 'back'): Promise<NetworkCreateOptions> {
+  try {
+    const { fabricNetworkOptions } = await import('../network/fabric');
+    return await fabricNetworkOptions(accountId, which);
+  } catch (err) {
+    logger.warn({ err: errText(err), accountId, which }, 'fabric network options unavailable: Docker defaults used');
+    return {};
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reconcile worker (docs/P1-PLAN.md §13). Converges the desired state of the
@@ -286,7 +304,9 @@ export async function runPass(state: AccountState, docker: Docker, now = new Dat
     try {
       switch (action.kind) {
         case 'createNetwork':
-          await createNetwork(docker, action.network, { [LABELS.internal]: 'true', [LABELS.account]: String(account.id) });
+          // P4b: front fabric of the account (subnet from the fabric pool, bridge name) — segmentation module.
+          await createNetwork(docker, action.network, { [LABELS.internal]: 'true', [LABELS.account]: String(account.id) },
+            await fabricOptions(account.id, 'front'));
           break;
         case 'attachPanel':
           if (action.reattach) {
@@ -303,7 +323,8 @@ export async function runPass(state: AccountState, docker: Docker, now = new Dat
           break;
         case 'createDbNetwork':
           // Never labelled oblimint.account: the edge joins every network carrying it.
-          await createNetwork(docker, action.network, { [LABELS.internal]: 'true', [P2_LABELS.dbNetwork]: String(account.id) });
+          await createNetwork(docker, action.network, { [LABELS.internal]: 'true', [P2_LABELS.dbNetwork]: String(account.id) },
+            await fabricOptions(account.id, 'back'));
           break;
         case 'attachNetwork':
           if (dbNetworkFailed || blocked(action)) continue;
@@ -732,6 +753,8 @@ export const reconcileService = {
         const { detachAccountAdmins } = await import('../databases/sso');
         await detachAccountAdmins(docker, account.id);
       } catch (err) { errors.push(`detach db admin: ${errText(err)}`); }
+      // P4b: app stacks (private networks, volumes kept as tombstones) and segmentation (subnets, policy) — docs/P4b-PLAN.md §7.
+      await runAccountTeardownHooks({ docker, accountId: account.id, purge: opts.purge, errors });
       try { await removeNetwork(docker, net); } catch (err) { errors.push(`remove network ${net}: ${errText(err)}`); }
       try { await removeNetwork(docker, dbNet); } catch (err) { errors.push(`remove network ${dbNet}: ${errText(err)}`); }
       try {

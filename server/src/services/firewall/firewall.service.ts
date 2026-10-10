@@ -18,7 +18,7 @@ import { fileServerService } from '../docker/filesrv.service';
 import { hostdFor, type HostdClient, type HostdGatewayEvent } from '../hostd/client';
 import { loadAccount, type HostingActor } from '../hosting/access';
 import { emitHosting } from '../hosting/events';
-import { fileServerContainer, LABELS, P2_LABELS, PANEL_NETWORK } from '../hosting/naming';
+import { fileServerContainer, LABELS, P2_LABELS, P4B_LABELS, PANEL_NETWORK } from '../hosting/naming';
 import { iso, type AccountRow } from '../hosting/rows';
 import { platformSettings } from '../platformSettings';
 import { errText } from '../setup/docker';
@@ -282,7 +282,8 @@ function subnetsOf(ipam: { Config?: Array<{ Subnet?: string }> } | undefined): s
  */
 export async function egressSubnets(docker: Pick<Docker, 'listNetworks'>): Promise<string[]> {
   const out: string[] = [];
-  for (const label of [LABELS.account, P2_LABELS.dbNetwork]) {
+  // P4b: + the private networks of the app stacks (label oblimint.app-network, docs/P4b-PLAN.md §4).
+  for (const label of [LABELS.account, P2_LABELS.dbNetwork, P4B_LABELS.appNetwork]) {
     const nets = await docker.listNetworks({ filters: { label: [label] } }) as Array<{ IPAM?: { Config?: Array<{ Subnet?: string }> } }>;
     out.push(...nets.flatMap((n) => subnetsOf(n.IPAM)));
   }

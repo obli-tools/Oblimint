@@ -96,6 +96,17 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'mail.outboundSuspended': 'Envoi de mails suspendu',
   'mail.serviceFailed': 'Service mail en échec',
   'mail.quotaWarning': 'Boîte mail presque pleine',
+  // P4b
+  'certificate.expiringSoon': 'Certificat bientôt expiré',
+  'uptime.down': 'Service injoignable',
+  'uptime.up': 'Service rétabli',
+  'app.updateAvailable': 'Mise à jour d’application disponible',
+  'app.updated': 'Application mise à jour',
+  'app.updateFailed': 'Échec de mise à jour d’application',
+  'app.deployFailed': 'Échec de déploiement d’application',
+  'edge.unitQuarantined': 'Configuration de proxy refusée',
+  'edge.rollback': 'Configuration du proxy restaurée',
+  'workflow.failed': 'Workflow en échec',
   test: 'Test',
 };
 

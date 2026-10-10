@@ -75,7 +75,7 @@ function baseState(): MailDesiredState {
   };
 }
 
-function setup(): { fake: FakeStalwart; driver: MailDriver; dirs: { config: string; data: string } } {
+function setup(clock: () => Date = () => NOW): { fake: FakeStalwart; driver: MailDriver; dirs: { config: string; data: string } } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oblimint-stalwart-'));
   const dirs = { config: path.join(root, 'config'), data: path.join(root, 'data') };
   const fake = new FakeStalwart(adminAuth);
@@ -92,7 +92,7 @@ function setup(): { fake: FakeStalwart; driver: MailDriver; dirs: { config: stri
     hostDataDir: '/srv/oblimint',
     bindAddresses: [],
     owner: null,
-    now: () => NOW,
+    now: clock,
     restartEngine: fake.restart,
     pollMs: 0,
   });
@@ -147,10 +147,18 @@ test('stalwart sync: first pass creates domains, accounts, lists, config, sieve;
   assert.deepEqual(catchAll.members, ['contact@exemple.fr']);
   assert.equal(fake.principals.has('oblimint-alias-10'), false);
 
-  // Config + DKIM key written, reload asked once.
+  // Config written, DKIM key + signing rule + sizes in the engine's settings store (never a key file), reload asked once.
   const toml = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
-  assert.match(toml, /remote_ip == '172\.30\.0\.5'/);
-  assert.equal(fs.readdirSync(path.join(dirs.config, 'dkim')).length, 1);
+  assert.ok(!toml.includes('remote_ip'), 'relay addresses live in the settings store, not in config.toml');
+  assert.match(fake.settings.get('session.rcpt.relay.0001.if') ?? '', /remote_ip == '172\.30\.0\.5'/);
+  assert.ok(!toml.includes('PRIVATE KEY') && !toml.includes('[signature'));
+  assert.equal(fs.readdirSync(path.join(dirs.config, 'dkim')).length, 0);
+  const sigDomains = [...fake.settings].filter(([k]) => /^signature\.[^.]+\.domain$/.test(k)).map(([, v]) => v);
+  assert.deepEqual(sigDomains, ['exemple.fr']);
+  assert.match(fake.settings.get('auth.dkim.sign.0000.if') ?? '', /sender_domain == 'exemple\.fr'$/);
+  assert.equal(fake.settings.get('session.data.limits.size.0000.if'), "rcpt_domain == 'exemple.fr'");
+  assert.equal(fake.settings.get('auth.dkim.verify'), 'relaxed', 'local keys untouched');
+  assert.equal(fake.calls.filter((c) => c.path === '/api/settings' && c.method === 'POST').length, 1, 'settings written before the restart');
   assert.equal(fake.calls.filter((c) => c.path === '/api/reload').length, 1);
   // Applied by a restart (Stalwart 0.12.4 reads config.toml at start only), then checked through /api/reload.
   assert.equal(fake.restarts, 1);
@@ -413,7 +421,7 @@ test('stalwart sync: a configuration change restarts the engine; a failed restar
   await driver.sync(baseState(), { reason: 'test' });
   assert.equal(fake.restarts, 1);
   const st = baseState();
-  st.relay = { ...st.relay, relayAddresses: ['172.30.0.9'] };
+  st.settings = { ...st.settings, spamTagScore: 5 };
   fake.restartError = 'container is restarting';
   await assert.rejects(driver.sync(st, { reason: 'test' }), (e: unknown) =>
     e instanceof MailDriverError && e.code === 'applyFailed' && /could not be restarted/.test(e.message) && /container is restarting/.test(e.detail ?? ''));
@@ -424,10 +432,46 @@ test('stalwart sync: a configuration change restarts the engine; a failed restar
   assert.equal(fake.restarts, 2);
   // A principal-only change (new mailbox) needs no restart.
   const st2 = baseState();
-  st2.relay = st.relay;
+  st2.settings = st.settings;
   st2.mailboxes = st2.mailboxes.map((m) => ({ ...m, quotaMb: (m.quotaMb ?? 100) + 1 }));
   await driver.sync(st2, { reason: 'test' });
   assert.equal(fake.restarts, 2);
+});
+
+test('stalwart sync: the site relay appearing or changing address is live — no restart (fresh install order)', async () => {
+  const { fake, driver, dirs } = setup();
+  // Fresh install: the engine's first syncs run before oblimint-mail-relay exists.
+  const first = baseState();
+  first.relay = { ...first.relay, relayAddresses: [] };
+  await driver.sync(first, { reason: 'setup' });
+  assert.equal(fake.restarts, 1);
+  const toml = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
+  assert.equal(fake.settings.get('session.rcpt.relay.0001.else'), 'false', 'nobody relays through 10025 yet');
+  const reloads = fake.reloads;
+  // The relay joins the mail network, then is recreated with another address.
+  for (const [i, ip] of ['172.30.0.5', '172.30.0.9'].entries()) {
+    const st = baseState();
+    st.relay = { ...st.relay, relayAddresses: [ip] };
+    const r = await driver.sync(st, { reason: 'relay' });
+    assert.equal(r.changed, true);
+    assert.equal(fake.restarts, 1, `${ip}: no restart`);
+    assert.equal(fake.reloads, reloads + i + 1, `${ip}: one live reload`);
+    assert.equal(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), toml, `${ip}: config.toml untouched`);
+    assert.equal(fake.settings.get('session.rcpt.relay.0001.if'), `local_port == 10025 && (remote_ip == '${ip}')`);
+    assert.ok((fake.settings.get('auth.spf.verify.mail-from.0000.if') ?? '').includes(`!(remote_ip == '${ip}')`), `${ip}: SPF skipped for the relay only`);
+    assert.ok((fake.settings.get('auth.dmarc.verify.0000.if') ?? '').includes(`'${ip}'`), `${ip}: DMARC`);
+  }
+});
+
+test('stalwart sync: a relay expression missing from the engine store is written back (no restart)', async () => {
+  const { fake, driver } = setup();
+  await driver.sync(baseState(), { reason: 'test' });
+  // An engine whose store lacks the relay expression (e.g. an upgrade from a version where it was a local key).
+  for (const k of [...fake.settings.keys()]) if (k.startsWith('session.rcpt.relay')) fake.settings.delete(k);
+  const r = await driver.sync(baseState(), { reason: 'test' });
+  assert.equal(r.changed, true);
+  assert.equal(fake.settings.get('session.rcpt.relay.0000.if'), '!is_empty(authenticated_as)');
+  assert.equal(fake.restarts, 1);
 });
 
 test('stalwart sync: an unverifiable hash only blocks its own mailbox', async () => {
@@ -479,4 +523,170 @@ test('stalwart driver: deployment and removal failures are MailDriverError', asy
   const { driver } = setup();
   await assert.rejects(driver.ensure(() => undefined), (e: unknown) => e instanceof MailDriverError && e.code === 'applyFailed' && /no docker/.test(e.detail ?? ''));
   await assert.rejects(driver.remove(() => undefined), (e: unknown) => e instanceof MailDriverError && e.code === 'applyFailed');
+});
+
+test('stalwart sync (report P4): mailbox create / delete, send toggle, password, quota, alias, forward are live — no restart; /api/reload only after a revocation', async () => {
+  const { fake, driver, dirs } = setup();
+  await driver.sync(baseState(), { reason: 'test' });
+  assert.equal(fake.restarts, 1);
+  const tomlBefore = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
+  assert.match(tomlBefore, /ends_with\(authenticated_as, '@exemple\.fr'\)/, 'limits per domain, not per mailbox');
+  assert.ok(!/authenticated_as == /.test(tomlBefore));
+  const reloads = () => fake.calls.filter((c) => c.path.startsWith('/api/reload')).length;
+  let reloadsBefore = reloads();
+
+  // A revocation (permission disabled, address / mailbox removed) is followed by ONE
+  // /api/reload: Stalwart caches positive directory lookups (stale RCPT 250 otherwise).
+  const live = async (what: string, st: MailDesiredState, check: () => void, revokes = false) => {
+    const calls = fake.calls.length;
+    const r = await driver.sync(st, { reason: what });
+    assert.equal(r.ok, true, `${what}: ${JSON.stringify(r.domainErrors)}`);
+    assert.equal(r.changed, true, `${what}: applied`);
+    assert.equal(fake.restarts, 1, `${what}: no restart`);
+    assert.equal(reloads(), reloadsBefore + (revokes ? 1 : 0), `${what}: ${revokes ? 'one /api/reload (lookup cache)' : 'no /api/reload'}`);
+    reloadsBefore = reloads();
+    assert.ok(fake.calls.slice(calls).some((c) => c.method !== 'GET'), `${what}: through the admin API`);
+    assert.equal(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), tomlBefore, `${what}: config.toml untouched`);
+    check();
+  };
+
+  // Create a mailbox (same account: its limit is already loaded).
+  let st = baseState();
+  st.mailboxes.push(mailbox(9, 'nouveau@autre.fr', contactHash));
+  await live('create', st, () => assert.equal(fake.principals.get('nouveau@autre.fr')?.type, 'individual'));
+  // Send toggle = the email-send permission of the principal.
+  st = baseState();
+  st.mailboxes.push(mailbox(9, 'nouveau@autre.fr', contactHash, { sendEnabled: false }));
+  await live('send off', st, () => assert.deepEqual(fake.principals.get('nouveau@autre.fr')!.disabledPermissions, ['email-send']), true);
+  st.mailboxes[st.mailboxes.length - 1] = mailbox(9, 'nouveau@autre.fr', contactHash);
+  await live('send on', st, () => assert.deepEqual(fake.principals.get('nouveau@autre.fr')!.disabledPermissions, []));
+  // Password + quota.
+  st.mailboxes[st.mailboxes.length - 1] = mailbox(9, 'nouveau@autre.fr', md5, { quotaMb: 2048 });
+  await live('password + quota', st, () => {
+    assert.deepEqual(fake.principals.get('nouveau@autre.fr')!.secrets, [md5.replace('{MD5-CRYPT}', '')]);
+    assert.equal(fake.principals.get('nouveau@autre.fr')!.quota, 2048 * 1048576);
+  });
+  // Alias (list) + forwarding (sieve through JMAP).
+  st.aliases.push({ id: 12, accountId: 7, domainId: 2, address: 'equipe@autre.fr', targets: ['nouveau@autre.fr', 'contact@exemple.fr'] });
+  st.mailboxes[st.mailboxes.length - 1] = mailbox(9, 'nouveau@autre.fr', md5, { quotaMb: 2048, forward: { targets: ['x@gmail.com'], keepCopy: true } });
+  await live('alias + forward', st, () => {
+    assert.deepEqual(fake.principals.get('oblimint-alias-12')!.members, ['contact@exemple.fr', 'nouveau@autre.fr']);
+    assert.match(fake.sieve.get('nouveau@autre.fr')!.get('oblimint')!.content, /redirect :copy "x@gmail\.com";/);
+  });
+  // Delete (detach: login / delivery removed, data kept until purge).
+  await live('delete', baseState(), () => {
+    const p = fake.principals.get('nouveau@autre.fr')!;
+    assert.deepEqual(p.emails, []);
+    assert.ok(p.disabledPermissions.includes('authenticate'));
+  }, true);
+  // Nothing left to do: no write, no reload.
+  const r = await driver.sync(baseState(), { reason: 'idempotent' });
+  assert.equal(r.changed, false);
+  assert.equal(reloads(), reloadsBefore, 'idempotent: no /api/reload');
+});
+
+test('stalwart sync: a failed reload after a revocation is retried on the next pass (stale lookup cache)', async () => {
+  const { fake, driver } = setup();
+  const st = baseState();
+  st.mailboxes.push(mailbox(9, 'carol@autre.fr', contactHash));
+  await driver.sync(st, { reason: 'test' });
+  const reloads = () => fake.calls.filter((c) => c.path.startsWith('/api/reload')).length;
+  const r0 = reloads();
+  // The mailbox is deleted, but the reload that drops the cached RCPT lookup fails.
+  fake.failOn = (c) => (c.path === '/api/reload' ? 'internal' : null);
+  await assert.rejects(driver.sync(baseState(), { reason: 'carol deleted' }), (e: unknown) =>
+    e instanceof MailDriverError && /after a revocation/.test(e.message));
+  assert.deepEqual(fake.principals.get('carol@autre.fr')!.emails, [], 'address released before the reload');
+  fake.failOn = null;
+  // Nothing left to write, yet the reload is still due.
+  await driver.sync(baseState(), { reason: 'retry' });
+  assert.equal(reloads(), r0 + 2, 'reload retried');
+  await driver.sync(baseState(), { reason: 'again' });
+  assert.equal(reloads(), r0 + 2, 'accepted: no more reload');
+});
+
+test('stalwart sync (report P4): only a stricter sending limit or a structural change restarts', async () => {
+  const { fake, driver, dirs } = setup();
+  await driver.sync(baseState(), { reason: 'test' });
+  assert.equal(fake.restarts, 1);
+  // A new account's first mailbox: its domain runs under the fallback (strictest rate, 200/h here) — no restart.
+  let st = baseState();
+  st.domains.push({ id: 3, accountId: 8, name: 'client2.fr', active: true, catchAll: null, maxMessageSizeMb: 50 });
+  await driver.sync(st, { reason: 'domain' });
+  assert.equal(fake.restarts, 1, 'a domain without DKIM key nor specific size is a principal only: live');
+  assert.equal(fake.principals.get('client2.fr')?.type, 'domain');
+  st.mailboxes.push({ ...mailbox(20, 'a@client2.fr', contactHash), accountId: 8, domainId: 3, sendPerHour: 500 });
+  await driver.sync(st, { reason: 'first mailbox, looser plan' });
+  assert.equal(fake.restarts, 1, 'covered by the stricter fallback: no restart');
+  const toml = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
+  assert.match(toml, /\[queue\.limiter\.inbound\.oblimint-rate-default\]\nkey = \["authenticated_as"\]\nrate = "200\/1h"/);
+  assert.ok(!toml.includes("'@client2.fr'"), 'file = what the engine loaded');
+  // A plan downgrade (stricter than what the engine enforces): restart (MA9).
+  st = JSON.parse(JSON.stringify(st)) as MailDesiredState;
+  for (const m of st.mailboxes) if (m.accountId === 7) m.sendPerHour = 50;
+  await driver.sync(st, { reason: 'downgrade' });
+  assert.equal(fake.restarts, 2);
+  const toml2 = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
+  assert.match(toml2, /\[queue\.limiter\.inbound\.oblimint-rate-50-0\]/);
+  assert.match(toml2, /\[queue\.limiter\.inbound\.oblimint-rate-500-0\]/, 'exact limits loaded with the restart');
+  // Then idempotent.
+  await driver.sync(st, { reason: 'again' });
+  assert.equal(fake.restarts, 2);
+  // The new domain's DKIM key and a smaller message size (report P4, §19): live — settings replaced in the
+  // engine's store + one /api/reload, NO restart, config.toml unchanged.
+  const reloads = () => fake.calls.filter((c) => c.path.startsWith('/api/reload')).length;
+  const r0 = reloads();
+  const tomlBefore = fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8');
+  st.dkim.push({ ...st.dkim[0], domain: 'client2.fr', selector: 'om202612' });
+  st.domains[2].maxMessageSizeMb = 10;
+  await driver.sync(st, { reason: 'dkim' });
+  assert.equal(fake.restarts, 2, 'a DKIM key / domain size never restarts the engine');
+  assert.equal(reloads(), r0 + 1, 'applied by one reload');
+  assert.equal(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), tomlBefore);
+  assert.ok([...fake.settings].some(([k, v]) => /^signature\.[^.]+\.domain$/.test(k) && v === 'client2.fr'));
+  assert.ok([...fake.settings.values()].includes("rcpt_domain == 'client2.fr'"));
+  // Idempotent: nothing written, no reload.
+  const w0 = fake.writes().length;
+  await driver.sync(st, { reason: 'again' });
+  assert.equal(fake.writes().length, w0);
+  // A rejected reload of the settings is retried on the next pass even though the store already holds them.
+  st.dkim = st.dkim.filter((k) => k.domain !== 'client2.fr');
+  fake.reloadErrors = { 'signature.x.private-key': 'Failed to build RSA key' };
+  await assert.rejects(driver.sync(st, { reason: 'dkim removed' }), (e: unknown) => e instanceof MailDriverError && /domain settings/.test(e.message));
+  fake.reloadErrors = null;
+  const r1 = reloads();
+  await driver.sync(st, { reason: 'retry' });
+  assert.equal(reloads(), r1 + 1, 'pending settings reloaded');
+  await driver.sync(st, { reason: 'again' });
+  assert.equal(reloads(), r1 + 1, 'accepted: no more reload');
+  assert.ok(![...fake.settings.values()].includes('client2.fr'), 'the removed key is gone from the store');
+  assert.equal(fake.restarts, 2);
+  // A store that lost the settings (wiped / restored engine data) gets them back.
+  for (const k of [...fake.settings.keys()]) if (k.startsWith('signature.')) fake.settings.delete(k);
+  await driver.sync(st, { reason: 'healed' });
+  assert.ok([...fake.settings].some(([k, v]) => /^signature\.[^.]+\.domain$/.test(k) && v === 'exemple.fr'));
+  assert.equal(fake.restarts, 2);
+});
+
+test('stalwart sync: limits left stricter than the plan are loaded by a bounded restart (quiet window / 24 h)', async () => {
+  let clock = NOW; // 10:00 UTC
+  const { fake, driver, dirs } = setup(() => clock);
+  await driver.sync(baseState(), { reason: 'test' });
+  assert.equal(fake.restarts, 1);
+  const st = baseState();
+  st.domains.push({ id: 3, accountId: 8, name: 'client2.fr', active: true, catchAll: null, maxMessageSizeMb: 50 });
+  st.mailboxes.push({ ...mailbox(20, 'a@client2.fr', contactHash), accountId: 8, domainId: 3, sendPerHour: 500 });
+  await driver.sync(st, { reason: 'new account' });
+  assert.equal(fake.restarts, 1, 'under the stricter fallback: no immediate restart');
+  const later = (h: number) => { clock = new Date(NOW.getTime() + h * 3_600_000); };
+  later(7); // 17:00 UTC
+  await driver.sync(st, { reason: 'periodic' });
+  assert.equal(fake.restarts, 1, '7 h, outside the quiet window');
+  later(16.5); // 02:30 UTC the next day
+  await driver.sync(st, { reason: 'periodic' });
+  assert.equal(fake.restarts, 2, 'quiet window after 6 h: exact limits loaded');
+  assert.match(fs.readFileSync(path.join(dirs.config, 'config.toml'), 'utf8'), /\[queue\.limiter\.inbound\.oblimint-rate-500-0\]/);
+  later(40);
+  await driver.sync(st, { reason: 'periodic' });
+  assert.equal(fake.restarts, 2, 'up to date: no further restart');
 });

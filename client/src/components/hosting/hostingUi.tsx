@@ -210,7 +210,7 @@ const KNOWN_CODES = [
   'planNameTaken', 'planInactive', 'baseNotAllowed', 'accountDeleting', 'invalidSshKey', 'emailTaken', 'alreadyMember',
   'domainReserved', 'certificateNotDue', 'certificateRateLimited', 'acmeEmailMissing', 'fileServerNoPort', 'noNode',
   'invalidKeyName', 'unknownNode', 'runtimeMismatch', 'runtimePrefixLimit', 'siteDeleting', 'certificateNameTaken', 'nodeNotSupported',
-  'accountNotServed', 'tlsDisabled',
+  'accountNotServed', 'tlsDisabled', 'domainServedByProxy',
   // Generic codes of every module (a module namespace may still refine them).
   'notFound', 'rateLimited',
 ] as const;
@@ -265,6 +265,33 @@ export function violationMessages(t: TFunction, violations: EnvelopeViolation[])
   }));
 }
 
+/** Label of a domains.served_by consumer ("a proxy host", "site routes"…). */
+export function servedByLabel(t: TFunction, servedBy: string): string {
+  switch (servedBy) {
+    case 'sites': return t('proxy.servedBy.sites') || 'site routes';
+    case 'proxy': return t('proxy.servedBy.proxy') || 'a proxy host';
+    case 'redirect': return t('proxy.servedBy.redirect') || 'a redirection';
+    case 'dead': return t('proxy.servedBy.dead') || 'a dead host';
+    default: return servedBy;
+  }
+}
+
+/**
+ * Message of a 409 domainServedByProxy (site route on a domain bound to a
+ * proxy host, a redirection or a dead host), naming `details.servedBy`.
+ */
+export function domainServedByProxyMessage(t: TFunction, err: unknown): string {
+  const d = (err as ApiErrorShape | null)?.response?.data?.details;
+  const servedBy = d && typeof d === 'object' && !Array.isArray(d) ? (d as { servedBy?: unknown }).servedBy : undefined;
+  const consumer = typeof servedBy === 'string' && servedBy
+    ? servedByLabel(t, servedBy)
+    : (t('hostingCommon.servedByAny') || 'a proxy host, a redirection or a dead host');
+  return t('hostingCommon.errors.domainServedByProxy', {
+    servedBy: consumer,
+    defaultValue: 'This domain is already served by {{servedBy}}: a site route cannot be added to it. Unbind it there first.',
+  });
+}
+
 /** Translated message of an API error: known `code` first, then the server text, then `fallback`. */
 export function hostingErrorMessage(t: TFunction, err: unknown, fallback: string): string {
   const code = apiErrorCode(err);
@@ -273,6 +300,7 @@ export function hostingErrorMessage(t: TFunction, err: unknown, fallback: string
     const head = t('hostingCommon.errors.envelopeExceeded') || 'The workspace resource envelope would be exceeded.';
     return lines.length ? `${head}\n${lines.join('\n')}` : head;
   }
+  if (code === 'domainServedByProxy') return domainServedByProxyMessage(t, err);
   if (code && (KNOWN_CODES as readonly string[]).includes(code)) {
     const msg = t(`hostingCommon.errors.${code}`);
     if (msg && msg !== `hostingCommon.errors.${code}`) return msg;

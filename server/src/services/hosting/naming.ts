@@ -44,7 +44,9 @@ export type ContainerRole = 'site' | 'site-secondary' | 'site-preview' | 'filesr
   // P3: shared scanner (panel network), ephemeral adapter tools container (account networks)
   | 'scanner' | 'tools'
   // P4: mail engine containers (label oblimint.mail-part tells which), site relay, webmail
-  | 'mail' | 'mail-relay' | 'webmail';
+  | 'mail' | 'mail-relay' | 'webmail'
+  // P4b: app containers (stacks), forward-auth sidecars (oauth2-proxy + redis)
+  | 'app' | 'proxy-auth';
 
 // ── P2 (docs/P2-PLAN.md §Conteneurs) ─────────────────────────────────────────
 
@@ -73,7 +75,7 @@ export const P2_LABELS = {
  * must NEVER remove as orphans: their owning module converges them itself
  * (databases: db). destroyAccount still removes them (label oblimint.account).
  */
-export const EXTERNALLY_MANAGED_ROLES: readonly ContainerRole[] = ['db', 'tools'];
+export const EXTERNALLY_MANAGED_ROLES: readonly ContainerRole[] = ['db', 'tools', 'app'];
 
 // ── P3 (docs/P3-PLAN.md §Conteneurs) ─────────────────────────────────────────
 
@@ -166,3 +168,44 @@ export function siteUpstream(siteId: number, role: 'primary' | 'secondary' | 'pr
 export function previewHostname(site: { id: number; slug: string }, panelHostname: string): string {
   return `${site.slug}-${site.id}.preview.${panelHostname.toLowerCase()}`;
 }
+
+// ── P4b (docs/P4b-PLAN.md §4, §5, §8) ────────────────────────────────────────
+
+/**
+ * App containers: oblimint-app-<stackId>-<service> (service names are
+ * validated [a-z0-9][a-z0-9_-]{0,62} by apps-core; the Docker name never uses
+ * the stack slug). Labels: oblimint.internal, oblimint.account, oblimint.app,
+ * oblimint.app-service, oblimint.role=app.
+ */
+export const appContainer = (stackId: number, service: string): string => `oblimint-app-${stackId}-${service.toLowerCase().replace(/[^a-z0-9_-]/g, '')}`;
+/** DNS alias of an app service on the account FRONT / BACK fabric (edge upstream, link target): app-<stackId>-<service>. */
+export const appServiceAlias = (stackId: number, service: string): string => `app-${stackId}-${service.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+/** Private network of a stack: oblimint-app-<stackId>-<compose network name> (panel-allocated subnet, label oblimint.app-network). */
+export const appPrivateNetwork = (stackId: number, name: string): string => `oblimint-app-${stackId}-${name.toLowerCase().replace(/[^a-z0-9_-]/g, '')}`;
+/** Named volume of a stack (local driver, bind to accounts/<id>/apps/<stackId>/volumes/<name>). */
+export const appVolume = (stackId: number, name: string): string => `oblimint-app-${stackId}-${name.toLowerCase().replace(/[^a-z0-9_-]/g, '')}`;
+/** Image built from a stack's source: oblimint-build/<stackId>-<service>:<deployment id>. */
+export const appBuildImage = (stackId: number, service: string, tag: string): string =>
+  `oblimint-build/${stackId}-${service.toLowerCase().replace(/[^a-z0-9_-]/g, '')}:${tag}`;
+
+/** Forward-auth: oauth2-proxy sidecar of one provider + their shared Redis, on AUTH_NETWORK with the edge. */
+export const AUTH_NETWORK = 'oblimint-auth';
+export const authSidecarContainer = (providerId: number): string => `oblimint-oauth2-${providerId}`;
+export const AUTH_SIDECAR_PORT = 4180;
+export const AUTH_REDIS_CONTAINER = 'oblimint-auth-redis';
+
+export const P4B_LABELS = {
+  /** app_stacks.id of an app container / volume / private network. */
+  app: 'oblimint.app',
+  /** Compose service name of an app container. */
+  appService: 'oblimint.app-service',
+  /** app_stacks.id of a PRIVATE app network (never oblimint.account: the edge joins those). */
+  appNetwork: 'oblimint.app-network',
+  /** front | back on an account fabric created by the segmentation module. */
+  fabric: 'oblimint.fabric',
+  /** auth_providers.id of an oauth2-proxy sidecar. */
+  authProvider: 'oblimint.auth-provider',
+} as const;
+
+export const oauth2ProxyImage = (): string => config.hosting.oauth2ProxyImage;
+export const authRedisImage = (): string => config.hosting.mailRedisImage;

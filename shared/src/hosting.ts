@@ -284,6 +284,31 @@ export interface PlanLimits {
   mailOutboundPerHour: number | null;
   /** Outbound messages per hour of ONE site (PHP mail() through the relay), null = unlimited. */
   mailSiteOutboundPerHour: number | null;
+  // ── P4b apps + proxy (docs/P4b-PLAN.md §3) ──
+  /** App stacks per account (null = unlimited, 0 = apps off). */
+  maxAppStacks: number | null;
+  /** App containers (services) per account, all stacks together. */
+  maxAppContainers: number | null;
+  /** CPU cores of ALL the app containers of the account together (null = node ceiling). */
+  appsCpuCores: number | null;
+  /** Memory (MiB) of ALL the app containers of the account together (null = node ceiling). */
+  appsMemoryMb: number | null;
+  /** Max processes of ONE app container. */
+  appsPidsPerContainer: number;
+  /** Build images from source (compose `build:` of a git / zip source), also gated by the tenant policy / settings. */
+  appsBuild: boolean;
+  /** Interactive console (exec) in app containers (+ capability apps.console, settings, tenant policy). */
+  appsConsole: boolean;
+  /** Proxy hosts per account (null = unlimited). */
+  maxProxyHosts: number | null;
+  /** Redirections + dead hosts per account. */
+  maxRedirections: number | null;
+  /** Proxy hosts towards external ip:port / host names (also gated by the tenant policy). */
+  proxyExternalTargets: boolean;
+  /** Uptime monitors per account. */
+  maxUptimeMonitors: number | null;
+  /** Workflows per account (null = unlimited, 0 = none). */
+  maxWorkflows: number | null;
 }
 
 export const DEFAULT_PLAN_LIMITS: PlanLimits = {
@@ -311,6 +336,18 @@ export const DEFAULT_PLAN_LIMITS: PlanLimits = {
   mailMaxMessageSizeMb: 25,
   mailOutboundPerHour: 200,
   mailSiteOutboundPerHour: 100,
+  maxAppStacks: 3,
+  maxAppContainers: 10,
+  appsCpuCores: 2,
+  appsMemoryMb: 2048,
+  appsPidsPerContainer: 512,
+  appsBuild: false,
+  appsConsole: false,
+  maxProxyHosts: 10,
+  maxRedirections: 10,
+  proxyExternalTargets: false,
+  maxUptimeMonitors: 10,
+  maxWorkflows: 5,
 };
 
 export interface Plan {
@@ -417,10 +454,16 @@ export interface HostingAccountUpdate {
 export type ClientCapability = 'sites.manage' | 'releases.publish' | 'releases.approve' | 'domains.manage' | 'files.manage'
   | 'databases.manage' | 'dns.manage'
   // P4
-  | 'mail.manage';
+  | 'mail.manage'
+  // P4b (docs/P4b-PLAN.md §12): apps (stacks, catalog, registries, links), the app
+  // console (exec, also gated by settings / tenant policy), proxy objects (hosts,
+  // redirections, dead hosts, access lists, pages, auth providers, account bans),
+  // monitoring (uptime monitors, status pages, workflows, SFTP targets, windows).
+  | 'apps.manage' | 'apps.console' | 'proxy.manage' | 'monitoring.manage';
 
 export const CLIENT_CAPABILITIES: readonly ClientCapability[] = [
   'sites.manage', 'releases.publish', 'releases.approve', 'domains.manage', 'files.manage', 'databases.manage', 'dns.manage', 'mail.manage',
+  'apps.manage', 'apps.console', 'proxy.manage', 'monitoring.manage',
 ];
 
 /** One client user of an account (GET /api/accounts/:id/users). */
@@ -942,7 +985,9 @@ export interface SiteRuntimeConfig {
  * stalwart), mail-relay (site relay of PHP mail()), webmail (Roundcube or
  * SnappyMail) — docs/P4-PLAN.md.
  */
-export type InfraComponentId = 'edge' | 'hostd' | 'dns' | 'dbadmin' | 'scanner' | 'mail' | 'mail-relay' | 'webmail';
+export type InfraComponentId = 'edge' | 'hostd' | 'dns' | 'dbadmin' | 'scanner' | 'mail' | 'mail-relay' | 'webmail'
+  // P4b: forward-auth sidecars (oauth2-proxy per provider + their Redis), module proxy-hosts.
+  | 'proxy-auth';
 
 export interface InfraComponentStatus {
   /** P2: + dns (PowerDNS), dbadmin (phpMyAdmin + Adminer). */
@@ -970,6 +1015,9 @@ export interface EdgeStatus {
   lastSyncError: string | null;
   acmeDirectory: 'production' | 'staging';
   certificates: { valid: number; pending: number; failed: number; expiringSoon: number };
+  /** P4b (edge-robustness): configuration units by status + last apply. */
+  units?: { total: number; active: number; quarantined: number; stub: number; pending: number; upstreamUnreachable: number };
+  lastApply?: { result: string; at: string; error: string | null } | null;
 }
 
 export interface EdgeSyncResult {
@@ -1015,6 +1063,19 @@ export const HostingSocketEvents = {
   // ── P4 (payloads: ids only, clients refetch — mail.ts) ──
   /** MailUpdatedPayload { entity, id, accountId, action } */
   MAIL_UPDATED: 'MAIL_UPDATED',
+  // ── P4b (payloads: ids only, clients refetch — apps.ts, proxy.ts, monitoring.ts) ──
+  /** AppUpdatedPayload */
+  APP_UPDATED: 'APP_UPDATED',
+  /** AppDeployOutputPayload (room app-deploy:<deploymentId>) */
+  APP_DEPLOY_OUTPUT: 'APP_DEPLOY_OUTPUT',
+  /** ProxyUpdatedPayload (hosts, redirections, dead hosts, streams, lists, pages, providers, certificates, edge units) */
+  PROXY_UPDATED: 'PROXY_UPDATED',
+  /** { accountId, linkId|null } — links / policy applied */
+  NETWORK_UPDATED: 'NETWORK_UPDATED',
+  /** { banId, accountId|null, action } */
+  BAN_UPDATED: 'BAN_UPDATED',
+  /** MonitoringUpdatedPayload */
+  MONITORING_UPDATED: 'MONITORING_UPDATED',
 } as const;
 export type HostingSocketEventName = typeof HostingSocketEvents[keyof typeof HostingSocketEvents];
 

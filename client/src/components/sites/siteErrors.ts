@@ -1,6 +1,7 @@
 import toast from 'react-hot-toast';
 import type { TFunction } from 'i18next';
 import { apiErrorMessage, isStepUpHandled } from '@/api/client';
+import { domainServedByProxyMessage } from '@/components/hosting/hostingUi';
 
 /**
  * Business error codes of the P1 API (docs/P1-PLAN.md §6) the Sites UI can
@@ -81,6 +82,8 @@ export function siteErrorMessage(err: unknown, t: TFunction, fallback?: string):
     const details = (err as { response?: { data?: { details?: { restored?: unknown } } } } | null)?.response?.data?.details;
     if (details?.restored === false) return t('sites.errors.runtimeSwitchNotRestored') || RUNTIME_NOT_RESTORED_FALLBACK;
   }
+  // P4b: site route on a domain bound to a proxy host / redirection / dead host (shared hosting message).
+  if (code === 'domainServedByProxy') return domainServedByProxyMessage(t, err);
   if (isKnownCode(code)) return t(`sites.errors.${code}`) || SITE_ERROR_FALLBACKS[code];
   // P3 codes met by P1 screens (publish / rollback / data paths: windowActive, adapterBusy, riskBlocked…):
   // translated by maintenance.json (maintenance.errors.*) with the error details, when the key exists.

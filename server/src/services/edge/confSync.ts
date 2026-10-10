@@ -7,6 +7,13 @@ import { renderVhost, vhostFileName, type EdgeVhost } from './nginxConfig';
 // conf.d synchronisation, with every side effect injected (tests use a temp
 // dir and a fake exec).
 //
+// P4b (edge-robustness): edge.service no longer calls syncConfDir — the edge
+// is applied unit by unit by pipeline.ts (sandbox per unit, edge/good/ copy,
+// canary); its global `nginx -t` safety net follows the same isolation rules
+// as below. This file keeps the shared pieces (EdgeExecResult,
+// EDGE_NOT_RUNNING, createDebouncedRunner) and the P1 per-vhost sync, still
+// covered by its tests.
+//
 // conf.d is BIND-MOUNTED into oblimint-edge: the directory itself is never
 // renamed nor replaced (the container would keep the old inode). Each file is
 // written as `<file>.tmp` then renamed over `<file>` (atomic per file), stale

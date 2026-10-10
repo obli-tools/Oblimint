@@ -56,6 +56,16 @@ import mailDnsRoutes from './mailDns.routes';                  // mail-dns-tls (
 import mailOutboundRoutes, { siteMailRelayRoutes } from './mailOutbound.routes'; // outbound-security
 import systemMailSecurityRoutes from './systemMailSecurity.routes'; // outbound-security (platform admin: bans, relay test)
 import webmailRoutes from './webmail.routes';                  // webmail (/mail/mailboxes/:id/webmail-session)
+// P4b — apps + proxy (docs/P4b-PLAN.md §6). One router file per owning module.
+import appsRoutes from './apps.routes';                         // apps-core (/apps: stacks, catalog, registries, policy)
+import networkRoutes, { systemNetworkRoutes } from './network.routes'; // segmentation (/network, /system/network)
+import proxyRoutes from './proxy.routes';                       // proxy-hosts (/proxy)
+import edgeUnitsRoutes, { systemEdgeUnitsRoutes } from './edgeUnits.routes'; // edge-robustness (/edge, /system/edge)
+import bansRoutes from './bans.routes';                         // honeypot-bans (/bans)
+import monitoringRoutes from './monitoring.routes';             // monitoring-automation (/monitoring)
+import uptimeRoutes from './uptime.routes';                     // monitoring-automation (/uptime)
+import automationRoutes from './automation.routes';             // monitoring-automation (/automation)
+import publicStatusRoutes from './publicStatus.routes';         // monitoring-automation (/public, no session)
 
 const router = Router();
 
@@ -66,6 +76,8 @@ router.use('/auth', obligateCallbackRoutes);       // sso-config, connected-apps
 router.use('/ip-probe', ipProbeRoutes);            // P2 hostd-firewall: public IP probe (v4-only / v6-only hosts)
 router.use('/system/infra', requireAuth, requireRole('admin'), infraRoutes); // P1 orchestration
 router.use('/system/edge', requireAuth, requireRole('admin'), edgeRoutes);   // P1 edge
+router.use('/system/edge', requireAuth, requireRole('admin'), systemEdgeUnitsRoutes); // P4b edge-robustness (units, applies, rollback)
+router.use('/system/network', requireAuth, requireRole('admin'), systemNetworkRoutes); // P4b segmentation
 router.use('/system/hosting-settings', requireAuth, requireRole('admin'), hostingSettingsRoutes); // P2 architect
 router.use('/system/dns', requireAuth, requireRole('admin'), systemDnsRoutes);           // P2 dns
 router.use('/system/firewall', requireAuth, requireRole('admin'), systemFirewallRoutes); // P2 hostd-firewall
@@ -73,6 +85,7 @@ router.use('/system/scanner', requireAuth, requireRole('admin'), scannerRoutes);
 router.use('/system/mail', requireAuth, requireRole('admin'), systemMailRoutes);         // P4 mail-core (no catch-all)
 router.use('/system/mail', requireAuth, requireRole('admin'), systemMailSecurityRoutes); // P4 outbound-security
 router.use('/site-api', siteApiRoutes);            // P3 windows: Bearer site token (no session)
+router.use('/public', publicStatusRoutes);         // P4b monitoring-automation: public status pages (no session)
 router.use('/system', systemRoutes);               // platform admin, no tenant required
 
 // ── Authenticated, no tenant required ───────────────────────────────────────
@@ -125,6 +138,15 @@ tenantRouter.use('/mail', mailDnsRoutes);
 tenantRouter.use('/mail', mailOutboundRoutes);
 tenantRouter.use('/mail', webmailRoutes);
 tenantRouter.use('/sites', siteMailRelayRoutes);        // /:id/mail-relay…
+// P4b apps + proxy. Each prefix has a single router (no shared prefix).
+tenantRouter.use('/apps', appsRoutes);
+tenantRouter.use('/network', networkRoutes);
+tenantRouter.use('/proxy', proxyRoutes);
+tenantRouter.use('/edge', edgeUnitsRoutes);
+tenantRouter.use('/bans', bansRoutes);
+tenantRouter.use('/monitoring', monitoringRoutes);
+tenantRouter.use('/uptime', uptimeRoutes);
+tenantRouter.use('/automation', automationRoutes);
 
 router.use('/', tenantRouter);
 
