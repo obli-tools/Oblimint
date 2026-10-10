@@ -41,6 +41,8 @@ export async function startWorkers(): Promise<void> {
   if (config.hosting.mailWorkers) for (const [name, w] of await p4Workers()) starters.push([name, () => w.start()]);
   // P4b workers (docs/P4b-PLAN.md §17): same contract; OBLIMINT_P4B_WORKERS=off skips them.
   if (config.hosting.p4bWorkers) for (const [name, w] of await p4bWorkers()) starters.push([name, () => w.start()]);
+  // P5 workers (docs/P5-PLAN.md §14): same contract; OBLIMINT_MIGRATION_WORKERS=off skips them.
+  if (config.hosting.migrationWorkers) for (const [name, w] of await p5Workers()) starters.push([name, () => w.start()]);
   for (const [name, start] of starters) {
     try { start(); } catch (err) { logger.error({ err, worker: name }, 'Worker failed to start'); }
   }
@@ -145,6 +147,22 @@ async function p4bWorkers(): Promise<Array<[string, Worker]>> {
   ];
 }
 
+/**
+ * P5 workers, in start order: migration-discovery (marks the discoveries interrupted by a restart),
+ * migration-runs (resumes the runs whose lease expired, executes the queued runs). The cutover service has no
+ * worker (its checklists are refreshed by the run-finished hook and on demand).
+ */
+async function p5Workers(): Promise<Array<[string, Worker]>> {
+  const [discovery, runs] = await Promise.all([
+    import('../services/migration/discovery/discovery.service').then((m) => m.discoveryService),
+    import('../services/migration/execution/runs.service').then((m) => m.migrationRunsService),
+  ]);
+  return [
+    ['migration-discovery', discovery],
+    ['migration-runs', runs],
+  ];
+}
+
 export async function stopWorkers(): Promise<void> {
   const mods = await Promise.all([
     import('../services/docker/reconcile.service').then((m) => m.reconcileService),
@@ -159,6 +177,7 @@ export async function stopWorkers(): Promise<void> {
   for (const [, w] of await p3Workers()) { try { w.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p4Workers()) { try { w.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p4bWorkers()) { try { w.stop(); } catch { /* exiting */ } }
+  for (const [, w] of await p5Workers()) { try { w.stop(); } catch { /* exiting */ } }
   const { stopInternalServer } = await import('../internal/internalServer');
   try { stopInternalServer(); } catch { /* exiting */ }
 }

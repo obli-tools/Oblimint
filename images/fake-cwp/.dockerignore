@@ -1,0 +1,6 @@
+# Build context = images/fake-cwp: only what the image build needs.
+check/
+e2e/
+scripts/
+README.md
+.gitattributes

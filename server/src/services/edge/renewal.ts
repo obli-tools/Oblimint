@@ -12,6 +12,9 @@
 //     trusted certificate;
 //   - names changed (www toggled) → reissued, but still after the failure
 //     backoff (a failed attempt keeps the OLD names on a still-valid row).
+//   - P5: a certificate IMPORTED from CWP (issuer 'imported', docs/P5-PLAN.md
+//     §9.6) is served as is and handed over to Let's Encrypt like one of ours:
+//     renewed in the same 30-day window (or at the cutover, explicitly).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const RENEW_BEFORE_MS = 30 * 24 * 3600_000;
@@ -22,6 +25,9 @@ export const STUCK_PENDING_MS = 3600_000;
 export const MANUAL_COOLDOWN_MS = 10 * 60_000;
 
 export type CertIssuer = 'letsencrypt' | 'letsencrypt-staging';
+
+/** certificates.issuer of a certificate imported by the CWP migration (P5): renewed by Let's Encrypt. */
+export const IMPORTED_CERT_ISSUER = 'imported';
 
 /** Issuer of the certificates of a directory. */
 export function issuerFor(directory: 'production' | 'staging'): CertIssuer {
@@ -103,13 +109,14 @@ export interface PlanRenewalsOptions {
 
 /**
  * Renewal pass (checkRenewals): ids to mark 'expired' (valid past not_after)
- * and ids to (re)issue now. Only Let's Encrypt certificates are handled.
+ * and ids to (re)issue now. Only Let's Encrypt certificates (and the ones
+ * imported by the CWP migration, handed over to Let's Encrypt) are handled.
  */
 export function planRenewals(rows: ScheduleRow[], now: number, opts: PlanRenewalsOptions = {}): { expire: number[]; renew: number[] } {
   const expire: number[] = [];
   const renew: number[] = [];
   for (const r of rows) {
-    if (!r.issuer.startsWith('letsencrypt')) continue;
+    if (!r.issuer.startsWith('letsencrypt') && r.issuer !== IMPORTED_CERT_ISSUER) continue;
     const end = ms(r.not_after);
     if (r.status === 'valid' && end !== null && end <= now) expire.push(r.id);
     let due: boolean;

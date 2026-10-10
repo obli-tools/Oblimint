@@ -15,7 +15,7 @@ import auditRoutes from './audit.routes';
 import dashboardRoutes from './dashboard.routes';
 import nodesRoutes from './nodes.routes';
 import { normalModeSetupRouter } from './setup.routes';
-import { requireRole } from '../middleware/rbac';
+import { requirePlatformAdminOnMaster, requireRole } from '../middleware/rbac';
 // P1 — hosting core (docs/P1-PLAN.md §API). One router file per owning module.
 import hostingMeRoutes from './hostingMe.routes';        // hosting-api
 import plansRoutes from './plans.routes';                // hosting-api
@@ -66,6 +66,13 @@ import monitoringRoutes from './monitoring.routes';             // monitoring-au
 import uptimeRoutes from './uptime.routes';                     // monitoring-automation (/uptime)
 import automationRoutes from './automation.routes';             // monitoring-automation (/automation)
 import publicStatusRoutes from './publicStatus.routes';         // monitoring-automation (/public, no session)
+// P5 — CWP migration (docs/P5-PLAN.md §6). Platform admin on the master tenant; one router file per owning module,
+// all on the shared prefix /system/migration (no catch-all in any of them).
+import migrationSourcesRoutes from './migrationSources.routes';     // source-executor (sources, host key, command log, allow-list)
+import migrationDiscoveryRoutes from './migrationDiscovery.routes'; // discovery
+import migrationPlansRoutes from './migrationPlans.routes';         // planner (targets, plans, choices, dry-run)
+import migrationRunsRoutes from './migrationRuns.routes';           // executor-web-db (runs, events, reports)
+import migrationCutoverRoutes from './migrationCutover.routes';     // executor-mail-dns (cutover checklist)
 
 const router = Router();
 
@@ -84,6 +91,9 @@ router.use('/system/firewall', requireAuth, requireRole('admin'), systemFirewall
 router.use('/system/scanner', requireAuth, requireRole('admin'), scannerRoutes);         // P3 scanners
 router.use('/system/mail', requireAuth, requireRole('admin'), systemMailRoutes);         // P4 mail-core (no catch-all)
 router.use('/system/mail', requireAuth, requireRole('admin'), systemMailSecurityRoutes); // P4 outbound-security
+for (const migrationRouter of [migrationSourcesRoutes, migrationDiscoveryRoutes, migrationPlansRoutes, migrationRunsRoutes, migrationCutoverRoutes]) {
+  router.use('/system/migration', requireAuth, requirePlatformAdminOnMaster, migrationRouter); // P5
+}
 router.use('/site-api', siteApiRoutes);            // P3 windows: Bearer site token (no session)
 router.use('/public', publicStatusRoutes);         // P4b monitoring-automation: public status pages (no session)
 router.use('/system', systemRoutes);               // platform admin, no tenant required

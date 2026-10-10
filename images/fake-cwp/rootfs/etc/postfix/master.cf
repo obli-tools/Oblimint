@@ -1,0 +1,34 @@
+# /etc/postfix/master.cf — CentOS Web Panel (fake-cwp, TEST ONLY): `postconf -M` of the source (docs/cwp/postfix-master.cf.txt).
+smtp       inet  n       -       n       -       -       smtpd -o content_filter=smtp-amavis:127.0.0.1:10024 -o receive_override_options=no_address_mappings
+submission inet  n       -       n       -       -       smtpd -o smtpd_enforce_tls=yes -o smtpd_sasl_auth_enable=yes -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+smtps      inet  n       -       n       -       -       smtpd -o smtpd_tls_wrappermode=yes -o smtpd_sasl_auth_enable=yes -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+pickup     fifo  n       -       n       60      1       pickup -o content_filter= -o receive_override_options=no_header_body_checks
+cleanup    unix  n       -       n       -       0       cleanup
+qmgr       fifo  n       -       n       300     1       qmgr
+tlsmgr     unix  -       -       n       1000?   1       tlsmgr
+rewrite    unix  -       -       n       -       -       trivial-rewrite
+bounce     unix  -       -       n       -       0       bounce
+defer      unix  -       -       n       -       0       bounce
+trace      unix  -       -       n       -       0       bounce
+verify     unix  -       -       n       -       1       verify
+flush      unix  n       -       n       1000?   0       flush
+proxymap   unix  -       -       n       -       -       proxymap
+smtp       unix  -       -       n       -       -       smtp
+relay      unix  -       -       n       -       -       smtp -o fallback_relay=
+showq      unix  n       -       n       -       -       showq
+error      unix  -       -       n       -       -       error
+discard    unix  -       -       n       -       -       discard
+local      unix  -       n       n       -       -       local
+virtual    unix  -       n       n       -       -       virtual
+lmtp       unix  -       -       n       -       -       lmtp
+anvil      unix  -       -       n       -       1       anvil
+scache     unix  -       -       n       -       1       scache
+maildrop   unix  -       n       n       -       -       pipe flags=DRhu user=vmail argv=/usr/local/bin/maildrop -d ${recipient}
+uucp       unix  -       n       n       -       -       pipe flags=Fqhu user=uucp argv=uux -r -n -z -a$sender - $nexthop!rmail ($recipient)
+ifmail     unix  -       n       n       -       -       pipe flags=F user=ftn argv=/usr/lib/ifmail/ifmail -r $nexthop ($recipient)
+bsmtp      unix  -       n       n       -       -       pipe flags=Fq. user=foo argv=/usr/local/sbin/bsmtp -f $sender $nexthop $recipient
+smtp-amavis unix -       -       y       -       2       smtp -o smtp_data_done_timeout=1200 -o disable_dns_lookups=yes -o smtp_send_xforward_command=yes
+127.0.0.1:10025 inet n   -       y       -       -       smtpd -o content_filter= -o smtpd_helo_restrictions= -o smtpd_sender_restrictions= -o smtpd_recipient_restrictions=permit_mynetworks,reject -o mynetworks=127.0.0.0/8 -o smtpd_error_sleep_time=0 -o smtpd_soft_error_limit=1001 -o smtpd_hard_error_limit=1000 -o receive_override_options=no_header_body_checks -o smtpd_helo_required=no -o smtpd_client_restrictions= -o smtpd_restriction_classes= -o disable_vrfy_command=no -o strict_rfc821_envelopes=yes
+dovecot    unix  -       n       n       -       -       pipe flags=DRhu user=vmail:mail argv=/usr/libexec/dovecot/deliver -d ${recipient}
+vacation   unix  -       n       n       -       -       pipe flags=Rq user=vacation argv=/usr/local/cwp/php71/bin/php -q /var/spool/vacation/vacation.php ${sender} ${recipient}
+spfpolicy  unix  -       n       n       -       -       spawn user=nobody argv=/usr/bin/python /usr/libexec/postfix/policyd-spf

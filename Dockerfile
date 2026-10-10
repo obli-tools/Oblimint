@@ -30,7 +30,9 @@ FROM node:24-alpine AS runtime
 WORKDIR /app
 
 # git: internal release repositories of the sites (P1 release pipeline).
-RUN apk add --no-cache git
+# rsync: receiver side of the CWP migration pulls (P5, docs/P5-PLAN.md §8 — the
+# remote side is reached through the read-only executor, never through ssh(1)).
+RUN apk add --no-cache git rsync
 
 COPY package.json package-lock.json ./
 COPY shared/package.json ./shared/

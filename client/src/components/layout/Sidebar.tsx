@@ -33,6 +33,8 @@ import {
   ShieldBan,
   LineChart,
   ServerCog,
+  // P5
+  ArrowRightLeft,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/utils/cn';
@@ -181,6 +183,8 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     ...(admin ? [{ label: t('nav.nodes') || 'Nodes', path: '/manage/nodes', icon: <Server size={18} /> } as NavItem] : []),
     // P4b: edge configuration units (quarantine, applies, rollback) — platform admin.
     ...(admin ? [{ label: t('nav.edge') || 'Edge', path: '/manage/edge', icon: <ServerCog size={18} /> } as NavItem] : []),
+    // P5: CWP migration (sources, discovery, plans, runs, cutover) — platform admin on the master tenant.
+    ...(admin && isMaster ? [{ label: t('nav.migration') || 'CWP migration', path: '/manage/migration', icon: <ArrowRightLeft size={18} /> } as NavItem] : []),
     ...(admin ? [{ label: t('nav.auditLog') || 'Audit log', path: '/manage/audit-log', icon: <ScrollText size={18} /> } as NavItem] : []),
     ...(canSettings ? [{ label: t('nav.settings') || 'Settings', path: '/settings', icon: <Settings size={18} /> } as NavItem] : []),
   ];

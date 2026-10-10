@@ -15,3 +15,5 @@ export * from './network';
 export * from './proxy';
 export * from './security';
 export * from './monitoring';
+// P5 (docs/P5-PLAN.md)
+export * from './migration';

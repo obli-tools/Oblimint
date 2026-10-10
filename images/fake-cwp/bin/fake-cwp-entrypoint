@@ -1,0 +1,156 @@
+#!/bin/bash
+# ─────────────────────────────────────────────────────────────────────────────
+# fake-cwp — container entrypoint (PID 1, no systemd). TEST ONLY.
+#
+#   1. SSH host keys (first start), root access: AUTHORIZED_KEY (public key,
+#      required unless ROOT_PASSWORD), ROOT_PASSWORD (optional: enables
+#      PermitRootLogin yes + password authentication);
+#   2. optional source addresses 203.0.113.10 / 10.99.0.2 on lo (needs
+#      --cap-add NET_ADMIN; FAKE_CWP_ADD_IPS=0 to skip);
+#   3. MariaDB 10.3 (mysqld --user=mysql), root through /root/.my.cnf;
+#   4. BIND: at the FIRST start only, nsupdate (TSIG cwp-updater) adds records
+#      to the dynamic zone → a .jnl exists and the .db file is stale; then
+#      /var/named becomes 0750 so named can never dump the zone file again
+#      (CWP-MAP §9: read it journal-applied or by AXFR);
+#   5. sshd -D -e in the foreground; SIGTERM stops sshd, mysqld and named
+#      cleanly (MyISAM tables of root_cwp / postfix must not be left open).
+#
+# Postfix, Dovecot, OpenDKIM, Pure-FTPd, nginx, Apache, Varnish, cron and PHP
+# are NOT running: only their files and CLIs exist (postconf / doveconf answer).
+# Files are only rewritten when their content changes: a restart must not
+# disturb the read-only comparison (scripts/verify-readonly.sh).
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+STATE=/var/lib/fake-cwp
+GEN=/opt/fake-cwp/generated
+MYSQLD_PID=
+NAMED_PID=
+SSHD_PID=
+
+log() { echo "fake-cwp: $*" >&2; }
+
+# Writes stdin to $1 (mode $2) only when the content differs (mtime untouched otherwise).
+write_if_changed() {
+	local target=$1 mode=$2 tmp
+	tmp=$(mktemp "${target}.XXXXXX")
+	cat > "$tmp"
+	if [ -f "$target" ] && cmp -s "$tmp" "$target"; then
+		rm -f "$tmp"
+	else
+		chmod "$mode" "$tmp"
+		mv -f "$tmp" "$target"
+	fi
+}
+
+shutdown() {
+	log "stopping"
+	[ -n "$SSHD_PID" ] && kill "$SSHD_PID" 2>/dev/null || true
+	if [ -n "$MYSQLD_PID" ]; then
+		mysqladmin --defaults-file=/root/.my.cnf shutdown 2>/dev/null || kill "$MYSQLD_PID" 2>/dev/null || true
+	fi
+	if [ -n "$NAMED_PID" ]; then
+		rndc stop 2>/dev/null || kill "$NAMED_PID" 2>/dev/null || true
+	fi
+	wait 2>/dev/null || true
+	exit 0
+}
+trap shutdown TERM INT
+
+install -d -m 0755 "$STATE"
+install -d -o mysql -g mysql -m 0755 /run/mariadb
+install -d -o named -g named -m 0755 /run/named
+rm -f /run/nologin /var/run/nologin /run/fake-cwp.ready
+
+# ── 1. SSH ───────────────────────────────────────────────────────────────────
+ssh-keygen -A >/dev/null
+install -d -m 0700 /root/.ssh
+if [ -n "${AUTHORIZED_KEY:-}" ]; then
+	printf '%s\n' "$AUTHORIZED_KEY" | write_if_changed /root/.ssh/authorized_keys 0600
+fi
+if [ -n "${ROOT_PASSWORD:-}" ]; then
+	# Only when it changed: a new salt at every start would rewrite /etc/shadow (read-only comparison).
+	pw_sum=$(printf '%s' "$ROOT_PASSWORD" | sha256sum | cut -d' ' -f1)
+	if [ "$(cat "$STATE/root-password.sha256" 2>/dev/null || true)" != "$pw_sum" ]; then
+		printf 'root:%s\n' "$ROOT_PASSWORD" | chpasswd -c SHA512
+		printf '%s\n' "$pw_sum" > "$STATE/root-password.sha256"
+	fi
+	permit=yes
+	pwauth=yes
+else
+	permit=prohibit-password
+	pwauth=no
+fi
+if [ ! -s /root/.ssh/authorized_keys ] && [ -z "${ROOT_PASSWORD:-}" ]; then
+	log "neither AUTHORIZED_KEY nor ROOT_PASSWORD given: nobody could log in"
+	exit 1
+fi
+sed -E "s/^PermitRootLogin .*/PermitRootLogin $permit/; s/^PasswordAuthentication .*/PasswordAuthentication $pwauth/" /etc/ssh/sshd_config \
+	| write_if_changed /etc/ssh/sshd_config 0600
+
+# ── 2. addresses of the source (optional) ───────────────────────────────────
+if [ "${FAKE_CWP_ADD_IPS:-1}" = 1 ]; then
+	for addr in 203.0.113.10/32 10.99.0.2/32; do
+		if ! ip -o addr show dev lo | grep -q " ${addr%/*}/"; then
+			ip addr add "$addr" dev lo 2>/dev/null || log "cannot add $addr on lo (run with --cap-add NET_ADMIN to expose the source IPs)"
+		fi
+	done
+fi
+
+# ── 3. MariaDB ───────────────────────────────────────────────────────────────
+/usr/libexec/mysqld --user=mysql &
+MYSQLD_PID=$!
+i=0
+until mysqladmin --defaults-file=/root/.my.cnf ping >/dev/null 2>&1; do
+	i=$((i + 1))
+	if [ "$i" -gt 90 ] || ! kill -0 "$MYSQLD_PID" 2>/dev/null; then
+		log "MariaDB did not start (see /var/log/mariadb/mariadb.log)"
+		exit 1
+	fi
+	sleep 1
+done
+log "MariaDB up"
+
+# ── 4. BIND ──────────────────────────────────────────────────────────────────
+first_dns=0
+[ -e "$STATE/nsupdate.done" ] || first_dns=1
+if [ "$first_dns" = 1 ]; then
+	# named must create the journal of the dynamic zone once.
+	chmod 0770 /var/named
+fi
+/usr/sbin/named -g -u named -c /etc/named.conf &
+NAMED_PID=$!
+DYN_ZONE=$(sed -n 's/^zone //p' "$GEN/nsupdate.txt")
+i=0
+until [ -n "$(dig +short +time=1 +tries=1 SOA "$DYN_ZONE" @127.0.0.1 2>/dev/null)" ]; do
+	i=$((i + 1))
+	if [ "$i" -gt 60 ] || ! kill -0 "$NAMED_PID" 2>/dev/null; then
+		log "named did not start"
+		exit 1
+	fi
+	sleep 1
+done
+if [ "$first_dns" = 1 ]; then
+	nsupdate -k /etc/named/keys/cwp-updater.key "$GEN/nsupdate.txt"
+	i=0
+	until [ -s "/var/named/$DYN_ZONE.db.jnl" ]; do
+		i=$((i + 1))
+		[ "$i" -le 30 ] || { log "no journal for $DYN_ZONE after nsupdate"; exit 1; }
+		sleep 1
+	done
+	touch "$STATE/nsupdate.done"
+	log "dynamic zone $DYN_ZONE updated: journal present, .db file stale"
+fi
+# named can append to the existing journal but never dump the zone file (temporary file in /var/named).
+if [ "$(stat -c %a /var/named)" != 750 ]; then
+	chmod 0750 /var/named
+fi
+log "named up"
+
+# ── 5. sshd ──────────────────────────────────────────────────────────────────
+/usr/sbin/sshd -D -e &
+SSHD_PID=$!
+touch /run/fake-cwp.ready
+log "ready: ssh on port 22 (TEST ONLY image)"
+wait "$SSHD_PID" || true
+shutdown

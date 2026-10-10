@@ -21,7 +21,9 @@ export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
   | 'mail-dkim' | 'mail-relay' | 'mail-admin' | 'webmail'
   // P4b: app .env / registry passwords / git tokens, forward-auth secrets, imported
   // certificate keys, automation secrets (SSH keys, SFTP passwords), Obliguard token cache.
-  | 'apps' | 'proxy-auth' | 'proxy-cert' | 'automation';
+  | 'apps' | 'proxy-auth' | 'proxy-cert' | 'automation'
+  // P5: credentials of the CWP migration sources (SSH password / private key + passphrase).
+  | 'migration-source';
 
 export class SecretBoxError extends Error {
   constructor(message: string) {

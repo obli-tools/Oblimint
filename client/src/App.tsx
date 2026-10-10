@@ -55,6 +55,11 @@ import { ProxyHostEditorPage } from '@/pages/proxy/ProxyHostEditorPage';   // ui
 import { BansPage } from '@/pages/security/BansPage';                      // ui-proxy
 import { TrafficPage } from '@/pages/traffic/TrafficPage';                 // ui-proxy
 import { EdgeUnitsPage } from '@/pages/edge/EdgeUnitsPage';                // ui-proxy
+// P5 — CWP migration (docs/P5-PLAN.md §11)
+import { MigrationPage } from '@/pages/migration/MigrationPage';                   // ui-migration
+import { MigrationDiscoveryPage } from '@/pages/migration/MigrationDiscoveryPage'; // ui-migration
+import { MigrationPlanPage } from '@/pages/migration/MigrationPlanPage';           // ui-migration
+import { MigrationRunPage } from '@/pages/migration/MigrationRunPage';             // ui-migration
 import { TwoFactorGate } from '@/components/common/TwoFactorGate';
 import { ConfirmProvider } from '@/components/common/ConfirmDialog';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
@@ -143,6 +148,11 @@ function NormalRoutes() {
           {/* Platform admin on the master tenant (god view) */}
           <Route element={<ProtectedRoute requiredRole="admin" requireMaster />}>
             <Route path="/manage/tenants" element={<TenantsPage />} />
+            {/* P5: CWP migration (tabs ?tab=sources|discoveries|plans|runs|commands), discovery tree, plan editor + cutover, run monitor */}
+            <Route path="/manage/migration" element={<MigrationPage />} />
+            <Route path="/manage/migration/discoveries/:id" element={<MigrationDiscoveryPage />} />
+            <Route path="/manage/migration/plans/:id" element={<MigrationPlanPage />} />
+            <Route path="/manage/migration/runs/:id" element={<MigrationRunPage />} />
           </Route>
         </Route>
       </Route>

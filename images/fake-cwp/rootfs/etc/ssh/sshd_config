@@ -1,0 +1,20 @@
+# sshd_config — fake-cwp (TEST ONLY). PermitRootLogin / PasswordAuthentication are set by
+# fake-cwp-entrypoint (key only by default; a password only when ROOT_PASSWORD is given).
+Port 22
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+SyslogFacility AUTHPRIV
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM no
+X11Forwarding no
+PrintMotd no
+MaxSessions 16
+MaxStartups 30:50:100
+ClientAliveInterval 60
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/libexec/openssh/sftp-server

@@ -468,7 +468,9 @@ async function runIssuance(target: CertTarget): Promise<void> {
     const now = Date.now();
     const current = await db('certificates').where({ id: certId }).first() as CertificateRow | undefined;
     if (!current) return;
-    const stillValid = keepValid && isUsable(current, now);
+    // Re-read, not only the `keepValid` captured at the start: a certificate installed meanwhile (P5 import of
+    // the CWP certificate while this issuance fails on DNS still pointing at CWP) is usable and stays served.
+    const stillValid = isUsable(current, now) && (keepValid || certFilesExist(current.primary_name));
     const status = stillValid ? 'valid' : wasIssued && current.not_after && new Date(current.not_after).getTime() <= now ? 'expired' : 'failed';
     await db('certificates').where({ id: certId }).update({
       status,

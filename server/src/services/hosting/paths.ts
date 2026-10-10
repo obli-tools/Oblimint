@@ -189,6 +189,13 @@ export function hostingLayout(root: string) {
     edgeGood: () => joinPosix(r, 'edge', 'good'),
     /** oauth2-proxy sidecars: nothing on disk (config by env), kept for symmetry. */
     authDir: () => joinPosix(r, 'auth'),
+    // ── P5 (docs/P5-PLAN.md §8) — panel-private (root 0700), never mounted in any container.
+    /** Root of the CWP migration state. */
+    migration: () => joinPosix(r, 'migration'),
+    /** Spool of one run (database dumps before import), removed at the end of the step. */
+    migrationSpool: (runId: number) => joinPosix(r, 'migration', 'spool', runId),
+    /** Per-transfer directories of the rsync tunnel sockets (0700, owned by the uid of the transfer). */
+    migrationTunnels: () => joinPosix(r, 'migration', 'tunnels'),
   };
 }
 

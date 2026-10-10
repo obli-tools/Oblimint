@@ -266,6 +266,15 @@ export const config = {
     appBuildCgroupParent: (process.env.OBLIMINT_APP_BUILD_CGROUP_PARENT || '').trim(),
     /** oauth2-proxy image of the forward-auth sidecars (official, pinned). */
     oauth2ProxyImage: process.env.OBLIMINT_OAUTH2_PROXY_IMAGE || 'quay.io/oauth2-proxy/oauth2-proxy:v7.7.1',
+    // ── P5 CWP migration (docs/P5-PLAN.md §14) ──
+    /** 'off': the migration worker (queued / interrupted runs) does not run; discovery and plans still work. */
+    migrationWorkers: process.env.OBLIMINT_MIGRATION_WORKERS !== 'off',
+    /** Runs executed in parallel (each one holds its own SSH session to the source). */
+    migrationConcurrency: Math.min(8, Math.max(1, intEnv('OBLIMINT_MIGRATION_CONCURRENCY', 2))),
+    /** Local rsync binary (receiver side of the pulls; the image installs it). */
+    rsyncBinary: (process.env.OBLIMINT_RSYNC_BIN || 'rsync').trim() || 'rsync',
+    /** Bandwidth cap of one rsync pull (KiB/s, 0 = none). */
+    migrationRsyncBwLimitKbps: intEnv('OBLIMINT_MIGRATION_BWLIMIT_KBPS', 0),
   },
   /** Static client build served in production. */
   // server/src (tsx) → ../../client/dist ; server/dist/src (compiled) → ../../../client/dist

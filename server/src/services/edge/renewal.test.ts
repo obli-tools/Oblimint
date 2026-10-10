@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { backoffMs, inBackoff, isUsable, issuerFor, issuerOutdated, needsIssuance, planRenewals, sameNames, type ScheduleRow } from './renewal';
+import { IMPORTED_CERT_ISSUER, backoffMs, inBackoff, isUsable, issuerFor, issuerOutdated, needsIssuance, planRenewals, sameNames, type ScheduleRow } from './renewal';
 
 const H = 3600_000;
 const D = 24 * H;
@@ -97,4 +97,16 @@ test('helpers', () => {
   assert.equal(isUsable(row({ not_after: new Date(NOW - 1) }), NOW), false);
   assert.equal(isUsable(row({ status: 'failed' }), NOW), false);
   assert.equal(isUsable(null, NOW), false);
+});
+
+test('P5: a certificate imported from CWP is handed over to Let\'s Encrypt in the renewal window', () => {
+  const rows = [
+    row({ id: 1, issuer: IMPORTED_CERT_ISSUER, not_after: new Date(NOW + 60 * D) }),
+    row({ id: 2, issuer: IMPORTED_CERT_ISSUER, not_after: new Date(NOW + 10 * D) }),
+    row({ id: 3, issuer: IMPORTED_CERT_ISSUER, not_after: new Date(NOW - D) }),
+    row({ id: 4, issuer: 'self-signed', not_after: new Date(NOW + 10 * D) }),
+  ];
+  const plan = planRenewals(rows, NOW);
+  assert.deepEqual(plan.renew, [2, 3]);
+  assert.deepEqual(plan.expire, [3]);
 });

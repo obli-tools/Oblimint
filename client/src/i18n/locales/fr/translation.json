@@ -193,7 +193,8 @@
     "bans": "Bannissements",
     "traffic": "Trafic",
     "edge": "Edge",
-    "apps_section": "Applications & proxy"
+    "apps_section": "Applications & proxy",
+    "migration": "Migration CWP"
   },
   "nodes": {
     "col": {

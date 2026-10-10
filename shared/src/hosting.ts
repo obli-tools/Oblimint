@@ -1076,6 +1076,9 @@ export const HostingSocketEvents = {
   BAN_UPDATED: 'BAN_UPDATED',
   /** MonitoringUpdatedPayload */
   MONITORING_UPDATED: 'MONITORING_UPDATED',
+  // ── P5 (payloads: ids only, room role:admin — migration.ts) ──
+  /** MigrationUpdatedPayload (sources, discoveries, plans, runs, steps, cutover) */
+  MIGRATION_UPDATED: 'MIGRATION_UPDATED',
 } as const;
 export type HostingSocketEventName = typeof HostingSocketEvents[keyof typeof HostingSocketEvents];
 
