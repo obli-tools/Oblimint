@@ -32,3 +32,10 @@ TODO*
 
 # Go build outputs
 hostd/bin/
+
+# Compiled binaries (never committed)
+hostd/hostd
+*.exe
+images/**/siteconf/siteconf
+images/**/relayd/relayd
+images/**/scand/scand
