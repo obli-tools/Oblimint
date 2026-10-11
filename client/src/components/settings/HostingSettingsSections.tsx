@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, BarChart3, Database, Eye, Globe, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, BarChart3, Database, Eye, Globe, Server, ShieldCheck } from 'lucide-react';
+import apiClient from '@/api/client';
 import type { AppConfigData, HostingSettings, HostingSettingsSection, HostingSettingsUpdate } from '@oblimint/shared';
 import { hostingSettingsApi } from '@/api/hostingSettings.api';
 import { isStepUpHandled } from '@/api/client';
@@ -55,6 +56,7 @@ export function HostingSettingsSections() {
 
   return (
     <>
+      <PanelAddressSection panel={panel} onSaved={setPanel} />
       <DnsSection value={settings.dns} save={save} />
       <PreviewSection value={settings.preview} panelHost={panel?.panel_hostname ?? null} save={save} />
       <DbAdminSection value={settings.dbAdmin} panelHost={panel?.panel_hostname ?? null} previewDomain={settings.preview.previewDomain} save={save} />
@@ -421,6 +423,52 @@ function UsageSection({ value, save }: { value: HostingSettings['usage']; save: 
           <NumberInput id="usage-res" value={draft.resourceRetentionDays} onChange={(v) => set({ resourceRetentionDays: v })} min={1} max={90} invalid={res === null} />
         </Field>
       </div>
+    </SettingsBlock>
+  );
+}
+
+// ── Panel address (identity from the setup wizard, editable afterwards) ─────
+function PanelAddressSection({ panel, onSaved }: { panel: AppConfigData | null; onSaved: (p: AppConfigData) => void }) {
+  const { t } = useTranslation();
+  const initial = { host: panel?.panel_hostname ?? '', v4: panel?.public_ipv4 ?? '', v6: panel?.public_ipv6 ?? '', email: panel?.acme_email ?? '' };
+  const [draft, setDraft, dirty, reset] = useDraft(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const host = normalizeHostname(draft.host);
+  const invalid = !isHostname(host) || (!!draft.v4.trim() && !isIp(draft.v4.trim())) || (!!draft.v6.trim() && !isIp(draft.v6.trim())) || !isEmail(draft.email.trim());
+  const onSave = async () => {
+    setSaving(true); setError(null);
+    try {
+      const res = await apiClient.put<{ success: boolean; data: AppConfigData }>('/admin/config/platform', { panelHostname: host, publicIpv4: draft.v4.trim(), publicIpv6: draft.v6.trim(), acmeEmail: draft.email.trim() });
+      onSaved(res.data.data);
+      toast.success(t('platformSettings.saved') || 'Settings saved');
+    } catch (err) {
+      if (!isStepUpHandled(err)) setError(opsErrorMessage(t, err, 'platformSettings', t('platformSettings.saveFailed') || 'Failed to save the settings'));
+    } finally { setSaving(false); }
+  };
+  const set = (k: keyof typeof initial) => (e: React.ChangeEvent<HTMLInputElement>) => { setDraft({ ...draft, [k]: e.target.value }); setError(null); };
+  return (
+    <SettingsBlock
+      id="settings-panel-address"
+      icon={<Server />}
+      title={t('platformSettings.panel.title') || 'Panel address'}
+      description={t('platformSettings.panel.description') || 'Host name of this panel and public addresses of the node. The edge serves the panel on this name and requests its certificate as soon as the DNS points here.'}
+      dirty={dirty} saving={saving} canSave={!invalid}
+      onSave={() => { void onSave(); }}
+      onReset={reset} error={error}
+    >
+      <Field label={t('platformSettings.panel.host') || 'Panel host name'} htmlFor="panel-host" hint={t('platformSettings.panel.hostHint') || 'Create an A (and AAAA) record of this name to the public IP of the server. Customers sign in at https://<name>/client.'}>
+        <input id="panel-host" value={draft.host} onChange={set('host')} placeholder="panel.example.com" autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
+      </Field>
+      <Field label={t('platformSettings.panel.ipv4') || 'Public IPv4'} htmlFor="panel-v4">
+        <input id="panel-v4" value={draft.v4} onChange={set('v4')} placeholder="203.0.113.10" className={cn(settingsInputCls, 'font-mono')} />
+      </Field>
+      <Field label={t('platformSettings.panel.ipv6') || 'Public IPv6 (optional)'} htmlFor="panel-v6">
+        <input id="panel-v6" value={draft.v6} onChange={set('v6')} placeholder="2001:db8::10" className={cn(settingsInputCls, 'font-mono')} />
+      </Field>
+      <Field label={t('platformSettings.panel.acmeEmail') || "Let's Encrypt e-mail"} htmlFor="panel-acme">
+        <input id="panel-acme" value={draft.email} onChange={set('email')} placeholder="admin@example.com" className={settingsInputCls} />
+      </Field>
     </SettingsBlock>
   );
 }

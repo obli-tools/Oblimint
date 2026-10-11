@@ -634,6 +634,15 @@
       "thresholdsHint": "Jusqu'à 5 valeurs entre 1 et 200. À 100 %, l'action du plan s'applique (avertir, bloquer les envois, suspendre).",
       "thresholdsRequired": "Au moins un seuil.",
       "title": "Consommation"
+    },
+    "panel": {
+      "title": "Adresse du panel",
+      "description": "Nom d'hôte de ce panel et adresses publiques du nœud. L'edge sert le panel sous ce nom et demande son certificat dès que le DNS pointe ici.",
+      "host": "Nom d'hôte du panel",
+      "hostHint": "Créez un enregistrement A (et AAAA) de ce nom vers l'IP publique du serveur. Les clients se connectent sur https://<nom>/client.",
+      "ipv4": "IPv4 publique",
+      "ipv6": "IPv6 publique (facultatif)",
+      "acmeEmail": "E-mail Let's Encrypt"
     }
   }
 }

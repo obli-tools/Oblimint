@@ -1,5 +1,10 @@
 import { Router } from 'express';
-import { requireRole } from '../middleware/rbac';
+import { requireRole, requirePlatformAdminOnMaster } from '../middleware/rbac';
+import net from 'node:net';
+import { edgeService } from '../services/edge/edge.service';
+import { certificateService } from '../services/edge/certificate.service';
+import { dnsService } from '../services/dns/dns.service';
+import { logger } from '../utils/logger';
 import { AppError } from '../middleware/errorHandler';
 import { appConfigService, obligatePatch, WRITABLE_CONFIG_KEYS } from '../services/appConfig.service';
 import { obligateService } from '../services/obligate.service';
@@ -61,6 +66,33 @@ router.put('/obligate', requireRole('admin'), async (req, res, next) => {
     if ('inboundSecret' in patch) details.inboundSecret = patch.inboundSecret ? 'changed' : 'cleared';
     await auditService.logReq(req, 'settings.obligate_changed', { resourceType: 'settings', details });
     res.json({ success: true, data: updated });
+  } catch (err) { next(err); }
+});
+
+// Panel identity (host name, public IPs, ACME e-mail) after the setup wizard:
+// platform admin on the master tenant. Re-syncs the edge (panel vhost), the
+// platform certificates and the DNS zones that publish these values.
+const HOST_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?.)+[a-z]{2,63}$/;
+router.put('/platform', requirePlatformAdminOnMaster, async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === 'string' ? v.trim() : v == null ? '' : null);
+    const host = str(b.panelHostname)?.toLowerCase().replace(/.$/, '') ?? null;
+    const v4 = str(b.publicIpv4); const v6 = str(b.publicIpv6); const email = str(b.acmeEmail);
+    if (host === null || !HOST_RE.test(host)) throw new AppError(400, 'Invalid panel host name', 'invalidPanelHostname');
+    if (v4 === null || (v4 && !net.isIPv4(v4))) throw new AppError(400, 'Invalid IPv4 address', 'invalidIpv4');
+    if (v6 === null || (v6 && !net.isIPv6(v6))) throw new AppError(400, 'Invalid IPv6 address', 'invalidIpv6');
+    if (email === null || !/^[^s@<>]+@[^s@<>]+.[^s@<>]+$/.test(email)) throw new AppError(400, 'Invalid e-mail address', 'invalidEmail');
+    const before = { panel_hostname: await appConfigService.get('panel_hostname'), public_ipv4: await appConfigService.get('public_ipv4'), public_ipv6: await appConfigService.get('public_ipv6'), acme_email: await appConfigService.get('acme_email') };
+    await appConfigService.set('panel_hostname', host);
+    await appConfigService.set('public_ipv4', v4);
+    await appConfigService.set('public_ipv6', v6);
+    await appConfigService.set('acme_email', email);
+    await auditService.logReq(req, 'settings.platform_changed', { resourceType: 'settings', details: { from: before, to: { panel_hostname: host, public_ipv4: v4, public_ipv6: v6, acme_email: email } } });
+    try { edgeService.scheduleSync('panel identity changed'); } catch (err) { logger.warn({ err }, 'edge sync after panel identity change failed'); }
+    try { certificateService.ensureAuxiliary(); } catch (err) { logger.warn({ err }, 'platform certificates after panel identity change failed'); }
+    dnsService.syncAllNow('panel identity changed').catch((err) => logger.warn({ err }, 'DNS sync after panel identity change failed'));
+    res.json({ success: true, data: await appConfigService.getAll() });
   } catch (err) { next(err); }
 });
 

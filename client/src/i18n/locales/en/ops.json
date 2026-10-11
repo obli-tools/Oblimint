@@ -634,6 +634,15 @@
       "thresholdsHint": "Up to 5 values between 1 and 200. At 100 %, the action of the plan applies (warn, block uploads, suspend).",
       "thresholdsRequired": "At least one threshold.",
       "title": "Usage"
+    },
+    "panel": {
+      "title": "Panel address",
+      "description": "Host name of this panel and public addresses of the node. The edge serves the panel on this name and requests its certificate as soon as the DNS points here.",
+      "host": "Panel host name",
+      "hostHint": "Create an A (and AAAA) record of this name to the public IP of the server. Customers sign in at https://<name>/client.",
+      "ipv4": "Public IPv4",
+      "ipv6": "Public IPv6 (optional)",
+      "acmeEmail": "Let's Encrypt e-mail"
     }
   }
 }
