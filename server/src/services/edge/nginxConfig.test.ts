@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  EdgeConfigError, edgeCertPaths, isValidServerName, isValidUpstream, renderVhost, sanitizeForNginx, selfSignedCertPaths, sortLocations,
+  EdgeConfigError, PANEL_COOKIE_RE, edgeCertPaths, isValidServerName, isValidUpstream, renderVhost, sanitizeForNginx, selfSignedCertPaths, sortLocations,
   validateVhost, vhostFileName, type EdgeVhost,
 } from './nginxConfig';
 
@@ -353,4 +353,20 @@ test('self-signed fallback certificate: platform vhosts only, flag consistent wi
   assert.throws(() => renderVhost({ ...panel, tls: edgeCertPaths('panel.oblimint.test') }), EdgeConfigError);
   // Other underscore directories stay refused.
   assert.throws(() => renderVhost({ ...panel, selfSigned: undefined, tls: { certPath: '/etc/nginx/oblimint/certs/_other/fullchain.pem', keyPath: fallback.keyPath } }), EdgeConfigError);
+});
+
+test('panel vhost: only the session cookie reaches the panel, header buffers absorb a cookie flood', () => {
+  const conf = renderVhost(vhost({
+    id: 'panel', kind: 'panel', accountId: null, tenantId: null, serverNames: ['panel.example.com'],
+    locations: [{ pathPrefix: '/', upstream: 'https://oblimint-panel:8443', kind: 'panel', siteId: null }],
+  }));
+  assert.match(conf, /large_client_header_buffers 4 1m;/);
+  // Main location and the nested restore location both filter the Cookie header.
+  assert.equal(conf.match(/proxy_set_header Cookie \$oblimint_panel_cookie;/g)?.length, 2);
+  const re = new RegExp(PANEL_COOKIE_RE);
+  assert.equal(re.exec('a=1; __Host-oblimint.sid=s%3Aabc.def; b=2')?.[1], '__Host-oblimint.sid=s%3Aabc.def');
+  assert.equal(re.exec('oblimint.sid=xyz')?.[1], 'oblimint.sid=xyz');
+  assert.equal(re.exec('fake-oblimint.sid=1; x=2'), null);
+  const site = renderVhost(vhost({}));
+  assert.doesNotMatch(site, /oblimint_panel_cookie|large_client_header_buffers/);
 });

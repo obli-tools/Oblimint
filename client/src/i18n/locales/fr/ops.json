@@ -516,11 +516,12 @@
     },
     "dbAdmin": {
       "description": "phpMyAdmin et Adminer s'ouvrent depuis le panel en authentification unique, sur leur propre nom d'hôte.",
-      "hint": "Par exemple db.<domaine de préversion>, jamais sous le panel. Vide : les outils d'administration sont désactivés.",
+      "hint": "Par exemple db.<domaine de préversion> ou db.<domaine du panel>. Vide : les outils d’administration sont désactivés.",
       "hintSuggest": "Par exemple {{value}}. Vide : les outils d'administration sont désactivés.",
       "hostname": "Nom d'hôte",
       "title": "Administration BDD",
-      "underPanel": "Jamais sur le domaine enregistrable du panel (ni un voisin de l'hôte du panel) : utilisez un hôte du domaine de préversion."
+      "underPanel": "Jamais sur le domaine enregistrable du panel (ni un voisin de l'hôte du panel) : utilisez un hôte du domaine de préversion.",
+      "sameSite": "Même domaine enregistrable que le panel : autorisé. Le panel n’accepte que son propre cookie de session : les cookies posés par cet hôte ne peuvent ni le remplacer ni bloquer le panel."
     },
     "dns": {
       "alsoNotify": "Serveurs prévenus des changements (NOTIFY)",
@@ -559,7 +560,8 @@
     "errors": {
       "email": "Adresse e-mail invalide.",
       "hostname": "Saisissez un nom d'hôte complet (FQDN).",
-      "range": "Entre {{min}} et {{max}}."
+      "range": "Entre {{min}} et {{max}}.",
+      "panelHost": "C’est le nom d’hôte du panel : choisissez-en un autre."
     },
     "firewall": {
       "disabled": "inactif",
@@ -619,9 +621,10 @@
       "setupTitle": "Domaine de préversion (facultatif)",
       "title": "Préversions",
       "underPanel": "Le domaine de préversion doit être un domaine enregistrable distinct de celui du panel : ni l'hôte du panel, ni l'un de ses parents ou sous-domaines, ni un voisin sur le même domaine (ex. preview.example.com à côté de panel.example.com).",
-      "warning": "Utilisez un domaine enregistrable dédié (par ex. exemple-preview.net), distinct du domaine du panel : une préversion exécute le code d'un client et, sur un sous-domaine du panel, elle pourrait lire ou poser les cookies du panel.",
+      "warning": "Un domaine enregistrable dédié (ex. exemple-preview.net) reste le choix le plus propre : une préversion exécute le code d’un client. Un sous-domaine du domaine du panel est autorisé — le panel n’accepte que son propre cookie de session __Host-.",
       "wildcard": "Certificat générique",
-      "wildcardHint": "Un seul certificat *.<domaine> par DNS-01 : la zone du domaine de préversion doit être hébergée sur notre serveur DNS. Désactivé : un certificat par hôte de préversion."
+      "wildcardHint": "Un seul certificat *.<domaine> par DNS-01 : la zone du domaine de préversion doit être hébergée sur notre serveur DNS. Désactivé : un certificat par hôte de préversion.",
+      "sameSite": "Même domaine enregistrable que le panel : autorisé. Une préversion exécute le code d’un client à côté du panel ; le panel n’accepte que son propre cookie de session et absorbe une inondation de cookies, un domaine dédié reste le choix le plus propre."
     },
     "saveFailed": "Échec de l'enregistrement des réglages",
     "saved": "Réglages enregistrés",

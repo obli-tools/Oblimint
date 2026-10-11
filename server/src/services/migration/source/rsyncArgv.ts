@@ -44,6 +44,8 @@ export class RsyncRequestError extends Error {
 const REMOTE_PATH_RE = /^\/[A-Za-z0-9._@+/-]+$/;
 const HOME_RE = /^\/home\/[A-Za-z0-9_][A-Za-z0-9._-]*\/[^/]/;
 const VMAIL_RE = /^\/var\/vmail\/([^/]+)\/[A-Za-z0-9._+-]+(\/|$)/;
+/** The home itself: only for a SELECTIVE site copy (includes + the '/*' catch-all, never a hidden entry). */
+const HOME_ROOT_RE = /^\/home\/[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 const EXCLUDE_RE = /^[A-Za-z0-9._*?/@+-]{1,255}$/;
 
 export interface ValidatedRsyncRequest {
@@ -70,7 +72,7 @@ function checkId(v: unknown, what: string): number {
 }
 
 /** Remote directory of a pull (MG10 realpath check is done on the source by rsync.ts). */
-export function checkRemotePath(p: unknown): string {
+export function checkRemotePath(p: unknown, allowHomeRoot = false): string {
   try {
     assertCleanPath(p, 'remotePath');
   } catch (err) {
@@ -80,6 +82,7 @@ export function checkRemotePath(p: unknown): string {
   const segs = p.split('/');
   if (segs.some((s) => s === '.ssh')) throw new RsyncRequestError('remotePath: .ssh is never pulled');
   if (HOME_RE.test(p)) return p;
+  if (allowHomeRoot && HOME_ROOT_RE.test(p)) return p;
   const m = VMAIL_RE.exec(p);
   if (m) {
     try { checkDomain(m[1]); } catch { throw new RsyncRequestError('remotePath: invalid mail domain'); }
@@ -121,7 +124,9 @@ export function checkBinding(req: RsyncPullRequest, remotePath: string, localPat
       throw new RsyncRequestError('binding: invalid CWP user');
     }
     if (!Number.isInteger(b.targetAccountId) || b.targetAccountId <= 0) throw new RsyncRequestError('binding: invalid target account');
-    if (!remotePath.startsWith(`/home/${b.cwpUsername}/`)) throw new RsyncRequestError("remotePath: not under the transfer account's home");
+    if (!remotePath.startsWith(`/home/${b.cwpUsername}/`) && remotePath !== `/home/${b.cwpUsername}`) {
+      throw new RsyncRequestError("remotePath: not under the transfer account's home");
+    }
     const acct = `${root}/accounts/${b.targetAccountId}`;
     const sub = req.preset === 'site-files' ? 'staging' : 'data';
     if (!localPath.startsWith(`${acct}/${sub}/`)) throw new RsyncRequestError(`localPath: not under the target account's ${sub}/`);
@@ -153,7 +158,12 @@ export function checkBinding(req: RsyncPullRequest, remotePath: string, localPat
 
 export function validateRsyncRequest(req: RsyncPullRequest, dataRoot: string, defaultBwLimitKbps: number): ValidatedRsyncRequest {
   if (!req || typeof req !== 'object') throw new RsyncRequestError('invalid request');
-  const remotePath = checkRemotePath(req.remotePath);
+  // The home itself is pulled only through a selective site copy: kept paths included, everything else at the
+  // home level excluded ('/*'), never a hidden entry (.ssh, .bash_history, .conf…) — plan/outside.ts.
+  const rawIncludes = Array.isArray(req.includes) ? req.includes : [];
+  const selectiveHome = req.preset === 'site-files' && rawIncludes.length > 0 && (req.excludes ?? []).includes('/*')
+    && rawIncludes.every((x) => typeof x === 'string' && x.startsWith('/') && !x.split('/').some((seg) => seg.startsWith('.')));
+  const remotePath = checkRemotePath(req.remotePath, selectiveHome);
   const localPath = checkLocalPath(req.localPath, dataRoot);
   const uid = checkId(req.uid, 'uid');
   const gid = checkId(req.gid, 'gid');

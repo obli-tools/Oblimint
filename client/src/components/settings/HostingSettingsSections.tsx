@@ -13,7 +13,7 @@ import { opsErrorMessage } from '@/components/usage/opsErrors';
 import { cn } from '@/utils/cn';
 import { ChipsInput } from './ChipsInput';
 import { Field, SettingsBlock, settingsInputCls } from './SettingsBlock';
-import { dbAdminConflictsWithPanel, intInRange, isEmail, isHostname, isIp, isIpOrCidr, normalizeHostname, previewConflictsWithPanel } from './settingsFormat';
+import { dbAdminConflictsWithPanel, intInRange, isPanelHost, isEmail, isHostname, isIp, isIpOrCidr, normalizeHostname, previewConflictsWithPanel } from './settingsFormat';
 
 type SaveFn = <K extends HostingSettingsSection>(section: K, patch: HostingSettingsUpdate[K]) => Promise<string | null>;
 
@@ -170,6 +170,16 @@ function DnsSection({ value, save }: { value: HostingSettings['dns']; save: Save
   );
 }
 
+/** Amber advice under a host field (same registrable domain as the panel: allowed, explained). */
+function SameSiteNote({ text }: { text: string }) {
+  return (
+    <p className="mb-1.5 flex items-start gap-1.5 text-xs text-status-pending">
+      <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+      <span>{text}</span>
+    </p>
+  );
+}
+
 // ── Previews ────────────────────────────────────────────────────────────────
 
 function PreviewSection({ value, panelHost, save }: { value: HostingSettings['preview']; panelHost: string | null; save: SaveFn }) {
@@ -178,8 +188,11 @@ function PreviewSection({ value, panelHost, save }: { value: HostingSettings['pr
   const { saving, error, setError, run } = useSaver(save);
   const domain = normalizeHostname(draft.previewDomain);
   const invalid = !!domain && !isHostname(domain);
-  const conflict = !invalid && previewConflictsWithPanel(domain, panelHost);
-  const valid = !invalid && !conflict;
+  // Same site as the panel: advised against (R-SAMESITE), not refused — the panel cookie is __Host- and every
+  // request is origin-checked. Only the panel host itself is refused.
+  const panelItself = !invalid && isPanelHost(domain, panelHost);
+  const sameSite = !invalid && !panelItself && previewConflictsWithPanel(domain, panelHost);
+  const valid = !invalid && !panelItself;
 
   return (
     <SettingsBlock
@@ -198,9 +211,10 @@ function PreviewSection({ value, panelHost, save }: { value: HostingSettings['pr
       <Field
         label={t('platformSettings.preview.domain') || 'Preview domain'}
         htmlFor="preview-domain"
-        error={invalid ? (t('platformSettings.preview.invalid') || 'Enter a domain name (e.g. example-preview.net).') : conflict ? (t('platformSettings.preview.underPanel') || 'The preview domain must be a registrable domain distinct from the panel one: neither the panel host, one of its parents or sub-domains, nor a sibling on the same domain (e.g. preview.example.com next to panel.example.com).') : null}
+        error={invalid ? (t('platformSettings.preview.invalid') || 'Enter a domain name (e.g. example-preview.net).') : panelItself ? (t('platformSettings.errors.panelHost') || 'This is the panel host name.') : null}
         hint={t('platformSettings.preview.domainHint') || 'Empty: previews have no public URL. Point *.<domain> (A / AAAA) to this server.'}
       >
+        {sameSite && <SameSiteNote text={t('platformSettings.preview.sameSite') || 'Same registrable domain as the panel: allowed, but a preview runs tenant code next to the panel (it could flood the panel domain with cookies). A domain of its own is safer.'} />}
         <input id="preview-domain" value={draft.previewDomain} onChange={(e) => { setDraft({ ...draft, previewDomain: e.target.value }); setError(null); }} placeholder={t('platformSettings.preview.placeholder') || 'example-preview.net'} autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
       </Field>
       <ToggleSwitch
@@ -222,8 +236,9 @@ function DbAdminSection({ value, panelHost, previewDomain, save }: { value: Host
   const { saving, error, setError, run } = useSaver(save);
   const host = normalizeHostname(draft.hostname);
   const invalid = !!host && !isHostname(host);
-  const underPanel = !invalid && dbAdminConflictsWithPanel(host, panelHost);
-  const valid = !invalid && !underPanel;
+  const panelItself = !invalid && isPanelHost(host, panelHost);
+  const sameSite = !invalid && !panelItself && dbAdminConflictsWithPanel(host, panelHost);
+  const valid = !invalid && !panelItself;
   const suggestion = previewDomain ? `db.${previewDomain}` : null;
 
   return (
@@ -239,11 +254,12 @@ function DbAdminSection({ value, panelHost, previewDomain, save }: { value: Host
       <Field
         label={t('platformSettings.dbAdmin.hostname') || 'Host name'}
         htmlFor="dbadmin-host"
-        error={invalid ? (t('platformSettings.errors.hostname') || 'Enter a fully qualified host name.') : underPanel ? (t('platformSettings.dbAdmin.underPanel') || 'Never on the panel registrable domain (nor a sibling of the panel host): use a host of the preview domain.') : null}
+        error={invalid ? (t('platformSettings.errors.hostname') || 'Enter a fully qualified host name.') : panelItself ? (t('platformSettings.errors.panelHost') || 'This is the panel host name.') : null}
         hint={suggestion
           ? t('platformSettings.dbAdmin.hintSuggest', { value: suggestion, defaultValue: 'For instance {{value}}. Empty: the admin tools are off.' })
-          : (t('platformSettings.dbAdmin.hint') || 'For instance db.<preview domain>, never under the panel. Empty: the admin tools are off.')}
+          : (t('platformSettings.dbAdmin.hint') || 'For instance db.<preview domain>. Empty: the admin tools are off.')}
       >
+        {sameSite && <SameSiteNote text={t('platformSettings.dbAdmin.sameSite') || 'Same registrable domain as the panel: allowed. A flaw in phpMyAdmin / Adminer could then flood the panel domain with cookies (clear them to recover); a separate domain avoids it.'} />}
         <input id="dbadmin-host" value={draft.hostname} onChange={(e) => { setDraft({ hostname: e.target.value }); setError(null); }} placeholder={suggestion ?? 'db.example-preview.net'} autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
       </Field>
     </SettingsBlock>

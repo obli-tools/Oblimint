@@ -67,6 +67,12 @@ export function previewConflictsWithPanel(preview: string, panel: string | null)
   return sameSiteAsPanel(preview, panel);
 }
 
+/** The panel host itself: never usable as preview domain / DB admin host (the edge would serve two vhosts on it). */
+export function isPanelHost(host: string, panel: string | null): boolean {
+  const h = normalizeHostname(host);
+  return !!h && h === normalizeHostname(panel ?? '');
+}
+
 /** The DB admin host must not be same-site with the panel either (R-SAMESITE). */
 export function dbAdminConflictsWithPanel(host: string, panel: string | null): boolean {
   return sameSiteAsPanel(host, panel);

@@ -516,11 +516,12 @@
     },
     "dbAdmin": {
       "description": "phpMyAdmin and Adminer are opened from the panel with single sign-on, on their own host name.",
-      "hint": "For instance db.<preview domain>, never under the panel. Empty: the admin tools are off.",
+      "hint": "For instance db.<preview domain> or db.<panel domain>. Empty: the admin tools are off.",
       "hintSuggest": "For instance {{value}}. Empty: the admin tools are off.",
       "hostname": "Host name",
       "title": "Database administration",
-      "underPanel": "Never on the panel registrable domain (nor a sibling of the panel host): use a host of the preview domain."
+      "underPanel": "Never on the panel registrable domain (nor a sibling of the panel host): use a host of the preview domain.",
+      "sameSite": "Same registrable domain as the panel: allowed. The panel only accepts its own session cookie, so cookies set by this host can neither replace it nor block the panel."
     },
     "dns": {
       "alsoNotify": "Servers notified of changes (NOTIFY)",
@@ -559,7 +560,8 @@
     "errors": {
       "email": "Invalid e-mail address.",
       "hostname": "Enter a fully qualified host name.",
-      "range": "Between {{min}} and {{max}}."
+      "range": "Between {{min}} and {{max}}.",
+      "panelHost": "This is the panel host name: choose another one."
     },
     "firewall": {
       "disabled": "inactive",
@@ -619,9 +621,10 @@
       "setupTitle": "Preview domain (optional)",
       "title": "Previews",
       "underPanel": "The preview domain must be a registrable domain distinct from the panel one: neither the panel host, one of its parents or sub-domains, nor a sibling on the same domain (e.g. preview.example.com next to panel.example.com).",
-      "warning": "Use a registrable domain of its own (e.g. example-preview.net), distinct from the panel domain: a preview runs tenant code, and on a sub-domain of the panel it could read or set the panel cookies.",
+      "warning": "A registrable domain of its own (e.g. example-preview.net) is the cleanest choice: a preview runs tenant code. A sub-domain of the panel domain is allowed — the panel only accepts its own __Host- session cookie.",
       "wildcard": "Wildcard certificate",
-      "wildcardHint": "One *.<domain> certificate through DNS-01: the zone of the preview domain must be hosted on our DNS server. Off: one certificate per preview host."
+      "wildcardHint": "One *.<domain> certificate through DNS-01: the zone of the preview domain must be hosted on our DNS server. Off: one certificate per preview host.",
+      "sameSite": "Same registrable domain as the panel: allowed. A preview runs tenant code next to the panel; the panel only accepts its own session cookie and absorbs a cookie flood, a domain of its own stays the cleanest choice."
     },
     "saveFailed": "Failed to save the settings",
     "saved": "Settings saved",

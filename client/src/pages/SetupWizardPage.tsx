@@ -17,7 +17,6 @@ import { Input } from '@/components/common/Input';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { copyText } from '@/utils/clipboard';
 import { cn } from '@/utils/cn';
-import { previewConflictsWithPanel } from '@/components/settings/settingsFormat';
 
 type WizardStep = 'token' | 'checks' | 'form' | 'progress' | 'restarting';
 
@@ -375,8 +374,8 @@ function SetupForm({ onApplied, onBack, onAuthLost }: { onApplied: () => void; o
     if (preview) {
       const panel = panelHostname.trim().toLowerCase();
       if (!HOSTNAME_RE.test(preview)) e.previewDomain = t('platformSettings.preview.invalid') || 'Enter a domain name (e.g. example-preview.net).';
-      else if (panel && previewConflictsWithPanel(preview, panel)) {
-        e.previewDomain = t('platformSettings.preview.underPanel') || 'The preview domain must be a registrable domain distinct from the panel one: neither the panel host, one of its parents or sub-domains, nor a sibling on the same domain (e.g. preview.example.com next to panel.example.com).';
+      else if (panel && preview === panel) {
+        e.previewDomain = t('platformSettings.errors.panelHost') || 'This is the panel host name.';
       }
     }
     if (!EMAIL_RE.test(acmeEmail.trim())) e.acmeEmail = t('setup.form.errors.email') || 'Enter a valid e-mail address.';

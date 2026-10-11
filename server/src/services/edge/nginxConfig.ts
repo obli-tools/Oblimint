@@ -359,6 +359,24 @@ function proxyDirectives(indent: string, variable: string, upstream: string, tim
   return lines;
 }
 
+/**
+ * Panel: only the panel session cookie is forwarded. A host of the same registrable domain (a preview, the DB
+ * admin, a client site on example.com next to panel.example.com) can set Domain=example.com cookies the browser
+ * then sends to the panel too (cookie tossing / flooding): the __Host- session cannot be overwritten, and with
+ * this filter nothing else reaches the panel, whatever their number (the header buffers below absorb a flood).
+ */
+export const PANEL_COOKIE_RE = '(?:^|;)\\s*((?:__Host-)?oblimint\\.sid=[^;]*)';
+/** Large enough for the browsers' cookie limits of a whole registrable domain (≈ 180 cookies × 4 KiB). */
+export const PANEL_HEADER_BUFFERS = '4 1m';
+
+function panelCookieLines(indent: string): string[] {
+  return [
+    `${indent}set $oblimint_panel_cookie "";`,
+    `${indent}if ($http_cookie ~ "${PANEL_COOKIE_RE}") { set $oblimint_panel_cookie $1; }`,
+    `${indent}proxy_set_header Cookie $oblimint_panel_cookie;`,
+  ];
+}
+
 function proxyLocation(v: EdgeVhost, loc: EdgeLocation, index: number): string {
   const prefix = sanitizeForNginx(loc.pathPrefix);
   const upstream = sanitizeForNginx(loc.upstream);
@@ -368,6 +386,7 @@ function proxyLocation(v: EdgeVhost, loc: EdgeLocation, index: number): string {
     `${I1}location ${loc.exact ? '=' : '^~'} ${prefix} {`,
     ...logVariableLines(v, loc.kind, loc.siteId),
     ...proxyDirectives(I2, variable, upstream, panel ? 3600 : 300),
+    ...(panel ? panelCookieLines(I2) : []),
   ];
   if (panel && !loc.exact && prefix === '/') {
     // Nested: a top-level regex location is never tried after a `^~` match.
@@ -380,6 +399,7 @@ function proxyLocation(v: EdgeVhost, loc: EdgeLocation, index: number): string {
       `${I3}client_max_body_size ${PANEL_RESTORE_MAX_BODY_MB}m;`,
       `${I3}client_body_timeout 300s;`,
       `${I3}proxy_request_buffering off;`,
+      ...panelCookieLines(I3),
       `${I2}}`,
     );
   }
@@ -411,6 +431,9 @@ function commonServerLines(v: EdgeVhost, names: string): string[] {
     // P4b: web bans (platform + this account) — right after server_name (honeypot-bans).
     ...banCheckLines(v.accountId, I1),
     `${I1}client_max_body_size ${v.clientMaxBodyMb}m;`,
+    // Panel: a cookie flood from a host of the same registrable domain must not turn into « 400 header too large »
+    // (TLS: the SNI server's value applies). Only the session cookie is forwarded (panelCookieLines).
+    ...(v.kind === 'panel' ? [`${I1}large_client_header_buffers ${PANEL_HEADER_BUFFERS};`] : []),
   ];
 }
 

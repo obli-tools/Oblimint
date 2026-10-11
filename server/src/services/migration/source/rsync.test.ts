@@ -151,6 +151,12 @@ test('local argv per preset (MG6: --safe-links, never owner / devices; --delete 
     '--include=/private_html', '--include=/public_html', '--exclude=/public_html/uploads/', '--exclude=/*',
   ]);
   assert.throws(() => validateRsyncRequest(req({ includes: ['../x'] }), ROOT, 0), RsyncRequestError);
+  // The home itself: only a selective copy (includes + '/*'), never with a hidden entry.
+  const home = REMOTE.split('/').slice(0, 3).join('/');
+  assert.throws(() => validateRsyncRequest(req({ remotePath: home }), ROOT, 0), /must be under/);
+  assert.throws(() => validateRsyncRequest(req({ remotePath: home, includes: ['/public_html'] }), ROOT, 0), /must be under/);
+  assert.throws(() => validateRsyncRequest(req({ remotePath: home, includes: ['/.ssh'], excludes: ['/*'] }), ROOT, 0), /must be under/);
+  assert.equal(validateRsyncRequest(req({ remotePath: home, includes: ['/private_html', '/public_html'], excludes: ['/*'] }), ROOT, 0).remotePath, home);
   assert.throws(() => validateRsyncRequest(req({ includes: ['a b'] }), ROOT, 0), RsyncRequestError);
   assert.equal(rshCommandLine(['C:/Program Files/node.exe', '--import', 'tsx', '/x/rsyncShim.ts']), "'C:/Program Files/node.exe' --import tsx /x/rsyncShim.ts");
   assert.throws(() => rshCommandLine(["/it's/node"]), RsyncRequestError);
