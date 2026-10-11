@@ -285,7 +285,7 @@ function PlanPage({ planId }: { planId: number }) {
       {tab === 'dns' && <PlanDnsTab editor={editor} inventory={inventory} inventoryStatus={inventoryStatus} />}
       {tab === 'warnings' && <PlanWarningsTab editor={editor} />}
       {tab === 'runs' && <PlanRunsTab editor={editor} />}
-      {tab === 'cutover' && <PlanCutoverTab planId={plan.id} />}
+      {tab === 'cutover' && <PlanCutoverTab planId={plan.id} selected={r ? r.accounts.filter((a) => a.selected).map((a) => a.cwpUsername) : null} />}
       {tab === 'report' && <PlanReportTab planId={plan.id} />}
 
       <RebaseModal plan={plan} open={rebaseOpen} onClose={() => setRebaseOpen(false)} onDone={(p) => { setRebaseOpen(false); editor.setPlan(p); }} />

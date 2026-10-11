@@ -340,7 +340,8 @@ const SPECS: TemplateSpec[] = [
     render: (args) => {
       const o = obj(args); onlyKeys(o, ['root', 'names', 'home']);
       const root = checkReadPath(o.root, 'refs', 'root');
-      const names = strList(o.names, 'names', MAX_REF_NAMES);
+      // [] allowed: only the absolute /home/<user>/ paths are looked for then (home required below).
+      const names = Array.isArray(o.names) && o.names.length === 0 ? [] as string[] : strList(o.names, 'names', MAX_REF_NAMES);
       for (const n of names) if (!REF_NAME_RE.test(n)) throw new ArgError('names: invalid name');
       let home: string | undefined;
       if (o.home !== undefined && o.home !== null) {

@@ -13,7 +13,7 @@ import { useConfirm, usePrompt } from '@/components/common/ConfirmDialog';
 import { CopyButton, Pill, headerBtnCls, inputCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { formatDateTime, paramEntries } from '../migrationFormat';
-import { CutoverStatePill, LoadState, loadErrorOf, toastMigrationError, type LoadError } from '../migrationUi';
+import { CutoverStatePill, LoadState, checkboxCls, loadErrorOf, toastMigrationError, type LoadError } from '../migrationUi';
 
 const ITEM_FALLBACK: Record<MigrationCutoverItemCode, { label: string; hint: string }> = {
   ttlLowered: { label: 'TTL lowered (≤ 300 s)', hint: 'Lower the TTL where the zone is served now (CWP, or Oblimint once the NS point here), then wait for the old TTL to expire. Checked live on the current name servers.' },
@@ -250,7 +250,8 @@ function CutoverCard({ c, onChanged }: { c: MigrationCutoverDomain; onChanged: (
 }
 
 /** Cutover checklist per migrated domain (docs/P5-PLAN.md §10). */
-export function PlanCutoverTab({ planId }: { planId: number }) {
+/** `selected`: CWP accounts selected in the plan (null = unknown: everything shown). */
+export function PlanCutoverTab({ planId, selected = null }: { planId: number; selected?: string[] | null }) {
   const { t } = useTranslation();
   const [items, setItems] = useState<MigrationCutoverDomain[]>([]);
   const [loading, setLoading] = useState(true);
@@ -290,6 +291,12 @@ export function PlanCutoverTab({ planId }: { planId: number }) {
     }
   };
 
+  // Checklists of the accounts migrated by this plan only (an account unselected since its run stays reachable).
+  const [everyAccount, setEveryAccount] = useState(false);
+  const keep = selected ? new Set(selected) : null;
+  const shown = everyAccount || !keep ? items : items.filter((c) => keep.has(c.cwpUsername));
+  const hidden = items.length - shown.length;
+
   const upsert = (c: MigrationCutoverDomain) => setItems((cur) => cur.map((x) => (x.id === c.id ? c : x)));
 
   return (
@@ -302,9 +309,15 @@ export function PlanCutoverTab({ planId }: { planId: number }) {
         </div>
         <button type="button" className={headerBtnCls} disabled={refreshing} onClick={() => { void refreshAll(); }}><RefreshCw size={14} className={cn(refreshing && 'animate-spin')} />{t('migration.cutover.refreshAll') || 'Refresh all'}</button>
       </div>
-      <LoadState loading={loading} error={error} empty={items.length === 0} emptyIcon={<ArrowRightLeft />} emptyText={t('migration.cutover.empty') || 'No domain to switch yet: the checklist appears after the first successful run of an account.'}>
+      {(hidden > 0 || everyAccount) && (
+        <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-text-muted">
+          <input type="checkbox" checked={everyAccount} onChange={(e) => setEveryAccount(e.target.checked)} className={checkboxCls} />
+          {t('migration.warnings.includeUnselected', { count: everyAccount ? items.length - (keep ? items.filter((c) => keep.has(c.cwpUsername)).length : 0) : hidden, defaultValue: 'Include the unselected accounts ({{count}})' })}
+        </label>
+      )}
+      <LoadState loading={loading} error={error} empty={shown.length === 0} emptyIcon={<ArrowRightLeft />} emptyText={t('migration.cutover.empty') || 'No domain to switch yet: the checklist appears after the first successful run of an account.'}>
         <div className="space-y-3">
-          {items.map((c) => <CutoverCard key={c.id} c={c} onChanged={upsert} />)}
+          {shown.map((c) => <CutoverCard key={c.id} c={c} onChanged={upsert} />)}
         </div>
       </LoadState>
     </div>

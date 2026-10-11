@@ -184,7 +184,10 @@ export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: numb
 export function planWarnings(r: MigrationPlanResult, all = false): { warnings: MigrationWarning[]; followUps: MigrationFollowUp[] } {
   const accounts = all ? r.accounts : r.accounts.filter((a) => a.selected);
   const keep = new Set(accounts.map((a) => a.cwpUsername));
-  const ofSelected = (s: { account?: string | null }) => all || !s.account || keep.has(s.account);
+  // Without an account, only the server-wide messages stay: an object of no account (an orphan zone, a domain or
+  // a database left by a deleted user…) is not migrated with the selected accounts.
+  const ofSelected = (s: { kind?: string; account?: string | null }) => all
+    || (s.account ? keep.has(s.account) : s.kind === 'server' || s.kind === 'package');
   return {
     warnings: [...r.warnings.filter((w) => ofSelected(w.scope)), ...accounts.flatMap((a) => a.warnings)],
     followUps: [...r.followUps.filter((f) => ofSelected(f.scope)), ...accounts.flatMap((a) => a.followUps)],

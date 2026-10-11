@@ -302,6 +302,11 @@ test('refusals: find name / depth / type, identifiers', () => {
   for (const maxDepth of [0, 7, 1.5, -1, '2', null]) refused('fs.find', { path: '/home/acct1', maxDepth });
   refused('fs.find', { ...base, type: 'p' });
   refused('fs.grepHtaccess', { root: '/home/acct1/public_html', maxDepth: 9 });
+  // fs.grepRefs: no name = only the absolute /home/<user>/ paths (home then required).
+  assert.equal(renderCommand('fs.grepRefs', { root: '/home/acct1/public_html', names: [], home: '/home/acct1' }, 'discovery', false).ok, true);
+  refused('fs.grepRefs', { root: '/home/acct1/public_html', names: [] });
+  refused('fs.grepRefs', { root: '/home/acct1/public_html', names: ['a b'], home: '/home/acct1' });
+  refused('fs.grepRefs', { root: '/etc', names: ['x'] });
   const badIds = ["a'b", 'a b', 'a;b', '$(id)', '`id`', 'a\nb', '', '-x', 'x'.repeat(65)];
   for (const v of badIds) refused('mysql.dumpSchema', { database: v });
   for (const v of badIds) refused('mysql.dumpData', { database: v, charset: 'utf8mb4', gzip: false });

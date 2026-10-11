@@ -86,7 +86,7 @@ async function collectAccount(ctx: DiscoveryContext, a: CwpAccount, domains: Cwp
     if (names.length === 0 && !homeArg) continue;
     const r = await ctx.tryRun(`references of ${root}`, 'fs.grepRefs', {
       root, names, ...(homeArg ? { home: homeArg } : {}),
-    }, { allowNonZeroExit: true });
+    }, { allowNonZeroExit: true }, { kind: 'account', key: a.username, account: a.username });
     if (!r) continue;
     const g = parseRefsGrep(r.stdout, root, new Set(names), homeArg);
     const refs: CwpOutsideRef[] = [...g.cited.entries()]
