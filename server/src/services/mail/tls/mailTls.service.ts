@@ -41,10 +41,23 @@ async function wantedPrimaries(ctx: MailPlatformContext): Promise<{ host: string
   return { host: ctx.host, panel: ctx.panelHostname, domains: [...new Set(domains)].sort() };
 }
 
-/** Copies one certificate when its edge files differ. Returns true when the mail copy changed. Never throws. */
-function syncCopy(name: string): boolean {
+/** Group the active engine reads its certificates with (MailDriver.certGid); null = root only. */
+async function engineCertGid(): Promise<number | null> {
   try {
-    return copyCertificate(localPaths.edgeCerts(), localPaths.mailCerts(), name);
+    return (await activeMailDriver()).certGid ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Copies one certificate when its edge files differ, and repairs owner / mode
+ * of an existing copy (group = the engine's). Returns true when the mail copy
+ * changed. Never throws.
+ */
+function syncCopy(name: string, gid: number | null): boolean {
+  try {
+    return copyCertificate(localPaths.edgeCerts(), localPaths.mailCerts(), name, { gid });
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== 'ENOENT') logger.warn({ certificate: name, err: (err as Error)?.message }, 'mail tls: certificate copy failed');
@@ -130,7 +143,7 @@ export async function certificateInstalled(primaryName: string, _names: string[]
   const w = await wantedPrimaries(ctx);
   const isPanelFallback = primary === w.panel && (w.host === w.panel || !copiedCertificateExists(localPaths.mailCerts(), w.host ?? ''));
   if (primary !== w.host && !isPanelFallback && !w.domains.includes(primary)) return;
-  if (!syncCopy(primary)) return;
+  if (!syncCopy(primary, await engineCertGid())) return;
   logger.info({ certificate: primary }, 'mail tls: certificate copied for the mail service');
   try {
     await (await activeMailDriver()).reloadTls();
@@ -161,11 +174,12 @@ export const mailTlsService = {
     const rows = new Map((await db('certificates').whereIn('primary_name', [...new Set(names)])
       .select('primary_name', 'names', 'status', 'not_after') as CertRow[]).map((r) => [r.primary_name, r]));
     const root = localPaths.mailCerts();
+    const gid = await engineCertGid();
     let changed = false;
     const ready = (name: string): boolean => {
       const row = rows.get(name);
       if (!servable(row)) return false;
-      if (syncCopy(name)) changed = true;
+      if (syncCopy(name, gid)) changed = true;
       return copiedCertificateExists(root, name);
     };
 

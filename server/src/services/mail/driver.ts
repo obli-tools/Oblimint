@@ -265,6 +265,14 @@ export interface MailEngineCapabilities {
 export interface MailDriver {
   readonly engine: MailEngine;
   readonly capabilities: MailEngineCapabilities;
+  /**
+   * Group of mail/certs/<name>/ (0750) and its fullchain / privkey (0640),
+   * module mail-dns-tls: the engine user's group when the engine reads its
+   * certificates unprivileged (stalwart: 5000). null / absent = root only
+   * (postfix-dovecot: the masters load the keys as root; its vmail workers
+   * must never read them).
+   */
+  readonly certGid?: number | null;
 
   // ── deployment (infra component 'mail', setup wizard step 'mail') ──
   /** Pull + (re)create the engine containers on MAIL_NETWORK, publish the mail ports, wait until ready. Idempotent. */

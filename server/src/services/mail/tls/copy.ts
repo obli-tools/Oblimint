@@ -9,7 +9,11 @@ import { isValidServerName } from '../../edge/nginxConfig';
 // → mail/certs/<name>/ : mode 0640 (group = the engine's when given), atomic
 // (temporary file + rename in the same directory), never through a symbolic
 // link (source, destination directory or file: refused), content compared
-// first so an unchanged renewal does not reload the engine.
+// first so an unchanged renewal does not reload the engine. The per-certificate
+// directory (0750) and both files (0640) carry the engine's group and are
+// REPAIRED when their owner / mode drifted (copies made before the group was
+// passed, engine change, manual edit): an unchanged content with a wrong
+// owner still counts as a change so the engine reloads its TLS.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CERT_FILES = ['fullchain.pem', 'privkey.pem'] as const;
@@ -35,15 +39,56 @@ function readRegular(file: string): Buffer {
   }
 }
 
-function ensureDir(dir: string, mode: number, recursive = false): void {
+/** Owners are only set by a root panel (production); a non-root test run on Linux and Windows skip it. */
+const canChown = (): boolean => process.platform !== 'win32' && process.getuid?.() === 0;
+
+/**
+ * Owner / mode an existing entry must be repaired to (null = already right).
+ * uid is always root (0); gid null = root's group. PURE (copy.test.ts).
+ */
+export function ownershipRepair(st: { uid: number; gid: number; mode: number }, want: { mode: number; gid: number | null }): { uid: number; gid: number; mode: number } | null {
+  const gid = want.gid ?? 0;
+  if (st.uid === 0 && st.gid === gid && (st.mode & 0o7777) === want.mode) return null;
+  return { uid: 0, gid, mode: want.mode };
+}
+
+/** Creates the directory when missing; when `fix`, repairs owner / mode of an existing one (never a link). */
+function ensureDir(dir: string, mode: number, opts: { recursive?: boolean; fix?: { gid: number | null } } = {}): boolean {
+  let st: fs.Stats | null = null;
   try {
-    const st = fs.lstatSync(dir);
+    st = fs.lstatSync(dir);
     if (st.isSymbolicLink() || !st.isDirectory()) throw new CertCopyError(`${dir} is not a plain directory`);
-    return;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
-  fs.mkdirSync(dir, { recursive, mode });
+  if (!st) {
+    fs.mkdirSync(dir, { recursive: opts.recursive ?? false, mode });
+    st = fs.lstatSync(dir);
+  }
+  if (!opts.fix || !canChown()) return false;
+  const repair = ownershipRepair(st, { mode, gid: opts.fix.gid });
+  if (!repair) return false;
+  // Checked plain directory just above, inside the panel-only tree (the engine mounts it read-only).
+  fs.lchownSync(dir, repair.uid, repair.gid);
+  fs.chmodSync(dir, repair.mode);
+  return true;
+}
+
+/** Repairs owner / mode of an existing regular file through an O_NOFOLLOW handle. true = repaired. */
+function repairFile(file: string, mode: number, gid: number | null): boolean {
+  if (!canChown()) return false;
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | O_NOFOLLOW);
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw new CertCopyError(`${path.basename(file)} is not a regular file`);
+    const repair = ownershipRepair(st, { mode, gid });
+    if (!repair) return false;
+    fs.fchownSync(fd, repair.uid, repair.gid);
+    fs.fchmodSync(fd, repair.mode);
+    return true;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function writeAtomic(dir: string, name: string, data: Buffer, opts: { mode: number; gid: number | null }): void {
@@ -59,7 +104,7 @@ function writeAtomic(dir: string, name: string, data: Buffer, opts: { mode: numb
   try {
     fs.writeSync(fd, data);
     fs.fsyncSync(fd);
-    if (opts.gid !== null && process.platform !== 'win32') fs.fchownSync(fd, 0, opts.gid);
+    if (canChown()) fs.fchownSync(fd, 0, opts.gid ?? 0);
     fs.fchmodSync(fd, opts.mode);
   } catch (err) {
     fs.closeSync(fd);
@@ -76,7 +121,7 @@ function writeAtomic(dir: string, name: string, data: Buffer, opts: { mode: numb
 }
 
 export interface CopyOptions {
-  /** Group of the files (engine gid); null = the panel's (root). */
+  /** Group of the directory and files (MailDriver.certGid: the engine user's group); null = root only. */
   gid?: number | null;
   /** File mode (default 0640). */
   mode?: number;
@@ -97,21 +142,26 @@ export function copyCertificate(srcRoot: string, dstRoot: string, name: string, 
   // Both files read first: never a new certificate with the old key.
   const data = CERT_FILES.map((f) => readRegular(path.join(srcDir, f)));
   if (data.some((d) => d.length === 0)) throw new CertCopyError('empty certificate file');
-  ensureDir(dstRoot, 0o711, true);
+  ensureDir(dstRoot, 0o711, { recursive: true });
   const dstDir = path.join(dstRoot, name);
-  ensureDir(dstDir, 0o750);
+  // 0750 root:<gid>: an engine running as an unprivileged user (stalwart,
+  // 5000:5000) must traverse it — root:root here was the "Permission denied
+  // (os error 13)" of the engine reload.
+  let changed = ensureDir(dstDir, 0o750, { fix: { gid } });
   // The pair is replaced by two renames inside ONE synchronous call: no other
   // copier of this process (edge hook, certificates() during a sync) can run
   // in between, and the engine reload is requested only after it returns.
   // Keep this function synchronous.
-  let changed = false;
   CERT_FILES.forEach((f, i) => {
     const target = path.join(dstDir, f);
     let current: Buffer | null = null;
     try { current = readRegular(target); } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
-    if (current && current.equals(data[i])) return;
+    if (current && current.equals(data[i])) {
+      if (repairFile(target, mode, gid)) changed = true;
+      return;
+    }
     writeAtomic(dstDir, f, data[i], { mode, gid });
     changed = true;
   });

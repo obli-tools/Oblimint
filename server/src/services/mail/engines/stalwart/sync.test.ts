@@ -12,6 +12,7 @@ import { StalwartApi } from './api';
 import { createStalwartDriver } from './driver';
 import { toStalwartSecret, STALWART_PASSWORD_SCHEMES } from './principals';
 import { FakeStalwart, QUEUE_FIXTURE_V011, QUEUE_FIXTURE_V012 } from './testing';
+import { STALWART_GID, STALWART_UID } from './constants';
 
 const SECRET = 'admin-secret-admin-secret-admin-secret-x';
 const creds = { secret: SECRET, hash: '$6$rounds=5000$abcdefghijklmnop$' + 'a'.repeat(86) };
@@ -756,4 +757,10 @@ test('stalwart sync (report P4): a structural change restarts; domains, DKIM key
   assert.ok([...fake.settings].some(([k, v]) => /^signature\.[^.]+\.domain$/.test(k) && v === 'exemple.fr'));
   assert.equal(fake.settings.get('queue.limiter.inbound.oblimint-rate-500-0.rate'), '500/1h');
   assert.equal(fake.restarts, 2);
+});
+
+test('certGid: the engine group reads its certificate copies (mail-dns-tls), root only without owner', () => {
+  const base = { credentials: async () => creds, api: (c: typeof creds) => new StalwartApi({ user: 'oblimint-admin', secret: c.secret }), docker: async () => { throw new Error('no docker'); }, ensureNetwork: async () => undefined, hostname: async () => 'mail.host.net', configDir: 'c', dataDir: 'd', certsDir: 'x', certRoots: ['x'], hostDataDir: '/srv/oblimint', bindAddresses: [] };
+  assert.equal(createStalwartDriver({ ...base, owner: { uid: STALWART_UID, gid: STALWART_GID } }).certGid, STALWART_GID);
+  assert.equal(createStalwartDriver({ ...base, owner: null }).certGid, null);
 });

@@ -372,6 +372,8 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
 
   const driver: MailDriver = {
     engine: 'stalwart',
+    // Runs as STALWART_UID:STALWART_GID: must read its certificate copies.
+    certGid: owner ? owner.gid : null,
     capabilities: {
       supported: true,
       mailboxes: true,
