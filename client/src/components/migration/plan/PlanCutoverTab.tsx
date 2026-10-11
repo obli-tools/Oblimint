@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { ArrowRightLeft, CheckCircle2, Circle, Globe, Info, RefreshCw, RotateCcw, Search, Undo2 } from 'lucide-react';
+import { AlertTriangle, ArrowRightLeft, CheckCircle2, Circle, Timer, Globe, Info, RefreshCw, RotateCcw, Search, Undo2 } from 'lucide-react';
 import {
   HostingSocketEvents, type MigrationCutoverDomain, type MigrationCutoverItem, type MigrationCutoverItemCode, type MigrationUpdatedPayload,
 } from '@oblimint/shared';
@@ -16,18 +16,27 @@ import { formatDateTime, paramEntries } from '../migrationFormat';
 import { CutoverStatePill, LoadState, loadErrorOf, toastMigrationError, type LoadError } from '../migrationUi';
 
 const ITEM_FALLBACK: Record<MigrationCutoverItemCode, { label: string; hint: string }> = {
-  ttlLowered: { label: 'TTL lowered (≤ 300 s)', hint: 'Lower the TTL of the records MANUALLY in CWP, then wait for the old TTL to expire. Checked live on the current name servers.' },
+  ttlLowered: { label: 'TTL lowered (≤ 300 s)', hint: 'Lower the TTL where the zone is served now (CWP, or Oblimint once the NS point here), then wait for the old TTL to expire. Checked live on the current name servers.' },
   targetReady: { label: 'Target ready', hint: 'Last initial run done, site published, DNS of the zone active.' },
   finalSync: { label: 'Final sync done', hint: 'A final-sync run succeeded after the TTL was lowered.' },
   nsChanged: { label: 'Name servers changed', hint: 'NS at the registrar point to the platform (live check).' },
   aRecordsChanged: { label: 'Web records changed', hint: 'A / AAAA / www point to the platform (live check).' },
   mxChanged: { label: 'Mail records changed', hint: 'MX (and SPF / DKIM / DMARC) point to the platform (live check).' },
   verified: { label: 'Ownership verified', hint: 'Domain ownership check is OK.' },
-  certificateIssued: { label: "Let's Encrypt certificate issued", hint: "After the switch, Let's Encrypt replaces the imported certificate." },
+  certificateIssued: { label: 'Valid certificate at the switch', hint: "The certificate imported from CWP (or a Let's Encrypt one) is valid for 7 more days at least. Advisory: Let's Encrypt can only issue once the DNS points here, it then replaces the imported one." },
   sourceDisabled: { label: 'Source disabled in CWP', hint: 'Manual: vhost / mail disabled in CWP by the operator.' },
 };
 
-function ItemRow({ item, disabled, onToggle, onForce }: { item: MigrationCutoverItem; disabled: boolean; onToggle: (v: boolean) => void; onForce?: (force: boolean) => void }) {
+/** TTL set by the checklist buttons (zone delegated to our name servers): before the switch, then after it. */
+const LOWERED_TTL = 300;
+const RAISED_TTL = 3600;
+
+/** Items that never block the switch: shown as a warning when not done. */
+const ADVISORY_ITEMS: ReadonlySet<MigrationCutoverItemCode> = new Set(['certificateIssued']);
+
+function ItemRow({ item, disabled, onToggle, onForce, extra }: {
+  item: MigrationCutoverItem; disabled: boolean; onToggle: (v: boolean) => void; onForce?: (force: boolean) => void; extra?: ReactNode;
+}) {
   const { t, i18n } = useTranslation();
   const fb = ITEM_FALLBACK[item.code] ?? { label: item.code, hint: '' };
   const forced = item.detail?.forced === true;
@@ -36,7 +45,9 @@ function ItemRow({ item, disabled, onToggle, onForce }: { item: MigrationCutover
     <li className="flex items-start gap-2.5 py-1.5">
       {item.auto ? (
         <span className="mt-0.5" aria-label={item.done ? (t('migration.cutover.done') || 'done') : (t('migration.cutover.notDone') || 'not done')}>
-          {item.done ? <CheckCircle2 size={16} className="text-green-400" /> : <Circle size={16} className="text-text-muted" />}
+          {item.done ? <CheckCircle2 size={16} className="text-green-400" />
+            : ADVISORY_ITEMS.has(item.code) ? <AlertTriangle size={16} className="text-amber-400" />
+            : <Circle size={16} className="text-text-muted" />}
         </span>
       ) : (
         <input type="checkbox" className="mt-0.5 h-4 w-4 accent-accent" disabled={disabled} checked={item.done} onChange={(e) => onToggle(e.target.checked)} aria-label={t(`migration.cutover.items.${item.code}.label`, { defaultValue: fb.label })} />
@@ -52,6 +63,7 @@ function ItemRow({ item, disabled, onToggle, onForce }: { item: MigrationCutover
               {forced ? (t('migration.cutover.unforce') || 'Remove the force') : (t('migration.cutover.force') || 'Force (with a note)')}
             </button>
           )}
+          {extra}
         </div>
         <p className="text-[11px] text-text-muted">{t(`migration.cutover.items.${item.code}.hint`, { defaultValue: fb.hint })}</p>
         {detail.length > 0 && (
@@ -84,6 +96,18 @@ function CutoverCard({ c, onChanged }: { c: MigrationCutoverDomain; onChanged: (
     } finally {
       setBusy(null);
     }
+  };
+
+  // The zone is delegated to our name servers already (live NS check): its TTL is set here, not at the source.
+  const zoneHere = c.mode === 'ns-delegation' && c.items.some((i) => i.code === 'nsChanged' && i.done);
+  const zoneTtl = async (ttl: number) => {
+    const ok = await confirm({
+      title: t('migration.cutover.zoneTtlTitle', { ttl, defaultValue: 'TTL of the zone: {{ttl}} s' }),
+      message: t('migration.cutover.zoneTtlMessage', { ttl, defaultValue: 'The default TTL of the zone and of every record written by hand (or migrated) becomes {{ttl}} s on the Oblimint DNS. Resolvers keep the old answers until the previous TTL expires.' }),
+      confirmLabel: t('migration.cutover.zoneTtlConfirm') || 'Apply',
+    });
+    if (!ok) return;
+    void act('ttl', () => migrationApi.setCutoverZoneTtl(c.id, ttl), t('migration.cutover.zoneTtlDone', { ttl, defaultValue: 'TTL set to {{ttl}} s' }));
   };
 
   /** ttlLowered is checked live; the staff may force it (split DNS, anycast…) with a note explaining why. */
@@ -170,7 +194,15 @@ function CutoverCard({ c, onChanged }: { c: MigrationCutoverDomain; onChanged: (
               item={it}
               disabled={busy != null}
               onToggle={(v) => { void act('item', () => migrationApi.updateCutover(c.id, { items: { [it.code]: v } })); }}
-              onForce={it.code === 'ttlLowered' ? (force) => { void forceTtl(force); } : undefined}
+              onForce={it.code === 'ttlLowered' && !switched ? (force) => { void forceTtl(force); } : undefined}
+              extra={it.code === 'ttlLowered' && zoneHere ? (
+                <button type="button" disabled={busy != null} onClick={() => { void zoneTtl(switched ? RAISED_TTL : LOWERED_TTL); }} className="inline-flex items-center gap-1 text-[11px] text-accent hover:underline disabled:opacity-50">
+                  <Timer size={11} />
+                  {switched
+                    ? t('migration.cutover.raiseTtl', { ttl: RAISED_TTL, defaultValue: 'Raise the TTL in Oblimint ({{ttl}} s)' })
+                    : t('migration.cutover.lowerTtl', { ttl: LOWERED_TTL, defaultValue: 'Lower the TTL in Oblimint ({{ttl}} s)' })}
+                </button>
+              ) : undefined}
             />
           ))}
         </ul>
@@ -266,7 +298,7 @@ export function PlanCutoverTab({ planId }: { planId: number }) {
         <Info size={14} className="mt-0.5 shrink-0 text-sky-400" />
         <div className="min-w-0 flex-1 space-y-1">
           <p>{t('migration.cutover.intro') || 'One checklist per migrated domain: lower the TTL, final sync, change the NS (zone migrated) or the records (zone elsewhere), switch, then Let\'s Encrypt takes over.'}</p>
-          <p className="font-medium text-amber-400">{t('migration.cutover.ttlManual') || 'Lowering the TTL is done MANUALLY in CWP (the panel never writes on the source); the panel only checks the TTL served by the current name servers.'}</p>
+          <p className="font-medium text-amber-400">{t('migration.cutover.ttlManual') || 'While the zone is served by CWP, lower its TTL there (the panel does not write on the source yet); once the NS point to Oblimint, use « Lower the TTL in Oblimint ».'}</p>
         </div>
         <button type="button" className={headerBtnCls} disabled={refreshing} onClick={() => { void refreshAll(); }}><RefreshCw size={14} className={cn(refreshing && 'animate-spin')} />{t('migration.cutover.refreshAll') || 'Refresh all'}</button>
       </div>

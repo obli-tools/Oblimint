@@ -39,6 +39,8 @@ import {
 const NOTES_MAX = 4000;
 
 const notFound = () => new AppError(404, 'Cutover item not found', 'notFound');
+/** Days a certificate must still be valid at the switch (checklist item certificateIssued). */
+const CERT_MIN_DAYS = 7;
 const lower = (s: string): string => String(s ?? '').trim().toLowerCase().replace(/\.$/, '');
 
 function plannedDomain(account: MigrationAccountPlan, fqdn: string): PlannedDomain | null {
@@ -68,9 +70,11 @@ async function dbFacts(planId: number, cwpUsername: string, d: PlannedDomain, ac
   const cert = facts.certificate;
   return {
     verified: { ok: facts.verificationStatus === 'verified', status: facts.verificationStatus },
+    // Advisory (never blocks the switch): the certificate served at the switch — the one imported from the source
+    // until Let's Encrypt (HTTP-01, possible only once the DNS points here) replaces it.
     certificateIssued: {
-      ok: !!cert && cert.status === 'valid' && cert.issuer.toLowerCase().startsWith('letsencrypt'),
-      issuer: cert?.issuer ?? null, status: cert?.status ?? null,
+      ok: !!cert && cert.status === 'valid' && (!cert.notAfter || new Date(cert.notAfter).getTime() > Date.now() + CERT_MIN_DAYS * 86_400_000),
+      issuer: cert?.issuer ?? null, status: cert?.status ?? null, notAfter: cert?.notAfter ?? null,
     },
     targetReady: { ok: initial && facts.exists && facts.published && zoneActive !== false, initialDone: initial, published: facts.published, zoneActive },
     lastFinalSyncAt: await lastFinalSyncAt(planId, cwpUsername),
@@ -329,6 +333,30 @@ export const migrationCutoverService = {
     const row = await loadRow(id);
     const refreshed = (await syncAccountRows(row.plan_id, row.cwp_username)).find((r) => r.id === row.id) ?? row;
     return toCutoverDomain(await checkRow(refreshed));
+  },
+
+  /**
+   * TTL of the migrated zone on OUR DNS (default + manual / template records) — only when the zone is already
+   * delegated to the platform name servers (live check): lowered before moving records, raised after the switch.
+   * 409 cutoverNotDelegated (records mode, or NS not ours yet: the TTL is then the source's), 404 zoneNotFound.
+   */
+  async setZoneTtl(req: Request, id: number, ttl: number): Promise<MigrationCutoverDomain> {
+    const row = await loadRow(id);
+    const plan = await accountPlanOf(row.plan_id, row.cwp_username);
+    const apex = plan ? migratedZoneOf(plan.account, row.fqdn) : null;
+    if (row.mode !== 'ns-delegation' || !apex) throw new AppError(409, 'The zone of this domain is not served by the platform', 'cutoverNotDelegated');
+    const deps = cutoverDeps();
+    const expected = (await deps.platformDns()).nameservers;
+    let seen: string[] = [];
+    try { seen = await (await deps.dns()).ns(apex); } catch { seen = []; }
+    if (!seen.length || !expected.length || !seen.every((n) => expected.includes(n))) {
+      throw new AppError(409, 'The name servers of the zone are not the platform ones yet: lower the TTL at the current DNS host', 'cutoverNotDelegated',
+        { seen: seen.join(', '), expected: expected.join(', ') });
+    }
+    const r = await deps.setZoneTtl(req, apex, ttl);
+    if (!r) throw new AppError(404, 'The zone is not hosted on the platform DNS', 'zoneNotFound', { zone: apex });
+    await audit(req, 'migration.cutover.zone_ttl', row, { zone: apex, ttl, recordsRetimed: r.recordsRetimed });
+    return toCutoverDomain(await checkRow(row));
   },
 
   async finalSync(req: Request, id: number): Promise<MigrationRun> {

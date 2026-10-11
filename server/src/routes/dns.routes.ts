@@ -52,6 +52,7 @@ const zoneUpdateSchema = z.object({
   kind: z.enum(['hosted', 'external']).optional(),
   dnssec: z.boolean().optional(),
   defaultTtl: z.number().int().min(60).max(604800).optional(),
+  applyTtlToRecords: z.boolean().optional(),
 }).strict();
 
 const resetSchema = z.object({ keepManual: z.boolean().default(true) }).strict();

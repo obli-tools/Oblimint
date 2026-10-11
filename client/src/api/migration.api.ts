@@ -78,6 +78,7 @@ export const migrationApi = {
   refreshCutover: (planId: number) => data<MigrationCutoverDomain[]>(apiClient.post(`${base}/plans/${planId}/cutover/refresh`)),
   updateCutover: (id: number, body: MigrationCutoverUpdate) => data<MigrationCutoverDomain>(apiClient.put(`${base}/cutover/${id}`, body)),
   checkCutover: (id: number) => data<MigrationCutoverDomain>(apiClient.post(`${base}/cutover/${id}/check`)),
+  setCutoverZoneTtl: (id: number, ttl: number) => data<MigrationCutoverDomain>(apiClient.post(`${base}/cutover/${id}/zone-ttl`, { ttl })),
   finalSync: (id: number) => data<MigrationRun>(apiClient.post(`${base}/cutover/${id}/final-sync`)),
   switchCutover: (id: number, body: MigrationCutoverSwitch) => data<MigrationCutoverDomain>(apiClient.post(`${base}/cutover/${id}/switch`, body)),
   rollbackCutover: (id: number) => data<MigrationCutoverDomain>(apiClient.post(`${base}/cutover/${id}/rollback`)),

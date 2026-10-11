@@ -283,8 +283,8 @@
           "label": "Web records changed"
         },
         "certificateIssued": {
-          "hint": "After the switch, Let's Encrypt replaces the imported certificate.",
-          "label": "Let's Encrypt certificate issued"
+          "hint": "The certificate imported from CWP (or a Let's Encrypt one) is valid for 7 more days at least. Advisory: Let's Encrypt can only issue once the DNS points here, it then replaces the imported one.",
+          "label": "Valid certificate at the switch"
         },
         "finalSync": {
           "hint": "A final-sync run succeeded after the TTL was lowered.",
@@ -307,7 +307,7 @@
           "label": "Target ready"
         },
         "ttlLowered": {
-          "hint": "Lower the TTL of the records MANUALLY in CWP, then wait for the old TTL to expire. Checked live on the current name servers.",
+          "hint": "Lower the TTL where the zone is served now (CWP, or Oblimint once the NS point here), then wait for the old TTL to expire. Checked live on the current name servers.",
           "label": "TTL lowered (≤ 300 s)"
         },
         "verified": {
@@ -343,9 +343,15 @@
       "switchTitle": "Switch the domain",
       "switched": "Domain switched",
       "switchedAt": "Switched on {{date}}",
-      "ttlManual": "Lowering the TTL is done MANUALLY in CWP (the panel never writes on the source); the panel only checks the TTL served by the current name servers.",
+      "ttlManual": "While the zone is served by CWP, lower its TTL there (the panel does not write on the source yet); once the NS point to Oblimint, use « Lower the TTL in Oblimint ».",
       "unforce": "Remove the force",
-      "value": "Value"
+      "value": "Value",
+      "lowerTtl": "Lower the TTL in Oblimint ({{ttl}} s)",
+      "raiseTtl": "Raise the TTL in Oblimint ({{ttl}} s)",
+      "zoneTtlTitle": "TTL of the zone: {{ttl}} s",
+      "zoneTtlMessage": "The default TTL of the zone and of every record written by hand (or migrated) becomes {{ttl}} s on the Oblimint DNS. Resolvers keep the old answers until the previous TTL expires.",
+      "zoneTtlConfirm": "Apply",
+      "zoneTtlDone": "TTL set to {{ttl}} s"
     },
     "cwpKinds": {
       "addon": "Addon",
@@ -537,7 +543,9 @@
       "validation": "Some fields are invalid.",
       "cutoverSwitched": "A domain of this account is already switched: a final sync would overwrite its live data. Use an explicit resync.",
       "planArchived": "This plan is archived: it can no longer be executed.",
-      "certificateNameTaken": "An imported certificate with this name already exists."
+      "certificateNameTaken": "An imported certificate with this name already exists.",
+      "cutoverNotDelegated": "The zone is not served by the Oblimint name servers yet: lower the TTL at the current DNS host.",
+      "zoneNotFound": "The zone is not hosted on the Oblimint DNS."
     },
     "events": {
       "accountAdopted": "Existing account adopted",

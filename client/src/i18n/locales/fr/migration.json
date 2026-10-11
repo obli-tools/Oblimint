@@ -283,8 +283,8 @@
           "label": "Enregistrements web changés"
         },
         "certificateIssued": {
-          "hint": "Après la bascule, Let’s Encrypt remplace le certificat importé.",
-          "label": "Certificat Let’s Encrypt émis"
+          "hint": "Le certificat importé de CWP (ou un certificat Let’s Encrypt) est valide encore 7 jours au moins. Indicatif : Let’s Encrypt ne peut émettre qu’une fois le DNS pointé ici, il remplace alors le certificat importé.",
+          "label": "Certificat valide à la bascule"
         },
         "finalSync": {
           "hint": "Une synchro finale a réussi après l’abaissement du TTL.",
@@ -307,7 +307,7 @@
           "label": "Cible prête"
         },
         "ttlLowered": {
-          "hint": "Abaissez le TTL des enregistrements À LA MAIN dans CWP, puis attendez l’expiration de l’ancien TTL. Contrôlé en direct sur les serveurs de noms actuels.",
+          "hint": "Abaissez le TTL là où la zone est servie aujourd’hui (CWP, ou Oblimint dès que les NS pointent ici), puis attendez l’expiration de l’ancien TTL. Contrôlé en direct sur les serveurs de noms actuels.",
           "label": "TTL abaissé (≤ 300 s)"
         },
         "verified": {
@@ -343,9 +343,15 @@
       "switchTitle": "Bascule du domaine",
       "switched": "Domaine basculé",
       "switchedAt": "Basculé le {{date}}",
-      "ttlManual": "L’abaissement du TTL se fait À LA MAIN dans CWP (le panel n’écrit jamais sur la source) ; le panel contrôle seulement le TTL servi par les serveurs de noms actuels.",
+      "ttlManual": "Tant que la zone est servie par CWP, abaissez son TTL là-bas (le panel n’écrit pas encore sur la source) ; dès que les NS pointent sur Oblimint, utilisez « Baisser le TTL dans Oblimint ».",
       "unforce": "Retirer le forçage",
-      "value": "Valeur"
+      "value": "Valeur",
+      "lowerTtl": "Baisser le TTL dans Oblimint ({{ttl}} s)",
+      "raiseTtl": "Remonter le TTL dans Oblimint ({{ttl}} s)",
+      "zoneTtlTitle": "TTL de la zone : {{ttl}} s",
+      "zoneTtlMessage": "Le TTL par défaut de la zone et de tous les enregistrements saisis à la main (ou migrés) passe à {{ttl}} s sur le DNS d’Oblimint. Les résolveurs gardent les anciennes réponses jusqu’à l’expiration du TTL précédent.",
+      "zoneTtlConfirm": "Appliquer",
+      "zoneTtlDone": "TTL réglé à {{ttl}} s"
     },
     "cwpKinds": {
       "addon": "Additionnel",
@@ -537,7 +543,9 @@
       "validation": "Certains champs sont invalides.",
       "cutoverSwitched": "Un domaine de ce compte est déjà basculé : une synchro finale écraserait ses données en service. Utilisez une resynchronisation explicite.",
       "planArchived": "Ce plan est archivé : il ne peut plus être exécuté.",
-      "certificateNameTaken": "Un certificat importé porte déjà ce nom."
+      "certificateNameTaken": "Un certificat importé porte déjà ce nom.",
+      "cutoverNotDelegated": "La zone n’est pas encore servie par les serveurs de noms d’Oblimint : abaissez le TTL chez l’hébergeur DNS actuel.",
+      "zoneNotFound": "La zone n’est pas hébergée sur le DNS d’Oblimint."
     },
     "events": {
       "accountAdopted": "Compte existant repris",

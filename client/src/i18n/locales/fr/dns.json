@@ -108,7 +108,8 @@
       "deleteFailed": "Impossible de supprimer la zone",
       "kindChangeTitle": "Changer l'hébergement du DNS",
       "toExternalConfirm": "La zone ne sera plus servie par nos serveurs de noms. Créez d'abord les enregistrements listés chez votre fournisseur DNS et modifiez la délégation chez votre registraire. Continuer ?",
-      "toHostedConfirm": "La zone sera servie par nos serveurs de noms une fois le domaine vérifié. Déclarez ensuite nos serveurs de noms chez votre registraire. Continuer ?"
+      "toHostedConfirm": "La zone sera servie par nos serveurs de noms une fois le domaine vérifié. Déclarez ensuite nos serveurs de noms chez votre registraire. Continuer ?",
+      "applyTtlToRecords": "L’appliquer aussi à tous les enregistrements existants"
     },
     "records": {
       "title": "Enregistrements",

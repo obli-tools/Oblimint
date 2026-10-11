@@ -128,7 +128,8 @@ export interface CutoverFacts {
   aRecordsChanged?: { ok: boolean; seen: string[]; expected: string[]; error: string | null };
   mxChanged?: { ok: boolean; seen: string[]; expected: string | null; error: string | null };
   verified?: { ok: boolean; status: string | null };
-  certificateIssued?: { ok: boolean; issuer: string | null; status: string | null };
+  /** A valid certificate (imported from the source or Let's Encrypt) that does not expire within CERT_MIN_DAYS. */
+  certificateIssued?: { ok: boolean; issuer: string | null; status: string | null; notAfter: string | null };
   targetReady?: { ok: boolean; initialDone: boolean; published: boolean; zoneActive: boolean | null };
   /** Finish time of the latest successful final-sync run of the account. */
   lastFinalSyncAt?: string | null;
@@ -193,7 +194,7 @@ export function applyFacts(items: MigrationCutoverItem[], facts: CutoverFacts, n
   if (facts.verified) set('verified', facts.verified.ok, { status: facts.verified.status });
   if (facts.certificateIssued) {
     const f = facts.certificateIssued;
-    set('certificateIssued', f.ok, { issuer: f.issuer, status: f.status });
+    set('certificateIssued', f.ok, { issuer: f.issuer, status: f.status, notAfter: f.notAfter });
   }
   if (facts.targetReady) {
     const f = facts.targetReady;

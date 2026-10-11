@@ -36,6 +36,7 @@ const updateBody = z.object({
 }).strict();
 
 const switchBody = z.object({ confirm: z.string().trim().min(1).max(253) }).strict();
+const zoneTtlBody = z.object({ ttl: z.number().int().min(60).max(604800) }).strict();
 
 type Handler = (req: Request) => Promise<unknown>;
 
@@ -51,6 +52,7 @@ router.get('/plans/:id/cutover', handle((req) => migrationCutoverService.list(id
 router.post('/plans/:id/cutover/refresh', heavyOpLimiter, handle((req) => migrationCutoverService.refresh(req, idParam(req))));
 router.put('/cutover/:id', validate(updateBody), handle((req) => migrationCutoverService.update(req, idParam(req), req.body)));
 router.post('/cutover/:id/check', heavyOpLimiter, handle((req) => migrationCutoverService.check(req, idParam(req))));
+router.post('/cutover/:id/zone-ttl', heavyOpLimiter, validate(zoneTtlBody), handle((req) => migrationCutoverService.setZoneTtl(req, idParam(req), req.body.ttl)));
 router.post('/cutover/:id/final-sync', handle((req) => migrationCutoverService.finalSync(req, idParam(req)), 202));
 router.post('/cutover/:id/switch', validate(switchBody), handle((req) => migrationCutoverService.switchOver(req, idParam(req), req.body)));
 router.post('/cutover/:id/rollback', handle((req) => migrationCutoverService.rollback(req, idParam(req))));

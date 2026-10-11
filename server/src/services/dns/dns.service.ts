@@ -115,6 +115,15 @@ function changed(zone: Pick<ZoneRow, 'id' | 'domain_id' | 'account_id' | 'tenant
   queue.zone(zone.id, reason);
 }
 
+/**
+ * TTL of the records written by people (manual / template) set to `ttl` — auto records follow the zone default,
+ * system records (ACME / ownership challenges) keep their short TTL. Returns the number of records changed.
+ */
+async function applyTtlToRecords(zoneId: number, ttl: number): Promise<number> {
+  return db('dns_records').where({ zone_id: zoneId }).whereIn('origin', ['manual', 'template']).whereNot('ttl', ttl)
+    .update({ ttl, updated_at: db.fn.now() });
+}
+
 async function zoneView(actor: HostingActor, zoneId: number): Promise<DnsZone> {
   const row = await zoneById(zoneId);
   if (!row) throw notFound();
@@ -212,6 +221,24 @@ async function templateNameTaken(tenantId: number, name: string, exceptId?: numb
 let timers: NodeJS.Timeout[] = [];
 
 export const dnsService = {
+  /**
+   * Platform-side TTL change of a hosted zone found by name (CWP migration cutover: the zone is delegated to our
+   * name servers, the staff lowers / raises its TTL from the checklist). Default TTL + manual / template records,
+   * audited, pushed to PowerDNS. null when there is no such hosted zone.
+   */
+  async setZoneTtlByName(req: Request, name: string, ttl: number): Promise<{ zoneId: number; recordsRetimed: number } | null> {
+    if (!Number.isInteger(ttl) || ttl < 60 || ttl > 604800) throw new AppError(400, 'TTL must be between 60 and 604800', 'recordInvalid', { field: 'ttl' });
+    const zone = await db('dns_zones').where({ name: name.toLowerCase(), kind: 'hosted' }).first() as ZoneRow | undefined;
+    if (!zone) return null;
+    if (zone.default_ttl !== ttl) await db('dns_zones').where({ id: zone.id }).update({ default_ttl: ttl, updated_at: db.fn.now() });
+    const recordsRetimed = await applyTtlToRecords(zone.id, ttl);
+    await audit(req, zone, 'dns.zone.ttl', { from: zone.default_ttl, to: ttl, recordsRetimed });
+    const fresh = await zoneById(zone.id);
+    if (fresh) await regenerateAuto(fresh, await loadContext());
+    changed(zone, 'zone-updated');
+    return { zoneId: zone.id, recordsRetimed };
+  },
+
   // ── zones ──
   async listZones(actor: HostingActor, filters: DnsZoneFilters): Promise<DnsZone[]> {
     if (filters.platform && !isPlatformAdmin(actor)) throw forbidden();
@@ -311,6 +338,12 @@ export const dnsService = {
       }
       patch.default_ttl = body.defaultTtl;
     }
+    let recordsRetimed = 0;
+    if (body.applyTtlToRecords) recordsRetimed = await applyTtlToRecords(zone.id, (patch.default_ttl as number | undefined) ?? zone.default_ttl);
+    if (recordsRetimed && !Object.keys(patch).length) {
+      await audit(req, zone, 'dns.zone.update', { ...body, recordsRetimed });
+      changed(zone, 'zone-updated');
+    }
     const dnssecChange = body.dnssec !== undefined && body.dnssec !== !!zone.dnssec;
     if (dnssecChange) {
       if (body.dnssec && (zone.kind !== 'hosted' || patch.kind === 'external' || zone.status !== 'active')) {
@@ -320,7 +353,7 @@ export const dnsService = {
     }
     if (Object.keys(patch).length) {
       await db('dns_zones').where({ id: zone.id }).update({ ...patch, updated_at: db.fn.now() });
-      await audit(req, zone, 'dns.zone.update', { ...body });
+      await audit(req, zone, 'dns.zone.update', { ...body, ...(body.applyTtlToRecords ? { recordsRetimed } : {}) });
     }
     if (dnssecChange) {
       // The user waits for the keys (DS to publish): push now, roll back when PowerDNS is unreachable.

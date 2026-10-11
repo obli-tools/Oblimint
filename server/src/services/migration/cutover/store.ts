@@ -139,7 +139,7 @@ export interface DomainFacts {
   includeWww: boolean;
   /** Site routes all point at a site with a current release, or a proxy binding exists. */
   published: boolean;
-  certificate: { status: string; issuer: string } | null;
+  certificate: { status: string; issuer: string; notAfter: string | null } | null;
 }
 
 export async function domainFacts(domainId: number | null, servedBy: 'site' | 'proxy' | 'none', conn: Conn = db): Promise<DomainFacts> {
@@ -159,14 +159,16 @@ export async function domainFacts(domainId: number | null, servedBy: 'site' | 'p
       .select('s.current_release_id') as Array<{ current_release_id: number | null }>;
     published = routes.length > 0 && routes.every((r) => r.current_release_id !== null);
   }
-  const cert = await conn('certificates').where({ domain_id: domainId }).first('status', 'issuer') as { status: string; issuer: string } | undefined;
+  const c = await conn('certificates').where({ domain_id: domainId }).first('status', 'issuer', 'not_after') as
+    { status: string; issuer: string; not_after: Date | string | null } | undefined;
+  const cert = c ? { status: c.status, issuer: c.issuer, notAfter: c.not_after ? new Date(c.not_after).toISOString() : null } : null;
   return {
     exists: true,
     verificationStatus: d.verification_status,
     verificationToken: d.verification_token,
     includeWww: !!d.include_www,
     published,
-    certificate: cert ?? null,
+    certificate: cert,
   };
 }
 

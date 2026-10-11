@@ -108,7 +108,8 @@
       "deleteFailed": "Failed to delete the zone",
       "kindChangeTitle": "Change where the DNS is hosted",
       "toExternalConfirm": "The zone stops being served by our name servers. Create the listed records at your DNS provider and update the delegation at your registrar first. Continue?",
-      "toHostedConfirm": "The zone will be served by our name servers once the domain is verified. Then set our name servers at your registrar. Continue?"
+      "toHostedConfirm": "The zone will be served by our name servers once the domain is verified. Then set our name servers at your registrar. Continue?",
+      "applyTtlToRecords": "Also apply it to every existing record"
     },
     "records": {
       "title": "Records",

@@ -132,6 +132,11 @@ export interface DnsZoneUpdate {
   kind?: DnsZoneKind;
   dnssec?: boolean;
   defaultTtl?: number;
+  /**
+   * With defaultTtl (or alone: the current default): every manual / template record of the zone takes that TTL
+   * too (auto records always follow the zone default). Used to lower the TTL before moving records, then raise it.
+   */
+  applyTtlToRecords?: boolean;
 }
 
 /** GET /api/dns/zones/:id/delegation — what the public DNS says. */

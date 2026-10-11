@@ -40,6 +40,8 @@ export interface CutoverDeps {
   /** Mail host of the node (MX target), null when not configured. */
   mailHost(): Promise<string | null>;
   platformDns(): Promise<{ nameservers: string[]; ipv4: string | null; ipv6: string | null }>;
+  /** TTL of our hosted zone `name` (default + manual / template records); null = no such hosted zone. */
+  setZoneTtl(req: Request, name: string, ttl: number): Promise<{ zoneId: number; recordsRetimed: number } | null>;
 }
 
 const TIMEOUT_MS = 4_000;
@@ -129,6 +131,10 @@ const real: CutoverDeps = {
   async mailHost() {
     const { loadMailPlatformContext } = await import('../../mail/dns/domains');
     return (await loadMailPlatformContext()).host;
+  },
+  async setZoneTtl(req, name, ttl) {
+    const { dnsService } = await import('../../dns/dns.service');
+    return dnsService.setZoneTtlByName(req, name, ttl);
   },
   async platformDns() {
     const { db } = await import('../../../db');

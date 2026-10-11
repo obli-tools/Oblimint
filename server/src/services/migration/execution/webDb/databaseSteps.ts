@@ -213,11 +213,15 @@ export async function dbUsersStep(ctx: MigrationStepContext): Promise<MigrationS
 // ── db:<name> ────────────────────────────────────────────────────────────────
 
 /** Opens the spooled dump (gzip detected by its magic number). */
-function dumpStreams(file: string): Readable[] {
+function dumpStreams(file: string, onRead?: (bytes: number) => void): Readable[] {
   const fd = fs.openSync(file, 'r');
   const head = Buffer.alloc(2);
   try { fs.readSync(fd, head, 0, 2, 0); } finally { fs.closeSync(fd); }
   const source = fs.createReadStream(file);
+  if (onRead) {
+    let read = 0;
+    source.on('data', (c: Buffer | string) => { read += c.length; onRead(read); });
+  }
   return head[0] === 0x1f && head[1] === 0x8b ? [source, zlib.createGunzip() as unknown as Readable] : [source];
 }
 
@@ -335,7 +339,16 @@ export async function databaseStep(ctx: MigrationStepContext, planned: PlannedDa
       let streamError: Error | null = null;
       // Kept to be destroyed whatever happens: an import that fails / is paused before reading everything must not
       // leave the read stream (fd on the unlinked multi-GB spool file) and the gunzip / filter chain open.
-      const chain: Array<Readable | NodeJS.ReadWriteStream> = [...dumpStreams(file), filter];
+      // Import progress: bytes of the spool file read so far (compressed, the unit of the dump), at most once a second.
+      const total = fs.statSync(file).size;
+      let lastAt = 0;
+      const onRead = (b: number) => {
+        const now = Date.now();
+        if (now - lastAt < 1_000 && b < total) return;
+        lastAt = now;
+        ctx.progress({ bytes: b });
+      };
+      const chain: Array<Readable | NodeJS.ReadWriteStream> = [...dumpStreams(file, onRead), filter];
       pipelineCb(chain as unknown as [Readable, NodeJS.WritableStream], (err) => { if (err && !streamError) streamError = err; });
       let res: { exitCode: number; stderr: string };
       try {

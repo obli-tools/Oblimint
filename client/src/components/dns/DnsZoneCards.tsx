@@ -23,6 +23,8 @@ export function ZoneSettingsCard({ zone, manage, onChanged }: { zone: DnsZoneDet
   const confirm = useConfirm();
   const [ttl, setTtl] = useState(String(zone.defaultTtl));
   const [busy, setBusy] = useState<'ttl' | 'dnssec' | 'kind' | null>(null);
+  // Also give that TTL to every record written by hand / from a template (auto records always follow the default).
+  const [ttlAll, setTtlAll] = useState(false);
   useEffect(() => { setTtl(String(zone.defaultTtl)); }, [zone.defaultTtl]);
 
   const ttlNum = /^\d+$/.test(ttl.trim()) ? Number(ttl.trim()) : NaN;
@@ -95,14 +97,23 @@ export function ZoneSettingsCard({ zone, manage, onChanged }: { zone: DnsZoneDet
                   size="sm"
                   variant="secondary"
                   loading={busy === 'ttl'}
-                  disabled={!ttlValid || ttlNum === zone.defaultTtl || busy !== null}
-                  onClick={() => { void update('ttl', { defaultTtl: ttlNum }, t('dns.zone.saved') || 'Zone updated'); }}
+                  disabled={!ttlValid || (ttlNum === zone.defaultTtl && !ttlAll) || busy !== null}
+                  onClick={() => {
+                    void update('ttl', { defaultTtl: ttlNum, ...(ttlAll ? { applyTtlToRecords: true } : {}) }, t('dns.zone.saved') || 'Zone updated');
+                    setTtlAll(false);
+                  }}
                 >
                   {t('common.save') || 'Save'}
                 </Button>
               )}
             </div>
             {!ttlValid && <p className="mt-1 text-xs text-status-down">{t('dns.validation.ttlRange') || `TTL between ${TTL_MIN} and ${TTL_MAX} seconds.`}</p>}
+            {manage && hosted && (
+              <label className="mt-1.5 inline-flex cursor-pointer items-center gap-2 text-xs text-text-muted">
+                <input type="checkbox" className="h-4 w-4 accent-accent" checked={ttlAll} onChange={(e) => setTtlAll(e.target.checked)} />
+                {t('dns.zone.applyTtlToRecords') || 'Also apply it to every existing record'}
+              </label>
+            )}
           </div>
         </div>
         {hosted && (
