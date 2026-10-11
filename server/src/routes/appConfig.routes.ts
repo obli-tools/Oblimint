@@ -72,17 +72,21 @@ router.put('/obligate', requireRole('admin'), async (req, res, next) => {
 // Panel identity (host name, public IPs, ACME e-mail) after the setup wizard:
 // platform admin on the master tenant. Re-syncs the edge (panel vhost), the
 // platform certificates and the DNS zones that publish these values.
-const HOST_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?.)+[a-z]{2,63}$/;
+export const PANEL_HOST_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+export const ACME_EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+/** Lower case, trailing dot of an absolute name removed (only a DOT: the name itself is kept whole). */
+export const normalizePanelHost = (v: string): string => v.toLowerCase().replace(/\.$/, '');
 router.put('/platform', requirePlatformAdminOnMaster, async (req, res, next) => {
   try {
     const b = (req.body ?? {}) as Record<string, unknown>;
     const str = (v: unknown) => (typeof v === 'string' ? v.trim() : v == null ? '' : null);
-    const host = str(b.panelHostname)?.toLowerCase().replace(/.$/, '') ?? null;
+    const rawHost = str(b.panelHostname);
+    const host = rawHost === null ? null : normalizePanelHost(rawHost);
     const v4 = str(b.publicIpv4); const v6 = str(b.publicIpv6); const email = str(b.acmeEmail);
-    if (host === null || !HOST_RE.test(host)) throw new AppError(400, 'Invalid panel host name', 'invalidPanelHostname');
+    if (host === null || !PANEL_HOST_RE.test(host)) throw new AppError(400, 'Invalid panel host name', 'invalidPanelHostname');
     if (v4 === null || (v4 && !net.isIPv4(v4))) throw new AppError(400, 'Invalid IPv4 address', 'invalidIpv4');
     if (v6 === null || (v6 && !net.isIPv6(v6))) throw new AppError(400, 'Invalid IPv6 address', 'invalidIpv6');
-    if (email === null || !/^[^s@<>]+@[^s@<>]+.[^s@<>]+$/.test(email)) throw new AppError(400, 'Invalid e-mail address', 'invalidEmail');
+    if (email === null || !ACME_EMAIL_RE.test(email)) throw new AppError(400, 'Invalid e-mail address', 'invalidEmail');
     const before = { panel_hostname: await appConfigService.get('panel_hostname'), public_ipv4: await appConfigService.get('public_ipv4'), public_ipv6: await appConfigService.get('public_ipv6'), acme_email: await appConfigService.get('acme_email') };
     await appConfigService.set('panel_hostname', host);
     await appConfigService.set('public_ipv4', v4);
