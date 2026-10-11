@@ -7,10 +7,10 @@ import { databasesApi } from '@/api/databases.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm, usePrompt } from '@/components/common/ConfirmDialog';
-import { Card, Pill, inputCls, isStepUpHandled, labelCls, selectCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
+import { Card, Pill, inputCls, isStepUpHandled, labelCls, selectCls } from '@/components/hosting/hostingUi';
 import { CopyField } from '@/components/dns/DomainOwnershipCard';
 import { cn } from '@/utils/cn';
 import { DB_MIN_PASSWORD, DB_USER_RE, dbErrorMessage, isReservedDbUser, privilegeLabel, toastDbError } from './dbFormat';
@@ -338,41 +338,28 @@ export function DbUsersCard({ instance, manage, onChanged }: { instance: DbInsta
       {instance.users.length === 0 ? (
         <p className="py-4 text-center text-xs text-text-muted">{t('databases.users.empty') || 'No user yet.'}</p>
       ) : (
-        <>
-          <ul className="space-y-2 md:hidden">
-            {instance.users.map((u) => (
-              <li key={u.id} className="rounded-lg bg-bg-primary p-2.5">
-                <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate font-mono text-sm text-text-primary">{u.username}</span>
-                  {actions(u)}
-                </div>
-                <div className="mt-1 text-[11px]">{grantsText(u)}</div>
-              </li>
-            ))}
-          </ul>
-          <TableScroll className="hidden rounded-lg bg-bg-primary md:block">
-            <table className="w-full min-w-[620px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('databases.users.username') || 'User'}</th>
-                  <th className={thCls}>{t('databases.users.grants') || 'Access'}</th>
-                  <th className={thCls}>{t('databases.users.passwordSet') || 'Password set'}</th>
-                  <th className={`${thCls} w-12`}><span className="sr-only">{t('ui.moreActions') || 'Actions'}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {instance.users.map((u) => (
-                  <tr key={u.id} className="align-top transition-colors hover:bg-bg-hover">
-                    <td className="px-4 py-2.5 font-mono text-text-primary">{u.username}</td>
-                    <td className="px-4 py-2.5 text-xs">{grantsText(u)}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-text-muted">{fmt(u.passwordSetAt)}</td>
-                    <td className="px-4 py-2.5 text-right">{actions(u)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
-        </>
+        <GroupedTable<DbUser>
+          singleGroupFlat
+          className="bg-bg-primary"
+          minWidth={620}
+          defaultSort={{ column: 'username' }}
+          groups={[{ key: 'users', label: '', sortLabel: '', nodes: flatNodes(instance.users, (u) => u.id) }]}
+          renderCard={(u) => (
+            <div className="rounded-lg bg-bg-primary p-2.5">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-sm text-text-primary">{u.username}</span>
+                {actions(u)}
+              </div>
+              <div className="mt-1 text-[11px]">{grantsText(u)}</div>
+            </div>
+          )}
+          columns={[
+            { id: 'username', header: t('databases.users.username') || 'User', tdClassName: 'font-mono text-text-primary', sort: (u) => u.username, cell: (u) => u.username },
+            { id: 'grants', header: t('databases.users.grants') || 'Access', tdClassName: 'text-xs', sort: (u) => u.grants.length, cell: (u) => grantsText(u) },
+            { id: 'password', header: t('databases.users.passwordSet') || 'Password set', tdClassName: 'font-mono text-xs text-text-muted', sort: (u) => u.passwordSetAt ?? '', cell: (u) => fmt(u.passwordSetAt) },
+            { id: 'actions', header: <span className="sr-only">{t('ui.moreActions') || 'Actions'}</span>, thClassName: 'w-12', tdClassName: 'text-right', cell: (u) => actions(u) },
+          ]}
+        />
       )}
       <DbUserCreateModal
         open={creating}

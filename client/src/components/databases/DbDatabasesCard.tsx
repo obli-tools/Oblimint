@@ -7,9 +7,9 @@ import { databasesApi } from '@/api/databases.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Card, inputCls, isStepUpHandled, labelCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
+import { Card, inputCls, isStepUpHandled, labelCls } from '@/components/hosting/hostingUi';
 import { downloadUrl, saveBlob } from '@/utils/download';
 import { canUseNative } from '@/native/bridge';
 import { cn } from '@/utils/cn';
@@ -271,49 +271,34 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
       {instance.databases.length === 0 ? (
         <p className="py-4 text-center text-xs text-text-muted">{t('databases.db.empty') || 'No database yet.'}</p>
       ) : (
-        <>
-          <ul className="space-y-2 md:hidden">
-            {instance.databases.map((d) => (
-              <li key={d.id} className="flex items-center gap-2 rounded-lg bg-bg-primary p-2.5">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-mono text-sm text-text-primary">{d.name}</div>
-                  <div className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-text-muted">
-                    <span>{formatBytes(t, d.sizeBytes)}</span>
-                    {d.charset && <span className="font-mono">{d.charset}</span>}
-                    {d.collation && <span className="font-mono">{d.collation}</span>}
-                  </div>
+        <GroupedTable<DbDatabase>
+          singleGroupFlat
+          className="bg-bg-primary"
+          minWidth={640}
+          defaultSort={{ column: 'name' }}
+          groups={[{ key: 'databases', label: '', sortLabel: '', nodes: flatNodes(instance.databases, (d) => d.id) }]}
+          renderCard={(d) => (
+            <div className="flex items-center gap-2 rounded-lg bg-bg-primary p-2.5">
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-mono text-sm text-text-primary">{d.name}</div>
+                <div className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-text-muted">
+                  <span>{formatBytes(t, d.sizeBytes)}</span>
+                  {d.charset && <span className="font-mono">{d.charset}</span>}
+                  {d.collation && <span className="font-mono">{d.collation}</span>}
                 </div>
-                {actions(d)}
-              </li>
-            ))}
-          </ul>
-          <TableScroll className="hidden rounded-lg bg-bg-primary md:block">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('databases.name') || 'Name'}</th>
-                  <th className={thCls}>{t('databases.db.charset') || 'Character set'}</th>
-                  <th className={thCls}>{t('databases.db.collation') || 'Collation'}</th>
-                  <th className={`${thCls} text-right`}>{t('databases.col.size') || 'Size'}</th>
-                  <th className={thCls}>{t('databases.db.createdAt') || 'Created'}</th>
-                  <th className={`${thCls} w-12`}><span className="sr-only">{t('ui.moreActions') || 'Actions'}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {instance.databases.map((d) => (
-                  <tr key={d.id} className="transition-colors hover:bg-bg-hover">
-                    <td className="px-4 py-2.5 font-mono text-text-primary">{d.name}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-text-secondary">{d.charset ?? '—'}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-text-secondary">{d.collation ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{formatBytes(t, d.sizeBytes)}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-text-muted">{fmtDate(d.createdAt)}</td>
-                    <td className="px-4 py-2.5 text-right">{actions(d)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
-        </>
+              </div>
+              {actions(d)}
+            </div>
+          )}
+          columns={[
+            { id: 'name', header: t('databases.name') || 'Name', tdClassName: 'font-mono text-text-primary', sort: (d) => d.name, cell: (d) => d.name },
+            { id: 'charset', header: t('databases.db.charset') || 'Character set', tdClassName: 'font-mono text-xs text-text-secondary', sort: (d) => d.charset ?? '', cell: (d) => d.charset ?? '—' },
+            { id: 'collation', header: t('databases.db.collation') || 'Collation', tdClassName: 'font-mono text-xs text-text-secondary', sort: (d) => d.collation ?? '', cell: (d) => d.collation ?? '—' },
+            { id: 'size', header: t('databases.col.size') || 'Size', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs tabular-nums', sort: (d) => d.sizeBytes ?? null, cell: (d) => formatBytes(t, d.sizeBytes) },
+            { id: 'created', header: t('databases.db.createdAt') || 'Created', tdClassName: 'font-mono text-xs text-text-muted', sort: (d) => d.createdAt ?? '', cell: (d) => fmtDate(d.createdAt) },
+            { id: 'actions', header: <span className="sr-only">{t('ui.moreActions') || 'Actions'}</span>, thClassName: 'w-12', tdClassName: 'text-right', cell: (d) => actions(d) },
+          ]}
+        />
       )}
       <DbCreateModal
         open={creating}

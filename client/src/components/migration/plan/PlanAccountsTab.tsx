@@ -7,6 +7,7 @@ import { Drawer } from '@/components/common/Drawer';
 import { IconButton } from '@/components/common/IconButton';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { MailSearch } from '@/components/mail/MailListParts';
 import { EmptyState, Pill, inputCls, selectCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
@@ -45,6 +46,15 @@ export function PlanAccountsTab({ editor, inventory, inventoryStatus, catalog, o
     if (filter === 'warnings' && !a.warnings.some((w) => w.severity === 'warning')) return false;
     return matches(search, a.cwpUsername, a.targetUsername, ...a.domains.map((d) => d.fqdn));
   });
+  const mainDomain = (a: MigrationAccountPlan) => a.domains.find((d) => d.cwpKind === 'main')?.fqdn ?? null;
+  const { sorted, sort } = useTableSort(shown, {
+    cwpUser: (a) => mainDomain(a) ?? a.cwpUsername,
+    target: (a) => editor.accountChoice(a.cwpUsername).targetUsername ?? a.targetUsername,
+    plan: (a) => planName(a),
+    content: (a) => a.domains.length,
+    volume: (a) => a.estimates.filesBytes + a.estimates.dbBytes + a.estimates.mailBytes,
+    dryRun: (a) => (a.blocked ? 1e6 : 0) + a.warnings.length,
+  });
   const allSelected = shown.length > 0 && shown.every((a) => editor.accountChoice(a.cwpUsername).selected ?? a.selected);
   // One write (PUT /choices, one recompute) for the whole selection, not one PUT per account.
   const toggleAll = (v: boolean) => editor.editAccounts(shown.map((a) => a.cwpUsername), (c) => ({ ...c, selected: v }));
@@ -68,18 +78,18 @@ export function PlanAccountsTab({ editor, inventory, inventoryStatus, catalog, o
           <thead>
             <tr className={theadRowCls}>
               <th className={`${thCls} w-10`}><input type="checkbox" className={checkboxCls} checked={allSelected} onChange={(e) => toggleAll(e.target.checked)} aria-label={t('migration.accounts.selectAll') || 'Select every shown account'} /></th>
-              <th className={thCls}>{t('migration.accounts.cwpUser') || 'CWP account'}</th>
+              <SortTh k="cwpUser" sort={sort} className={thCls}>{t('migration.accounts.cwpUser') || 'CWP account'}</SortTh>
               <th className={thCls}>{t('migration.accounts.tenant') || 'Workspace'}</th>
-              <th className={thCls}>{t('migration.accounts.targetUsername') || 'Target username'}</th>
-              <th className={thCls}>{t('migration.accounts.plan') || 'Plan'}</th>
-              <th className={thCls}>{t('migration.accounts.content') || 'Domains / sites / proxies / DB / mail'}</th>
-              <th className={thCls}>{t('migration.accounts.volume') || 'Volume'}</th>
-              <th className={thCls}>{t('migration.accounts.dryRun') || 'Dry-run'}</th>
+              <SortTh k="target" sort={sort} className={thCls}>{t('migration.accounts.targetUsername') || 'Target username'}</SortTh>
+              <SortTh k="plan" sort={sort} className={thCls}>{t('migration.accounts.plan') || 'Plan'}</SortTh>
+              <SortTh k="content" sort={sort} className={thCls}>{t('migration.accounts.content') || 'Domains / sites / proxies / DB / mail'}</SortTh>
+              <SortTh k="volume" sort={sort} className={thCls}>{t('migration.accounts.volume') || 'Volume'}</SortTh>
+              <SortTh k="dryRun" sort={sort} className={thCls}>{t('migration.accounts.dryRun') || 'Dry-run'}</SortTh>
               <th className={`${thCls} w-12`}><span className="sr-only">{t('common.edit') || 'Edit'}</span></th>
             </tr>
           </thead>
           <tbody>
-            {shown.map((a) => {
+            {sorted.map((a) => {
               const c = editor.accountChoice(a.cwpUsername);
               const selected = c.selected ?? a.selected;
               const tenantId = c.tenantId ?? a.tenantId;
@@ -88,7 +98,9 @@ export function PlanAccountsTab({ editor, inventory, inventoryStatus, catalog, o
                 <tr key={a.cwpUsername} className={cn('transition-colors hover:bg-bg-hover', a.blocked && 'bg-status-down/[0.04]', !selected && 'opacity-60')}>
                   <td className={tdCls}><input type="checkbox" className={checkboxCls} checked={selected} onChange={(e) => editor.editAccount(a.cwpUsername, (x) => ({ ...x, selected: e.target.checked }))} aria-label={a.cwpUsername} /></td>
                   <td className={tdCls}>
-                    <button type="button" className="font-mono text-sm text-text-primary hover:text-accent" onClick={() => onOpenAccount(a.cwpUsername)}>{a.cwpUsername}</button>
+                    {/* The main domain names the account (example.com), the CWP user follows. */}
+                    <button type="button" className="font-mono text-sm text-text-primary hover:text-accent" onClick={() => onOpenAccount(a.cwpUsername)}>{mainDomain(a) ?? a.cwpUsername}</button>
+                    {mainDomain(a) && <div className="font-mono text-[11px] text-text-muted">{a.cwpUsername}</div>}
                     <div className="mt-0.5 flex flex-wrap gap-1">
                       {a.suspended && <Pill tone="amber">{t('migration.inventory.suspended') || 'suspended'}</Pill>}
                       {a.existingAccountId != null && <Link to={`/accounts/${a.existingAccountId}`} className="text-[11px] text-accent hover:underline">{t('migration.accounts.existing') || 'already created'} #{a.existingAccountId}</Link>}

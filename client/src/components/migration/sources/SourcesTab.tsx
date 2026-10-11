@@ -8,6 +8,7 @@ import { migrationApi } from '@/api/migration.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Pill, headerAccentBtnCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
@@ -51,6 +52,10 @@ export function SourcesTab({ sources, loading, error, onChanged, onReload, onSho
   const [testing, setTesting] = useState<{ id: number; autoRun: boolean } | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const testSource = testing ? sources.find((s) => s.id === testing.id) ?? null : null;
+  const { sorted: sortedSources, sort } = useTableSort(sources, {
+    name: (s) => s.name, connection: (s) => `${s.host}:${s.port}`, status: (s) => s.status, system: (s) => s.cwpVersion ?? '',
+    hostKey: (s) => s.hostKey?.fingerprint ?? '', lastCheck: (s) => s.lastCheckedAt ?? '',
+  });
 
   const remove = async (s: MigrationSource) => {
     if (!(await confirm({
@@ -105,17 +110,17 @@ export function SourcesTab({ sources, loading, error, onChanged, onReload, onSho
           <table className="w-full min-w-[980px] text-sm">
             <thead>
               <tr className={theadRowCls}>
-                <th className={thCls}>{t('migration.sources.name') || 'Source'}</th>
-                <th className={thCls}>{t('migration.sources.connection') || 'Connection'}</th>
-                <th className={thCls}>{t('migration.sources.status') || 'Status'}</th>
-                <th className={thCls}>{t('migration.sources.system') || 'CWP / OS'}</th>
-                <th className={thCls}>{t('migration.hostKey.title') || 'Host fingerprint'}</th>
-                <th className={thCls}>{t('migration.sources.lastCheck') || 'Last check'}</th>
+                <SortTh k="name" sort={sort} className={thCls}>{t('migration.sources.name') || 'Source'}</SortTh>
+                <SortTh k="connection" sort={sort} className={thCls}>{t('migration.sources.connection') || 'Connection'}</SortTh>
+                <SortTh k="status" sort={sort} className={thCls}>{t('migration.sources.status') || 'Status'}</SortTh>
+                <SortTh k="system" sort={sort} className={thCls}>{t('migration.sources.system') || 'CWP / OS'}</SortTh>
+                <SortTh k="hostKey" sort={sort} className={thCls}>{t('migration.hostKey.title') || 'Host fingerprint'}</SortTh>
+                <SortTh k="lastCheck" sort={sort} className={thCls}>{t('migration.sources.lastCheck') || 'Last check'}</SortTh>
                 <th className={`${thCls} w-40`}><span className="sr-only">{t('migration.common.actions') || 'Actions'}</span></th>
               </tr>
             </thead>
             <tbody>
-              {sources.map((s) => (
+              {sortedSources.map((s) => (
                 <tr key={s.id} className="transition-colors hover:bg-bg-hover">
                   <td className={tdCls}>
                     <div className="font-medium text-text-primary">{s.name}</div>

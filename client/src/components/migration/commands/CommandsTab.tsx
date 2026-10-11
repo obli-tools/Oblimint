@@ -6,6 +6,7 @@ import type {
 } from '@oblimint/shared';
 import { migrationApi } from '@/api/migration.api';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { Pager } from '@/components/mail/MailListParts';
 import { Card, EmptyState, Pill, inputCls, selectCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
@@ -76,6 +77,11 @@ function CommandLog({ sourceId }: { sourceId: number }) {
   // The route has no phase parameter: the phase filter applies to the current page only (the pager stays reachable).
   const shown = phase ? items.filter((c) => c.phase === phase) : items;
   const phaseHidesPage = !!phase && items.length > 0 && shown.length === 0;
+  // Sorts the page shown (the log is paginated by the server, newest first).
+  const { sorted: sortedShown, sort } = useTableSort(shown, {
+    date: (c) => c.createdAt, template: (c) => c.template, command: (c) => c.command, status: (c) => c.status,
+    exit: (c) => c.exitCode ?? null, bytes: (c) => c.bytesOut ?? null, duration: (c) => c.durationMs ?? null,
+  });
 
   return (
     <div className="space-y-3">
@@ -103,17 +109,17 @@ function CommandLog({ sourceId }: { sourceId: number }) {
           <table className="w-full min-w-[1000px] text-sm">
             <thead>
               <tr className={theadRowCls}>
-                <th className={thCls}>{t('migration.commands.date') || 'Date'}</th>
-                <th className={thCls}>{t('migration.commands.template') || 'Template'}</th>
-                <th className={thCls}>{t('migration.commands.command') || 'Rendered command'}</th>
-                <th className={thCls}>{t('migration.common.status') || 'Status'}</th>
-                <th className={thCls}>{t('migration.commands.exit') || 'Exit'}</th>
-                <th className={thCls}>{t('migration.commands.bytes') || 'Output'}</th>
-                <th className={thCls}>{t('migration.runs.duration') || 'Duration'}</th>
+                <SortTh k="date" sort={sort} className={thCls}>{t('migration.commands.date') || 'Date'}</SortTh>
+                <SortTh k="template" sort={sort} className={thCls}>{t('migration.commands.template') || 'Template'}</SortTh>
+                <SortTh k="command" sort={sort} className={thCls}>{t('migration.commands.command') || 'Rendered command'}</SortTh>
+                <SortTh k="status" sort={sort} className={thCls}>{t('migration.common.status') || 'Status'}</SortTh>
+                <SortTh k="exit" sort={sort} className={thCls}>{t('migration.commands.exit') || 'Exit'}</SortTh>
+                <SortTh k="bytes" sort={sort} className={thCls}>{t('migration.commands.bytes') || 'Output'}</SortTh>
+                <SortTh k="duration" sort={sort} className={thCls}>{t('migration.runs.duration') || 'Duration'}</SortTh>
               </tr>
             </thead>
             <tbody>
-              {shown.map((c) => (
+              {sortedShown.map((c) => (
                 <tr key={c.id} className={cn('transition-colors hover:bg-bg-hover', c.status === 'refused' && 'bg-status-down/[0.05]')}>
                   <td className={`${tdCls} whitespace-nowrap font-mono text-[11px] text-text-muted`}>
                     {formatDateTime(c.createdAt, i18n.language)}
@@ -155,6 +161,9 @@ function AllowList() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [t]);
+  const { sorted: sortedTemplates, sort } = useTableSort(items, {
+    template: (x) => x.id, description: (x) => templateDescription(t, x.id) || x.description, phases: (x) => x.phases.join(','),
+  });
   return (
     <Card title={t('migration.commands.allowlist') || 'Allow-list of the read-only executor'} icon={<ListChecks size={14} className="text-accent" />}>
       <p className="mb-3 text-xs text-text-muted">{t('migration.commands.allowlistIntro') || 'The only commands the panel can run on a source. Arguments are validated (read roots, deny list, SQL guard, no symlink under /home or /var/vmail) and quoted; anything else is refused and logged.'}</p>
@@ -163,13 +172,13 @@ function AllowList() {
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className={theadRowCls}>
-                <th className={thCls}>{t('migration.commands.template') || 'Template'}</th>
-                <th className={thCls}>{t('migration.commands.descriptionCol') || 'What it does'}</th>
-                <th className={thCls}>{t('migration.commands.phases.title') || 'Phases'}</th>
+                <SortTh k="template" sort={sort} className={thCls}>{t('migration.commands.template') || 'Template'}</SortTh>
+                <SortTh k="description" sort={sort} className={thCls}>{t('migration.commands.descriptionCol') || 'What it does'}</SortTh>
+                <SortTh k="phases" sort={sort} className={thCls}>{t('migration.commands.phases.title') || 'Phases'}</SortTh>
               </tr>
             </thead>
             <tbody>
-              {items.map((tpl) => (
+              {sortedTemplates.map((tpl) => (
                 <tr key={tpl.id} className="border-t border-white/[0.04]">
                   <td className={tdCls}><code className="font-mono text-xs text-text-primary">{tpl.id}</code></td>
                   <td className={`${tdCls} text-xs text-text-secondary`}>{templateDescription(t, tpl.id) || tpl.description}</td>

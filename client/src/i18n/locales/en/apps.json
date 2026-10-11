@@ -1141,6 +1141,7 @@
       "statusPages": "Status pages"
     },
     "uptime24h": "24 h",
-    "uptime30d": "30 d"
+    "uptime30d": "30 d",
+    "platformGroup": "Platform"
   }
 }

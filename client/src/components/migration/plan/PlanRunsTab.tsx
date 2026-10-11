@@ -11,6 +11,7 @@ import { migrationApi } from '@/api/migration.api';
 import { Button } from '@/components/common/Button';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Card, Pill, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
@@ -73,6 +74,11 @@ export function PlanRunsTab({ editor }: { editor: PlanEditor }) {
     return true;
   };
   const chosen = [...picked].filter(canRun);
+  const { sorted: sortedAccounts, sort } = useTableSort(result?.accounts ?? [], {
+    user: (a) => a.cwpUsername, target: (a) => statusOf.get(a.cwpUsername)?.targetUsername ?? a.targetUsername,
+    lastRun: (a) => statusOf.get(a.cwpUsername)?.lastRun?.startedAt ?? '', initial: (a) => !!statusOf.get(a.cwpUsername)?.initialDone,
+    lastSync: (a) => statusOf.get(a.cwpUsername)?.lastSyncAt ?? '', cutover: (a) => statusOf.get(a.cwpUsername)?.cutover?.switched ?? null,
+  });
 
   const start = async () => {
     if (!chosen.length) return;
@@ -164,16 +170,16 @@ export function PlanRunsTab({ editor }: { editor: PlanEditor }) {
                         onChange={(e) => setPicked(e.target.checked ? new Set(eligible.filter((a) => canRun(a.cwpUsername)).map((a) => a.cwpUsername)) : new Set())}
                       />
                     </th>
-                    <th className={thCls}>{t('migration.accounts.cwpUser') || 'CWP account'}</th>
-                    <th className={thCls}>{t('migration.runs.targetAccount') || 'Target account'}</th>
-                    <th className={thCls}>{t('migration.runs.lastRun') || 'Last run'}</th>
-                    <th className={thCls}>{t('migration.runs.initialDone') || 'Initial'}</th>
-                    <th className={thCls}>{t('migration.runs.lastSync') || 'Last sync'}</th>
-                    <th className={thCls}>{t('migration.runs.cutover') || 'Cutover'}</th>
+                    <SortTh k="user" sort={sort} className={thCls}>{t('migration.accounts.cwpUser') || 'CWP account'}</SortTh>
+                    <SortTh k="target" sort={sort} className={thCls}>{t('migration.runs.targetAccount') || 'Target account'}</SortTh>
+                    <SortTh k="lastRun" sort={sort} className={thCls}>{t('migration.runs.lastRun') || 'Last run'}</SortTh>
+                    <SortTh k="initial" sort={sort} className={thCls}>{t('migration.runs.initialDone') || 'Initial'}</SortTh>
+                    <SortTh k="lastSync" sort={sort} className={thCls}>{t('migration.runs.lastSync') || 'Last sync'}</SortTh>
+                    <SortTh k="cutover" sort={sort} className={thCls}>{t('migration.runs.cutover') || 'Cutover'}</SortTh>
                   </tr>
                 </thead>
                 <tbody>
-                  {(result?.accounts ?? []).map((a) => {
+                  {sortedAccounts.map((a) => {
                     const st = statusOf.get(a.cwpUsername);
                     const ok = canRun(a.cwpUsername);
                     const reason = !a.selected ? (t('migration.runs.notSelected') || 'not selected')

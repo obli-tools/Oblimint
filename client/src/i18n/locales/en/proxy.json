@@ -485,7 +485,8 @@
       "upstreamHint": "The target did not answer the reachability probe: the previous version is kept. New try every minute.",
       "upstreamUnreachable": "Target unreachable"
     },
-    "usedBy": "Used by"
+    "usedBy": "Used by",
+    "platformGroup": "Platform"
   },
   "bans": {
     "activeOnly": "Active",

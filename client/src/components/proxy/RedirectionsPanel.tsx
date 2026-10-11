@@ -7,11 +7,12 @@ import { proxyApi } from '@/api/proxy.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { DomainPicker } from './DomainPicker';
 import { AccountField, DomainNames, EdgeUnitBanner, EdgeUnitPill, ListState, SslState, useProxyAccess } from './proxyUi';
@@ -33,6 +34,8 @@ export function RedirectionsPanel({ accountId, tenantId, accounts, showAccount, 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ProxyRedirection | 'new' | null>(null);
+  const accountDir = useAccountDirectory();
+  const domainKey = (r: ProxyRedirection) => r.domains[0]?.name ?? `~${r.id}`;
 
   const seq = useRef(0);
   const load = useCallback(async () => {
@@ -105,9 +108,18 @@ export function RedirectionsPanel({ accountId, tenantId, accounts, showAccount, 
         <div className="ml-auto">{createBtn}</div>
       </div>
       <ListState loading={loading} error={error} empty={items.length === 0} emptyIcon={<CornerUpRight />} emptyText={t('proxy.redirections.empty') || 'No redirection yet.'} emptyAction={createBtn ?? undefined}>
-        <ul className="space-y-2 md:hidden">
-          {items.map((r) => (
-            <li key={r.id} className={cn('rounded-xl bg-bg-secondary px-3 py-2.5', !r.enabled && 'opacity-60')}>
+        <GroupedTable<ProxyRedirection>
+          storageKey="proxy-redirections"
+          singleGroupFlat
+          minWidth={820}
+          defaultSort={{ column: 'domains' }}
+          rowClassName={(r) => !r.enabled && 'opacity-60'}
+          // Grouped by account, a redirection under the one of its parent domain (first bound domain).
+          groups={showAccount
+            ? groupRowsByAccount(items, accountDir, (r) => ({ id: r.accountId, username: r.accountUsername }), (rows) => domainTree(rows, domainKey, (r) => r.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: domainTree(items, domainKey, (r) => r.id) }]}
+          renderCard={(r) => (
+            <div className={cn('rounded-xl bg-bg-secondary px-3 py-2.5', !r.enabled && 'opacity-60')}>
               <div className="flex items-center gap-2">
                 <span className="min-w-0 flex-1"><DomainNames domains={r.domains} /></span>
                 <EdgeUnitPill unit={r.edge} />
@@ -116,42 +128,26 @@ export function RedirectionsPanel({ accountId, tenantId, accounts, showAccount, 
               <div className="mt-1 break-all font-mono text-xs text-text-secondary">{r.statusCode} → {targetUrl(r)}</div>
               <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
                 <SslState domains={r.domains} enabled />
-                {showAccount && <span className="font-mono">{r.accountUsername}</span>}
                 {showTenant && <TenantBadge tenantId={r.tenantId} />}
               </div>
-            </li>
-          ))}
-        </ul>
-        <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-          <table className="w-full min-w-[820px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('proxy.domains.title') || 'Domains'}</th>
-                <th className={thCls}>{t('proxy.redirections.target') || 'Redirect to'}</th>
-                <th className={thCls}>{t('proxy.ssl.title') || 'SSL'}</th>
-                <th className={thCls}>{t('proxy.unit.title') || 'Edge'}</th>
-                {showAccount && <th className={thCls}>{t('proxy.account') || 'Hosting account'}</th>}
-                {showTenant && <th className={thCls}>{t('proxy.tenant') || 'Workspace'}</th>}
-                <th className={`${thCls} w-20`}>{t('proxy.enabled') || 'Enabled'}</th>
-                <th className={`${thCls} w-14`}><span className="sr-only">{t('proxy.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((r) => (
-                <tr key={r.id} className={cn('align-top transition-colors hover:bg-bg-hover', !r.enabled && 'opacity-60')}>
-                  <td className="max-w-[20rem] px-4 py-3"><DomainNames domains={r.domains} /></td>
-                  <td className="px-4 py-3"><Pill tone="blue" className="mr-2">{r.statusCode}</Pill><span className="break-all font-mono text-xs text-text-secondary">{targetUrl(r)}</span></td>
-                  <td className="px-4 py-3"><SslState domains={r.domains} enabled /></td>
-                  <td className="px-4 py-3"><EdgeUnitPill unit={r.edge} /></td>
-                  {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{r.accountUsername}</td>}
-                  {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={r.tenantId} /></td>}
-                  <td className="px-4 py-3"><ToggleSwitch size="sm" checked={r.enabled} disabled={!canManage(r.accountId)} onChange={(v) => { void toggle(r, v); }} ariaLabel={t('proxy.enabled') || 'Enabled'} /></td>
-                  <td className="px-4 py-3 text-right">{menu(r)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+            </div>
+          )}
+          columns={[
+            { id: 'domains', header: t('proxy.domains.title') || 'Domains', tdClassName: 'max-w-[20rem]', sort: domainKey, cell: (r) => <DomainNames domains={r.domains} /> },
+            {
+              id: 'target', header: t('proxy.redirections.target') || 'Redirect to', sort: (r) => targetUrl(r),
+              cell: (r) => <><Pill tone="blue" className="mr-2">{r.statusCode}</Pill><span className="break-all font-mono text-xs text-text-secondary">{targetUrl(r)}</span></>,
+            },
+            { id: 'ssl', header: t('proxy.ssl.title') || 'SSL', cell: (r) => <SslState domains={r.domains} enabled /> },
+            { id: 'edge', header: t('proxy.unit.title') || 'Edge', cell: (r) => <EdgeUnitPill unit={r.edge} /> },
+            ...(showTenant && !showAccount ? [{ id: 'tenant', header: t('proxy.tenant') || 'Workspace', cell: (r: ProxyRedirection) => <TenantBadge tenantId={r.tenantId} /> }] : []),
+            {
+              id: 'enabled', header: t('proxy.enabled') || 'Enabled', thClassName: 'w-20', sort: (r) => r.enabled,
+              cell: (r) => <ToggleSwitch size="sm" checked={r.enabled} disabled={!canManage(r.accountId)} onChange={(v) => { void toggle(r, v); }} ariaLabel={t('proxy.enabled') || 'Enabled'} />,
+            },
+            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (r) => menu(r) },
+          ]}
+        />
       </ListState>
 
       <RedirectionModal

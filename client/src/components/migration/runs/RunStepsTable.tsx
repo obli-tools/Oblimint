@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { MigrationRunStep } from '@oblimint/shared';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { Pill, thCls, theadRowCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { durationBetween, formatDuration, resultSummary, targetLinks } from '../migrationFormat';
@@ -14,19 +15,28 @@ export function RunStepsTable({ steps, onShowEvents }: { steps: MigrationRunStep
   const { t } = useTranslation();
   const [open, setOpen] = useState<Set<number>>(new Set());
   const toggle = (id: number) => setOpen((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const ordered = [...steps].sort((a, b) => a.phase - b.phase || a.provider.localeCompare(b.provider) || a.id - b.id);
+  const execution = [...steps].sort((a, b) => a.phase - b.phase || a.provider.localeCompare(b.provider) || a.id - b.id);
+  // No column picked = execution order (phase, provider, position).
+  const { sorted: ordered, sort } = useTableSort(execution, {
+    phase: (s) => s.phase,
+    step: (s) => s.key,
+    status: (s) => s.status,
+    attempts: (s) => s.attempts,
+    duration: (s) => (s.startedAt ? durationBetween(s.startedAt, s.finishedAt) : null),
+    result: (s) => s.error ?? '',
+  });
   return (
     <TableScroll className="rounded-xl bg-bg-secondary">
       <table className="w-full min-w-[880px] text-sm">
         <thead>
           <tr className={theadRowCls}>
             <th className={`${thCls} w-8`}><span className="sr-only">{t('migration.run.details') || 'Details'}</span></th>
-            <th className={`${thCls} w-14`}>{t('migration.run.phase') || 'Phase'}</th>
-            <th className={thCls}>{t('migration.run.step') || 'Step'}</th>
-            <th className={thCls}>{t('migration.common.status') || 'Status'}</th>
-            <th className={thCls}>{t('migration.run.attempts') || 'Attempts'}</th>
-            <th className={thCls}>{t('migration.runs.duration') || 'Duration'}</th>
-            <th className={thCls}>{t('migration.run.result') || 'Result'}</th>
+            <SortTh k="phase" sort={sort} className={`${thCls} w-14`}>{t('migration.run.phase') || 'Phase'}</SortTh>
+            <SortTh k="step" sort={sort} className={thCls}>{t('migration.run.step') || 'Step'}</SortTh>
+            <SortTh k="status" sort={sort} className={thCls}>{t('migration.common.status') || 'Status'}</SortTh>
+            <SortTh k="attempts" sort={sort} className={thCls}>{t('migration.run.attempts') || 'Attempts'}</SortTh>
+            <SortTh k="duration" sort={sort} className={thCls}>{t('migration.runs.duration') || 'Duration'}</SortTh>
+            <SortTh k="result" sort={sort} className={thCls}>{t('migration.run.result') || 'Result'}</SortTh>
           </tr>
         </thead>
         <tbody>

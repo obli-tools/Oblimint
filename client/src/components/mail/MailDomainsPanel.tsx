@@ -7,9 +7,10 @@ import { HostingSocketEvents, type HostingAccount, type MailDomain, type MailUpd
 import { mailApi } from '@/api/mail.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
+import { groupRowsByAccount } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
-import { EmptyState, headerAccentBtnCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, headerAccentBtnCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { formatBytes } from '@/components/databases/dbFormat';
 import { DnsDots, MailDomainStatusBadge, dotsFromHealthy } from './MailBadges';
 import { MailDomainCreateModal } from './MailDomainCreateModal';
@@ -100,6 +101,7 @@ export function MailDomainsPanel({ accountId, tenantId, accounts, showTenant }: 
     return domains.filter((d) => d.name.includes(q) || d.accountUsername.toLowerCase().includes(q));
   }, [domains, search]);
 
+  const accountDir = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
   const manageable = useMemo(() => accounts.filter((a) => can('mail.manage', a.id)), [accounts, can]);
   const canCreate = accountId != null ? can('mail.manage', accountId) : manageable.length > 0;
   const createBtn = canCreate ? (
@@ -122,64 +124,53 @@ export function MailDomainsPanel({ accountId, tenantId, accounts, showTenant }: 
         <EmptyState icon={<AtSign />} text={search ? (t('common.noMatch') || 'No match') : (t('mail.domains.empty') || 'No mail domain yet: enable mail on one of your domains.')} action={!search ? createBtn ?? undefined : undefined} />
       ) : (
         <>
-          <ul className="space-y-2 md:hidden">
-            {filtered.map((d) => (
-              <li key={d.id}>
-                <Link to={`/mail/domains/${d.id}`} className="block w-full rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 truncate font-mono text-sm font-semibold text-text-primary">{d.name}</span>
-                    <MailDomainStatusBadge status={d.status} message={d.statusMessage} />
-                    <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
-                  </div>
-                  <DnsDots dots={dotsOf(d)} className="mt-1.5" />
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-                    <span className="font-mono">{d.accountUsername}</span>
-                    <span>{t('mail.domains.counts', { mailboxes: d.mailboxCount, aliases: d.aliasCount, defaultValue: '{{mailboxes}} mailbox(es) · {{aliases}} alias(es)' })}</span>
-                    {d.usedBytes != null && <span>{formatBytes(t, d.usedBytes)}</span>}
-                    {showTenant && <TenantBadge tenantId={d.tenantId} />}
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-          <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-            <table className="w-full min-w-[900px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('mail.domains.domain') || 'Mail domain'}</th>
-                  <th className={thCls}>{t('mail.account') || 'Hosting account'}</th>
-                  {showTenant && <th className={thCls}>{t('hostingCommon.tenant') || 'Workspace'}</th>}
-                  <th className={thCls}>{t('mail.domains.status') || 'Status'}</th>
-                  <th className={thCls}>DNS</th>
-                  <th className={`${thCls} text-right`}>{t('mail.domains.mailboxes') || 'Mailboxes'}</th>
-                  <th className={`${thCls} text-right`}>{t('mail.domains.aliases') || 'Aliases'}</th>
-                  <th className={`${thCls} text-right`}>{t('mail.domains.used') || 'Used'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((d) => (
-                  <tr key={d.id} onClick={() => navigate(`/mail/domains/${d.id}`)} className="cursor-pointer transition-colors hover:bg-bg-hover">
-                    <td className="px-4 py-3">
-                      <Link to={`/mail/domains/${d.id}`} onClick={(e) => e.stopPropagation()} className="font-mono font-medium text-text-primary hover:text-accent">{d.name}</Link>
-                      {!d.dnsManaged && <div className="text-[11px] text-text-muted">{t('mail.domains.externalDns') || 'DNS hosted elsewhere'}</div>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link to={`/accounts/${d.accountId}`} onClick={(e) => e.stopPropagation()} className="font-mono text-text-secondary hover:text-accent">{d.accountUsername}</Link>
-                    </td>
-                    {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={d.tenantId} /></td>}
-                    <td className="px-4 py-3"><MailDomainStatusBadge status={d.status} message={d.statusMessage} /></td>
-                    <td className="px-4 py-3">
-                      <DnsDots dots={dotsOf(d)} />
-                      {d.dnsCheckedAt && <div className="mt-0.5 text-[10px] text-text-muted">{new Date(d.dnsCheckedAt).toLocaleString(i18n.language)}</div>}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums">{d.mailboxCount}</td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums">{d.aliasCount}</td>
-                    <td className="px-4 py-3 text-right font-mono text-xs tabular-nums">{formatBytes(t, d.usedBytes)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
+          <GroupedTable<MailDomain>
+            storageKey="mail-domains"
+            singleGroupFlat
+            minWidth={820}
+            defaultSort={{ column: 'name' }}
+            groups={groupRowsByAccount(filtered, accountDir, (d) => ({ id: d.accountId, username: d.accountUsername }), (rows) => domainTree(rows, (d) => d.name, (d) => d.id))}
+            onRowClick={(d) => navigate(`/mail/domains/${d.id}`)}
+            renderCard={(d) => (
+              <Link to={`/mail/domains/${d.id}`} className="block w-full rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 truncate font-mono text-sm font-semibold text-text-primary">{d.name}</span>
+                  <MailDomainStatusBadge status={d.status} message={d.statusMessage} />
+                  <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+                </div>
+                <DnsDots dots={dotsOf(d)} className="mt-1.5" />
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                  <span>{t('mail.domains.counts', { mailboxes: d.mailboxCount, aliases: d.aliasCount, defaultValue: '{{mailboxes}} mailbox(es) · {{aliases}} alias(es)' })}</span>
+                  {d.usedBytes != null && <span>{formatBytes(t, d.usedBytes)}</span>}
+                  {showTenant && <TenantBadge tenantId={d.tenantId} />}
+                </div>
+              </Link>
+            )}
+            columns={[
+              {
+                id: 'name', header: t('mail.domains.domain') || 'Mail domain', sort: (d) => d.name,
+                cell: (d) => (
+                  <>
+                    <Link to={`/mail/domains/${d.id}`} className="font-mono font-medium text-text-primary hover:text-accent">{d.name}</Link>
+                    {!d.dnsManaged && <div className="text-[11px] text-text-muted">{t('mail.domains.externalDns') || 'DNS hosted elsewhere'}</div>}
+                  </>
+                ),
+              },
+              { id: 'status', header: t('mail.domains.status') || 'Status', sort: (d) => d.status, cell: (d) => <MailDomainStatusBadge status={d.status} message={d.statusMessage} /> },
+              {
+                id: 'dns', header: 'DNS', sort: (d) => d.dnsHealthy ?? null,
+                cell: (d) => (
+                  <>
+                    <DnsDots dots={dotsOf(d)} />
+                    {d.dnsCheckedAt && <div className="mt-0.5 text-[10px] text-text-muted">{new Date(d.dnsCheckedAt).toLocaleString(i18n.language)}</div>}
+                  </>
+                ),
+              },
+              { id: 'mailboxes', header: t('mail.domains.mailboxes') || 'Mailboxes', thClassName: 'text-right', tdClassName: 'text-right font-mono tabular-nums', sort: (d) => d.mailboxCount, cell: (d) => d.mailboxCount },
+              { id: 'aliases', header: t('mail.domains.aliases') || 'Aliases', thClassName: 'text-right', tdClassName: 'text-right font-mono tabular-nums', sort: (d) => d.aliasCount, cell: (d) => d.aliasCount },
+              { id: 'used', header: t('mail.domains.used') || 'Used', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs tabular-nums', sort: (d) => d.usedBytes ?? null, cell: (d) => formatBytes(t, d.usedBytes) },
+            ]}
+          />
           {filtered.some((d) => d.status === 'pending') && (
             <p className="flex items-start gap-2 text-xs text-text-muted">
               <AlertTriangle size={13} className="mt-0.5 shrink-0 text-sky-300" />

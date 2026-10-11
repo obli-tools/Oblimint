@@ -21,7 +21,7 @@ import { IconButton } from '@/components/common/IconButton';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
 import { Drawer } from '@/components/common/Drawer';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { useConfirm } from '@/components/common/ConfirmDialog';
@@ -38,7 +38,7 @@ import { OverQuotaBanner, OverQuotaPill } from '@/components/usage/usageUi';
 import { AccountDatabasesPanel } from '@/components/databases/AccountDatabasesPanel';
 import {
   AccountStatusBadge, Card, DiskBar, EmptyState, ForceHttpsIcon, InfoRow, Pill, TlsBadge, headerBtnCls,
-  hostingErrorMessage, isStepUpHandled, labelCls, payloadNumber, selectCls, thCls, theadRowCls, toastHostingError, useHostingEvents,
+  hostingErrorMessage, isStepUpHandled, labelCls, payloadNumber, selectCls, toastHostingError, useHostingEvents,
 } from '@/components/hosting/hostingUi';
 
 type Tab = 'overview' | 'sites' | 'domains' | 'databases' | 'usage' | 'security' | 'users' | 'files';
@@ -331,60 +331,48 @@ function SitesTab({ account }: { account: HostingAccount }) {
       ) : sites.length === 0 ? (
         <EmptyState icon={<Server />} text={t('accounts.sites.empty') || 'No site in this account yet.'} />
       ) : (
-        <>
-        {/* Phone: cards */}
-        <ul className="space-y-2 md:hidden">
-          {sites.map((s) => (
-            <li key={s.id}>
-              <Link to={`/sites/${s.id}`} className="block rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-text-primary">{s.name}</span>
-                  <Pill tone={siteStatusTone(s.status)}>{statusLabel(s.status)}</Pill>
-                  <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
-                </div>
-                <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">{s.slug}</div>
-                <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-text-muted">
-                  <span>{s.base}</span>
-                  <span>{t('accounts.sites.col.release') || 'Release'} {s.currentReleaseNumber != null ? `#${s.currentReleaseNumber}` : '—'}</span>
-                  {s.primaryDomain && <span className="truncate">{s.primaryDomain}</span>}
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
-        {/* Desktop: table */}
-        <TableScroll className="rounded-xl bg-bg-secondary max-md:hidden">
-          <table className="w-full min-w-[680px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('accounts.sites.col.name') || 'Site'}</th>
-                <th className={thCls}>{t('accounts.sites.col.base') || 'Base'}</th>
-                <th className={thCls}>{t('accounts.sites.col.status') || 'Status'}</th>
-                <th className={thCls}>{t('accounts.sites.col.release') || 'Release'}</th>
-                <th className={thCls}>{t('accounts.sites.col.domain') || 'Domain'}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sites.map((s) => (
-                <tr key={s.id} onClick={() => navigate(`/sites/${s.id}`)} className="cursor-pointer transition-colors hover:bg-bg-hover">
-                  <td className="px-4 py-3">
-                    <Link to={`/sites/${s.id}`} onClick={(e) => e.stopPropagation()} className="font-medium text-text-primary hover:text-accent">{s.name}</Link>
-                    <div className="font-mono text-[11px] text-text-muted">{s.slug}</div>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.base}</td>
-                  <td className="px-4 py-3">
-                    {s.statusMessage
-                      ? <span title={s.statusMessage}><Pill tone={siteStatusTone(s.status)}>{statusLabel(s.status)}</Pill></span>
-                      : <Pill tone={siteStatusTone(s.status)}>{statusLabel(s.status)}</Pill>}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.currentReleaseNumber != null ? `#${s.currentReleaseNumber}` : '—'}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.primaryDomain ?? '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
-        </>
+        <GroupedTable<Site>
+          singleGroupFlat
+          minWidth={680}
+          defaultSort={{ column: 'name' }}
+          groups={[{ key: 'all', label: '', sortLabel: '', nodes: domainTree(sites, (x) => x.primaryDomain ?? `~${x.slug}`, (x) => x.id) }]}
+          onRowClick={(x) => navigate(`/sites/${x.id}`)}
+          renderCard={(x) => (
+            <Link to={`/sites/${x.id}`} className="block rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-semibold text-text-primary">{x.name}</span>
+                <Pill tone={siteStatusTone(x.status)}>{statusLabel(x.status)}</Pill>
+                <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+              </div>
+              <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">{x.slug}</div>
+              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-text-muted">
+                <span>{x.base}</span>
+                <span>{t('accounts.sites.col.release') || 'Release'} {x.currentReleaseNumber != null ? `#${x.currentReleaseNumber}` : '—'}</span>
+                {x.primaryDomain && <span className="truncate">{x.primaryDomain}</span>}
+              </div>
+            </Link>
+          )}
+          columns={[
+            {
+              id: 'name', header: t('accounts.sites.col.name') || 'Site', sort: (x) => x.primaryDomain ?? x.name,
+              cell: (x) => (
+                <>
+                  <Link to={`/sites/${x.id}`} className="font-medium text-text-primary hover:text-accent">{x.name}</Link>
+                  <div className="font-mono text-[11px] text-text-muted">{x.slug}</div>
+                </>
+              ),
+            },
+            { id: 'base', header: t('accounts.sites.col.base') || 'Base', tdClassName: 'font-mono text-xs text-text-secondary', sort: (x) => x.base, cell: (x) => x.base },
+            {
+              id: 'status', header: t('accounts.sites.col.status') || 'Status', sort: (x) => x.status,
+              cell: (x) => (x.statusMessage
+                ? <span title={x.statusMessage}><Pill tone={siteStatusTone(x.status)}>{statusLabel(x.status)}</Pill></span>
+                : <Pill tone={siteStatusTone(x.status)}>{statusLabel(x.status)}</Pill>),
+            },
+            { id: 'release', header: t('accounts.sites.col.release') || 'Release', tdClassName: 'font-mono text-xs text-text-secondary', sort: (x) => x.currentReleaseNumber ?? null, cell: (x) => (x.currentReleaseNumber != null ? `#${x.currentReleaseNumber}` : '—') },
+            { id: 'domain', header: t('accounts.sites.col.domain') || 'Domain', tdClassName: 'font-mono text-xs text-text-secondary', sort: (x) => x.primaryDomain ?? '', cell: (x) => x.primaryDomain ?? '—' },
+          ]}
+        />
       )}
     </div>
   );
@@ -443,55 +431,37 @@ function DomainsTab({ account }: { account: HostingAccount }) {
       ) : domains.length === 0 ? (
         <EmptyState icon={<Globe />} text={t('accounts.domains.empty') || 'No domain in this account yet.'} />
       ) : (
-        <>
-        {/* Phone: cards */}
-        <ul className="space-y-2 md:hidden">
-          {domains.map((d) => (
-            <li key={d.id}>
-              <button type="button" onClick={() => select(d.id)} className="block w-full rounded-xl bg-bg-secondary px-3 py-2.5 text-left hover:bg-bg-tertiary/30">
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-mono text-sm font-semibold text-text-primary">{d.name}</span>
-                  <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
-                  <VerificationBadge verification={d.verification} />
-                  <span>{domainKindLabel(t, d.kind)}</span>
-                  <span className="font-mono">{d.routes.length} {t('domains.col.routes') || 'Routes'}</span>
-                  <TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} />
-                  {d.forceHttps && <ForceHttpsIcon on />}
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
-        {/* Desktop: table */}
-        <TableScroll className="rounded-xl bg-bg-secondary max-md:hidden">
-          <table className="w-full min-w-[720px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('domains.col.name') || 'Domain'}</th>
-                <th className={thCls}>{t('domains.col.kind') || 'Kind'}</th>
-                <th className={thCls}>{t('domainOwnership.col') || 'Ownership'}</th>
-                <th className={`${thCls} text-right`}>{t('domains.col.routes') || 'Routes'}</th>
-                <th className={thCls}>{t('domains.col.tls') || 'TLS'}</th>
-                <th className={thCls}>{t('domains.col.https') || 'HTTPS'}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {domains.map((d) => (
-                <tr key={d.id} onClick={() => select(d.id)} className="cursor-pointer transition-colors hover:bg-bg-hover">
-                  <td className="px-4 py-3 font-mono font-medium text-text-primary">{d.name}</td>
-                  <td className="px-4 py-3 text-text-secondary">{domainKindLabel(t, d.kind)}</td>
-                  <td className="px-4 py-3"><VerificationBadge verification={d.verification} /></td>
-                  <td className="px-4 py-3 text-right font-mono tabular-nums">{d.routes.length}</td>
-                  <td className="px-4 py-3"><TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} /></td>
-                  <td className="px-4 py-3"><ForceHttpsIcon on={d.forceHttps} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
-        </>
+        <GroupedTable<Domain>
+          singleGroupFlat
+          minWidth={720}
+          defaultSort={{ column: 'name' }}
+          selectedKey={selectedId}
+          groups={[{ key: 'all', label: '', sortLabel: '', nodes: domainTree(domains, (d) => d.name, (d) => d.id) }]}
+          onRowClick={(d) => select(d.id)}
+          renderCard={(d) => (
+            <button type="button" onClick={() => select(d.id)} className="block w-full rounded-xl bg-bg-secondary px-3 py-2.5 text-left hover:bg-bg-tertiary/30">
+              <div className="flex items-center gap-2">
+                <span className="truncate font-mono text-sm font-semibold text-text-primary">{d.name}</span>
+                <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
+                <VerificationBadge verification={d.verification} />
+                <span>{domainKindLabel(t, d.kind)}</span>
+                <span className="font-mono">{d.routes.length} {t('domains.col.routes') || 'Routes'}</span>
+                <TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} />
+                {d.forceHttps && <ForceHttpsIcon on />}
+              </div>
+            </button>
+          )}
+          columns={[
+            { id: 'name', header: t('domains.col.name') || 'Domain', tdClassName: 'font-mono font-medium text-text-primary', sort: (d) => d.name, cell: (d) => d.name },
+            { id: 'kind', header: t('domains.col.kind') || 'Kind', tdClassName: 'text-text-secondary', sort: (d) => d.kind, cell: (d) => domainKindLabel(t, d.kind) },
+            { id: 'ownership', header: t('domainOwnership.col') || 'Ownership', sort: (d) => d.verification?.status ?? '', cell: (d) => <VerificationBadge verification={d.verification} /> },
+            { id: 'routes', header: t('domains.col.routes') || 'Routes', thClassName: 'text-right', tdClassName: 'text-right font-mono tabular-nums', sort: (d) => d.routes.length, cell: (d) => d.routes.length },
+            { id: 'tls', header: t('domains.col.tls') || 'TLS', sort: (d) => d.certificate?.status ?? d.tlsMode, cell: (d) => <TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} /> },
+            { id: 'https', header: t('domains.col.https') || 'HTTPS', sort: (d) => d.forceHttps, cell: (d) => <ForceHttpsIcon on={d.forceHttps} /> },
+          ]}
+        />
       )}
 
       <Drawer

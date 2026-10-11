@@ -15,7 +15,7 @@ import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { BasePicker } from '../BasePicker';
 import { isBaseAllowed } from '../allowedBases';
@@ -23,7 +23,7 @@ import { BaseBadge, Pill, useBaseLabel, type Tone } from '../SiteBadges';
 import { formatDateTime } from '../siteForm';
 import { isNotImplemented, siteErrorMessage, toastSiteError } from '../siteErrors';
 import { useHostingEvent } from '../useHostingEvent';
-import { cardCls, fieldCls, sectionLabelCls, tdCls, thCls } from '../styles';
+import { cardCls, fieldCls, sectionLabelCls } from '../styles';
 import type { SiteTabProps } from './types';
 
 /**
@@ -218,6 +218,8 @@ export function SiteRuntimeTab({ site, reloadSite, switchTo, onSwitchHandled }: 
   );
 }
 
+type RuntimeContainer = SiteRuntimeStatus['containers'][number];
+
 function ContainersTable({ status }: { status: SiteRuntimeStatus }) {
   const { t, i18n } = useTranslation();
   const roleLabel = (r: RuntimeRole) => ({
@@ -234,38 +236,31 @@ function ContainersTable({ status }: { status: SiteRuntimeStatus }) {
     unknown: t('runtime.states.unknown') || 'unknown',
   })[s];
   return (
-    <TableScroll className="rounded-lg bg-bg-tertiary/40">
-      <table className="w-full min-w-[820px] text-sm">
-        <thead>
-          <tr>
-            <th className={thCls}>{t('runtime.fields.role') || 'Role'}</th>
-            <th className={thCls}>{t('runtime.fields.container') || 'Container'}</th>
-            <th className={thCls}>{t('runtime.fields.base') || 'Base'}</th>
-            <th className={thCls}>{t('runtime.fields.state') || 'State'}</th>
-            <th className={thCls}>{t('runtime.fields.startedAt') || 'Started'}</th>
-            <th className={thCls}>{t('runtime.fields.health') || 'Health'}</th>
-            <th className={thCls}>{t('runtime.fields.limits') || 'Limits'}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {status.containers.map((c) => (
-            <tr key={c.name}>
-              <td className={tdCls}><Pill tone={c.role === 'preview' ? 'blue' : c.role === 'secondary' ? 'muted' : 'accent'} className="text-[10px] uppercase">{roleLabel(c.role)}</Pill></td>
-              <td className={`${tdCls} font-mono text-xs text-text-secondary`}>{c.name}</td>
-              <td className={tdCls}><BaseBadge base={c.base} compact /></td>
-              <td className={tdCls}><Pill tone={STATE_TONE[c.state]}>{stateLabel(c.state)}</Pill></td>
-              <td className={`${tdCls} whitespace-nowrap font-mono text-xs text-text-muted`}>{formatDateTime(c.startedAt, i18n.language)}</td>
-              <td className={`${tdCls} text-xs`}>
-                {c.health ? <span className={c.health === 'healthy' ? 'text-status-up' : c.health === 'unhealthy' ? 'text-red-400' : 'text-text-secondary'}>{c.health}</span> : <span className="text-text-muted">—</span>}
-              </td>
-              <td className={`${tdCls} whitespace-nowrap font-mono text-xs text-text-muted`}>
-                {c.memoryLimitMb != null ? `${c.memoryLimitMb} MB` : '∞'} · {c.cpuLimit != null ? `${c.cpuLimit} CPU` : '∞'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </TableScroll>
+    <GroupedTable<RuntimeContainer>
+      storageKey="site-runtime"
+      singleGroupFlat
+      className="bg-bg-tertiary/40"
+      minWidth={820}
+      groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(status.containers, (c) => c.name) }]}
+      columns={[
+        {
+          id: 'role', header: t('runtime.fields.role') || 'Role', sort: (c) => c.role,
+          cell: (c) => <Pill tone={c.role === 'preview' ? 'blue' : c.role === 'secondary' ? 'muted' : 'accent'} className="text-[10px] uppercase">{roleLabel(c.role)}</Pill>,
+        },
+        { id: 'container', header: t('runtime.fields.container') || 'Container', tdClassName: 'font-mono text-xs text-text-secondary', sort: (c) => c.name, cell: (c) => c.name },
+        { id: 'base', header: t('runtime.fields.base') || 'Base', sort: (c) => c.base, cell: (c) => <BaseBadge base={c.base} compact /> },
+        { id: 'state', header: t('runtime.fields.state') || 'State', sort: (c) => c.state, cell: (c) => <Pill tone={STATE_TONE[c.state]}>{stateLabel(c.state)}</Pill> },
+        { id: 'started', header: t('runtime.fields.startedAt') || 'Started', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-muted', sort: (c) => c.startedAt ?? '', cell: (c) => formatDateTime(c.startedAt, i18n.language) },
+        {
+          id: 'health', header: t('runtime.fields.health') || 'Health', tdClassName: 'text-xs', sort: (c) => c.health ?? '',
+          cell: (c) => (c.health ? <span className={c.health === 'healthy' ? 'text-status-up' : c.health === 'unhealthy' ? 'text-red-400' : 'text-text-secondary'}>{c.health}</span> : <span className="text-text-muted">—</span>),
+        },
+        {
+          id: 'limits', header: t('runtime.fields.limits') || 'Limits', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-muted', sort: (c) => c.memoryLimitMb ?? null,
+          cell: (c) => <>{c.memoryLimitMb != null ? `${c.memoryLimitMb} MB` : '∞'} · {c.cpuLimit != null ? `${c.cpuLimit} CPU` : '∞'}</>,
+        },
+      ]}
+    />
   );
 }
 

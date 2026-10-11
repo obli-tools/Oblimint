@@ -10,10 +10,10 @@ import { useTenantStore } from '@/store/tenantStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { Button } from '@/components/common/Button';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
-import { TenantBadge } from '@/components/common/TenantBadge';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
-import { EmptyState, Pill, headerAccentBtnCls, headerBtnCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, Pill, headerAccentBtnCls, headerBtnCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { ZoneKindBadge, ZoneStatusBadge } from './DnsBadges';
 import { DnsZoneCreateModal } from './DnsZoneCreateModal';
 import { dnsErrorMessage, toastDnsError } from './dnsErrors';
@@ -114,6 +114,7 @@ export function DnsZonesTab() {
     return zones.filter((z) => z.name.includes(q) || (z.accountUsername ?? '').toLowerCase().includes(q));
   }, [zones, search]);
 
+  const accountDir = useAccountDirectory();
   const canCreate = can('dns.manage');
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(i18n.language) : '—');
 
@@ -154,67 +155,42 @@ export function DnsZonesTab() {
           text={search ? (t('common.noMatch') || 'No match') : (t('dns.zones.empty') || 'No DNS zone yet: zones are created with the domains.')}
         />
       ) : (
-        <>
-          <ul className="space-y-2 md:hidden">
-            {filtered.map((z) => (
-              <li key={z.id}>
-                <Link to={`/dns/zones/${z.id}`} className="block w-full rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 truncate font-mono text-sm font-semibold text-text-primary">{z.name}</span>
-                    <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-                    <ZoneStatusBadge status={z.status} message={z.statusMessage} />
-                    <ZoneKindBadge kind={z.kind} />
-                    {z.dnssec && <Pill tone="green"><KeyRound size={10} />DNSSEC</Pill>}
-                    <span className="font-mono">{z.accountUsername ?? (t('dns.zones.platform') || 'platform')}</span>
-                    <span>{t('dns.zones.recordCount', { count: z.recordCount, defaultValue: '{{count}} record(s)' })}</span>
-                    {isMaster && <TenantBadge tenantId={z.tenantId} />}
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-
-          <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-            <table className="w-full min-w-[860px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('dns.zones.col.name') || 'Zone'}</th>
-                  <th className={thCls}>{t('domains.col.account') || 'Account'}</th>
-                  {isMaster && <th className={thCls}>{t('hostingCommon.tenant') || 'Workspace'}</th>}
-                  <th className={thCls}>{t('dns.zones.col.kind') || 'Kind'}</th>
-                  <th className={thCls}>{t('dns.zones.col.status') || 'Status'}</th>
-                  <th className={`${thCls} text-right`}>{t('dns.zones.col.records') || 'Records'}</th>
-                  <th className={thCls}>DNSSEC</th>
-                  <th className={thCls}>{t('dns.zones.col.lastSync') || 'Last sync'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((z) => (
-                  <tr key={z.id} onClick={() => navigate(`/dns/zones/${z.id}`)} className="cursor-pointer transition-colors hover:bg-bg-hover">
-                    <td className="px-4 py-3">
-                      <Link to={`/dns/zones/${z.id}`} onClick={(e) => e.stopPropagation()} className="font-mono font-medium text-text-primary hover:text-accent">{z.name}</Link>
-                    </td>
-                    <td className="px-4 py-3">
-                      {z.accountId != null ? (
-                        <Link to={`/accounts/${z.accountId}`} onClick={(e) => e.stopPropagation()} className="font-mono text-text-secondary hover:text-accent">{z.accountUsername}</Link>
-                      ) : (
-                        <Pill>{t('dns.zones.platform') || 'platform'}</Pill>
-                      )}
-                    </td>
-                    {isMaster && <td className="px-4 py-3"><TenantBadge tenantId={z.tenantId} /></td>}
-                    <td className="px-4 py-3"><ZoneKindBadge kind={z.kind} /></td>
-                    <td className="px-4 py-3"><ZoneStatusBadge status={z.status} message={z.statusMessage} /></td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums">{z.recordCount}</td>
-                    <td className="px-4 py-3">{z.dnssec ? <KeyRound size={14} className="text-green-400" /> : <span className="text-text-muted">—</span>}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-text-muted">{fmt(z.lastSyncedAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
-        </>
+        <GroupedTable<DnsZone>
+          storageKey="dns-zones"
+          singleGroupFlat
+          minWidth={820}
+          defaultSort={{ column: 'name' }}
+          // One group per account (title = its primary domain), the zones without account (platform) apart;
+          // a zone under the zone it is a sub-zone of (example.com → sub.example.com).
+          groups={groupRowsByAccount(filtered, accountDir, (z) => ({ id: z.accountId, username: z.accountUsername }),
+            (rows) => domainTree(rows, (z) => z.name, (z) => z.id), t('dns.zones.platformGroup') || 'Platform')}
+          onRowClick={(z) => navigate(`/dns/zones/${z.id}`)}
+          renderCard={(z) => (
+            <Link to={`/dns/zones/${z.id}`} className="block w-full rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 truncate font-mono text-sm font-semibold text-text-primary">{z.name}</span>
+                <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                <ZoneStatusBadge status={z.status} message={z.statusMessage} />
+                <ZoneKindBadge kind={z.kind} />
+                {z.dnssec && <Pill tone="green"><KeyRound size={10} />DNSSEC</Pill>}
+                <span>{t('dns.zones.recordCount', { count: z.recordCount, defaultValue: '{{count}} record(s)' })}</span>
+              </div>
+            </Link>
+          )}
+          columns={[
+            {
+              id: 'name', header: t('dns.zones.col.name') || 'Zone', sort: (z) => z.name,
+              cell: (z) => <Link to={`/dns/zones/${z.id}`} className="font-mono font-medium text-text-primary hover:text-accent">{z.name}</Link>,
+            },
+            { id: 'kind', header: t('dns.zones.col.kind') || 'Kind', sort: (z) => z.kind, cell: (z) => <ZoneKindBadge kind={z.kind} /> },
+            { id: 'status', header: t('dns.zones.col.status') || 'Status', sort: (z) => z.status, cell: (z) => <ZoneStatusBadge status={z.status} message={z.statusMessage} /> },
+            { id: 'records', header: t('dns.zones.col.records') || 'Records', thClassName: 'text-right', tdClassName: 'text-right font-mono tabular-nums', sort: (z) => z.recordCount, cell: (z) => z.recordCount },
+            { id: 'dnssec', header: 'DNSSEC', sort: (z) => z.dnssec, cell: (z) => (z.dnssec ? <KeyRound size={14} className="text-green-400" /> : <span className="text-text-muted">—</span>) },
+            { id: 'sync', header: t('dns.zones.col.lastSync') || 'Last sync', tdClassName: 'font-mono text-xs text-text-muted', sort: (z) => z.lastSyncedAt ?? '', cell: (z) => fmt(z.lastSyncedAt) },
+          ]}
+        />
       )}
 
       <DnsZoneCreateModal

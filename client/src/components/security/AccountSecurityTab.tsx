@@ -12,6 +12,7 @@ import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import {
   Card, EmptyState, Pill, apiErrorCode, inputCls, labelCls, payloadNumber, thCls, theadRowCls, useHostingEvents,
@@ -292,6 +293,9 @@ function RulesCard({ info, canEdit, onChanged, onReload }: {
   const [adding, setAdding] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const { sorted: sortedRules, sort } = useTableSort(info.rules, {
+    cidr: (r) => r.cidr, label: (r) => r.label ?? '', expires: (r) => r.expiresAt ?? '~', createdBy: (r) => r.createdBy ?? '',
+  });
 
   const issue = cidr.trim() ? cidrIssue(cidr) : null;
   const issueText = issue === 'tooWide'
@@ -374,7 +378,7 @@ function RulesCard({ info, canEdit, onChanged, onReload }: {
       ) : (
         <>
           <ul className="space-y-2 md:hidden">
-            {info.rules.map((r) => (
+            {sortedRules.map((r) => (
               <li key={r.id} className="flex items-start gap-2 rounded-lg bg-bg-primary px-3 py-2">
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-mono text-sm text-text-primary">{r.cidr}</div>
@@ -389,15 +393,15 @@ function RulesCard({ info, canEdit, onChanged, onReload }: {
             <table className="w-full min-w-[620px] text-sm">
               <thead>
                 <tr className={theadRowCls}>
-                  <th className={thCls}>{t('security.rules.cidr') || 'Address or range'}</th>
-                  <th className={thCls}>{t('security.rules.labelCol') || 'Label'}</th>
-                  <th className={thCls}>{t('security.rules.expiresCol') || 'Expires'}</th>
-                  <th className={thCls}>{t('security.rules.createdBy') || 'Added by'}</th>
+                  <SortTh k="cidr" sort={sort} className={thCls}>{t('security.rules.cidr') || 'Address or range'}</SortTh>
+                  <SortTh k="label" sort={sort} className={thCls}>{t('security.rules.labelCol') || 'Label'}</SortTh>
+                  <SortTh k="expires" sort={sort} className={thCls}>{t('security.rules.expiresCol') || 'Expires'}</SortTh>
+                  <SortTh k="createdBy" sort={sort} className={thCls}>{t('security.rules.createdBy') || 'Added by'}</SortTh>
                   {canEdit && <th className={thCls} />}
                 </tr>
               </thead>
               <tbody>
-                {info.rules.map((r) => (
+                {sortedRules.map((r) => (
                   <tr key={r.id} className="transition-colors hover:bg-bg-hover">
                     <td className="px-4 py-2.5 font-mono text-text-primary">{r.cidr}</td>
                     <td className="px-4 py-2.5 text-text-secondary">{r.label ?? '—'}</td>

@@ -8,6 +8,7 @@ import { Button } from '@/components/common/Button';
 import { Drawer } from '@/components/common/Drawer';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Card, InfoRow, Pill, inputCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
@@ -131,6 +132,9 @@ function FlowsDrawer({ open, accountId, onClose }: { open: boolean; accountId: n
   }, [open, accountId, t]);
   const q = filter.trim().toLowerCase();
   const shown = (flows ?? []).filter((f) => !q || [f.bridge, f.src.container, f.src.ip, f.dst.container, f.dst.ip, f.reason, String(f.port)].some((v) => v.toLowerCase().includes(q)));
+  const { sorted: sortedFlows, sort } = useTableSort(shown, {
+    bridge: (f) => f.bridge, source: (f) => f.src.container, target: (f) => f.dst.container, port: (f) => f.port, reason: (f) => f.reason,
+  });
   return (
     <Drawer open={open} onClose={onClose} size="full" title={t('network.system.flowsTitle') || 'Allowed flows'} icon={<ListTree className="h-4 w-4 text-accent" />}>
       <div className="space-y-3 pb-4">
@@ -141,15 +145,15 @@ function FlowsDrawer({ open, accountId, onClose }: { open: boolean; accountId: n
             <table className="w-full min-w-[760px] text-xs">
               <thead>
                 <tr className={theadRowCls}>
-                  <th className={thCls}>{t('network.system.bridge') || 'Bridge'}</th>
-                  <th className={thCls}>{t('network.source') || 'From'}</th>
-                  <th className={thCls}>{t('network.target') || 'To'}</th>
-                  <th className={thCls}>{t('network.port') || 'Port'}</th>
-                  <th className={thCls}>{t('network.system.reason') || 'Reason'}</th>
+                  <SortTh k="bridge" sort={sort} className={thCls}>{t('network.system.bridge') || 'Bridge'}</SortTh>
+                  <SortTh k="source" sort={sort} className={thCls}>{t('network.source') || 'From'}</SortTh>
+                  <SortTh k="target" sort={sort} className={thCls}>{t('network.target') || 'To'}</SortTh>
+                  <SortTh k="port" sort={sort} className={thCls}>{t('network.port') || 'Port'}</SortTh>
+                  <SortTh k="reason" sort={sort} className={thCls}>{t('network.system.reason') || 'Reason'}</SortTh>
                 </tr>
               </thead>
               <tbody>
-                {shown.map((f, i) => (
+                {sortedFlows.map((f, i) => (
                   <tr key={i} className="border-t border-border/40 font-mono">
                     <td className="px-4 py-2 text-text-muted">{f.bridge}</td>
                     <td className="px-4 py-2"><div className="text-text-primary">{f.src.container}</div><div className="text-text-muted">{f.src.ip} · {f.src.segment}</div></td>

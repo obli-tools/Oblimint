@@ -11,13 +11,13 @@ import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { Modal } from '@/components/common/Modal';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { ExtensionChips } from '../ExtensionChips';
 import { Pill, PolicyBadge, usePolicyLabel } from '../SiteBadges';
 import { dataPathContainsDocroot, findOverlappingPath, isPhpLikeExtension } from '../siteForm';
 import { siteErrorMessage, toastSiteError } from '../siteErrors';
-import { fieldCls, labelCls, sectionLabelCls, tdCls, thCls } from '../styles';
+import { fieldCls, labelCls, sectionLabelCls } from '../styles';
 import type { SiteTabProps } from './types';
 
 export function SiteDataPathsTab({ site, onPublish }: SiteTabProps) {
@@ -132,51 +132,51 @@ export function SiteDataPathsTab({ site, onPublish }: SiteTabProps) {
           <p className="text-sm text-text-secondary">{t('dataPaths.empty') || 'No data path: the whole site is read only.'}</p>
         </div>
       ) : (
-        <TableScroll className="bg-bg-secondary rounded-xl">
-          <table className="w-full min-w-[680px] text-sm">
-            <thead>
-              <tr>
-                <th className={thCls}>{t('dataPaths.fields.path') || 'Path'}</th>
-                <th className={thCls}>{t('dataPaths.fields.policy') || 'Policy'}</th>
-                <th className={thCls}>{t('dataPaths.fields.extensions') || 'Allowed extensions'}</th>
-                <th className={thCls}>{t('dataPaths.fields.source') || 'Source'}</th>
-                <th className={thCls}><span className="sr-only">{t('releases.fields.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {paths.map((p) => (
-                <tr key={p.id} className="transition-colors hover:bg-bg-tertiary">
-                  <td className={`${tdCls} font-mono text-xs text-text-primary`}>{p.path}/</td>
-                  <td className={tdCls}>
-                    <PolicyBadge policy={p.policy} />
-                    <div className="mt-0.5 max-w-[18rem] text-[11px] text-text-muted">{policyLabel(p.policy).hint}</div>
-                  </td>
-                  <td className={tdCls}>
-                    {p.policy === 'typed' && p.allowedExtensions?.length ? (
-                      <div className="flex max-w-[22rem] flex-wrap gap-1">
-                        {p.allowedExtensions.slice(0, 14).map((e) => <code key={e} className="rounded bg-bg-tertiary px-1 font-mono text-[10px] text-text-secondary">{e}</code>)}
-                        {p.allowedExtensions.length > 14 && <span className="text-[10px] text-text-muted">+{p.allowedExtensions.length - 14}</span>}
-                      </div>
-                    ) : <span className="text-text-muted">—</span>}
-                  </td>
-                  <td className={tdCls}>
-                    <Pill tone="muted" className="text-[10px]">
-                      {p.source === 'profile' ? (t('dataPaths.source.profile') || 'profile') : (t('dataPaths.source.manual') || 'manual')}
-                    </Pill>
-                  </td>
-                  <td className={`${tdCls} whitespace-nowrap text-right`}>
-                    {canManage && (
-                      <>
-                        <IconButton label={t('common.edit') || 'Edit'} icon={<Pencil className="h-3.5 w-3.5" />} size="sm" onClick={() => setEditing(p)} />
-                        <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 className="h-3.5 w-3.5" />} variant="danger" size="sm" onClick={() => void remove(p)} />
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<SiteDataPath>
+          storageKey="site-data-paths"
+          singleGroupFlat
+          minWidth={680}
+          defaultSort={{ column: 'path' }}
+          groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(paths, (p) => p.id) }]}
+          columns={[
+            { id: 'path', header: t('dataPaths.fields.path') || 'Path', tdClassName: 'font-mono text-xs text-text-primary', sort: (p) => p.path, cell: (p) => `${p.path}/` },
+            {
+              id: 'policy', header: t('dataPaths.fields.policy') || 'Policy', sort: (p) => p.policy,
+              cell: (p) => (
+                <>
+                  <PolicyBadge policy={p.policy} />
+                  <div className="mt-0.5 max-w-[18rem] text-[11px] text-text-muted">{policyLabel(p.policy).hint}</div>
+                </>
+              ),
+            },
+            {
+              id: 'extensions', header: t('dataPaths.fields.extensions') || 'Allowed extensions', sort: (p) => p.allowedExtensions?.length ?? null,
+              cell: (p) => (p.policy === 'typed' && p.allowedExtensions?.length ? (
+                <div className="flex max-w-[22rem] flex-wrap gap-1">
+                  {p.allowedExtensions.slice(0, 14).map((e) => <code key={e} className="rounded bg-bg-tertiary px-1 font-mono text-[10px] text-text-secondary">{e}</code>)}
+                  {p.allowedExtensions.length > 14 && <span className="text-[10px] text-text-muted">+{p.allowedExtensions.length - 14}</span>}
+                </div>
+              ) : <span className="text-text-muted">—</span>),
+            },
+            {
+              id: 'source', header: t('dataPaths.fields.source') || 'Source', sort: (p) => p.source,
+              cell: (p) => (
+                <Pill tone="muted" className="text-[10px]">
+                  {p.source === 'profile' ? (t('dataPaths.source.profile') || 'profile') : (t('dataPaths.source.manual') || 'manual')}
+                </Pill>
+              ),
+            },
+            {
+              id: 'actions', header: <span className="sr-only">{t('releases.fields.actions') || 'Actions'}</span>, tdClassName: 'whitespace-nowrap text-right',
+              cell: (p) => (canManage ? (
+                <>
+                  <IconButton label={t('common.edit') || 'Edit'} icon={<Pencil className="h-3.5 w-3.5" />} size="sm" onClick={() => setEditing(p)} />
+                  <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 className="h-3.5 w-3.5" />} variant="danger" size="sm" onClick={() => void remove(p)} />
+                </>
+              ) : null),
+            },
+          ]}
+        />
       )}
 
       {editing && (

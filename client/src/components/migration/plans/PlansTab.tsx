@@ -8,6 +8,7 @@ import { migrationApi } from '@/api/migration.api';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Pill, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
@@ -55,6 +56,11 @@ export function PlansTab({ sources, sourceFilter, onSourceFilter, reloadKey }: {
   useHostingEvents([HostingSocketEvents.MIGRATION_UPDATED], () => { void load(); }, (_e, p) => (p as MigrationUpdatedPayload | null)?.entity === 'plan', 800);
 
   const sourceName = (id: number) => sources.find((s) => s.id === id)?.name ?? `#${id}`;
+  const { sorted: sortedPlans, sort } = useTableSort(plans, {
+    name: (p) => p.name, source: (p) => sourceName(p.sourceId), discovery: (p) => p.discoveryId, status: (p) => p.status,
+    totals: (p) => p.totals?.selected ?? null, volume: (p) => (p.totals ? p.totals.filesBytes + p.totals.dbBytes + p.totals.mailBytes : null),
+    computed: (p) => p.computedAt ?? '',
+  });
 
   const remove = async (p: MigrationPlanSummary) => {
     if (!(await confirm({
@@ -96,18 +102,18 @@ export function PlansTab({ sources, sourceFilter, onSourceFilter, reloadKey }: {
           <table className="w-full min-w-[900px] text-sm">
             <thead>
               <tr className={theadRowCls}>
-                <th className={thCls}>{t('migration.plans.name') || 'Name'}</th>
-                <th className={thCls}>{t('migration.common.source') || 'Source'}</th>
-                <th className={thCls}>{t('migration.plans.discovery') || 'Discovery'}</th>
-                <th className={thCls}>{t('migration.common.status') || 'Status'}</th>
-                <th className={thCls}>{t('migration.plans.totals') || 'Accounts selected / blocked'}</th>
-                <th className={thCls}>{t('migration.plans.volume') || 'Volume'}</th>
-                <th className={thCls}>{t('migration.plans.computedAt') || 'Computed'}</th>
+                <SortTh k="name" sort={sort} className={thCls}>{t('migration.plans.name') || 'Name'}</SortTh>
+                <SortTh k="source" sort={sort} className={thCls}>{t('migration.common.source') || 'Source'}</SortTh>
+                <SortTh k="discovery" sort={sort} className={thCls}>{t('migration.plans.discovery') || 'Discovery'}</SortTh>
+                <SortTh k="status" sort={sort} className={thCls}>{t('migration.common.status') || 'Status'}</SortTh>
+                <SortTh k="totals" sort={sort} className={thCls}>{t('migration.plans.totals') || 'Accounts selected / blocked'}</SortTh>
+                <SortTh k="volume" sort={sort} className={thCls}>{t('migration.plans.volume') || 'Volume'}</SortTh>
+                <SortTh k="computed" sort={sort} className={thCls}>{t('migration.plans.computedAt') || 'Computed'}</SortTh>
                 <th className={`${thCls} w-32`}><span className="sr-only">{t('migration.common.actions') || 'Actions'}</span></th>
               </tr>
             </thead>
             <tbody>
-              {plans.map((p) => (
+              {sortedPlans.map((p) => (
                 <tr key={p.id} className="transition-colors hover:bg-bg-hover">
                   <td className={tdCls}>
                     <Link to={`/manage/migration/plans/${p.id}`} className="font-medium text-text-primary hover:text-accent">{p.name}</Link>

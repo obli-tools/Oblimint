@@ -10,11 +10,12 @@ import { proxyApi } from '@/api/proxy.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { ListState, useProxyAccess } from './proxyUi';
 import { proxyErrorCode, proxyErrorMessage, proxyLoadError, toastProxyError } from './proxyErrors';
@@ -49,6 +50,7 @@ export function CustomPagesPanel({ accountId, tenantId, accounts, showAccount, s
   const [items, setItems] = useState<CustomPage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const accountDir = useAccountDirectory();
   const [editing, setEditing] = useState<CustomPage | 'new' | null>(null);
 
   const seq = useRef(0);
@@ -106,10 +108,6 @@ export function CustomPagesPanel({ accountId, tenantId, accounts, showAccount, s
       ]}
     />
   );
-  const owner = (p: CustomPage) => (p.accountId == null
-    ? <Pill tone="accent">{t('proxy.platform') || 'platform'}</Pill>
-    : <span className="font-mono text-xs text-text-secondary">{accounts.find((a) => a.id === p.accountId)?.username ?? `#${p.accountId}`}</span>);
-
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -117,36 +115,34 @@ export function CustomPagesPanel({ accountId, tenantId, accounts, showAccount, s
         <div className="ml-auto">{createBtn}</div>
       </div>
       <ListState loading={loading} error={error} empty={items.length === 0} emptyIcon={<FileCode2 />} emptyText={t('proxy.pages.empty') || 'No custom page yet: the built-in pages are used.'} emptyAction={createBtn ?? undefined}>
-        <TableScroll className="rounded-xl bg-bg-secondary">
-          <table className="w-full min-w-[680px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('proxy.pages.name') || 'Page'}</th>
-                <th className={thCls}>{t('proxy.pages.codes') || 'Codes'}</th>
-                <th className={thCls}>{t('proxy.usedBy') || 'Used by'}</th>
-                {(showAccount || isStaff) && <th className={thCls}>{t('proxy.account') || 'Hosting account'}</th>}
-                {showTenant && <th className={thCls}>{t('proxy.tenant') || 'Workspace'}</th>}
-                <th className={`${thCls} w-14`}><span className="sr-only">{t('proxy.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((p) => (
-                <tr key={p.id} className="align-top transition-colors hover:bg-bg-hover">
-                  <td className="px-4 py-3">
-                    <span className="font-medium text-text-primary">{p.name}</span>
-                    {p.isWakingPage && <Pill tone="blue" className="ml-2">{t('proxy.pages.waking') || 'waking page'}</Pill>}
-                    {p.description && <div className="mt-0.5 text-xs text-text-muted">{p.description}</div>}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{p.isWakingPage ? '—' : (p.codes.length ? p.codes.join(', ') : (t('proxy.pages.allCodes') || 'all'))}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{p.usedBy}</td>
-                  {(showAccount || isStaff) && <td className="px-4 py-3">{owner(p)}</td>}
-                  {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={p.tenantId} /></td>}
-                  <td className="px-4 py-3 text-right">{menu(p)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<CustomPage>
+          storageKey="proxy-custom-pages"
+          singleGroupFlat
+          minWidth={680}
+          defaultSort={{ column: 'name' }}
+          groups={showAccount || isStaff
+            ? groupRowsByAccount(items, accountDir, (p) => ({ id: p.accountId, username: accounts.find((a) => a.id === p.accountId)?.username }), (rows) => flatNodes(rows, (p) => p.id), t('proxy.platformGroup') || 'Platform')
+            : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (p) => p.id) }]}
+          columns={[
+            {
+              id: 'name', header: t('proxy.pages.name') || 'Page', sort: (p) => p.name,
+              cell: (p) => (
+                <>
+                  <span className="font-medium text-text-primary">{p.name}</span>
+                  {p.isWakingPage && <Pill tone="blue" className="ml-2">{t('proxy.pages.waking') || 'waking page'}</Pill>}
+                  {p.description && <div className="mt-0.5 text-xs text-text-muted">{p.description}</div>}
+                </>
+              ),
+            },
+            {
+              id: 'codes', header: t('proxy.pages.codes') || 'Codes', tdClassName: 'font-mono text-xs text-text-secondary', sort: (p) => (p.isWakingPage ? '' : p.codes.join(',')),
+              cell: (p) => (p.isWakingPage ? '—' : (p.codes.length ? p.codes.join(', ') : (t('proxy.pages.allCodes') || 'all'))),
+            },
+            { id: 'usedBy', header: t('proxy.usedBy') || 'Used by', tdClassName: 'font-mono text-xs text-text-secondary', sort: (p) => p.usedBy, cell: (p) => p.usedBy },
+            ...(showTenant && !(showAccount || isStaff) ? [{ id: 'tenant', header: t('proxy.tenant') || 'Workspace', cell: (p: CustomPage) => <TenantBadge tenantId={p.tenantId} /> }] : []),
+            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (p) => menu(p) },
+          ]}
+        />
       </ListState>
 
       <CustomPageModal

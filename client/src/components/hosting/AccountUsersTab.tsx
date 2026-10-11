@@ -11,6 +11,7 @@ import { Modal } from '@/components/common/Modal';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu';
 import { cn } from '@/utils/cn';
@@ -30,6 +31,9 @@ export function AccountUsersTab({ accountId, tenantId }: { accountId: number; te
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<AccountClientUser | null>(null);
   const [removing, setRemoving] = useState<AccountClientUser | null>(null);
+  const { sorted: sortedUsers, sort } = useTableSort(users, {
+    user: (u) => u.username, twoFactor: (u) => u.totpEnabled, capabilities: (u) => (Array.isArray(u.capabilities) ? u.capabilities.length : 0), other: (u) => u.otherAccountCount,
+  });
 
   const load = useCallback(async () => {
     try {
@@ -69,7 +73,7 @@ export function AccountUsersTab({ accountId, tenantId }: { accountId: number; te
         <>
         {/* Phone: cards */}
         <ul className="space-y-2 md:hidden">
-          {users.map((u) => (
+          {sortedUsers.map((u) => (
             <li key={u.userId} className="rounded-xl bg-bg-secondary px-3 py-2.5">
               <div className="flex items-center gap-2">
                 <span className="truncate font-mono text-sm font-semibold text-text-primary">{u.username}</span>
@@ -97,15 +101,15 @@ export function AccountUsersTab({ accountId, tenantId }: { accountId: number; te
           <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className={theadRowCls}>
-                <th className={thCls}>{t('accounts.users.col.user') || 'User'}</th>
-                <th className={thCls}>{t('accounts.users.col.twoFactor') || '2FA'}</th>
-                <th className={thCls}>{t('accounts.users.capabilities') || 'Capabilities'}</th>
-                <th className={`${thCls} text-right`}>{t('accounts.users.col.otherAccounts') || 'Other accounts'}</th>
+                <SortTh k="user" sort={sort} className={thCls}>{t('accounts.users.col.user') || 'User'}</SortTh>
+                <SortTh k="twoFactor" sort={sort} className={thCls}>{t('accounts.users.col.twoFactor') || '2FA'}</SortTh>
+                <SortTh k="capabilities" sort={sort} className={thCls}>{t('accounts.users.capabilities') || 'Capabilities'}</SortTh>
+                <SortTh k="other" sort={sort} className={`${thCls} text-right`}>{t('accounts.users.col.otherAccounts') || 'Other accounts'}</SortTh>
                 <th className="w-20" />
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
+              {sortedUsers.map((u) => (
                 <tr key={u.userId} className="transition-colors hover:bg-bg-hover">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">

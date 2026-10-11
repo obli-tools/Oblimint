@@ -3,21 +3,33 @@ import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle, Boxes, ChevronsDownUp, ChevronsUpDown, Globe, Network, Package, Server, UserRound,
 } from 'lucide-react';
-import type { CwpAccount, CwpDomainKind, CwpInventory } from '@oblimint/shared';
+import type { CwpAccount, CwpDomain, CwpDomainKind, CwpInventory } from '@oblimint/shared';
 import { MasterDetail } from '@/components/common/MasterDetail';
+import { domainTree, type TreeNode as TreeNodeOf } from '@/components/common/GroupedTable';
 import { TableScroll } from '@/components/common/TableScroll';
 import { MailSearch } from '@/components/mail/MailListParts';
 import { EmptyState, InfoRow, Pill, headerBtnCls, theadRowCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { formatBytes, matches, severityCounts, sortWarnings } from '../migrationFormat';
 import { SeverityCounts, WarningList, useByteUnits } from '../migrationUi';
-import { cwpKindLabel } from './discoveryLabels';
 import {
   CertificatesTable, CronsTable, DatabasesTable, DbUsersTable, DomainNode, FtpTable, MailDomainNode, OutsideList, ZoneNode,
 } from './InventoryParts';
 import { Node, TreeProvider, useTreeController } from './treeState';
 
 const KIND_ORDER: CwpDomainKind[] = ['main', 'addon', 'parked', 'subdomain'];
+
+/** Domains of an account as a tree (siblings: main, addon, parked, sub-domain, then by name). */
+function renderDomainTree(nodes: TreeNodeOf<CwpDomain>[], idPrefix: string, depth: number): ReactNode {
+  return [...nodes]
+    .sort((a, b) => KIND_ORDER.indexOf(a.row.kind) - KIND_ORDER.indexOf(b.row.kind) || a.row.fqdn.localeCompare(b.row.fqdn))
+    .map((n) => (
+      <div key={n.key} style={depth ? { marginLeft: `${Math.min(depth, 4) * 1.25}rem` } : undefined}>
+        <DomainNode d={n.row} idPrefix={idPrefix} showKind />
+        {n.children.length > 0 && renderDomainTree(n.children, idPrefix, depth + 1)}
+      </div>
+    ));
+}
 
 function SectionHead({ icon, label, count }: { icon: ReactNode; label: string; count?: number }) {
   return (
@@ -77,16 +89,8 @@ function AccountDetail({ inv, account, q }: { inv: CwpInventory; account: CwpAcc
 
       <div className="rounded-xl bg-bg-secondary p-2">
         <Node id={`${id}:domains`} defaultOpen title={<SectionHead icon={<Globe size={14} />} label={t('migration.inventory.domains') || 'Domains'} count={domains.length} />}>
-          {KIND_ORDER.map((k) => {
-            const list = domains.filter((d) => d.kind === k);
-            if (!list.length) return null;
-            return (
-              <div key={k} className="space-y-0.5">
-                <div className="px-1.5 pt-1 text-[10px] font-mono uppercase tracking-[0.12em] text-text-muted">{cwpKindLabel(t, k)} · {list.length}</div>
-                {list.map((d) => <DomainNode key={d.fqdn} d={d} idPrefix={id} />)}
-              </div>
-            );
-          })}
+          {/* Nested by name: the main domain at the root, its sub-domains below it (example.com → shop.example.com). */}
+          {renderDomainTree(domainTree(domains, (d) => d.fqdn, (d) => d.fqdn), id, 0)}
         </Node>
         {(dbs.length > 0 || dbUsers.length > 0) && (
           <Node id={`${id}:db`} title={<SectionHead icon={<Boxes size={14} />} label={t('migration.inventory.databases') || 'Databases'} count={dbs.length} />}>
@@ -167,7 +171,9 @@ export function InventoryTree({ inv }: { inv: CwpInventory }) {
     }
     return m;
   }, [inv, q]);
-  const accounts = inv.accounts.filter((a) => accountMatches.get(a.username));
+  // Named and ordered by their main domain (example.com), the CWP user below.
+  const accounts = inv.accounts.filter((a) => accountMatches.get(a.username))
+    .sort((a, b) => (a.mainDomain || a.username).localeCompare(b.mainDomain || b.username));
   const nameMatchesAccount = (a: CwpAccount) => matches(q, a.username, a.mainDomain, a.contactEmail);
   const current = accounts.find((a) => a.username === selected) ?? null;
 
@@ -270,12 +276,12 @@ export function InventoryTree({ inv }: { inv: CwpInventory }) {
                           className={cn('w-full rounded-lg px-3 py-2 text-left transition-colors', selected === a.username ? 'bg-accent/10 ring-1 ring-accent/40' : 'hover:bg-bg-hover')}
                         >
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-sm text-text-primary">{a.username}</span>
+                            <span className="min-w-0 truncate font-mono text-sm text-text-primary">{a.mainDomain || a.username}</span>
                             {a.suspended && <Pill tone="amber">{t('migration.inventory.suspended') || 'suspended'}</Pill>}
                             {blocking && <Pill tone="red">!</Pill>}
                             <span className="ml-auto font-mono text-[10px] text-text-muted">{n} {t('migration.counts.inline.domains') || 'domains'}</span>
                           </div>
-                          <div className="truncate text-[11px] text-text-muted">{a.mainDomain} · {a.packageName ?? '—'} · {formatBytes((a.homeBytes ?? 0) + (a.mailBytes ?? 0) + (a.dbBytes ?? 0), units)}</div>
+                          <div className="truncate text-[11px] text-text-muted"><span className="font-mono">{a.username}</span> · {a.packageName ?? '—'} · {formatBytes((a.homeBytes ?? 0) + (a.mailBytes ?? 0) + (a.dbBytes ?? 0), units)}</div>
                         </button>
                       </li>
                     );

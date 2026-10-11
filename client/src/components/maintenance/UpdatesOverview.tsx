@@ -7,8 +7,9 @@ import { adaptersApi } from '@/api/maintenance.api';
 import { sitesApi } from '@/api/sites.api';
 import { useTenantStore } from '@/store/tenantStore';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
-import { EmptyState, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
+import { EmptyState, useHostingEvents } from '@/components/hosting/hostingUi';
 import { formatDateTime } from '@/components/sites/siteForm';
 import { Pill } from '@/components/sites/SiteBadges';
 import { useAdapterName } from './MaintenanceBadges';
@@ -28,9 +29,13 @@ const MAX_RUNS = 50;
 
 interface SiteRow { site: Site; info: SiteAdaptersInfo }
 
+const updatesOf = (info: SiteAdaptersInfo) => info.available.reduce((n, a) => n + a.updates.length, 0);
+const lastCheckOf = (info: SiteAdaptersInfo) => info.available.map((a) => a.checkedAt).filter((x): x is string => !!x).sort().pop() ?? null;
+
 export function UpdatesOverview() {
   const { t, i18n } = useTranslation();
   const adapterName = useAdapterName();
+  const accountDir = useAccountDirectory();
   const currentTenantId = useTenantStore((s) => s.currentTenantId);
   const [rows, setRows] = useState<SiteRow[] | null>(null);
   const [siteCount, setSiteCount] = useState(0);
@@ -117,65 +122,59 @@ export function UpdatesOverview() {
       {withApps.length === 0 ? (
         <EmptyState icon={<Package />} text={t('adapters.overview.empty') || 'No site with a supported application (WordPress, Composer, Drupal, Nextcloud).'} />
       ) : (
-        <>
-          <ul className="space-y-2 md:hidden">
-            {withApps.map(({ site, info }) => {
-              const count = info.available.reduce((n, a) => n + a.updates.length, 0);
+          <GroupedTable<SiteRow>
+            storageKey="maintenance-updates"
+            singleGroupFlat
+            minWidth={720}
+            defaultSort={{ column: 'site' }}
+            groups={groupRowsByAccount(withApps, accountDir, (r) => ({ id: r.site.accountId, username: r.site.accountUsername }), (rs) => flatNodes(rs, (r) => r.site.id))}
+            renderCard={({ site, info }) => {
+              const count = updatesOf(info);
               return (
-                <li key={site.id}>
-                  <Link to={`/sites/${site.id}?tab=maintenance`} className="block rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-hover">
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{site.name}</span>
-                      {info.running && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />}
-                      {count > 0 ? <Pill tone="amber">{count}</Pill> : <Pill tone="green">{t('adapters.upToDate') || 'up to date'}</Pill>}
-                    </div>
-                    <div className="mt-1 text-[11px] text-text-muted">{info.detections.filter((d) => d.detected).map((d) => `${adapterName(d.adapter)}${d.version ? ` ${d.version}` : ''}`).join(' · ')}</div>
-                  </Link>
-                </li>
+                <Link to={`/sites/${site.id}?tab=maintenance`} className="block rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-hover">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{site.name}</span>
+                    {info.running && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />}
+                    {count > 0 ? <Pill tone="amber">{count}</Pill> : <Pill tone="green">{t('adapters.upToDate') || 'up to date'}</Pill>}
+                  </div>
+                  <div className="mt-1 text-[11px] text-text-muted">{info.detections.filter((d) => d.detected).map((d) => `${adapterName(d.adapter)}${d.version ? ` ${d.version}` : ''}`).join(' · ')}</div>
+                </Link>
               );
-            })}
-          </ul>
-          <TableScroll className="rounded-xl bg-bg-secondary max-md:hidden">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('windows.col.site') || 'Site'}</th>
-                  <th className={thCls}>{t('adapters.col.adapter') || 'Application'}</th>
-                  <th className={thCls}>{t('adapters.col.updates') || 'Updates'}</th>
-                  <th className={thCls}>{t('adapters.overview.lastCheck') || 'Last check'}</th>
-                  <th className={thCls}>{t('adapters.overview.schedules') || 'Schedules'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {withApps.map(({ site, info }) => {
-                  const count = info.available.reduce((n, a) => n + a.updates.length, 0);
-                  const lastCheck = info.available.map((a) => a.checkedAt).filter((x): x is string => !!x).sort().pop() ?? null;
+            }}
+            columns={[
+              {
+                id: 'site', header: t('windows.col.site') || 'Site', sort: (r) => r.site.name,
+                cell: ({ site }) => <Link to={`/sites/${site.id}?tab=maintenance`} className="font-medium text-text-primary hover:text-accent">{site.name}</Link>,
+              },
+              {
+                id: 'app', header: t('adapters.col.adapter') || 'Application', tdClassName: 'text-xs text-text-secondary',
+                sort: (r) => r.info.detections.filter((d) => d.detected).map((d) => adapterName(d.adapter)).join(','),
+                cell: ({ info }) => info.detections.filter((d) => d.detected).map((d) => (
+                  <div key={d.adapter}>{adapterName(d.adapter)}{d.version && <span className="ml-1 font-mono text-text-muted">{d.version}</span>}</div>
+                )),
+              },
+              {
+                id: 'updates', header: t('adapters.col.updates') || 'Updates', sort: (r) => updatesOf(r.info),
+                cell: ({ info }) => {
+                  const count = updatesOf(info);
                   return (
-                    <tr key={site.id} className="transition-colors hover:bg-bg-hover">
-                      <td className="px-4 py-2.5">
-                        <Link to={`/sites/${site.id}?tab=maintenance`} className="font-medium text-text-primary hover:text-accent">{site.name}</Link>
-                        <div className="font-mono text-[11px] text-text-muted">{site.accountUsername}</div>
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-text-secondary">
-                        {info.detections.filter((d) => d.detected).map((d) => (
-                          <div key={d.adapter}>{adapterName(d.adapter)}{d.version && <span className="ml-1 font-mono text-text-muted">{d.version}</span>}</div>
-                        ))}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className="inline-flex items-center gap-1.5">
-                          {count > 0 ? <Pill tone="amber">{t('adapters.updatesCount', { count, defaultValue: '{{count}} update(s)' })}</Pill> : <Pill tone="green">{t('adapters.upToDate') || 'up to date'}</Pill>}
-                          {info.running && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />}
-                        </span>
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-text-muted">{formatDateTime(lastCheck, i18n.language)}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-text-secondary">{info.schedules.filter((s) => s.enabled).length}</td>
-                    </tr>
+                    <span className="inline-flex items-center gap-1.5">
+                      {count > 0 ? <Pill tone="amber">{t('adapters.updatesCount', { count, defaultValue: '{{count}} update(s)' })}</Pill> : <Pill tone="green">{t('adapters.upToDate') || 'up to date'}</Pill>}
+                      {info.running && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />}
+                    </span>
                   );
-                })}
-              </tbody>
-            </table>
-          </TableScroll>
-        </>
+                },
+              },
+              {
+                id: 'lastCheck', header: t('adapters.overview.lastCheck') || 'Last check', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-muted',
+                sort: (r) => lastCheckOf(r.info) ?? '', cell: ({ info }) => formatDateTime(lastCheckOf(info), i18n.language),
+              },
+              {
+                id: 'schedules', header: t('adapters.overview.schedules') || 'Schedules', tdClassName: 'font-mono text-xs text-text-secondary',
+                sort: (r) => r.info.schedules.filter((x) => x.enabled).length, cell: ({ info }) => info.schedules.filter((x) => x.enabled).length,
+              },
+            ]}
+          />
       )}
       {siteCount > MAX_SITES && (
         <p className="text-xs text-text-muted">{t('adapters.overview.capped', { count: MAX_SITES, total: siteCount, defaultValue: 'Only the first {{count}} of {{total}} sites are shown here: open a site for its updates.' })}</p>

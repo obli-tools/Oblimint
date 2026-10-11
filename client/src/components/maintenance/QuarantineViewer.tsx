@@ -16,6 +16,7 @@ import { IconButton } from '@/components/common/IconButton';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { useConfirm, usePrompt } from '@/components/common/ConfirmDialog';
 import { EmptyState, InfoRow, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { formatDateTime } from '@/components/sites/siteForm';
@@ -90,6 +91,11 @@ export function QuarantineViewer() {
   const pages = Math.max(1, Math.ceil(total / PAGE));
   const page = Math.floor(offset / PAGE) + 1;
   const where = (q: QuarantineItem) => `${q.siteName ?? q.accountUsername}`;
+  // Sorts the page shown (paginated by the server, newest first).
+  const { sorted: sortedItems, sort } = useTableSort(items, {
+    detected: (q) => q.detectedAt, site: (q) => where(q), path: (q) => q.path, reason: (q) => reasonLabel(q.reason),
+    type: (q) => q.detectedType ?? '', size: (q) => q.sizeBytes ?? null, status: (q) => q.status,
+  });
 
   return (
     <div className="space-y-3">
@@ -126,7 +132,7 @@ export function QuarantineViewer() {
       ) : (
         <>
           <ul className="space-y-2 md:hidden">
-            {items.map((q) => (
+            {sortedItems.map((q) => (
               <li key={q.id}>
                 <button type="button" onClick={() => setOpenItem(q)} className="w-full rounded-xl bg-bg-secondary px-3 py-2.5 text-left hover:bg-bg-hover">
                   <div className="flex items-center gap-2">
@@ -147,17 +153,17 @@ export function QuarantineViewer() {
             <table className="w-full min-w-[900px] text-sm">
               <thead>
                 <tr className={theadRowCls}>
-                  <th className={thCls}>{t('quarantine.col.detected') || 'Detected'}</th>
-                  <th className={thCls}>{t('quarantine.col.site') || 'Site'}</th>
-                  <th className={thCls}>{t('quarantine.col.path') || 'Path'}</th>
-                  <th className={thCls}>{t('quarantine.col.reason') || 'Reason'}</th>
-                  <th className={thCls}>{t('quarantine.col.type') || 'Type'}</th>
-                  <th className={thCls}>{t('quarantine.col.size') || 'Size'}</th>
-                  <th className={thCls}>{t('quarantine.col.status') || 'Status'}</th>
+                  <SortTh k="detected" sort={sort} className={thCls}>{t('quarantine.col.detected') || 'Detected'}</SortTh>
+                  <SortTh k="site" sort={sort} className={thCls}>{t('quarantine.col.site') || 'Site'}</SortTh>
+                  <SortTh k="path" sort={sort} className={thCls}>{t('quarantine.col.path') || 'Path'}</SortTh>
+                  <SortTh k="reason" sort={sort} className={thCls}>{t('quarantine.col.reason') || 'Reason'}</SortTh>
+                  <SortTh k="type" sort={sort} className={thCls}>{t('quarantine.col.type') || 'Type'}</SortTh>
+                  <SortTh k="size" sort={sort} className={thCls}>{t('quarantine.col.size') || 'Size'}</SortTh>
+                  <SortTh k="status" sort={sort} className={thCls}>{t('quarantine.col.status') || 'Status'}</SortTh>
                 </tr>
               </thead>
               <tbody>
-                {items.map((q) => (
+                {sortedItems.map((q) => (
                   <tr key={q.id} onClick={() => setOpenItem(q)} className="cursor-pointer transition-colors hover:bg-bg-hover">
                     <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-text-muted">{formatDateTime(q.detectedAt, i18n.language)}</td>
                     <td className="max-w-[12rem] px-4 py-2.5">

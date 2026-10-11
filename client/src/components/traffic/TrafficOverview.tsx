@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { BarChart3 } from 'lucide-react';
 import { HostingSocketEvents, type HostingAccount, type ProxyTrafficOverviewRow, type ProxyTrafficRange, type ProxyUpdatedPayload } from '@oblimint/shared';
 import { trafficApi } from '@/api/traffic.api';
-import { TableScroll } from '@/components/common/TableScroll';
-import { thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
+import { groupRowsByAccount } from '@/components/common/accountGroups';
+import { useHostingEvents } from '@/components/hosting/hostingUi';
 import { formatCount } from '@/components/usage/usageFormat';
 import { useByteFormat } from '@/components/usage/usageUi';
 import { ListState } from '@/components/proxy/proxyUi';
@@ -53,6 +54,7 @@ export function TrafficOverview({ accountId, tenantId, range, accounts, showAcco
   const errors = rows.reduce((s, r) => s + r.requests * r.errorRate, 0);
   const out = rows.reduce((s, r) => s + r.bytesOut, 0);
   const maxReq = Math.max(1, ...rows.map((r) => r.requests));
+  const accountDir = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
   const accountName = (id: number) => accounts.find((a) => a.id === id)?.username ?? `#${id}`;
 
   return (
@@ -64,37 +66,31 @@ export function TrafficOverview({ accountId, tenantId, range, accounts, showAcco
         <StatTile label={t('traffic.hosts') || 'Proxy hosts'} value={String(rows.length)} />
       </div>
       <ListState loading={loading} error={error} empty={rows.length === 0} emptyIcon={<BarChart3 />} emptyText={t('traffic.empty') || 'No traffic for this period (or no proxy host yet).'}>
-        <TableScroll className="rounded-xl bg-bg-secondary">
-          <table className="w-full min-w-[720px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('proxy.hosts.name') || 'Proxy host'}</th>
-                <th className={thCls}>{t('traffic.requests') || 'Requests'}</th>
-                <th className={thCls}>{t('traffic.errorRate') || 'Error rate'}</th>
-                <th className={thCls}>p95</th>
-                <th className={thCls}>{t('traffic.bytesOut') || 'Data sent'}</th>
-                {showAccount && <th className={thCls}>{t('proxy.account') || 'Hosting account'}</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.proxyHostId} className="transition-colors hover:bg-bg-hover">
-                  <td className="px-4 py-3"><Link to={`/traffic/${r.proxyHostId}?range=${range}`} className="font-medium text-text-primary hover:text-accent">{r.name}</Link></td>
-                  <td className="w-56 px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="w-14 shrink-0 font-mono text-xs text-text-secondary">{formatCount(r.requests)}</span>
-                      <div className="h-1 flex-1 rounded bg-white/[0.04]"><div className="h-full rounded bg-accent" style={{ width: `${(r.requests / maxReq) * 100}%` }} /></div>
-                    </div>
-                  </td>
-                  <td className={cn('px-4 py-3 font-mono text-xs', r.errorRate > 0.05 ? 'text-status-down' : 'text-text-secondary')}>{formatPct(r.errorRate)}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{formatMs(r.p95Ms)}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{bytes(r.bytesOut)}</td>
-                  {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{accountName(r.accountId)}</td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<ProxyTrafficOverviewRow>
+          storageKey="traffic"
+          singleGroupFlat
+          minWidth={680}
+          defaultSort={{ column: 'requests', dir: 'desc' }}
+          // Grouped by account, a host under the host of its parent domain (example.com → shop.example.com).
+          groups={showAccount
+            ? groupRowsByAccount(rows, accountDir, (r) => ({ id: r.accountId, username: accountName(r.accountId) }), (list) => domainTree(list, (r) => r.name, (r) => r.proxyHostId))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: domainTree(rows, (r) => r.name, (r) => r.proxyHostId) }]}
+          columns={[
+            { id: 'name', header: t('proxy.hosts.name') || 'Proxy host', sort: (r) => r.name, cell: (r) => <Link to={`/traffic/${r.proxyHostId}?range=${range}`} className="font-medium text-text-primary hover:text-accent">{r.name}</Link> },
+            {
+              id: 'requests', header: t('traffic.requests') || 'Requests', tdClassName: 'w-56', sort: (r) => r.requests,
+              cell: (r) => (
+                <div className="flex items-center gap-2">
+                  <span className="w-14 shrink-0 font-mono text-xs text-text-secondary">{formatCount(r.requests)}</span>
+                  <div className="h-1 flex-1 rounded bg-white/[0.04]"><div className="h-full rounded bg-accent" style={{ width: `${(r.requests / maxReq) * 100}%` }} /></div>
+                </div>
+              ),
+            },
+            { id: 'errors', header: t('traffic.errorRate') || 'Error rate', sort: (r) => r.errorRate, cell: (r) => <span className={cn('font-mono text-xs', r.errorRate > 0.05 ? 'text-status-down' : 'text-text-secondary')}>{formatPct(r.errorRate)}</span> },
+            { id: 'p95', header: 'p95', tdClassName: 'font-mono text-xs text-text-secondary', sort: (r) => r.p95Ms ?? null, cell: (r) => formatMs(r.p95Ms) },
+            { id: 'bytes', header: t('traffic.bytesOut') || 'Data sent', tdClassName: 'font-mono text-xs text-text-secondary', sort: (r) => r.bytesOut, cell: (r) => bytes(r.bytesOut) },
+          ]}
+        />
       </ListState>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
@@ -7,12 +7,12 @@ import { HostingSocketEvents, type HostingAccount, type MonitoringUpdatedPayload
 import { automationApi } from '@/api/automation.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
-import { cn } from '@/utils/cn';
+import { EmptyState, useHostingEvents } from '@/components/hosting/hostingUi';
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { appsErrorMessage, toastAppsError } from '@/components/apps/appsErrors';
 import { formatDateTime } from '@/components/apps/appsFormat';
@@ -60,6 +60,7 @@ export function WorkflowsPanel({ accountId, tenantId, accounts, showAccount, cre
   }, 1000);
 
   const manageable = accounts.filter((a) => can('monitoring.manage', a.id));
+  const accountDir = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
   const run = async (w: Workflow) => {
     setBusy(w.id);
@@ -104,56 +105,54 @@ export function WorkflowsPanel({ accountId, tenantId, accounts, showAccount, cre
       {items === null ? <div className="flex justify-center py-12"><LoadingSpinner /></div>
         : items.length === 0 ? <EmptyState icon={<WorkflowIcon />} text={error ?? (t('automation.empty') || 'No workflow yet. Example: export a certificate to a server by SFTP each time it is renewed.')} />
           : (
-            <TableScroll className="bg-bg-secondary" stickyFirstCol>
-              <table className="w-full min-w-[820px] text-sm">
-                <thead>
-                  <tr className={theadRowCls}>
-                    <th className={thCls}>{t('automation.form.name') || 'Name'}</th>
-                    <th className={thCls}>{t('automation.form.trigger') || 'Trigger'}</th>
-                    <th className={thCls}>{t('automation.lastRun') || 'Last run'}</th>
-                    <th className={thCls}>{t('automation.nextRun') || 'Next run'}</th>
-                    {showAccount && <th className={thCls}>{t('apps.list.account') || 'Account'}</th>}
-                    <th className={thCls}>{t('automation.form.enabled') || 'Active'}</th>
-                    <th className={cn(thCls, 'w-12')}><span className="sr-only">{t('apps.list.actions') || 'Actions'}</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((w) => {
-                    const manage = can('monitoring.manage', w.accountId);
-                    return (
-                      <tr key={w.id} className="cursor-pointer border-t border-border/40 hover:bg-bg-hover/40" onClick={() => navigate(`/automation/workflows/${w.id}`)}>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <Link to={`/automation/workflows/${w.id}`} onClick={(e) => e.stopPropagation()} className="font-medium text-text-primary hover:text-accent">{w.name}</Link>
-                            {isStaff && <TenantBadge tenantId={w.tenantId} />}
-                          </div>
-                          <div className="text-[11px] text-text-muted">{t('automation.actionCount', { count: w.actions.length, defaultValue: '{{count}} action(s)' })}</div>
-                        </td>
-                        <td className="max-w-[18rem] px-4 py-3 text-xs text-text-secondary">{describeTrigger(t, w.trigger, i18n.language)}</td>
-                        <td className="px-4 py-3">
-                          <RunStatusPill status={w.lastStatus} />
-                          <div className="text-[11px] text-text-muted">{w.lastRunAt ? formatDateTime(w.lastRunAt, i18n.language) : ''}</div>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-text-muted">{w.enabled ? formatDateTime(w.nextRunAt, i18n.language) : '—'}</td>
-                        {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{w.accountId == null ? (t('uptime.platformShort') || 'platform') : (accounts.find((a) => a.id === w.accountId)?.username ?? `#${w.accountId}`)}</td>}
-                        <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                          <ToggleSwitch size="sm" checked={w.enabled} disabled={!manage || busy === w.id} onChange={(c) => { void setEnabled(w, c); }} ariaLabel={t('automation.form.enabled') || 'Active'} />
-                        </td>
-                        <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
-                          {manage && (
-                            <ActionMenu disabled={busy === w.id} items={[
-                              { key: 'run', icon: <Play size={14} />, label: t('automation.runNow') || 'Run now', onClick: () => { void run(w); }, disabled: w.lastStatus === 'running' },
-                              { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(w) },
-                              { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(w); }, danger: true, separator: true },
-                            ]} />
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </TableScroll>
+            <GroupedTable<Workflow>
+              storageKey="automation-workflows"
+              singleGroupFlat
+              minWidth={760}
+              defaultSort={{ column: 'name' }}
+              // One group per account (platform workflows apart): the account column is the group header.
+              groups={groupRowsByAccount(items, accountDir, (w) => ({ id: showAccount ? w.accountId : null }), (rows) => flatNodes(rows, (w) => w.id), t('uptime.platformGroup') || 'Platform')}
+              onRowClick={(w) => navigate(`/automation/workflows/${w.id}`)}
+              columns={[
+                {
+                  id: 'name', header: t('automation.form.name') || 'Name', sort: (w) => w.name,
+                  cell: (w) => (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <Link to={`/automation/workflows/${w.id}`} className="font-medium text-text-primary hover:text-accent">{w.name}</Link>
+                        {isStaff && <TenantBadge tenantId={w.tenantId} />}
+                      </div>
+                      <div className="text-[11px] text-text-muted">{t('automation.actionCount', { count: w.actions.length, defaultValue: '{{count}} action(s)' })}</div>
+                    </>
+                  ),
+                },
+                { id: 'trigger', header: t('automation.form.trigger') || 'Trigger', tdClassName: 'max-w-[18rem] text-xs text-text-secondary', sort: (w) => describeTrigger(t, w.trigger, i18n.language), cell: (w) => describeTrigger(t, w.trigger, i18n.language) },
+                {
+                  id: 'lastRun', header: t('automation.lastRun') || 'Last run', sort: (w) => w.lastRunAt ?? '',
+                  cell: (w) => (
+                    <>
+                      <RunStatusPill status={w.lastStatus} />
+                      <div className="text-[11px] text-text-muted">{w.lastRunAt ? formatDateTime(w.lastRunAt, i18n.language) : ''}</div>
+                    </>
+                  ),
+                },
+                { id: 'nextRun', header: t('automation.nextRun') || 'Next run', tdClassName: 'text-xs text-text-muted', sort: (w) => (w.enabled ? w.nextRunAt ?? '' : ''), cell: (w) => (w.enabled ? formatDateTime(w.nextRunAt, i18n.language) : '—') },
+                {
+                  id: 'enabled', header: t('automation.form.enabled') || 'Active', sort: (w) => w.enabled,
+                  cell: (w) => <ToggleSwitch size="sm" checked={w.enabled} disabled={!can('monitoring.manage', w.accountId) || busy === w.id} onChange={(c) => { void setEnabled(w, c); }} ariaLabel={t('automation.form.enabled') || 'Active'} />,
+                },
+                {
+                  id: 'actions', header: <span className="sr-only">{t('apps.list.actions') || 'Actions'}</span>, thClassName: 'w-12', tdClassName: 'px-2',
+                  cell: (w) => (can('monitoring.manage', w.accountId) ? (
+                    <ActionMenu disabled={busy === w.id} items={[
+                      { key: 'run', icon: <Play size={14} />, label: t('automation.runNow') || 'Run now', onClick: () => { void run(w); }, disabled: w.lastStatus === 'running' },
+                      { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(w) },
+                      { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(w); }, danger: true, separator: true },
+                    ]} />
+                  ) : null),
+                },
+              ]}
+            />
           )}
       {(creating || editing) && (
         <WorkflowModal

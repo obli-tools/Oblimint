@@ -12,12 +12,12 @@ import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
-import { TenantBadge } from '@/components/common/TenantBadge';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount } from '@/components/common/accountGroups';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, Pill, inputCls, labelCls, payloadNumber, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, Pill, inputCls, labelCls, payloadNumber, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { appsErrorMessage, toastAppsError } from '@/components/apps/appsErrors';
@@ -79,7 +79,7 @@ export function NetworkLinksPanel({ accountId, tenantId, accounts, showAccount, 
 }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
-  const { can, isStaff } = useP4bAccess();
+  const { can } = useP4bAccess();
   const [links, setLinks] = useState<NetworkLink[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<NetworkLink | null>(null);
@@ -144,62 +144,48 @@ export function NetworkLinksPanel({ accountId, tenantId, accounts, showAccount, 
   };
 
   const manageable = accounts.filter((a) => can('apps.manage', a.id));
+  const accountDir = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
   return (
     <>
       {links === null ? <div className="flex justify-center py-12"><LoadingSpinner /></div>
         : links.length === 0 ? <EmptyState icon={<Cable />} text={error ?? (t('network.empty') || 'No link: the containers of the account are isolated from each other.')} />
           : (
-            <TableScroll className="bg-bg-secondary" stickyFirstCol>
-              <table className="w-full min-w-[820px] text-sm">
-                <thead>
-                  <tr className={theadRowCls}>
-                    <th className={thCls}>{t('network.source') || 'From'}</th>
-                    <th className={thCls}><span className="sr-only">→</span></th>
-                    <th className={thCls}>{t('network.target') || 'To'}</th>
-                    <th className={thCls}>{t('network.port') || 'Port'}</th>
-                    {showAccount && <th className={thCls}>{t('apps.list.account') || 'Account'}</th>}
-                    <th className={thCls}>{t('apps.list.status') || 'Status'}</th>
-                    <th className={thCls}>{t('network.enabled') || 'Enabled'}</th>
-                    <th className={cn(thCls, 'w-12')}><span className="sr-only">{t('apps.list.actions') || 'Actions'}</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {links.map((l) => {
-                    const manage = can('apps.manage', l.accountId);
-                    return (
-                      <tr key={l.id} className="border-t border-border/40 align-top">
-                        <td className="max-w-[16rem] px-4 py-3"><Endpoint end={l.source} /></td>
-                        <td className="px-1 py-3 text-text-muted"><ArrowRight size={14} /></td>
-                        <td className="max-w-[16rem] px-4 py-3">
-                          <Endpoint end={l.target} />
-                          {l.description && <div className="mt-0.5 truncate text-[11px] text-text-muted">{l.description}</div>}
-                        </td>
-                        <td className="px-4 py-3 font-mono text-xs text-text-secondary">{l.port}/{l.protocol}</td>
-                        {showAccount && (
-                          <td className="px-4 py-3 font-mono text-xs text-text-secondary">
-                            {accounts.find((a) => a.id === l.accountId)?.username ?? `#${l.accountId}`}
-                            {isStaff && <TenantBadge tenantId={l.tenantId} className="ml-1" />}
-                          </td>
-                        )}
-                        <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{linkStatusPill(t, l)}{originPill(t, l)}</div></td>
-                        <td className="px-4 py-3">
-                          <ToggleSwitch size="sm" checked={l.enabled} disabled={!manage || busy === l.id} onChange={(c) => { void toggle(l, c); }} ariaLabel={t('network.enabled') || 'Enabled'} />
-                        </td>
-                        <td className="px-2 py-2">
-                          {manage && (
-                            <ActionMenu items={[
-                              { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(l) },
-                              { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(l); }, danger: true, separator: true },
-                            ]} />
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </TableScroll>
+            <GroupedTable<NetworkLink>
+              storageKey="network-links"
+              singleGroupFlat
+              minWidth={760}
+              defaultSort={{ column: 'source' }}
+              groups={groupRowsByAccount(links, accountDir, (l) => ({ id: showAccount ? l.accountId : null }), (rows) => flatNodes(rows, (l) => l.id))}
+              columns={[
+                { id: 'source', header: t('network.source') || 'From', tdClassName: 'max-w-[16rem]', sort: (l) => l.source.label, cell: (l) => <Endpoint end={l.source} /> },
+                { id: 'arrow', header: <span className="sr-only">→</span>, tdClassName: 'px-1 text-text-muted', cell: () => <ArrowRight size={14} /> },
+                {
+                  id: 'target', header: t('network.target') || 'To', tdClassName: 'max-w-[16rem]', sort: (l) => l.target.label,
+                  cell: (l) => (
+                    <>
+                      <Endpoint end={l.target} />
+                      {l.description && <div className="mt-0.5 truncate text-[11px] text-text-muted">{l.description}</div>}
+                    </>
+                  ),
+                },
+                { id: 'port', header: t('network.port') || 'Port', tdClassName: 'font-mono text-xs text-text-secondary', sort: (l) => l.port, cell: (l) => `${l.port}/${l.protocol}` },
+                { id: 'status', header: t('apps.list.status') || 'Status', sort: (l) => (l.enabled ? l.status ?? '' : '~disabled'), cell: (l) => <div className="flex flex-wrap gap-1">{linkStatusPill(t, l)}{originPill(t, l)}</div> },
+                {
+                  id: 'enabled', header: t('network.enabled') || 'Enabled', sort: (l) => l.enabled,
+                  cell: (l) => <ToggleSwitch size="sm" checked={l.enabled} disabled={!can('apps.manage', l.accountId) || busy === l.id} onChange={(c) => { void toggle(l, c); }} ariaLabel={t('network.enabled') || 'Enabled'} />,
+                },
+                {
+                  id: 'actions', header: <span className="sr-only">{t('apps.list.actions') || 'Actions'}</span>, thClassName: 'w-12', tdClassName: 'px-2',
+                  cell: (l) => (can('apps.manage', l.accountId) ? (
+                    <ActionMenu items={[
+                      { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(l) },
+                      { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(l); }, danger: true, separator: true },
+                    ]} />
+                  ) : null),
+                },
+              ]}
+            />
           )}
       {creating && (
         <LinkCreateModal

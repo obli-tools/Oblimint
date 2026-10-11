@@ -7,14 +7,16 @@ import { appsApi } from '@/api/apps.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Drawer } from '@/components/common/Drawer';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, InfoRow, Pill, sectionTitleCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
+import { EmptyState, InfoRow, Pill, sectionTitleCls } from '@/components/hosting/hostingUi';
 import { formatMb } from '@/components/hosting/hostingFormat';
 import { cn } from '@/utils/cn';
 import { appsErrorMessage, toastAppsError } from '../appsErrors';
 import { formatDateTime, shortDigest, trimNum } from '../appsFormat';
 import { ContainerStateBadge, containerStateLabel } from '../AppBadges';
+
+type Service = AppStackDetail['services'][number];
 
 /** Containers (one per service): state, health, ports, restarts, start / stop / restart, inspect drawer. */
 export function AppContainersTab({ stack, canManage, onChanged }: { stack: AppStackDetail; canManage: boolean; onChanged: () => void }) {
@@ -46,54 +48,62 @@ export function AppContainersTab({ stack, canManage, onChanged }: { stack: AppSt
 
   return (
     <>
-      <TableScroll className="bg-bg-secondary" stickyFirstCol>
-        <table className="w-full min-w-[820px] text-sm">
-          <thead>
-            <tr className={theadRowCls}>
-              <th className={thCls}>{t('apps.effective.service') || 'Service'}</th>
-              <th className={thCls}>{t('apps.list.status') || 'Status'}</th>
-              <th className={thCls}>{t('apps.effective.image') || 'Image'}</th>
-              <th className={thCls}>{t('apps.effective.ports') || 'Exposed ports'}</th>
-              <th className={thCls}>{t('apps.effective.limits') || 'Limits'}</th>
-              <th className={thCls}>{t('apps.containers.started') || 'Started'}</th>
-              <th className={cn(thCls, 'w-12')}><span className="sr-only">{t('apps.list.actions') || 'Actions'}</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            {stack.services.map((s) => (
-              <tr key={s.name} className="border-t border-border/40 align-top">
-                <td className="px-4 py-3">
-                  <button type="button" onClick={() => setInspecting(s.name)} className="font-mono text-[13px] text-text-primary hover:text-accent">{s.name}</button>
-                  <div className="font-mono text-[10.5px] text-text-muted">{s.containerName}</div>
-                </td>
-                <td className="px-4 py-3">
-                  <ContainerStateBadge state={s.state} health={s.health} />
-                  {s.restartCount > 0 && <div className="mt-1 text-[11px] text-amber-400">{t('apps.containers.restarts', { count: s.restartCount, defaultValue: '{{count}} restart(s)' })}</div>}
-                </td>
-                <td className="px-4 py-3">
-                  <div className="break-all font-mono text-xs text-text-secondary">{s.image ?? '—'}</div>
-                  <div className="font-mono text-[10.5px] text-text-muted">{shortDigest(s.currentDigest)}</div>
-                </td>
-                <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.exposedPorts.length ? s.exposedPorts.map((p) => `${p.port}/${p.protocol}`).join(', ') : '—'}</td>
-                <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-text-secondary">
-                  {s.limits ? `${trimNum(s.limits.cpus)} CPU · ${formatMb(s.limits.memoryMb, units)} · ${s.limits.pids} PID` : '—'}
-                </td>
-                <td className="px-4 py-3 text-xs text-text-muted">{formatDateTime(s.startedAt, i18n.language)}</td>
-                <td className="px-2 py-2">
-                  {busy === s.name ? <div className="p-2"><LoadingSpinner size="sm" /></div> : (
-                    <ActionMenu items={[
-                      { key: 'inspect', icon: <FileSearch size={14} />, label: t('apps.containers.inspect') || 'Inspect', onClick: () => setInspecting(s.name) },
-                      { key: 'start', icon: <Play size={14} />, label: t('apps.actions.start') || 'Start', onClick: () => { void act(s.name, 'start'); }, hidden: !canManage, disabled: s.state === 'running', separator: true },
-                      { key: 'restart', icon: <RotateCw size={14} />, label: t('apps.actions.restart') || 'Restart', onClick: () => { void act(s.name, 'restart'); }, hidden: !canManage, disabled: s.state === 'missing' },
-                      { key: 'stop', icon: <Square size={14} />, label: t('apps.actions.stop') || 'Stop', onClick: () => { void act(s.name, 'stop'); }, hidden: !canManage, disabled: s.state !== 'running' && s.state !== 'restarting', danger: true },
-                    ]} />
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </TableScroll>
+      <GroupedTable<Service>
+        storageKey="app-containers"
+        singleGroupFlat
+        minWidth={820}
+        defaultSort={{ column: 'service' }}
+        groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(stack.services, (x) => x.name) }]}
+        columns={[
+          {
+            id: 'service', header: t('apps.effective.service') || 'Service', sort: (x) => x.name,
+            cell: (x) => (
+              <>
+                <button type="button" onClick={() => setInspecting(x.name)} className="font-mono text-[13px] text-text-primary hover:text-accent">{x.name}</button>
+                <div className="font-mono text-[10.5px] text-text-muted">{x.containerName}</div>
+              </>
+            ),
+          },
+          {
+            id: 'status', header: t('apps.list.status') || 'Status', sort: (x) => x.state,
+            cell: (x) => (
+              <>
+                <ContainerStateBadge state={x.state} health={x.health} />
+                {x.restartCount > 0 && <div className="mt-1 text-[11px] text-amber-400">{t('apps.containers.restarts', { count: x.restartCount, defaultValue: '{{count}} restart(s)' })}</div>}
+              </>
+            ),
+          },
+          {
+            id: 'image', header: t('apps.effective.image') || 'Image', sort: (x) => x.image ?? '',
+            cell: (x) => (
+              <>
+                <div className="break-all font-mono text-xs text-text-secondary">{x.image ?? '—'}</div>
+                <div className="font-mono text-[10.5px] text-text-muted">{shortDigest(x.currentDigest)}</div>
+              </>
+            ),
+          },
+          {
+            id: 'ports', header: t('apps.effective.ports') || 'Exposed ports', tdClassName: 'font-mono text-xs text-text-secondary', sort: (x) => x.exposedPorts[0]?.port ?? null,
+            cell: (x) => (x.exposedPorts.length ? x.exposedPorts.map((p) => `${p.port}/${p.protocol}`).join(', ') : '—'),
+          },
+          {
+            id: 'limits', header: t('apps.effective.limits') || 'Limits', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-secondary', sort: (x) => x.limits?.memoryMb ?? null,
+            cell: (x) => (x.limits ? `${trimNum(x.limits.cpus)} CPU · ${formatMb(x.limits.memoryMb, units)} · ${x.limits.pids} PID` : '—'),
+          },
+          { id: 'started', header: t('apps.containers.started') || 'Started', tdClassName: 'text-xs text-text-muted', sort: (x) => x.startedAt ?? '', cell: (x) => formatDateTime(x.startedAt, i18n.language) },
+          {
+            id: 'actions', header: <span className="sr-only">{t('apps.list.actions') || 'Actions'}</span>, thClassName: 'w-12', tdClassName: 'px-2 py-2',
+            cell: (x) => (busy === x.name ? <div className="p-2"><LoadingSpinner size="sm" /></div> : (
+              <ActionMenu items={[
+                { key: 'inspect', icon: <FileSearch size={14} />, label: t('apps.containers.inspect') || 'Inspect', onClick: () => setInspecting(x.name) },
+                { key: 'start', icon: <Play size={14} />, label: t('apps.actions.start') || 'Start', onClick: () => { void act(x.name, 'start'); }, hidden: !canManage, disabled: x.state === 'running', separator: true },
+                { key: 'restart', icon: <RotateCw size={14} />, label: t('apps.actions.restart') || 'Restart', onClick: () => { void act(x.name, 'restart'); }, hidden: !canManage, disabled: x.state === 'missing' },
+                { key: 'stop', icon: <Square size={14} />, label: t('apps.actions.stop') || 'Stop', onClick: () => { void act(x.name, 'stop'); }, hidden: !canManage, disabled: x.state !== 'running' && x.state !== 'restarting', danger: true },
+              ]} />
+            )),
+          },
+        ]}
+      />
       <InspectDrawer stackId={stack.id} service={inspecting} onClose={() => setInspecting(null)} />
     </>
   );

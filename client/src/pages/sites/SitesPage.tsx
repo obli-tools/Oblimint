@@ -8,13 +8,13 @@ import { accountsApi } from '@/api/accounts.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
 import { PageContainer } from '@/components/common/PageContainer';
-import { TableScroll } from '@/components/common/TableScroll';
-import { TenantBadge } from '@/components/common/TenantBadge';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
+import { groupRowsByAccount } from '@/components/common/accountGroups';
 import { CreateSiteModal } from '@/components/sites/CreateSiteModal';
 import { BaseBadge, SiteStatusBadge, usePublishModeLabel } from '@/components/sites/SiteBadges';
 import { useHostingEvent } from '@/components/sites/useHostingEvent';
 import { siteErrorMessage } from '@/components/sites/siteErrors';
-import { fieldCls, tdCls, thCls } from '@/components/sites/styles';
+import { fieldCls } from '@/components/sites/styles';
 import { headerAccentBtnCls, headerBtnCls } from '@/components/hosting/hostingUi';
 
 export function SitesPage() {
@@ -92,6 +92,7 @@ export function SitesPage() {
 
   const canCreate = mayCreate;
   const accountName = useMemo(() => new Map(accounts.map((a) => [a.id, a.username])), [accounts]);
+  const accountDir = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
   return (
     <PageContainer className="flex flex-col gap-5">
@@ -163,107 +164,73 @@ export function SitesPage() {
           )}
         </div>
       ) : sites.length > 0 && (
-        <>
-        {/* Phone: cards (same pattern as the accounts list) */}
-        <ul className="space-y-2 md:hidden">
-          {sites.map((s) => (
-            <li key={s.id}>
-              <Link to={`/sites/${s.id}`} className="block rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold text-text-primary">{s.name}</span>
-                  <SiteStatusBadge status={s.status} message={s.statusMessage} />
-                  <TenantBadge tenantId={s.tenantId} />
-                  <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+        <GroupedTable<Site>
+          storageKey="sites"
+          singleGroupFlat
+          minWidth={900}
+          defaultSort={{ column: 'name' }}
+          groups={groupRowsByAccount(sites, accountDir, (x) => ({ id: x.accountId, username: x.accountUsername || accountName.get(x.accountId) }),
+            // A site under the site of its parent domain (example.com → shop.example.com); without a domain: at the root.
+            (rows) => domainTree(rows, (x) => x.primaryDomain ?? `~${x.slug}`, (x) => x.id))}
+          onRowClick={(x) => navigate(`/sites/${x.id}`)}
+          renderCard={(x) => (
+            <Link to={`/sites/${x.id}`} className="block rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-sm font-semibold text-text-primary">{x.name}</span>
+                <SiteStatusBadge status={x.status} message={x.statusMessage} />
+                <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+              </div>
+              <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">{x.slug}</div>
+              {x.statusMessage && x.status === 'error' && <div className="mt-1 line-clamp-2 text-[11px] text-red-400/90">{x.statusMessage}</div>}
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
+                <BaseBadge base={x.base} compact />
+                <span>{t('sites.fields.release') || 'Release'}: <span className="font-mono text-text-primary">{x.currentReleaseNumber != null ? `#${x.currentReleaseNumber}` : '—'}</span></span>
+                <span>{publishModeLabel(x.publishMode)}</span>
+                {x.primaryDomain && <span className="truncate font-mono text-text-secondary">{x.primaryDomain}</span>}
+              </div>
+            </Link>
+          )}
+          columns={[
+            {
+              id: 'name', header: t('sites.fields.name') || 'Name', sort: (x) => x.primaryDomain ?? x.name,
+              cell: (x) => (
+                <>
+                  <Link to={`/sites/${x.id}`} className="font-medium text-text-primary hover:text-accent">{x.name}</Link>
+                  <div className="font-mono text-[11px] text-text-muted">{x.slug}</div>
+                </>
+              ),
+            },
+            { id: 'base', header: t('sites.fields.base') || 'Base', sort: (x) => x.base, cell: (x) => <BaseBadge base={x.base} compact /> },
+            {
+              id: 'app', header: t('sites.fields.appProfile') || 'Application', tdClassName: 'text-text-secondary',
+              sort: (x) => x.appProfile ?? '',
+              cell: (x) => (x.appProfile ? (x.appProfile === 'static' ? (t('sites.profile.static') || 'Static site') : appProfileDef(x.appProfile).label) : '—'),
+            },
+            {
+              id: 'status', header: t('sites.fields.status') || 'Status', sort: (x) => x.status,
+              cell: (x) => (
+                <div className="flex flex-col items-start gap-0.5">
+                  <SiteStatusBadge status={x.status} message={x.statusMessage} />
+                  {x.statusMessage && x.status === 'error' && <span className="max-w-[16rem] truncate text-[11px] text-red-400/90" title={x.statusMessage}>{x.statusMessage}</span>}
                 </div>
-                <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">
-                  {s.accountUsername || accountName.get(s.accountId) || `#${s.accountId}`} · {s.slug}
-                </div>
-                {s.statusMessage && s.status === 'error' && (
-                  <div className="mt-1 line-clamp-2 text-[11px] text-red-400/90">{s.statusMessage}</div>
-                )}
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
-                  <BaseBadge base={s.base} compact />
-                  <span>{t('sites.fields.release') || 'Release'}: <span className="font-mono text-text-primary">{s.currentReleaseNumber != null ? `#${s.currentReleaseNumber}` : '—'}</span></span>
-                  <span>{publishModeLabel(s.publishMode)}</span>
-                  {s.primaryDomain && <span className="truncate font-mono text-text-secondary">{s.primaryDomain}</span>}
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
-        <TableScroll className="hidden bg-bg-secondary rounded-xl md:block" stickyFirstCol>
-          <table className="w-full min-w-[960px] text-sm">
-            <thead>
-              <tr>
-                <th className={thCls}>{t('sites.fields.name') || 'Name'}</th>
-                <th className={thCls}>{t('sites.fields.accountShort') || 'Account'}</th>
-                <th className={thCls}>{t('sites.fields.base') || 'Base'}</th>
-                <th className={thCls}>{t('sites.fields.appProfile') || 'Application'}</th>
-                <th className={thCls}>{t('sites.fields.status') || 'Status'}</th>
-                <th className={thCls}>{t('sites.fields.release') || 'Release'}</th>
-                <th className={thCls}>{t('sites.fields.primaryDomain') || 'Domain'}</th>
-                <th className={thCls}>{t('sites.fields.publishMode') || 'Publication'}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sites.map((s) => (
-                <tr
-                  key={s.id}
-                  className="cursor-pointer transition-colors hover:bg-bg-tertiary"
-                  onClick={(e) => {
-                    if ((e.target as HTMLElement).closest('a,button')) return;
-                    navigate(`/sites/${s.id}`);
-                  }}
-                >
-                  <td className={tdCls}>
-                    <div className="flex items-center gap-2">
-                      <Link to={`/sites/${s.id}`} className="font-medium text-text-primary hover:text-accent">{s.name}</Link>
-                      <TenantBadge tenantId={s.tenantId} />
-                    </div>
-                    <div className="font-mono text-[11px] text-text-muted">{s.slug}</div>
-                  </td>
-                  <td className={tdCls}>
-                    <Link to={`/accounts/${s.accountId}`} className="font-mono text-xs text-text-secondary hover:text-accent">
-                      {s.accountUsername || accountName.get(s.accountId) || `#${s.accountId}`}
-                    </Link>
-                  </td>
-                  <td className={tdCls}><BaseBadge base={s.base} compact /></td>
-                  <td className={`${tdCls} text-text-secondary`}>
-                    {s.appProfile ? (s.appProfile === 'static' ? (t('sites.profile.static') || 'Static site') : appProfileDef(s.appProfile).label) : '—'}
-                  </td>
-                  <td className={tdCls}>
-                    <div className="flex flex-col items-start gap-0.5">
-                      <SiteStatusBadge status={s.status} message={s.statusMessage} />
-                      {s.statusMessage && s.status === 'error' && (
-                        <span className="max-w-[16rem] truncate text-[11px] text-red-400/90" title={s.statusMessage}>{s.statusMessage}</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className={`${tdCls} font-mono text-text-secondary`}>
-                    {s.currentReleaseNumber != null ? `#${s.currentReleaseNumber}` : <span className="text-text-muted">—</span>}
-                  </td>
-                  <td className={tdCls}>
-                    {s.primaryDomain ? (
-                      <a
-                        href={`https://${s.primaryDomain}/`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 font-mono text-xs text-text-secondary hover:text-accent"
-                      >
-                        {s.primaryDomain}
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
-                    ) : <span className="text-text-muted">—</span>}
-                  </td>
-                  <td className={`${tdCls} text-xs text-text-secondary`}>
-                    {publishModeLabel(s.publishMode)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
-        </>
+              ),
+            },
+            {
+              id: 'release', header: t('sites.fields.release') || 'Release', tdClassName: 'font-mono text-text-secondary',
+              sort: (x) => x.currentReleaseNumber ?? null,
+              cell: (x) => (x.currentReleaseNumber != null ? `#${x.currentReleaseNumber}` : <span className="text-text-muted">—</span>),
+            },
+            {
+              id: 'domain', header: t('sites.fields.primaryDomain') || 'Domain', sort: (x) => x.primaryDomain ?? '',
+              cell: (x) => (x.primaryDomain ? (
+                <a href={`https://${x.primaryDomain}/`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-xs text-text-secondary hover:text-accent">
+                  {x.primaryDomain}<ExternalLink className="h-3 w-3" />
+                </a>
+              ) : <span className="text-text-muted">—</span>),
+            },
+            { id: 'publish', header: t('sites.fields.publishMode') || 'Publication', tdClassName: 'text-xs text-text-secondary', sort: (x) => x.publishMode, cell: (x) => publishModeLabel(x.publishMode) },
+          ]}
+        />
       )}
 
       <CreateSiteModal

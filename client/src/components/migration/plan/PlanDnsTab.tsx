@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, Network, Unlink } from 'lucide-react';
 import type { CwpInventory, MigrationPlanChoices } from '@oblimint/shared';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { domainTree, groupByAccount, type TreeNode as TreeNodeOf } from '@/components/common/GroupedTable';
 import { Card, EmptyState, Pill, selectCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { MailSearch } from '@/components/mail/MailListParts';
@@ -90,6 +91,33 @@ export function PlanDnsTab({ editor, inventory, inventoryStatus }: { editor: Pla
   // The orphan-zones card needs the inventory: while it loads / when it failed, say so instead of hiding the card.
   const orphans = inventory ? <OrphanZonesCard editor={editor} inventory={inventory} />
     : inventoryStatus && (inventoryStatus.loading || inventoryStatus.error) ? <InventoryStatus status={inventoryStatus} compact /> : null;
+  const renderZones = (nodes: TreeNodeOf<(typeof zones)[number]>[], depth: number): ReactNode => [...nodes]
+    .sort((x, y) => x.row.zone.name.localeCompare(y.row.zone.name))
+    .map((n) => {
+      const { account, zone } = n.row;
+      const w = warningsFor(account.warnings, 'zone', zone.name);
+      return (
+        <div key={n.key} style={depth ? { marginLeft: `${Math.min(depth, 4) * 1.25}rem` } : undefined}>
+          <TreeNode
+            title={<span className="font-mono text-[13px]">{zone.name}</span>}
+            badges={
+              <span className="inline-flex flex-wrap gap-1">
+                {zone.domain && <Pill tone="blue">{zone.domain}</Pill>}
+                {zone.rewritten > 0 && <Pill tone="accent">{t('migration.dns.rewritten', { count: zone.rewritten, defaultValue: '{{count}} rewritten' })}</Pill>}
+                {zone.dropped.length > 0 && <Pill tone="amber">{t('migration.dns.dropped', { count: zone.dropped.length, defaultValue: '{{count}} dropped' })}</Pill>}
+              </span>
+            }
+            meta={`${zone.records.length} · TTL ${zone.defaultTtl}`}
+          >
+            <div className="space-y-2 px-1 pb-2">
+              <ZonePreview zone={zone} />
+              {w.length > 0 && <WarningList warnings={w} showScope={false} />}
+            </div>
+          </TreeNode>
+          {n.children.length > 0 && <div className="mt-1 space-y-1">{renderZones(n.children, depth + 1)}</div>}
+        </div>
+      );
+    });
   if (!editor.plan.result) return <div className="space-y-3">{orphans}<EmptyState icon={<Network />} text={t('migration.overview.noResult') || 'No dry-run yet.'} /></div>;
   return (
     <div className="space-y-3">
@@ -99,30 +127,22 @@ export function PlanDnsTab({ editor, inventory, inventoryStatus }: { editor: Pla
         <p className="min-w-0 flex-1 text-xs text-text-muted">{t('migration.dns.description') || 'Zones are read with the journal applied, the source IPs are rewritten exactly, SOA and apex NS are replaced by the platform ones, unsupported types and the records the mail DNS already provides are dropped.'}</p>
       </div>
       {zones.length === 0 ? <EmptyState icon={<Network />} text={t('migration.dns.empty') || 'No zone migrated by this plan.'} /> : (
-        <div className="space-y-1 rounded-xl bg-bg-secondary p-2">
-          {zones.map(({ account, zone }) => {
-            const w = warningsFor(account.warnings, 'zone', zone.name);
-            return (
-              <TreeNode
-                key={`${account.cwpUsername}-${zone.name}`}
-                title={<span className="font-mono text-[13px]">{zone.name}</span>}
-                badges={
-                  <span className="inline-flex flex-wrap gap-1">
-                    <Pill>{account.cwpUsername}</Pill>
-                    {zone.domain && <Pill tone="blue">{zone.domain}</Pill>}
-                    {zone.rewritten > 0 && <Pill tone="accent">{t('migration.dns.rewritten', { count: zone.rewritten, defaultValue: '{{count}} rewritten' })}</Pill>}
-                    {zone.dropped.length > 0 && <Pill tone="amber">{t('migration.dns.dropped', { count: zone.dropped.length, defaultValue: '{{count}} dropped' })}</Pill>}
-                  </span>
-                }
-                meta={`${zone.records.length} · TTL ${zone.defaultTtl}`}
-              >
-                <div className="space-y-2 px-1 pb-2">
-                  <ZonePreview zone={zone} />
-                  {w.length > 0 && <WarningList warnings={w} showScope={false} />}
+        // One block per account (titled by its main domain), the zones nested by name (example.com → shop.example.com).
+        <div className="space-y-3">
+          {groupByAccount(zones, ({ account }) => {
+            const main = account.domains.find((d) => d.cwpKind === 'main')?.fqdn ?? null;
+            return { id: account.cwpUsername, name: main ?? account.cwpUsername, meta: main ? <span className="font-mono text-[11px] text-text-muted">{account.cwpUsername}</span> : undefined };
+          }, (rows) => domainTree(rows, ({ zone }) => zone.name, ({ account, zone }) => `${account.cwpUsername}-${zone.name}`))
+            .sort((x, y) => x.sortLabel.localeCompare(y.sortLabel))
+            .map((g) => (
+              <section key={g.key} className="rounded-xl bg-bg-secondary p-2">
+                <div className="flex items-center gap-2 px-2 pb-1.5 pt-1">
+                  <span className="font-mono text-sm font-semibold text-text-primary">{g.label}</span>
+                  {g.meta}
                 </div>
-              </TreeNode>
-            );
-          })}
+                <div className="space-y-1">{renderZones(g.nodes, 0)}</div>
+              </section>
+            ))}
         </div>
       )}
     </div>

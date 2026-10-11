@@ -13,11 +13,11 @@ import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Card, Pill, payloadNumber, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { Card, Pill, payloadNumber, useHostingEvents } from '@/components/hosting/hostingUi';
 import { RecordOriginBadge, ZoneKindBadge, ZoneStatusBadge } from '@/components/dns/DnsBadges';
 import { DnsRecordModal } from '@/components/dns/DnsRecordModal';
 import { ApplyTemplateModal, DelegationCard, ExpectedRecordsCard, ZoneResetModal, ZoneSettingsCard } from '@/components/dns/DnsZoneCards';
@@ -304,63 +304,60 @@ export function DnsZonePage() {
             {zone.records.length === 0 ? (t('dns.records.empty') || 'No record yet.') : (t('common.noMatch') || 'No match')}
           </p>
         ) : (
-          <>
-            {/* Phone: one card per record */}
-            <ul className="space-y-2 md:hidden">
-              {records.map((r) => (
-                <li key={r.id} className={cn('rounded-lg bg-bg-primary p-2.5', r.disabled && 'opacity-60')}>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[11px] font-semibold text-accent">{r.type}</span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-sm text-text-primary">{r.name}</span>
-                    {recordActions(r)}
+          <GroupedTable<DnsRecord>
+            singleGroupFlat
+            minWidth={820}
+            className="bg-bg-primary"
+            rowClassName={(r) => r.disabled && 'opacity-60'}
+            // Default order: compareRecords (apex first, then by name / type); every column sorts; a record sits
+            // under the record of its parent name (www.example.com under example.com).
+            groups={[{ key: 'records', label: '', sortLabel: '', nodes: domainTree(records, (r) => fqdnOf(r.name, zone.name), (r) => r.id) }]}
+            renderCard={(r) => (
+              <div className={cn('rounded-lg bg-bg-primary p-2.5', r.disabled && 'opacity-60')}>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[11px] font-semibold text-accent">{r.type}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-sm text-text-primary">{r.name}</span>
+                  {recordActions(r)}
+                </div>
+                <div className="mt-1 break-all font-mono text-xs text-text-secondary">
+                  {r.priority != null && <span className="text-text-muted">{r.priority} </span>}{r.content}
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                  <RecordOriginBadge origin={r.origin} />
+                  <span className="font-mono">TTL {r.ttl}</span>
+                  {r.disabled && <Pill>{t('dns.records.disabled') || 'Disabled'}</Pill>}
+                  {r.comment && <span className="truncate">{r.comment}</span>}
+                </div>
+              </div>
+            )}
+            columns={[
+              {
+                id: 'name', header: t('dns.records.fields.name') || 'Name', sort: (r) => fqdnOf(r.name, zone.name),
+                cell: (r) => (
+                  <div>
+                    <div className="font-mono text-text-primary">{r.name}</div>
+                    {r.comment && <div className="text-[11px] text-text-muted">{r.comment}</div>}
                   </div>
-                  <div className="mt-1 break-all font-mono text-xs text-text-secondary">
-                    {r.priority != null && <span className="text-text-muted">{r.priority} </span>}{r.content}
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-                    <RecordOriginBadge origin={r.origin} />
-                    <span className="font-mono">TTL {r.ttl}</span>
-                    {r.disabled && <Pill>{t('dns.records.disabled') || 'Disabled'}</Pill>}
-                    {r.comment && <span className="truncate">{r.comment}</span>}
-                  </div>
-                </li>
-              ))}
-            </ul>
-            <TableScroll className="hidden rounded-lg bg-bg-primary md:block">
-              <table className="w-full min-w-[820px] text-sm">
-                <thead>
-                  <tr className={theadRowCls}>
-                    <th className={thCls}>{t('dns.records.fields.name') || 'Name'}</th>
-                    <th className={thCls}>{t('dns.records.fields.type') || 'Type'}</th>
-                    <th className={thCls}>{t('dns.records.fields.content') || 'Content'}</th>
-                    <th className={`${thCls} text-right`}>TTL</th>
-                    <th className={thCls}>{t('dns.records.fields.origin') || 'Origin'}</th>
-                    <th className={`${thCls} w-20`}><span className="sr-only">{t('common.edit') || 'Edit'}</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.map((r) => (
-                    <tr key={r.id} className={cn('align-top transition-colors hover:bg-bg-hover', r.disabled && 'opacity-60')}>
-                      <td className="px-4 py-2.5">
-                        <div className="font-mono text-text-primary">{r.name}</div>
-                        {r.comment && <div className="text-[11px] text-text-muted">{r.comment}</div>}
-                      </td>
-                      <td className="px-4 py-2.5 font-mono text-xs font-semibold text-accent">{r.type}</td>
-                      <td className="max-w-[28rem] px-4 py-2.5">
-                        <span className="break-all font-mono text-xs text-text-secondary">
-                          {r.priority != null && <span className="text-text-muted">{r.priority} </span>}{r.content}
-                        </span>
-                        {r.disabled && <Pill className="ml-2">{t('dns.records.disabled') || 'Disabled'}</Pill>}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{r.ttl}</td>
-                      <td className="px-4 py-2.5"><RecordOriginBadge origin={r.origin} /></td>
-                      <td className="px-4 py-2.5 text-right">{recordActions(r)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </TableScroll>
-          </>
+                ),
+              },
+              { id: 'type', header: t('dns.records.fields.type') || 'Type', tdClassName: 'font-mono text-xs font-semibold text-accent', sort: (r) => r.type, cell: (r) => r.type },
+              {
+                id: 'content', header: t('dns.records.fields.content') || 'Content', tdClassName: 'max-w-[28rem]',
+                sort: (r) => `${r.priority ?? ''} ${r.content}`.trim(),
+                cell: (r) => (
+                  <span>
+                    <span className="break-all font-mono text-xs text-text-secondary">
+                      {r.priority != null && <span className="text-text-muted">{r.priority} </span>}{r.content}
+                    </span>
+                    {r.disabled && <Pill className="ml-2">{t('dns.records.disabled') || 'Disabled'}</Pill>}
+                  </span>
+                ),
+              },
+              { id: 'ttl', header: 'TTL', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs tabular-nums', sort: (r) => r.ttl, cell: (r) => r.ttl },
+              { id: 'origin', header: t('dns.records.fields.origin') || 'Origin', sort: (r) => r.origin, cell: (r) => <RecordOriginBadge origin={r.origin} /> },
+              { id: 'actions', header: <span className="sr-only">{t('common.edit') || 'Edit'}</span>, thClassName: 'w-20', tdClassName: 'text-right', cell: (r) => recordActions(r) },
+            ]}
+          />
         )}
       </Card>
 

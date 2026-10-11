@@ -4,8 +4,9 @@ import { AlertTriangle, ScrollText } from 'lucide-react';
 import type { MailLogDirection, MailLogEntry, MailLogEventKind } from '@oblimint/shared';
 import { mailApi } from '@/api/mail.api';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
-import { EmptyState, Pill, labelCls, selectCls, inputCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
+import { EmptyState, Pill, labelCls, selectCls, inputCls } from '@/components/hosting/hostingUi';
 import { formatBytes } from '@/components/databases/dbFormat';
 import { cn } from '@/utils/cn';
 import { LogEventBadge } from './MailBadges';
@@ -20,6 +21,7 @@ const EVENTS: MailLogEventKind[] = ['accepted', 'delivered', 'deferred', 'bounce
 
 /** Logs tab of /mail: direction / event / dates / text filters, pagination. */
 export function MailLogsPanel({ accountId, tenantId, mailboxId }: { accountId?: number | null; tenantId?: number; mailboxId?: number }) {
+  const accountDir = useAccountDirectory();
   const { t, i18n } = useTranslation();
   const [direction, setDirection] = useState<MailLogDirection | ''>('');
   const [event, setEvent] = useState<MailLogEventKind | ''>('');
@@ -108,9 +110,17 @@ export function MailLogsPanel({ accountId, tenantId, mailboxId }: { accountId?: 
         <EmptyState icon={<ScrollText />} text={t('mail.logs.empty') || 'No log line for these filters.'} />
       ) : (
         <>
-          <ul className="space-y-2 md:hidden">
-            {items.map((l) => (
-              <li key={l.id} className="rounded-xl bg-bg-secondary px-3 py-2.5">
+          <GroupedTable<MailLogEntry>
+            storageKey="mail-logs"
+            singleGroupFlat
+            minWidth={980}
+            defaultSort={{ column: 'at', dir: 'desc' }}
+            // Sorting applies to the page shown (server pagination).
+            groups={accountId == null && mailboxId == null
+              ? groupRowsByAccount(items, accountDir, (l) => ({ id: l.accountId }), (rows) => flatNodes(rows, (l) => l.id), t('common.platformGroup') || 'Platform')
+              : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (l) => l.id) }]}
+            renderCard={(l) => (
+              <div className="rounded-xl bg-bg-secondary px-3 py-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <LogEventBadge event={l.event} />
                   <Pill>{dirLabel(l.direction)}</Pill>
@@ -118,40 +128,26 @@ export function MailLogsPanel({ accountId, tenantId, mailboxId }: { accountId?: 
                 </div>
                 <div className="mt-1.5 break-all font-mono text-xs text-text-primary">{l.sender ?? '<>'} → {l.recipient ?? '—'}</div>
                 {l.detail && <div className="mt-1 break-words text-[11px] text-text-muted">{l.detail}</div>}
-              </li>
-            ))}
-          </ul>
-          <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-            <table className="w-full min-w-[980px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('mail.logs.at') || 'Date'}</th>
-                  <th className={thCls}>{t('mail.logs.direction') || 'Direction'}</th>
-                  <th className={thCls}>{t('mail.logs.event') || 'Event'}</th>
-                  <th className={thCls}>{t('mail.logs.sender') || 'Sender'}</th>
-                  <th className={thCls}>{t('mail.logs.recipient') || 'Recipient'}</th>
-                  <th className={`${thCls} text-right`}>{t('mail.logs.size') || 'Size'}</th>
-                  <th className={thCls}>{t('mail.logs.detail') || 'Detail'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((l) => (
-                  <tr key={l.id} className="align-top transition-colors hover:bg-bg-hover">
-                    <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-text-secondary">{new Date(l.at).toLocaleString(i18n.language)}</td>
-                    <td className="px-4 py-2.5"><Pill>{dirLabel(l.direction)}</Pill></td>
-                    <td className="px-4 py-2.5"><LogEventBadge event={l.event} /></td>
-                    <td className="max-w-[14rem] break-all px-4 py-2.5 font-mono text-xs text-text-primary">{l.sender ?? '<>'}</td>
-                    <td className="max-w-[14rem] break-all px-4 py-2.5 font-mono text-xs text-text-secondary">{l.recipient ?? '—'}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{l.sizeBytes == null ? '—' : formatBytes(t, l.sizeBytes)}</td>
-                    <td className="max-w-[20rem] px-4 py-2.5 text-[11px] text-text-muted">
-                      <span className="break-words">{l.detail ?? '—'}</span>
-                      {(l.remote || l.queueId) && <div className="mt-0.5 font-mono text-[10px]">{[l.remote, l.queueId].filter(Boolean).join(' · ')}</div>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
+              </div>
+            )}
+            columns={[
+              { id: 'at', header: t('mail.logs.at') || 'Date', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-secondary', sort: (l) => l.at, cell: (l) => new Date(l.at).toLocaleString(i18n.language) },
+              { id: 'direction', header: t('mail.logs.direction') || 'Direction', sort: (l) => l.direction, cell: (l) => <Pill>{dirLabel(l.direction)}</Pill> },
+              { id: 'event', header: t('mail.logs.event') || 'Event', sort: (l) => l.event, cell: (l) => <LogEventBadge event={l.event} /> },
+              { id: 'sender', header: t('mail.logs.sender') || 'Sender', tdClassName: 'max-w-[14rem] break-all font-mono text-xs text-text-primary', sort: (l) => l.sender ?? '', cell: (l) => l.sender ?? '<>' },
+              { id: 'recipient', header: t('mail.logs.recipient') || 'Recipient', tdClassName: 'max-w-[14rem] break-all font-mono text-xs text-text-secondary', sort: (l) => l.recipient ?? '', cell: (l) => l.recipient ?? '—' },
+              { id: 'size', header: t('mail.logs.size') || 'Size', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs tabular-nums', sort: (l) => l.sizeBytes ?? null, cell: (l) => (l.sizeBytes == null ? '—' : formatBytes(t, l.sizeBytes)) },
+              {
+                id: 'detail', header: t('mail.logs.detail') || 'Detail', tdClassName: 'max-w-[20rem] text-[11px] text-text-muted', sort: (l) => l.detail ?? '',
+                cell: (l) => (
+                  <>
+                    <span className="break-words">{l.detail ?? '—'}</span>
+                    {(l.remote || l.queueId) && <div className="mt-0.5 font-mono text-[10px]">{[l.remote, l.queueId].filter(Boolean).join(' · ')}</div>}
+                  </>
+                ),
+              },
+            ]}
+          />
           <Pager offset={offset} total={total} pageSize={PAGE} onOffset={setOffset} extra={<span>{t('mail.logs.total', { count: total, defaultValue: '{{count}} line(s)' })}</span>} />
         </>
       )}

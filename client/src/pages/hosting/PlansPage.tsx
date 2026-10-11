@@ -9,18 +9,17 @@ import { useHostingMe } from '@/store/hostingStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { useTenantStore } from '@/store/tenantStore';
 import { PageContainer } from '@/components/common/PageContainer';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes, groupByAccount } from '@/components/common/GroupedTable';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { IconButton } from '@/components/common/IconButton';
 import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
-import { TenantBadge } from '@/components/common/TenantBadge';
 import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { PlanFormModal } from '@/components/hosting/PlanFormModal';
 import {
   Card, EmptyState, Pill, dimensionLabel, dimensionValue, headerAccentBtnCls, headerBtnCls, hostingErrorMessage,
-  thCls, theadRowCls, toastHostingError, useHostingEvents,
+  toastHostingError, useHostingEvents,
 } from '@/components/hosting/hostingUi';
 import { formatMb } from '@/components/hosting/hostingFormat';
 
@@ -197,74 +196,63 @@ export function PlansPage() {
           action={manage ? <button onClick={() => setEditing('new')} className={headerAccentBtnCls}><Plus size={14} />{t('plans.create') || 'New plan'}</button> : undefined}
         />
       ) : (
-        <>
-          {/* Phone: cards */}
-          <ul className="space-y-2 md:hidden">
-            {plans.map((p) => (
-              <li key={p.id} className="rounded-xl bg-bg-secondary px-3 py-2.5">
-                <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">{p.name}</span>
-                  {isMaster && <TenantBadge tenantId={p.tenantId} tenantName={p.tenantName} />}
-                  {!p.isActive && <Pill>{t('plans.inactive') || 'inactive'}</Pill>}
-                  {manage && <ActionMenu items={menuItems(p)} sheetTitle={p.name} triggerSize="sm" />}
+        <GroupedTable<Plan>
+          storageKey="plans"
+          singleGroupFlat
+          minWidth={760}
+          defaultSort={{ column: 'name' }}
+          // Master view: one group per workspace.
+          groups={isMaster
+            ? groupByAccount(plans, (p) => ({ id: p.tenantId, name: p.tenantName ?? `#${p.tenantId}` }), (rows) => flatNodes(rows, (p) => p.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(plans, (p) => p.id) }]}
+          renderCard={(p) => (
+            <div className="rounded-xl bg-bg-secondary px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">{p.name}</span>
+                {!p.isActive && <Pill>{t('plans.inactive') || 'inactive'}</Pill>}
+                {manage && <ActionMenu items={menuItems(p)} sheetTitle={p.name} triggerSize="sm" />}
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {keyLimits(p).map((c) => <span key={c} className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">{c}</span>)}
+              </div>
+              <div className="mt-1.5 text-[11px] text-text-muted">
+                {t('plans.col.accounts') || 'Accounts'}: <span className="text-text-primary">{p.accountCount}</span> · {t('plans.col.bases') || 'Bases'}: {basesLabel(p)}
+              </div>
+            </div>
+          )}
+          columns={[
+            {
+              id: 'name', header: t('plans.col.name') || 'Name', sort: (p) => p.name,
+              cell: (p) => (
+                <>
+                  <div className="font-medium text-text-primary">{p.name}</div>
+                  {p.description && <div className="max-w-xs truncate text-xs text-text-muted">{p.description}</div>}
+                </>
+              ),
+            },
+            {
+              id: 'limits', header: t('plans.col.limits') || 'Limits',
+              cell: (p) => <div className="flex flex-wrap gap-1">{keyLimits(p).map((c) => <span key={c} className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">{c}</span>)}</div>,
+            },
+            { id: 'bases', header: t('plans.col.bases') || 'Bases', tdClassName: 'text-xs', cell: (p) => basesLabel(p) },
+            { id: 'accounts', header: t('plans.col.accounts') || 'Accounts', thClassName: 'text-right', tdClassName: 'text-right font-mono tabular-nums', sort: (p) => p.accountCount, cell: (p) => p.accountCount },
+            {
+              id: 'active', header: t('plans.col.active') || 'Active', sort: (p) => p.isActive,
+              cell: (p) => (manage
+                ? <ToggleSwitch size="sm" checked={p.isActive} onChange={(v) => { void toggleActive(p, v); }} ariaLabel={t('plans.col.active') || 'Active'} />
+                : (p.isActive ? <Pill tone="green">{t('plans.active') || 'active'}</Pill> : <Pill>{t('plans.inactive') || 'inactive'}</Pill>)),
+            },
+            {
+              id: 'actions', header: '', thClassName: 'w-20',
+              cell: (p) => (manage ? (
+                <div className="flex items-center justify-end gap-1">
+                  <IconButton label={t('common.edit') || 'Edit'} icon={<Pencil size={13} />} size="sm" onClick={() => setEditing(p)} />
+                  <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 size={13} />} size="sm" variant="danger" onClick={() => { void remove(p); }} />
                 </div>
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {keyLimits(p).map((c) => <span key={c} className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">{c}</span>)}
-                </div>
-                <div className="mt-1.5 text-[11px] text-text-muted">
-                  {t('plans.col.accounts') || 'Accounts'}: <span className="text-text-primary">{p.accountCount}</span> · {t('plans.col.bases') || 'Bases'}: {basesLabel(p)}
-                </div>
-              </li>
-            ))}
-          </ul>
-
-          <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('plans.col.name') || 'Name'}</th>
-                  {isMaster && <th className={thCls}>{t('hostingCommon.tenant') || 'Workspace'}</th>}
-                  <th className={thCls}>{t('plans.col.limits') || 'Limits'}</th>
-                  <th className={thCls}>{t('plans.col.bases') || 'Bases'}</th>
-                  <th className={`${thCls} text-right`}>{t('plans.col.accounts') || 'Accounts'}</th>
-                  <th className={thCls}>{t('plans.col.active') || 'Active'}</th>
-                  <th className="w-20" />
-                </tr>
-              </thead>
-              <tbody>
-                {plans.map((p) => (
-                  <tr key={p.id} className="hover:bg-bg-hover transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-text-primary">{p.name}</div>
-                      {p.description && <div className="max-w-xs truncate text-xs text-text-muted">{p.description}</div>}
-                    </td>
-                    {isMaster && <td className="px-4 py-3"><TenantBadge tenantId={p.tenantId} tenantName={p.tenantName} /></td>}
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {keyLimits(p).map((c) => <span key={c} className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">{c}</span>)}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-xs">{basesLabel(p)}</td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums">{p.accountCount}</td>
-                    <td className="px-4 py-3">
-                      {manage
-                        ? <ToggleSwitch size="sm" checked={p.isActive} onChange={(v) => { void toggleActive(p, v); }} ariaLabel={t('plans.col.active') || 'Active'} />
-                        : (p.isActive ? <Pill tone="green">{t('plans.active') || 'active'}</Pill> : <Pill>{t('plans.inactive') || 'inactive'}</Pill>)}
-                    </td>
-                    <td className="px-2 py-3">
-                      {manage && (
-                        <div className="flex items-center justify-end gap-1">
-                          <IconButton label={t('common.edit') || 'Edit'} icon={<Pencil size={13} />} size="sm" onClick={() => setEditing(p)} />
-                          <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 size={13} />} size="sm" variant="danger" onClick={() => { void remove(p); }} />
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
-        </>
+              ) : null),
+            },
+          ]}
+        />
       )}
 
       <PlanFormModal

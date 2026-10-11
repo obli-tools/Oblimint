@@ -12,12 +12,12 @@ import { sitesApi } from '@/api/sites.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { BaseBadge, Pill } from '../SiteBadges';
 import { siteErrorMessage, toastSiteError } from '../siteErrors';
 import { useHostingEvent } from '../useHostingEvent';
-import { cardCls, fieldCls, labelCls, tdCls, thCls } from '../styles';
+import { cardCls, fieldCls, labelCls } from '../styles';
 import type { SiteTabProps } from './types';
 
 export function SiteRoutesTab({ site, reloadSite }: SiteTabProps) {
@@ -117,40 +117,35 @@ export function SiteRoutesTab({ site, reloadSite }: SiteTabProps) {
           <p className="text-sm text-text-secondary">{t('siteRoutes.empty') || 'No domain points to this site yet.'}</p>
         </div>
       ) : (
-        <TableScroll className="bg-bg-secondary rounded-xl">
-          <table className="w-full min-w-[640px] text-sm">
-            <thead>
-              <tr>
-                <th className={thCls}>{t('siteRoutes.fields.address') || 'Address'}</th>
-                <th className={thCls}>{t('siteRoutes.fields.prefix') || 'Prefix'}</th>
-                <th className={thCls}>{t('siteRoutes.fields.runtime') || 'Runtime'}</th>
-                <th className={thCls}><span className="sr-only">{t('releases.fields.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {routes.map((r) => (
-                <tr key={r.id} className="transition-colors hover:bg-bg-tertiary">
-                  <td className={tdCls}>
-                    <a href={`https://${r.domainName}${r.pathPrefix}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-xs text-text-primary hover:text-accent">
-                      {r.domainName}{r.pathPrefix}<ExternalLink className="h-3 w-3" />
-                    </a>
-                  </td>
-                  <td className={`${tdCls} font-mono text-xs text-text-secondary`}>{r.pathPrefix}</td>
-                  <td className={tdCls}>
-                    {r.runtimeId == null
-                      ? <Pill tone="accent" className="text-[10px] uppercase">{t('siteRoutes.primary') || 'primary'}</Pill>
-                      : r.runtimeBase ? <BaseBadge base={r.runtimeBase} compact /> : <Pill tone="muted">#{r.runtimeId}</Pill>}
-                  </td>
-                  <td className={`${tdCls} text-right`}>
-                    {canManage && (
-                      <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 className="h-3.5 w-3.5" />} variant="danger" size="sm" onClick={() => void remove(r)} />
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<SiteRoute>
+          storageKey="site-routes"
+          singleGroupFlat
+          minWidth={640}
+          defaultSort={{ column: 'address' }}
+          // A route under the route of its parent domain (example.com → shop.example.com).
+          groups={[{ key: 'all', label: '', sortLabel: '', nodes: domainTree(routes, (r) => `${r.domainName}${r.pathPrefix === '/' ? '' : r.pathPrefix}`, (r) => r.id) }]}
+          columns={[
+            {
+              id: 'address', header: t('siteRoutes.fields.address') || 'Address', sort: (r) => `${r.domainName}${r.pathPrefix}`,
+              cell: (r) => (
+                <a href={`https://${r.domainName}${r.pathPrefix}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-xs text-text-primary hover:text-accent">
+                  {r.domainName}{r.pathPrefix}<ExternalLink className="h-3 w-3" />
+                </a>
+              ),
+            },
+            { id: 'prefix', header: t('siteRoutes.fields.prefix') || 'Prefix', tdClassName: 'font-mono text-xs text-text-secondary', sort: (r) => r.pathPrefix, cell: (r) => r.pathPrefix },
+            {
+              id: 'runtime', header: t('siteRoutes.fields.runtime') || 'Runtime', sort: (r) => r.runtimeBase ?? (r.runtimeId == null ? '' : String(r.runtimeId)),
+              cell: (r) => (r.runtimeId == null
+                ? <Pill tone="accent" className="text-[10px] uppercase">{t('siteRoutes.primary') || 'primary'}</Pill>
+                : r.runtimeBase ? <BaseBadge base={r.runtimeBase} compact /> : <Pill tone="muted">#{r.runtimeId}</Pill>),
+            },
+            {
+              id: 'actions', header: <span className="sr-only">{t('releases.fields.actions') || 'Actions'}</span>, tdClassName: 'text-right',
+              cell: (r) => (canManage ? <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 className="h-3.5 w-3.5" />} variant="danger" size="sm" onClick={() => void remove(r)} /> : null),
+            },
+          ]}
+        />
       )}
 
       {canManage && (

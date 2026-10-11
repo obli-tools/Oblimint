@@ -82,7 +82,8 @@
         "status": "Status",
         "records": "Records",
         "lastSync": "Last sync"
-      }
+      },
+      "platformGroup": "Platform"
     },
     "zone": {
       "title": "DNS zone",

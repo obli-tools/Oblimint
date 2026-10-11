@@ -7,9 +7,9 @@ import { dnsApi } from '@/api/dns.api';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Card, CopyButton, InfoRow, Pill, inputCls, isStepUpHandled, labelCls, selectCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
+import { Card, CopyButton, InfoRow, Pill, inputCls, isStepUpHandled, labelCls, selectCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { zoneKindLabel } from './DnsBadges';
 import { CopyField } from './DomainOwnershipCard';
@@ -175,45 +175,30 @@ export function ExpectedRecordsCard({ zone }: { zone: DnsZoneDetail }) {
       {rows.length === 0 ? (
         <p className="text-xs text-text-muted">{t('dns.expected.none') || 'Nothing to create.'}</p>
       ) : (
-        <>
-          <ul className="space-y-2 md:hidden">
-            {rows.map((r, i) => (
-              <li key={i} className="space-y-1 rounded-lg bg-bg-primary p-2">
-                <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <Pill tone="accent">{r.type}</Pill>
-                  <Pill>{purposeLabel(t, r.purpose)}</Pill>
-                  {r.priority != null && <span className="font-mono text-text-muted">{t('dns.records.fields.priority') || 'Priority'} {r.priority}</span>}
-                </div>
-                <CopyField label={t('dns.records.fields.name') || 'Name'} value={r.name} />
-                <CopyField label={t('dns.records.fields.content') || 'Content'} value={r.content} />
-              </li>
-            ))}
-          </ul>
-          <TableScroll className="hidden rounded-lg bg-bg-primary md:block">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('dns.records.fields.name') || 'Name'}</th>
-                  <th className={thCls}>{t('dns.records.fields.type') || 'Type'}</th>
-                  <th className={thCls}>{t('dns.records.fields.priority') || 'Priority'}</th>
-                  <th className={thCls}>{t('dns.records.fields.content') || 'Content'}</th>
-                  <th className={thCls}>{t('dns.expected.purpose.title') || 'Purpose'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i} className="align-top">
-                    <td className="px-4 py-2"><span className="inline-flex items-center gap-1 break-all font-mono text-xs">{r.name}<CopyButton text={r.name} /></span></td>
-                    <td className="px-4 py-2 font-mono text-xs text-accent">{r.type}</td>
-                    <td className="px-4 py-2 font-mono text-xs">{r.priority ?? '—'}</td>
-                    <td className="px-4 py-2"><span className="inline-flex items-center gap-1 break-all font-mono text-xs">{r.content}<CopyButton text={r.content} /></span></td>
-                    <td className="px-4 py-2 text-xs text-text-muted">{purposeLabel(t, r.purpose)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
-        </>
+        <GroupedTable<DnsExpectedRecord>
+          singleGroupFlat
+          className="bg-bg-primary"
+          minWidth={640}
+          groups={[{ key: 'expected', label: '', sortLabel: '', nodes: flatNodes(rows, (r) => `${r.type}|${r.name}|${r.content}`) }]}
+          renderCard={(r) => (
+            <div className="space-y-1 rounded-lg bg-bg-primary p-2">
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <Pill tone="accent">{r.type}</Pill>
+                <Pill>{purposeLabel(t, r.purpose)}</Pill>
+                {r.priority != null && <span className="font-mono text-text-muted">{t('dns.records.fields.priority') || 'Priority'} {r.priority}</span>}
+              </div>
+              <CopyField label={t('dns.records.fields.name') || 'Name'} value={r.name} />
+              <CopyField label={t('dns.records.fields.content') || 'Content'} value={r.content} />
+            </div>
+          )}
+          columns={[
+            { id: 'name', header: t('dns.records.fields.name') || 'Name', sort: (r) => r.name, cell: (r) => <span className="inline-flex items-center gap-1 break-all font-mono text-xs">{r.name}<CopyButton text={r.name} /></span> },
+            { id: 'type', header: t('dns.records.fields.type') || 'Type', tdClassName: 'font-mono text-xs text-accent', sort: (r) => r.type, cell: (r) => r.type },
+            { id: 'priority', header: t('dns.records.fields.priority') || 'Priority', tdClassName: 'font-mono text-xs', sort: (r) => r.priority ?? null, cell: (r) => r.priority ?? '—' },
+            { id: 'content', header: t('dns.records.fields.content') || 'Content', sort: (r) => r.content, cell: (r) => <span className="inline-flex items-center gap-1 break-all font-mono text-xs">{r.content}<CopyButton text={r.content} /></span> },
+            { id: 'purpose', header: t('dns.expected.purpose.title') || 'Purpose', tdClassName: 'text-xs text-text-muted', sort: (r) => purposeLabel(t, r.purpose), cell: (r) => purposeLabel(t, r.purpose) },
+          ]}
+        />
       )}
     </Card>
   );

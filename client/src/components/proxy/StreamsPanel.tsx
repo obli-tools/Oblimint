@@ -8,11 +8,12 @@ import { proxyApi, type StreamPortInfo } from '@/api/proxy.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { EMPTY_TARGET, TargetEditor, targetComplete } from './TargetEditor';
 import { EdgeUnitBanner, EdgeUnitPill, ListState, useProxyAccess } from './proxyUi';
@@ -37,6 +38,7 @@ export function StreamsPanel({ accountId, tenantId, accounts, showTenant }: {
   const [ports, setPorts] = useState<StreamPortInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const accountDir = useAccountDirectory();
   const [editing, setEditing] = useState<ProxyStream | 'new' | null>(null);
 
   const seq = useRef(0);
@@ -129,36 +131,26 @@ export function StreamsPanel({ accountId, tenantId, accounts, showTenant }: {
         </div>
       )}
       <ListState loading={loading} error={error} empty={items.length === 0} emptyIcon={<Cable />} emptyText={t('proxy.streams.empty') || 'No stream yet.'} emptyAction={createBtn ?? undefined}>
-        <TableScroll className="rounded-xl bg-bg-secondary">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('proxy.streams.name') || 'Stream'}</th>
-                <th className={thCls}>{t('proxy.streams.port') || 'Incoming port'}</th>
-                <th className={thCls}>{t('proxy.hosts.target') || 'Target'}</th>
-                <th className={thCls}>{t('proxy.unit.title') || 'Edge'}</th>
-                <th className={thCls}>{t('proxy.account') || 'Hosting account'}</th>
-                {showTenant && <th className={thCls}>{t('proxy.tenant') || 'Workspace'}</th>}
-                <th className={`${thCls} w-20`}>{t('proxy.enabled') || 'Enabled'}</th>
-                <th className={`${thCls} w-14`}><span className="sr-only">{t('proxy.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((s) => (
-                <tr key={s.id} className={cn('align-top transition-colors hover:bg-bg-hover', !s.enabled && 'opacity-60')}>
-                  <td className="px-4 py-3 font-medium text-text-primary">{s.name}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.incomingPort} <span className="text-text-muted">{protos(s)}</span></td>
-                  <td className="px-4 py-3 break-all font-mono text-xs text-text-secondary">→ {targetShort(s.target)}</td>
-                  <td className="px-4 py-3"><EdgeUnitPill unit={s.edge} /></td>
-                  <td className="px-4 py-3 text-xs">{s.accountUsername ? <span className="font-mono text-text-secondary">{s.accountUsername}</span> : <Pill tone="accent">{t('proxy.platform') || 'platform'}</Pill>}</td>
-                  {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={s.tenantId} /></td>}
-                  <td className="px-4 py-3"><ToggleSwitch size="sm" checked={s.enabled} disabled={!mayEdit(s)} onChange={(v) => { void toggle(s, v); }} ariaLabel={t('proxy.enabled') || 'Enabled'} /></td>
-                  <td className="px-4 py-3 text-right">{menu(s)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<ProxyStream>
+          storageKey="proxy-streams"
+          singleGroupFlat
+          minWidth={760}
+          defaultSort={{ column: 'name' }}
+          rowClassName={(x) => !x.enabled && 'opacity-60'}
+          groups={groupRowsByAccount(items, accountDir, (x) => ({ id: x.accountId, username: x.accountUsername }), (rows) => flatNodes(rows, (x) => x.id), t('proxy.platformGroup') || 'Platform')}
+          columns={[
+            { id: 'name', header: t('proxy.streams.name') || 'Stream', tdClassName: 'font-medium text-text-primary', sort: (x) => x.name, cell: (x) => x.name },
+            { id: 'port', header: t('proxy.streams.port') || 'Incoming port', tdClassName: 'font-mono text-xs text-text-secondary', sort: (x) => x.incomingPort, cell: (x) => <>{x.incomingPort} <span className="text-text-muted">{protos(x)}</span></> },
+            { id: 'target', header: t('proxy.hosts.target') || 'Target', tdClassName: 'break-all font-mono text-xs text-text-secondary', sort: (x) => targetShort(x.target), cell: (x) => <>→ {targetShort(x.target)}</> },
+            { id: 'edge', header: t('proxy.unit.title') || 'Edge', cell: (x) => <EdgeUnitPill unit={x.edge} /> },
+            ...(showTenant ? [{ id: 'tenant', header: t('proxy.tenant') || 'Workspace', cell: (x: ProxyStream) => <TenantBadge tenantId={x.tenantId} /> }] : []),
+            {
+              id: 'enabled', header: t('proxy.enabled') || 'Enabled', thClassName: 'w-20', sort: (x) => x.enabled,
+              cell: (x) => <ToggleSwitch size="sm" checked={x.enabled} disabled={!mayEdit(x)} onChange={(v) => { void toggle(x, v); }} ariaLabel={t('proxy.enabled') || 'Enabled'} />,
+            },
+            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (x) => menu(x) },
+          ]}
+        />
       </ListState>
 
       <StreamModal

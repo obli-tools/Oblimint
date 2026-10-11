@@ -14,6 +14,7 @@ import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Card, InfoRow, Pill, hostingErrorMessage, theadRowCls, thCls, toastHostingError, useHostingEvents } from './hostingUi';
@@ -151,14 +152,19 @@ export function PlatformUpdatesPanel({ nodeId }: { nodeId?: number }) {
     }
   });
 
+  // One sort for every group (component / image / status…): the groups keep their order, their rows follow it.
+  const { sorted: sortedImages, sort } = useTableSort(state?.images ?? [], {
+    component: (i) => kindLabel(t, i.kind), image: (i) => i.image, version: (i) => i.version ?? '', local: (i) => i.localDigest ?? '',
+    remote: (i) => i.remoteDigest ?? '', status: (i) => i.status, checked: (i) => i.checkedAt ?? '',
+  });
   const groups = useMemo(() => {
     const out: Array<[PlatformImageGroup, PlatformImageStatus[]]> = [];
     for (const g of ['platform', 'sites', 'tools'] as PlatformImageGroup[]) {
-      const items = (state?.images ?? []).filter((i) => i.group === g);
+      const items = sortedImages.filter((i) => i.group === g);
       if (items.length) out.push([g, items]);
     }
     return out;
-  }, [state]);
+  }, [sortedImages]);
 
   if (!state) {
     return error
@@ -233,13 +239,13 @@ export function PlatformUpdatesPanel({ nodeId }: { nodeId?: number }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className={theadRowCls}>
-                  <th className={thCls}>{t('platformUpdates.col.component') || 'Component'}</th>
-                  <th className={thCls}>{t('platformUpdates.col.image') || 'Image'}</th>
-                  <th className={thCls}>{t('platformUpdates.col.version') || 'Version'}</th>
-                  <th className={thCls}>{t('platformUpdates.col.local') || 'Local digest'}</th>
-                  <th className={thCls}>{t('platformUpdates.col.remote') || 'Registry digest'}</th>
-                  <th className={thCls}>{t('platformUpdates.col.status') || 'Status'}</th>
-                  <th className={thCls}>{t('platformUpdates.col.checked') || 'Checked'}</th>
+                  <SortTh k="component" sort={sort} className={thCls}>{t('platformUpdates.col.component') || 'Component'}</SortTh>
+                  <SortTh k="image" sort={sort} className={thCls}>{t('platformUpdates.col.image') || 'Image'}</SortTh>
+                  <SortTh k="version" sort={sort} className={thCls}>{t('platformUpdates.col.version') || 'Version'}</SortTh>
+                  <SortTh k="local" sort={sort} className={thCls}>{t('platformUpdates.col.local') || 'Local digest'}</SortTh>
+                  <SortTh k="remote" sort={sort} className={thCls}>{t('platformUpdates.col.remote') || 'Registry digest'}</SortTh>
+                  <SortTh k="status" sort={sort} className={thCls}>{t('platformUpdates.col.status') || 'Status'}</SortTh>
+                  <SortTh k="checked" sort={sort} className={thCls}>{t('platformUpdates.col.checked') || 'Checked'}</SortTh>
                   <th className={thCls} />
                 </tr>
               </thead>

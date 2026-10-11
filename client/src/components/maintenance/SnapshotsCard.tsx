@@ -8,6 +8,7 @@ import { snapshotsApi } from '@/api/maintenance.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { IconButton } from '@/components/common/IconButton';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Card, thCls, theadRowCls } from '@/components/hosting/hostingUi';
 import { formatDateTime } from '@/components/sites/siteForm';
@@ -24,6 +25,7 @@ export function SnapshotsCard({ site, tick }: { site: Site; tick: number }) {
   const { can } = useHostingMe();
   const canManage = can('databases.manage', site.accountId);
   const reasonLabel = useSnapshotReasonLabel();
+
   const [items, setItems] = useState<DbSnapshot[] | null>(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -97,6 +99,10 @@ export function SnapshotsCard({ site, tick }: { site: Site; tick: number }) {
       <IconButton variant="danger" label={t('common.delete') || 'Delete'} icon={<Trash2 size={14} />} disabled={s.status === 'deleted' || s.status === 'creating' || busy === s.id} onClick={() => { void remove(s); }} />
     </div>
   ) : null;
+  const { sorted: sortedItems, sort } = useTableSort(items ?? [], {
+    database: (s) => s.databaseName, status: (s) => s.status, reason: (s) => reasonLabel(s.reason), size: (s) => s.sizeBytes ?? null,
+    created: (s) => s.createdAt, expires: (s) => s.expiresAt ?? '',
+  });
 
   return (
     <Card title={t('snapshots.title') || 'Database snapshots'} icon={<DatabaseBackup size={14} className="text-accent" />}>
@@ -107,7 +113,7 @@ export function SnapshotsCard({ site, tick }: { site: Site; tick: number }) {
       ) : (
         <>
           <ul className="space-y-2 md:hidden">
-            {items.map((s) => (
+            {sortedItems.map((s) => (
               <li key={s.id} className="rounded-lg bg-bg-primary px-3 py-2">
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate font-mono text-sm text-text-primary">{s.databaseName}</span>
@@ -128,17 +134,17 @@ export function SnapshotsCard({ site, tick }: { site: Site; tick: number }) {
             <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className={theadRowCls}>
-                  <th className={thCls}>{t('snapshots.col.database') || 'Database'}</th>
-                  <th className={thCls}>{t('snapshots.col.status') || 'Status'}</th>
-                  <th className={thCls}>{t('snapshots.col.reason') || 'Reason'}</th>
-                  <th className={thCls}>{t('snapshots.col.size') || 'Size'}</th>
-                  <th className={thCls}>{t('snapshots.col.created') || 'Created'}</th>
-                  <th className={thCls}>{t('snapshots.col.expires') || 'Expires'}</th>
+                  <SortTh k="database" sort={sort} className={thCls}>{t('snapshots.col.database') || 'Database'}</SortTh>
+                  <SortTh k="status" sort={sort} className={thCls}>{t('snapshots.col.status') || 'Status'}</SortTh>
+                  <SortTh k="reason" sort={sort} className={thCls}>{t('snapshots.col.reason') || 'Reason'}</SortTh>
+                  <SortTh k="size" sort={sort} className={thCls}>{t('snapshots.col.size') || 'Size'}</SortTh>
+                  <SortTh k="created" sort={sort} className={thCls}>{t('snapshots.col.created') || 'Created'}</SortTh>
+                  <SortTh k="expires" sort={sort} className={thCls}>{t('snapshots.col.expires') || 'Expires'}</SortTh>
                   <th className={thCls} />
                 </tr>
               </thead>
               <tbody>
-                {items.map((s) => (
+                {sortedItems.map((s) => (
                   <tr key={s.id} className="transition-colors hover:bg-bg-hover">
                     <td className="px-4 py-2.5">
                       <div className="font-mono text-text-primary">{s.databaseName}</div>

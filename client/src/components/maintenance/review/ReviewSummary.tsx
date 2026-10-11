@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Activity, AlertTriangle, CheckCircle2, FileStack, ShieldAlert, ShieldCheck, XCircle } from 'lucide-react';
 import type { MaintenanceWindowDetail } from '@oblimint/shared';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { Card, InfoRow, thCls, theadRowCls } from '@/components/hosting/hostingUi';
 import { formatDateTime } from '@/components/sites/siteForm';
 import { Pill } from '@/components/sites/SiteBadges';
@@ -16,6 +17,9 @@ export function ReviewSummary({ w }: { w: MaintenanceWindowDetail }) {
   const engineLabel = useEngineLabel();
   const reasonLabel = useAutoValidationReasonLabel();
   const componentLabel = useComponentStatusLabel();
+  const { sorted: components, sort } = useTableSort(w.checksums?.components ?? [], {
+    provider: (c) => c.provider, name: (c) => c.name, version: (c) => c.version ?? '', status: (c) => c.status, files: (c) => c.mismatches * 1e9 + c.files,
+  });
   const c = w.counts ?? w.analysis?.counts ?? null;
   const a = w.analysis;
   const risk = w.risk ?? a?.risk ?? null;
@@ -123,15 +127,15 @@ export function ReviewSummary({ w }: { w: MaintenanceWindowDetail }) {
             <table className="w-full min-w-[560px] text-sm">
               <thead>
                 <tr className={theadRowCls}>
-                  <th className={thCls}>{t('windowReview.checksums.provider') || 'Provider'}</th>
-                  <th className={thCls}>{t('windowReview.checksums.name') || 'Component'}</th>
-                  <th className={thCls}>{t('windowReview.checksums.version') || 'Version'}</th>
-                  <th className={thCls}>{t('windowReview.checksums.status') || 'Status'}</th>
-                  <th className={thCls}>{t('windowReview.checksums.files') || 'Files'}</th>
+                  <SortTh k="provider" sort={sort} className={thCls}>{t('windowReview.checksums.provider') || 'Provider'}</SortTh>
+                  <SortTh k="name" sort={sort} className={thCls}>{t('windowReview.checksums.name') || 'Component'}</SortTh>
+                  <SortTh k="version" sort={sort} className={thCls}>{t('windowReview.checksums.version') || 'Version'}</SortTh>
+                  <SortTh k="status" sort={sort} className={thCls}>{t('windowReview.checksums.status') || 'Status'}</SortTh>
+                  <SortTh k="files" sort={sort} className={thCls}>{t('windowReview.checksums.files') || 'Files'}</SortTh>
                 </tr>
               </thead>
               <tbody>
-                {w.checksums.components.map((comp) => (
+                {components.map((comp) => (
                   <tr key={`${comp.provider}:${comp.name}`}>
                     <td className="px-4 py-2 font-mono text-xs text-text-muted">{comp.provider}</td>
                     <td className="px-4 py-2 text-text-primary">{comp.name}</td>

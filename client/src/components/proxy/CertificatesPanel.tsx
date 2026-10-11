@@ -7,11 +7,12 @@ import { proxyApi } from '@/api/proxy.api';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { AccountField, ListState, useProxyAccess } from './proxyUi';
 import { proxyErrorMessage, proxyLoadError, toastProxyError } from './proxyErrors';
@@ -51,6 +52,7 @@ export function CertificatesPanel({ accountId, tenantId, accounts, showAccount, 
   const [status, setStatus] = useState<CertificateStatus | ''>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const accountDir = useAccountDirectory();
   const [importing, setImporting] = useState(false);
 
   const seq = useRef(0);
@@ -118,53 +120,53 @@ export function CertificatesPanel({ accountId, tenantId, accounts, showAccount, 
       </div>
       <p className="-mt-1 text-xs text-text-muted">{t('proxy.certs.description') || 'Let’s Encrypt certificates of the domains (renewed automatically, DNS-01 for wildcards) and imported certificates. A proxy host uses the certificates of its domains, or an imported one.'}</p>
       <ListState loading={loading} error={error} empty={items.length === 0} emptyIcon={<ShieldCheck />} emptyText={t('proxy.certs.empty') || 'No certificate.'} emptyAction={importBtn ?? undefined}>
-        <TableScroll className="rounded-xl bg-bg-secondary">
-          <table className="w-full min-w-[860px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('proxy.certs.names') || 'Names'}</th>
-                <th className={thCls}>{t('proxy.certs.source') || 'Source'}</th>
-                <th className={thCls}>{t('proxy.certs.status') || 'Status'}</th>
-                <th className={thCls}>{t('proxy.certs.expires') || 'Expires'}</th>
-                <th className={thCls}>{t('proxy.usedBy') || 'Used by'}</th>
-                {showAccount && <th className={thCls}>{t('proxy.account') || 'Hosting account'}</th>}
-                {showTenant && <th className={thCls}>{t('proxy.tenant') || 'Workspace'}</th>}
-                <th className={`${thCls} w-14`}><span className="sr-only">{t('proxy.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((c) => (
-                <tr key={`${c.kind}-${c.id}`} className="align-top transition-colors hover:bg-bg-hover">
-                  <td className="max-w-[20rem] px-4 py-3">
-                    <span className="font-mono text-[13px] text-text-primary">{c.primaryName}</span>
-                    {c.names.length > 1 && <div className="mt-0.5 break-all font-mono text-[11px] text-text-muted">{c.names.filter((n) => n !== c.primaryName).join(', ')}</div>}
-                  </td>
-                  <td className="px-4 py-3">
-                    {c.kind === 'acme' ? <Pill tone="blue">ACME</Pill> : <Pill tone="accent">{t('proxy.certs.imported') || 'imported'}</Pill>}
-                    {c.issuer && <div className="mt-0.5 text-[11px] text-text-muted">{c.issuer}</div>}
-                  </td>
-                  <td className="px-4 py-3"><CertificateStatusPill status={c.status} notAfter={c.notAfter} lastError={c.lastError} /></td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{c.notAfter ? new Date(c.notAfter).toLocaleDateString(i18n.language) : '—'}</td>
-                  <td className="px-4 py-3 text-xs text-text-secondary">
-                    {c.usedBy.length === 0 ? '—' : (
-                      <ul className="space-y-0.5">
-                        {c.usedBy.slice(0, 3).map((u) => <li key={`${u.kind}-${u.id}`}><span className="text-text-muted">{usedByLabel(u)}</span> {u.name}</li>)}
-                        {c.usedBy.length > 3 && <li className="text-text-muted">+{c.usedBy.length - 3}</li>}
-                      </ul>
-                    )}
-                  </td>
-                  {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{c.accountUsername ?? '—'}</td>}
-                  {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={c.tenantId} /></td>}
-                  <td className="px-4 py-3 text-right">
-                    {c.kind === 'imported' && c.accountId != null && canManage(c.accountId) && (
-                      <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 size={14} />} variant="danger" size="sm" onClick={() => { void remove(c); }} />
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<CertificateListItem>
+          storageKey="proxy-certificates"
+          singleGroupFlat
+          minWidth={860}
+          defaultSort={{ column: 'names' }}
+          groups={showAccount
+            ? groupRowsByAccount(items, accountDir, (c) => ({ id: c.accountId, username: c.accountUsername }), (rows) => domainTree(rows, (c) => c.primaryName, (c) => `${c.kind}-${c.id}`), t('proxy.platformGroup') || 'Platform')
+            : [{ key: 'all', label: '', sortLabel: '', nodes: domainTree(items, (c) => c.primaryName, (c) => `${c.kind}-${c.id}`) }]}
+          columns={[
+            {
+              id: 'names', header: t('proxy.certs.names') || 'Names', tdClassName: 'max-w-[20rem]', sort: (c) => c.primaryName,
+              cell: (c) => (
+                <>
+                  <span className="font-mono text-[13px] text-text-primary">{c.primaryName}</span>
+                  {c.names.length > 1 && <div className="mt-0.5 break-all font-mono text-[11px] text-text-muted">{c.names.filter((n) => n !== c.primaryName).join(', ')}</div>}
+                </>
+              ),
+            },
+            {
+              id: 'source', header: t('proxy.certs.source') || 'Source', sort: (c) => c.kind,
+              cell: (c) => (
+                <>
+                  {c.kind === 'acme' ? <Pill tone="blue">ACME</Pill> : <Pill tone="accent">{t('proxy.certs.imported') || 'imported'}</Pill>}
+                  {c.issuer && <div className="mt-0.5 text-[11px] text-text-muted">{c.issuer}</div>}
+                </>
+              ),
+            },
+            { id: 'status', header: t('proxy.certs.status') || 'Status', sort: (c) => c.status, cell: (c) => <CertificateStatusPill status={c.status} notAfter={c.notAfter} lastError={c.lastError} /> },
+            {
+              id: 'expires', header: t('proxy.certs.expires') || 'Expires', tdClassName: 'font-mono text-xs text-text-secondary', sort: (c) => c.notAfter ?? '',
+              cell: (c) => (c.notAfter ? new Date(c.notAfter).toLocaleDateString(i18n.language) : '—'),
+            },
+            {
+              id: 'usedBy', header: t('proxy.usedBy') || 'Used by', tdClassName: 'text-xs text-text-secondary', sort: (c) => c.usedBy.length,
+              cell: (c) => (c.usedBy.length === 0 ? '—' : (
+                <ul className="space-y-0.5">
+                  {c.usedBy.slice(0, 3).map((u) => <li key={`${u.kind}-${u.id}`}><span className="text-text-muted">{usedByLabel(u)}</span> {u.name}</li>)}
+                  {c.usedBy.length > 3 && <li className="text-text-muted">+{c.usedBy.length - 3}</li>}
+                </ul>
+              )),
+            },
+            ...(showTenant && !showAccount ? [{ id: 'tenant', header: t('proxy.tenant') || 'Workspace', cell: (c: CertificateListItem) => <TenantBadge tenantId={c.tenantId} /> }] : []),
+            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (c) => (c.kind === 'imported' && c.accountId != null && canManage(c.accountId)
+              ? <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 size={14} />} variant="danger" size="sm" onClick={() => { void remove(c); }} />
+              : null) },
+          ]}
+        />
       </ListState>
 
       <CertificateImportModal

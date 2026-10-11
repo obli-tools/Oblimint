@@ -90,7 +90,10 @@
     "refresh": "Refresh",
     "requiredField": "This field is required",
     "save": "Save",
-    "searchEllipsis": "Search…"
+    "searchEllipsis": "Search…",
+    "expandAll": "Expand all",
+    "collapseAll": "Collapse all",
+    "platformGroup": "Platform"
   },
   "dashboard": {
     "accounts": "Hosting accounts",

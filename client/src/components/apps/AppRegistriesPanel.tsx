@@ -9,9 +9,10 @@ import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, headerBtnCls, inputCls, labelCls, selectCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
+import { EmptyState, headerBtnCls, inputCls, labelCls, selectCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { useP4bAccess } from './appsAccess';
 import { appsErrorMessage, toastAppsError } from './appsErrors';
@@ -28,6 +29,7 @@ export function AppRegistriesPanel({ accountId, tenantId, accounts, showAccount 
   const confirm = useConfirm();
   const { can } = useP4bAccess();
   const [items, setItems] = useState<AppRegistryCredential[]>([]);
+  const accountDir = useAccountDirectory();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AppRegistryCredential | 'new' | null>(null);
@@ -73,37 +75,29 @@ export function AppRegistriesPanel({ accountId, tenantId, accounts, showAccount 
       {error && items.length === 0 ? <EmptyState icon={<KeyRound />} text={error} /> : items.length === 0 ? (
         <EmptyState icon={<KeyRound />} text={t('apps.registries.empty') || 'No registry credentials. Public images need none.'} />
       ) : (
-        <TableScroll className="bg-bg-secondary">
-          <table className="w-full min-w-[560px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('apps.registries.registry') || 'Registry'}</th>
-                <th className={thCls}>{t('apps.registries.username') || 'User name'}</th>
-                {showAccount && <th className={thCls}>{t('apps.list.account') || 'Account'}</th>}
-                <th className={thCls}>{t('apps.registries.updated') || 'Updated'}</th>
-                <th className={cn(thCls, 'w-12')}><span className="sr-only">{t('apps.list.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((r) => (
-                <tr key={r.id} className="border-t border-border/40">
-                  <td className="px-4 py-3 font-mono text-[13px] text-text-primary">{r.registry}</td>
-                  <td className="px-4 py-3 font-mono text-[13px] text-text-secondary">{r.username}</td>
-                  {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{accounts.find((a) => a.id === r.accountId)?.username ?? `#${r.accountId}`}</td>}
-                  <td className="px-4 py-3 text-xs text-text-muted">{formatDateTime(r.updatedAt, i18n.language)}</td>
-                  <td className="px-2 py-2">
-                    {can('apps.manage', r.accountId) && (
-                      <ActionMenu items={[
-                        { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(r) },
-                        { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(r); }, danger: true, separator: true },
-                      ]} />
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<AppRegistryCredential>
+          storageKey="app-registries"
+          singleGroupFlat
+          minWidth={560}
+          defaultSort={{ column: 'registry' }}
+          groups={showAccount
+            ? groupRowsByAccount(items, accountDir, (r) => ({ id: r.accountId, username: accounts.find((a) => a.id === r.accountId)?.username }), (rows) => flatNodes(rows, (r) => r.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (r) => r.id) }]}
+          columns={[
+            { id: 'registry', header: t('apps.registries.registry') || 'Registry', tdClassName: 'font-mono text-[13px] text-text-primary', sort: (r) => r.registry, cell: (r) => r.registry },
+            { id: 'username', header: t('apps.registries.username') || 'User name', tdClassName: 'font-mono text-[13px] text-text-secondary', sort: (r) => r.username, cell: (r) => r.username },
+            { id: 'updated', header: t('apps.registries.updated') || 'Updated', tdClassName: 'text-xs text-text-muted', sort: (r) => r.updatedAt, cell: (r) => formatDateTime(r.updatedAt, i18n.language) },
+            {
+              id: 'actions', header: <span className="sr-only">{t('apps.list.actions') || 'Actions'}</span>, thClassName: 'w-12', tdClassName: 'px-2 py-2',
+              cell: (r) => (can('apps.manage', r.accountId) ? (
+                <ActionMenu items={[
+                  { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(r) },
+                  { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(r); }, danger: true, separator: true },
+                ]} />
+              ) : null),
+            },
+          ]}
+        />
       )}
       {editing && (
         <RegistryModal

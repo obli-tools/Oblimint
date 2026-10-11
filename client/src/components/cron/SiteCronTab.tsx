@@ -10,10 +10,10 @@ import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, Pill, payloadNumber, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, Pill, payloadNumber, useHostingEvents } from '@/components/hosting/hostingUi';
 import { opsErrorMessage, toastOpsError } from '@/components/usage/opsErrors';
 import { describeSchedule, runStatusTone } from './cronFormat';
 import { CronJobModal } from './CronJobModal';
@@ -144,10 +144,14 @@ export function SiteCronTab({ site }: { site: Site }) {
         />
       ) : (
         <>
-          {/* Phone: cards */}
-          <ul className="space-y-2 md:hidden">
-            {jobs.map((job) => (
-              <li key={job.id} className="rounded-xl bg-bg-secondary px-3 py-2.5">
+          <GroupedTable<CronJob>
+            storageKey="site-cron"
+            singleGroupFlat
+            minWidth={760}
+            defaultSort={{ column: 'name' }}
+            groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(jobs, (j) => j.id) }]}
+            renderCard={(job) => (
+              <div className="rounded-xl bg-bg-secondary px-3 py-2.5">
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">{job.name}</span>
                   {canEdit && <ToggleSwitch size="sm" checked={job.enabled} disabled={busy === job.id} onChange={(v) => { void toggle(job, v); }} ariaLabel={t('cron.form.enabled') || 'Enabled'} />}
@@ -159,56 +163,54 @@ export function SiteCronTab({ site }: { site: Site }) {
                   <Pill tone={runStatusTone(job.lastStatus)}>{statusLabel(job.lastStatus)}</Pill>
                   <span className="font-mono">{t('cron.col.next') || 'Next'}: {job.enabled ? fmt(job.nextRunAt) : (t('cron.disabled') || 'disabled')}</span>
                 </div>
-              </li>
-            ))}
-          </ul>
-          {/* Desktop: table */}
-          <TableScroll className="rounded-xl bg-bg-secondary max-md:hidden">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('cron.col.name') || 'Name'}</th>
-                  <th className={thCls}>{t('cron.col.schedule') || 'Schedule'}</th>
-                  <th className={thCls}>{t('cron.col.next') || 'Next'}</th>
-                  <th className={thCls}>{t('cron.col.last') || 'Last run'}</th>
-                  <th className={thCls}>{t('cron.col.enabled') || 'Enabled'}</th>
-                  <th className={thCls} />
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((job) => (
-                  <tr key={job.id} className="transition-colors hover:bg-bg-hover">
-                    <td className="max-w-[16rem] px-4 py-3">
-                      <div className="truncate font-medium text-text-primary">{job.name}</div>
-                      <div className="truncate font-mono text-[11px] text-text-muted" title={job.command}>{job.command}</div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="font-mono text-xs text-text-secondary">{job.schedule}</div>
-                      {human(job) && <div className="text-[11px] text-text-muted">{human(job)} (UTC)</div>}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-text-secondary">{job.enabled ? fmt(job.nextRunAt) : '—'}</td>
-                    <td className="px-4 py-3">
-                      <button type="button" onClick={() => setHistory(job)} className="flex flex-col items-start gap-0.5 text-left">
-                        <Pill tone={runStatusTone(job.lastStatus)}>{statusLabel(job.lastStatus)}</Pill>
-                        {job.lastRunAt && <span className="font-mono text-[11px] text-text-muted">{fmt(job.lastRunAt)}</span>}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3">
-                      <ToggleSwitch size="sm" checked={job.enabled} disabled={!canEdit || busy === job.id} onChange={(v) => { void toggle(job, v); }} ariaLabel={t('cron.form.enabled') || 'Enabled'} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        {canEdit && <IconButton label={t('cron.runNow') || 'Run now'} icon={<Play size={14} />} disabled={busy === job.id} onClick={() => { void runNow(job); }} />}
-                        <IconButton label={t('cron.history') || 'History'} icon={<History size={14} />} onClick={() => setHistory(job)} />
-                        {canEdit && <IconButton label={t('common.edit') || 'Edit'} icon={<Pencil size={14} />} onClick={() => setEditing(job)} />}
-                        {canEdit && <IconButton variant="danger" label={t('common.delete') || 'Delete'} icon={<Trash2 size={14} />} disabled={busy === job.id} onClick={() => { void remove(job); }} />}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
+              </div>
+            )}
+            columns={[
+              {
+                id: 'name', header: t('cron.col.name') || 'Name', tdClassName: 'max-w-[16rem]', sort: (job) => job.name,
+                cell: (job) => (
+                  <>
+                    <div className="truncate font-medium text-text-primary">{job.name}</div>
+                    <div className="truncate font-mono text-[11px] text-text-muted" title={job.command}>{job.command}</div>
+                  </>
+                ),
+              },
+              {
+                id: 'schedule', header: t('cron.col.schedule') || 'Schedule', sort: (job) => job.schedule,
+                cell: (job) => (
+                  <>
+                    <div className="font-mono text-xs text-text-secondary">{job.schedule}</div>
+                    {human(job) && <div className="text-[11px] text-text-muted">{human(job)} (UTC)</div>}
+                  </>
+                ),
+              },
+              { id: 'next', header: t('cron.col.next') || 'Next', tdClassName: 'font-mono text-xs text-text-secondary', sort: (job) => (job.enabled ? job.nextRunAt ?? '' : ''), cell: (job) => (job.enabled ? fmt(job.nextRunAt) : '—') },
+              {
+                id: 'last', header: t('cron.col.last') || 'Last run', sort: (job) => job.lastRunAt ?? '',
+                cell: (job) => (
+                  <button type="button" onClick={() => setHistory(job)} className="flex flex-col items-start gap-0.5 text-left">
+                    <Pill tone={runStatusTone(job.lastStatus)}>{statusLabel(job.lastStatus)}</Pill>
+                    {job.lastRunAt && <span className="font-mono text-[11px] text-text-muted">{fmt(job.lastRunAt)}</span>}
+                  </button>
+                ),
+              },
+              {
+                id: 'enabled', header: t('cron.col.enabled') || 'Enabled', sort: (job) => job.enabled,
+                cell: (job) => <ToggleSwitch size="sm" checked={job.enabled} disabled={!canEdit || busy === job.id} onChange={(v) => { void toggle(job, v); }} ariaLabel={t('cron.form.enabled') || 'Enabled'} />,
+              },
+              {
+                id: 'actions', header: '',
+                cell: (job) => (
+                  <div className="flex items-center justify-end gap-1">
+                    {canEdit && <IconButton label={t('cron.runNow') || 'Run now'} icon={<Play size={14} />} disabled={busy === job.id} onClick={() => { void runNow(job); }} />}
+                    <IconButton label={t('cron.history') || 'History'} icon={<History size={14} />} onClick={() => setHistory(job)} />
+                    {canEdit && <IconButton label={t('common.edit') || 'Edit'} icon={<Pencil size={14} />} onClick={() => setEditing(job)} />}
+                    {canEdit && <IconButton variant="danger" label={t('common.delete') || 'Delete'} icon={<Trash2 size={14} />} disabled={busy === job.id} onClick={() => { void remove(job); }} />}
+                  </div>
+                ),
+              },
+            ]}
+          />
         </>
       )}
       <p className="text-xs text-text-muted">{t('cron.utcHint') || 'Schedules are evaluated in UTC. The plan sets the number of jobs and the minimum interval between two runs.'}</p>

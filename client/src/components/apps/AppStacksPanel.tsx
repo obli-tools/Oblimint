@@ -9,10 +9,11 @@ import {
 import { appsApi } from '@/api/apps.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, headerAccentBtnCls, inputCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, headerAccentBtnCls, inputCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { useP4bAccess } from './appsAccess';
 import { appsErrorMessage, isNotImplemented, toastAppsError } from './appsErrors';
@@ -70,6 +71,8 @@ export function AppStacksPanel({ accountId, tenantId, showAccount, showTenant, n
       && (!q || s.name.includes(q) || s.displayName.toLowerCase().includes(q) || s.accountUsername.toLowerCase().includes(q)));
   }, [stacks, search, status]);
 
+  const accountDir = useAccountDirectory();
+
   const run = async (s: AppStack, action: AppUserAction) => {
     if (action === 'stop' && !(await confirm({
       title: t('apps.actions.stop') || 'Stop',
@@ -111,73 +114,80 @@ export function AppStacksPanel({ accountId, tenantId, showAccount, showTenant, n
           action={stacks.length === 0 && newHref ? <Link to={newHref} className={headerAccentBtnCls}><Plus size={14} />{t('apps.new') || 'New application'}</Link> : undefined}
         />
       ) : (
-        <TableScroll className="bg-bg-secondary" stickyFirstCol>
-          <table className="w-full min-w-[760px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('apps.list.name') || 'Application'}</th>
-                {showAccount && <th className={thCls}>{t('apps.list.account') || 'Account'}</th>}
-                <th className={thCls}>{t('apps.list.source') || 'Source'}</th>
-                <th className={thCls}>{t('apps.list.status') || 'Status'}</th>
-                <th className={thCls}>{t('apps.list.services') || 'Services'}</th>
-                <th className={thCls}>{t('apps.list.lastDeploy') || 'Last deployment'}</th>
-                <th className={cn(thCls, 'w-12')}><span className="sr-only">{t('apps.list.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((s) => {
+        <GroupedTable<AppStack>
+          storageKey="apps"
+          singleGroupFlat
+          minWidth={700}
+          defaultSort={{ column: 'name' }}
+          groups={showAccount
+            ? groupRowsByAccount(shown, accountDir, (s) => ({ id: s.accountId, username: s.accountUsername }), (rows) => flatNodes(rows, (s) => s.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(shown, (s) => s.id) }]}
+          onRowClick={(s) => navigate(`/apps/${s.id}`)}
+          columns={[
+            {
+              id: 'name', header: t('apps.list.name') || 'Application', sort: (s) => s.displayName,
+              cell: (s) => (
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <CatalogIcon icon={s.catalog?.icon ?? null} size={28} />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Link to={`/apps/${s.id}`} className="truncate font-medium text-text-primary hover:text-accent">{s.displayName}</Link>
+                      {showTenant && !showAccount && <TenantBadge tenantId={s.tenantId} />}
+                    </div>
+                    <div className="truncate font-mono text-[11px] text-text-muted">{s.name}</div>
+                  </div>
+                </div>
+              ),
+            },
+            {
+              id: 'source', header: t('apps.list.source') || 'Source', sort: (s) => (s.catalog ? s.catalog.name : s.sourceType),
+              cell: (s) => (
+                <span className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
+                  <SourceTypeIcon type={s.sourceType} size={13} />
+                  {s.catalog ? s.catalog.name : sourceTypeLabel(t, s.sourceType)}
+                </span>
+              ),
+            },
+            {
+              id: 'status', header: t('apps.list.status') || 'Status', sort: (s) => s.status,
+              cell: (s) => (
+                <div className="flex flex-wrap items-center gap-1">
+                  <AppStatusBadge status={s.status} message={s.statusMessage} />
+                  {s.updateAvailable && <UpdateAvailableBadge />}
+                </div>
+              ),
+            },
+            { id: 'services', header: t('apps.list.services') || 'Services', tdClassName: 'font-mono text-xs text-text-secondary', sort: (s) => s.runningCount, cell: (s) => `${s.runningCount} / ${s.serviceCount}` },
+            {
+              id: 'deployed', header: t('apps.list.lastDeploy') || 'Last deployment', tdClassName: 'text-xs text-text-muted', sort: (s) => s.lastDeployedAt ?? '',
+              cell: (s) => (
+                <span title={s.lastDeployedAt ? new Date(s.lastDeployedAt).toLocaleString(i18n.language) : undefined}>
+                  {s.lastDeployedAt ? t('apps.list.ago', { value: ago(s.lastDeployedAt), defaultValue: '{{value}} ago' }) : '—'}
+                </span>
+              ),
+            },
+            {
+              id: 'actions', header: <span className="sr-only">{t('apps.list.actions') || 'Actions'}</span>, thClassName: 'w-12', tdClassName: 'px-2 py-2',
+              cell: (s) => {
                 const manage = can('apps.manage', s.accountId);
                 const locked = s.status === 'deploying' || s.status === 'deleting' || busy === s.id;
                 return (
-                  <tr key={s.id} className="cursor-pointer border-t border-border/40 hover:bg-bg-hover/40" onClick={() => navigate(`/apps/${s.id}`)}>
-                    <td className="px-4 py-3">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <CatalogIcon icon={s.catalog?.icon ?? null} size={28} />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <Link to={`/apps/${s.id}`} onClick={(e) => e.stopPropagation()} className="truncate font-medium text-text-primary hover:text-accent">{s.displayName}</Link>
-                            {showTenant && <TenantBadge tenantId={s.tenantId} />}
-                          </div>
-                          <div className="truncate font-mono text-[11px] text-text-muted">{s.name}</div>
-                        </div>
-                      </div>
-                    </td>
-                    {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.accountUsername}</td>}
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
-                        <SourceTypeIcon type={s.sourceType} size={13} />
-                        {s.catalog ? s.catalog.name : sourceTypeLabel(t, s.sourceType)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-1">
-                        <AppStatusBadge status={s.status} message={s.statusMessage} />
-                        {s.updateAvailable && <UpdateAvailableBadge />}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.runningCount} / {s.serviceCount}</td>
-                    <td className="px-4 py-3 text-xs text-text-muted" title={s.lastDeployedAt ? new Date(s.lastDeployedAt).toLocaleString(i18n.language) : undefined}>
-                      {s.lastDeployedAt ? t('apps.list.ago', { value: ago(s.lastDeployedAt), defaultValue: '{{value}} ago' }) : '—'}
-                    </td>
-                    <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
-                      <ActionMenu
-                        disabled={busy === s.id}
-                        items={[
-                          { key: 'open', icon: <ExternalLink size={14} />, label: t('apps.list.open') || 'Open', onClick: () => navigate(`/apps/${s.id}`) },
-                          { key: 'edit', icon: <Code2 size={14} />, label: t('apps.list.editCompose') || 'Edit the compose', onClick: () => navigate(`/apps/${s.id}/edit`), hidden: !manage },
-                          { key: 'deploy', icon: <Rocket size={14} />, label: s.status === 'draft' ? (t('apps.actions.deploy') || 'Deploy') : (t('apps.actions.redeploy') || 'Redeploy'), onClick: () => { void run(s, s.status === 'draft' ? 'deploy' : 'redeploy'); }, hidden: !manage, disabled: locked, separator: true },
-                          { key: 'start', icon: <Play size={14} />, label: t('apps.actions.start') || 'Start', onClick: () => { void run(s, 'start'); }, hidden: !manage || s.status === 'draft', disabled: locked || s.status === 'running' },
-                          { key: 'restart', icon: <RotateCw size={14} />, label: t('apps.actions.restart') || 'Restart', onClick: () => { void run(s, 'restart'); }, hidden: !manage || s.status === 'draft', disabled: locked },
-                          { key: 'stop', icon: <Square size={14} />, label: t('apps.actions.stop') || 'Stop', onClick: () => { void run(s, 'stop'); }, hidden: !manage || s.status === 'draft', disabled: locked || s.status === 'stopped', danger: true },
-                        ]}
-                      />
-                    </td>
-                  </tr>
+                  <ActionMenu
+                    disabled={busy === s.id}
+                    items={[
+                      { key: 'open', icon: <ExternalLink size={14} />, label: t('apps.list.open') || 'Open', onClick: () => navigate(`/apps/${s.id}`) },
+                      { key: 'edit', icon: <Code2 size={14} />, label: t('apps.list.editCompose') || 'Edit the compose', onClick: () => navigate(`/apps/${s.id}/edit`), hidden: !manage },
+                      { key: 'deploy', icon: <Rocket size={14} />, label: s.status === 'draft' ? (t('apps.actions.deploy') || 'Deploy') : (t('apps.actions.redeploy') || 'Redeploy'), onClick: () => { void run(s, s.status === 'draft' ? 'deploy' : 'redeploy'); }, hidden: !manage, disabled: locked, separator: true },
+                      { key: 'start', icon: <Play size={14} />, label: t('apps.actions.start') || 'Start', onClick: () => { void run(s, 'start'); }, hidden: !manage || s.status === 'draft', disabled: locked || s.status === 'running' },
+                      { key: 'restart', icon: <RotateCw size={14} />, label: t('apps.actions.restart') || 'Restart', onClick: () => { void run(s, 'restart'); }, hidden: !manage || s.status === 'draft', disabled: locked },
+                      { key: 'stop', icon: <Square size={14} />, label: t('apps.actions.stop') || 'Stop', onClick: () => { void run(s, 'stop'); }, hidden: !manage || s.status === 'draft', disabled: locked || s.status === 'stopped', danger: true },
+                    ]}
+                  />
                 );
-              })}
-            </tbody>
-          </table>
-        </TableScroll>
+              },
+            },
+          ]}
+        />
       )}
     </div>
   );

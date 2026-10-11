@@ -14,10 +14,11 @@ import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { useTenantFilter } from '@/hooks/useTenantFilter';
 import { PageContainer } from '@/components/common/PageContainer';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantFilterChips } from '@/components/common/TenantFilterChips';
 import { TenantBadge } from '@/components/common/TenantBadge';
-import { AccountStatusBadge, Card, EmptyState, headerBtnCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { AccountStatusBadge, Card, EmptyState, headerBtnCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { BarChart, ChartLegend, LineChart, Sparkline } from '@/components/usage/UsageCharts';
 import { HeroCard, HeroFeatured, MiniStat } from '@/components/usage/HeroCards';
 import { opsErrorMessage } from '@/components/usage/opsErrors';
@@ -212,9 +213,13 @@ function TenantSection({ usage, month }: { usage: TenantUsage; month: string }) 
   );
 }
 
+type TopAccount = TenantUsage['topAccounts'][number];
+type TenantRow = PlatformUsage['tenants'][number];
+
 function TopAccounts({ usage }: { usage: TenantUsage }) {
   const { t } = useTranslation();
   const isMaster = useIsMasterTenant();
+  const accountDir = useAccountDirectory();
   const rows = usage.topAccounts;
   return (
     <Card title={t('usage.top.title') || 'Top accounts'} icon={<Users size={14} className="text-accent" />}>
@@ -222,50 +227,50 @@ function TopAccounts({ usage }: { usage: TenantUsage }) {
         <p className="py-3 text-center text-xs text-text-muted">{t('usage.top.empty') || 'No account yet.'}</p>
       ) : (
         <>
-          <ul className="space-y-2 md:hidden">
-            {rows.map((r) => (
-              <li key={r.accountId}>
-                <Link to={`/accounts/${r.accountId}?tab=usage`} className="block rounded-lg bg-bg-primary px-3 py-2.5 hover:bg-bg-hover">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-mono text-sm font-semibold text-text-primary">{r.username}</span>
-                    <OverQuotaPill state={r.overQuota} />
-                    <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
-                  </div>
-                  <div className="mt-2 space-y-2">
-                    <QuotaLine dimension="traffic" used={r.trafficBytes} limit={r.trafficQuotaBytes} />
-                    <QuotaLine dimension="disk" used={r.diskUsedBytes} limit={r.diskQuotaBytes} />
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-          <TableScroll className="max-md:hidden">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('usage.top.account') || 'Account'}</th>
-                  <th className={thCls}>{t('usage.dimension.traffic') || 'Traffic'}</th>
-                  <th className={thCls}>{t('usage.dimension.disk') || 'Disk'}</th>
-                  <th className={thCls}>{t('usage.top.state') || 'State'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.accountId} className="transition-colors hover:bg-bg-hover">
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2">
-                        <Link to={`/accounts/${r.accountId}?tab=usage`} className="font-mono font-medium text-text-primary hover:text-accent">{r.username}</Link>
-                        {isMaster && <TenantBadge tenantId={r.tenantId} />}
+          <GroupedTable<TopAccount>
+            storageKey="usage-top"
+            singleGroupFlat
+            className=""
+            minWidth={640}
+            defaultSort={{ column: 'traffic', dir: 'desc' }}
+            groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(rows, (r) => r.accountId) }]}
+            renderCard={(r) => (
+              <Link to={`/accounts/${r.accountId}?tab=usage`} className="block rounded-lg bg-bg-primary px-3 py-2.5 hover:bg-bg-hover">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-mono text-sm font-semibold text-text-primary">{accountDir.get(r.accountId)?.primaryDomain || r.username}</span>
+                  <OverQuotaPill state={r.overQuota} />
+                  <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+                </div>
+                <div className="mt-2 space-y-2">
+                  <QuotaLine dimension="traffic" used={r.trafficBytes} limit={r.trafficQuotaBytes} />
+                  <QuotaLine dimension="disk" used={r.diskUsedBytes} limit={r.diskQuotaBytes} />
+                </div>
+              </Link>
+            )}
+            columns={[
+              {
+                id: 'account', header: t('usage.top.account') || 'Account', sort: (r) => accountDir.get(r.accountId)?.primaryDomain || r.username,
+                cell: (r) => {
+                  const domain = accountDir.get(r.accountId)?.primaryDomain;
+                  return (
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0">
+                        <Link to={`/accounts/${r.accountId}?tab=usage`} className="font-mono font-medium text-text-primary hover:text-accent">{domain || r.username}</Link>
+                        {domain && domain !== r.username && <div className="font-mono text-[11px] text-text-muted">{r.username}</div>}
                       </div>
-                    </td>
-                    <td className="w-[30%] px-4 py-2.5"><QuotaLine dimension="traffic" used={r.trafficBytes} limit={r.trafficQuotaBytes} /></td>
-                    <td className="w-[30%] px-4 py-2.5"><QuotaLine dimension="disk" used={r.diskUsedBytes} limit={r.diskQuotaBytes} /></td>
-                    <td className="px-4 py-2.5">{r.overQuota === 'ok' ? <span className="text-xs text-text-muted">—</span> : <OverQuotaPill state={r.overQuota} />}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
+                      {isMaster && <TenantBadge tenantId={r.tenantId} />}
+                    </div>
+                  );
+                },
+              },
+              { id: 'traffic', header: t('usage.dimension.traffic') || 'Traffic', tdClassName: 'w-[30%]', sort: (r) => r.trafficBytes, cell: (r) => <QuotaLine dimension="traffic" used={r.trafficBytes} limit={r.trafficQuotaBytes} /> },
+              { id: 'disk', header: t('usage.dimension.disk') || 'Disk', tdClassName: 'w-[30%]', sort: (r) => r.diskUsedBytes, cell: (r) => <QuotaLine dimension="disk" used={r.diskUsedBytes} limit={r.diskQuotaBytes} /> },
+              {
+                id: 'state', header: t('usage.top.state') || 'State', sort: (r) => (r.overQuota === 'ok' ? '' : r.overQuota),
+                cell: (r) => (r.overQuota === 'ok' ? <span className="text-xs text-text-muted">—</span> : <OverQuotaPill state={r.overQuota} />),
+              },
+            ]}
+          />
         </>
       )}
     </Card>
@@ -293,28 +298,20 @@ function PlatformSection({ usage, bytes }: { usage: PlatformUsage; bytes: (n: nu
           {tenants.length === 0 ? (
             <p className="py-3 text-center text-xs text-text-muted">{t('usage.top.empty') || 'No account yet.'}</p>
           ) : (
-            <TableScroll>
-              <table className="w-full min-w-[420px] text-sm">
-                <thead>
-                  <tr className={theadRowCls}>
-                    <th className={thCls}>{t('usage.platform.tenant') || 'Workspace'}</th>
-                    <th className={`${thCls} text-right`}>{t('usage.dimension.traffic') || 'Traffic'}</th>
-                    <th className={`${thCls} text-right`}>{t('usage.dimension.disk') || 'Disk'}</th>
-                    <th className={`${thCls} text-right`}>{t('usage.platform.accounts') || 'Accounts'}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tenants.map((r) => (
-                    <tr key={r.tenantId} className="transition-colors hover:bg-bg-hover">
-                      <td className="px-4 py-2.5"><TenantBadge tenantId={r.tenantId} tenantName={r.name} size="md" /></td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs text-text-secondary">{bytes(r.trafficBytes)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs text-text-secondary">{bytes(r.diskUsedBytes)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs text-text-secondary">{r.accounts}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </TableScroll>
+            <GroupedTable<TenantRow>
+              storageKey="usage-tenants"
+              singleGroupFlat
+              className=""
+              minWidth={420}
+              defaultSort={{ column: 'traffic', dir: 'desc' }}
+              groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(tenants, (r) => r.tenantId) }]}
+              columns={[
+                { id: 'tenant', header: t('usage.platform.tenant') || 'Workspace', sort: (r) => r.name, cell: (r) => <TenantBadge tenantId={r.tenantId} tenantName={r.name} size="md" /> },
+                { id: 'traffic', header: t('usage.dimension.traffic') || 'Traffic', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs text-text-secondary', sort: (r) => r.trafficBytes, cell: (r) => bytes(r.trafficBytes) },
+                { id: 'disk', header: t('usage.dimension.disk') || 'Disk', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs text-text-secondary', sort: (r) => r.diskUsedBytes, cell: (r) => bytes(r.diskUsedBytes) },
+                { id: 'accounts', header: t('usage.platform.accounts') || 'Accounts', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs text-text-secondary', sort: (r) => r.accounts, cell: (r) => r.accounts },
+              ]}
+            />
           )}
         </Card>
 

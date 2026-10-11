@@ -7,11 +7,12 @@ import { proxyApi } from '@/api/proxy.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { headerAccentBtnCls, labelCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { headerAccentBtnCls, labelCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { DomainPicker } from './DomainPicker';
 import { AccountField, DomainNames, EdgeUnitBanner, EdgeUnitPill, ListState, SslState, useProxyAccess } from './proxyUi';
@@ -33,6 +34,8 @@ export function DeadHostsPanel({ accountId, tenantId, accounts, showAccount, sho
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ProxyDeadHost | 'new' | null>(null);
+  const accountDir = useAccountDirectory();
+  const domainKey = (d: ProxyDeadHost) => d.domains[0]?.name ?? `~${d.id}`;
 
   const seq = useRef(0);
   const load = useCallback(async () => {
@@ -108,9 +111,17 @@ export function DeadHostsPanel({ accountId, tenantId, accounts, showAccount, sho
         <div className="ml-auto">{createBtn}</div>
       </div>
       <ListState loading={loading} error={error} empty={items.length === 0} emptyIcon={<Ban />} emptyText={t('proxy.deadHosts.empty') || 'No dead host yet.'} emptyAction={createBtn ?? undefined}>
-        <ul className="space-y-2 md:hidden">
-          {items.map((d) => (
-            <li key={d.id} className={cn('rounded-xl bg-bg-secondary px-3 py-2.5', !d.enabled && 'opacity-60')}>
+        <GroupedTable<ProxyDeadHost>
+          storageKey="proxy-dead-hosts"
+          singleGroupFlat
+          minWidth={760}
+          defaultSort={{ column: 'domains' }}
+          rowClassName={(d) => !d.enabled && 'opacity-60'}
+          groups={showAccount
+            ? groupRowsByAccount(items, accountDir, (d) => ({ id: d.accountId, username: d.accountUsername }), (rows) => domainTree(rows, domainKey, (d) => d.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: domainTree(items, domainKey, (d) => d.id) }]}
+          renderCard={(d) => (
+            <div className={cn('rounded-xl bg-bg-secondary px-3 py-2.5', !d.enabled && 'opacity-60')}>
               <div className="flex items-center gap-2">
                 <span className="min-w-0 flex-1"><DomainNames domains={d.domains} /></span>
                 <EdgeUnitPill unit={d.edge} />
@@ -119,42 +130,23 @@ export function DeadHostsPanel({ accountId, tenantId, accounts, showAccount, sho
               <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
                 <SslState domains={d.domains} enabled />
                 <span>{pageName(d.customPageId)}</span>
-                {showAccount && <span className="font-mono">{d.accountUsername}</span>}
                 {showTenant && <TenantBadge tenantId={d.tenantId} />}
               </div>
-            </li>
-          ))}
-        </ul>
-        <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('proxy.domains.title') || 'Domains'}</th>
-                <th className={thCls}>{t('proxy.deadHosts.page') || '404 page'}</th>
-                <th className={thCls}>{t('proxy.ssl.title') || 'SSL'}</th>
-                <th className={thCls}>{t('proxy.unit.title') || 'Edge'}</th>
-                {showAccount && <th className={thCls}>{t('proxy.account') || 'Hosting account'}</th>}
-                {showTenant && <th className={thCls}>{t('proxy.tenant') || 'Workspace'}</th>}
-                <th className={`${thCls} w-20`}>{t('proxy.enabled') || 'Enabled'}</th>
-                <th className={`${thCls} w-14`}><span className="sr-only">{t('proxy.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((d) => (
-                <tr key={d.id} className={cn('align-top transition-colors hover:bg-bg-hover', !d.enabled && 'opacity-60')}>
-                  <td className="max-w-[22rem] px-4 py-3"><DomainNames domains={d.domains} max={3} /></td>
-                  <td className="px-4 py-3 text-xs text-text-secondary">{pageName(d.customPageId)}</td>
-                  <td className="px-4 py-3"><SslState domains={d.domains} enabled /></td>
-                  <td className="px-4 py-3"><EdgeUnitPill unit={d.edge} /></td>
-                  {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{d.accountUsername}</td>}
-                  {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={d.tenantId} /></td>}
-                  <td className="px-4 py-3"><ToggleSwitch size="sm" checked={d.enabled} disabled={!canManage(d.accountId)} onChange={(v) => { void toggle(d, v); }} ariaLabel={t('proxy.enabled') || 'Enabled'} /></td>
-                  <td className="px-4 py-3 text-right">{menu(d)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+            </div>
+          )}
+          columns={[
+            { id: 'domains', header: t('proxy.domains.title') || 'Domains', tdClassName: 'max-w-[22rem]', sort: domainKey, cell: (d) => <DomainNames domains={d.domains} max={3} /> },
+            { id: 'page', header: t('proxy.deadHosts.page') || '404 page', tdClassName: 'text-xs text-text-secondary', sort: (d) => pageName(d.customPageId), cell: (d) => pageName(d.customPageId) },
+            { id: 'ssl', header: t('proxy.ssl.title') || 'SSL', cell: (d) => <SslState domains={d.domains} enabled /> },
+            { id: 'edge', header: t('proxy.unit.title') || 'Edge', cell: (d) => <EdgeUnitPill unit={d.edge} /> },
+            ...(showTenant && !showAccount ? [{ id: 'tenant', header: t('proxy.tenant') || 'Workspace', cell: (d: ProxyDeadHost) => <TenantBadge tenantId={d.tenantId} /> }] : []),
+            {
+              id: 'enabled', header: t('proxy.enabled') || 'Enabled', thClassName: 'w-20', sort: (d) => d.enabled,
+              cell: (d) => <ToggleSwitch size="sm" checked={d.enabled} disabled={!canManage(d.accountId)} onChange={(v) => { void toggle(d, v); }} ariaLabel={t('proxy.enabled') || 'Enabled'} />,
+            },
+            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (d) => menu(d) },
+          ]}
+        />
       </ListState>
 
       <DeadHostModal

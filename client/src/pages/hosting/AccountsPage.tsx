@@ -11,13 +11,12 @@ import { useHostingMe } from '@/store/hostingStore';
 import { useTenantStore } from '@/store/tenantStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { PageContainer } from '@/components/common/PageContainer';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes, groupByAccount } from '@/components/common/GroupedTable';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TenantBadge } from '@/components/common/TenantBadge';
 import { AccountCreateModal } from '@/components/hosting/AccountCreateModal';
 import {
   AccountStatusBadge, DiskBar, EmptyState, accountStatusLabel, headerAccentBtnCls, headerBtnCls, hostingErrorMessage,
-  thCls, theadRowCls, useHostingEvents,
+  useHostingEvents,
 } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 
@@ -136,64 +135,58 @@ export function AccountsPage() {
             : undefined}
         />
       ) : (
-        <>
-          {/* Phone: cards */}
-          <ul className="space-y-2 md:hidden">
-            {accounts.map((a) => (
-              <li key={a.id}>
-                <Link to={`/accounts/${a.id}`} className="block rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-mono text-sm font-semibold text-text-primary">{a.username}</span>
-                    <AccountStatusBadge status={a.status} message={a.statusMessage} />
-                    {isMaster && <TenantBadge tenantId={a.tenantId} tenantName={a.tenantName} />}
-                    <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+        <GroupedTable<HostingAccount>
+          storageKey="accounts"
+          singleGroupFlat
+          minWidth={860}
+          defaultSort={{ column: 'name' }}
+          // Master view: one group per workspace; elsewhere a single flat list.
+          groups={isMaster
+            ? groupByAccount(accounts, (a) => ({ id: a.tenantId, name: a.tenantName ?? `#${a.tenantId}` }), (rows) => flatNodes(rows, (a) => a.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(accounts, (a) => a.id) }]}
+          onRowClick={(a) => navigate(`/accounts/${a.id}`)}
+          renderCard={(a) => (
+            <Link to={`/accounts/${a.id}`} className="block rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
+              <div className="flex items-center gap-2">
+                <span className="truncate font-mono text-sm font-semibold text-text-primary">{a.primaryDomain || a.username}</span>
+                <AccountStatusBadge status={a.status} message={a.statusMessage} />
+                <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+              </div>
+              <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">{a.primaryDomain ? a.username : null}{a.primaryDomain && a.displayName ? ' · ' : null}{a.displayName}</div>
+              <div className="mt-2"><DiskBar usedMb={a.diskUsedMb} quotaMb={a.diskQuotaMb} mode={a.quotaMode} /></div>
+              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-muted">
+                <span>{t('accounts.col.plan') || 'Plan'}: <span className="text-text-primary">{a.planName ?? '—'}</span></span>
+                <span>{t('accounts.col.sites') || 'Sites'}: <span className="text-text-primary">{a.siteCount}</span></span>
+                <span>{t('accounts.col.domains') || 'Domains'}: <span className="text-text-primary">{a.domainCount}</span></span>
+              </div>
+            </Link>
+          )}
+          columns={[
+            {
+              id: 'name', header: t('accounts.col.username') || 'Account', sort: (a) => a.primaryDomain || a.username,
+              cell: (a) => (
+                <>
+                  <Link to={`/accounts/${a.id}`} className="font-mono font-medium text-text-primary hover:text-accent">{a.primaryDomain || a.username}</Link>
+                  <div className="max-w-[16rem] truncate font-mono text-[11px] text-text-muted">
+                    {a.primaryDomain ? a.username : null}{a.primaryDomain && a.displayName ? ' · ' : null}{a.displayName}
                   </div>
-                  {a.displayName && <div className="mt-0.5 truncate text-xs text-text-muted">{a.displayName}</div>}
-                  <div className="mt-2"><DiskBar usedMb={a.diskUsedMb} quotaMb={a.diskQuotaMb} mode={a.quotaMode} /></div>
-                  <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-muted">
-                    <span>{t('accounts.col.plan') || 'Plan'}: <span className="text-text-primary">{a.planName ?? '—'}</span></span>
-                    <span>{t('accounts.col.sites') || 'Sites'}: <span className="text-text-primary">{a.siteCount}</span></span>
-                    <span>{t('accounts.col.domains') || 'Domains'}: <span className="text-text-primary">{a.domainCount}</span></span>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-
-          <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-            <table className="w-full min-w-[860px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('accounts.col.username') || 'Account'}</th>
-                  {isMaster && <th className={thCls}>{t('hostingCommon.tenant') || 'Workspace'}</th>}
-                  <th className={thCls}>{t('accounts.col.plan') || 'Plan'}</th>
-                  <th className={thCls}>{t('accounts.col.status') || 'Status'}</th>
-                  <th className={thCls}>{t('accounts.col.disk') || 'Disk'}</th>
-                  <th className={`${thCls} text-right`}>{t('accounts.col.sites') || 'Sites'}</th>
-                  <th className={`${thCls} text-right`}>{t('accounts.col.domains') || 'Domains'}</th>
-                  <th className={thCls}>{t('accounts.col.created') || 'Created'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {accounts.map((a) => (
-                  <tr key={a.id} onClick={() => navigate(`/accounts/${a.id}`)} className="cursor-pointer transition-colors hover:bg-bg-hover">
-                    <td className="px-4 py-3">
-                      <Link to={`/accounts/${a.id}`} onClick={(e) => e.stopPropagation()} className="font-mono font-medium text-text-primary hover:text-accent">{a.username}</Link>
-                      {a.displayName && <div className="max-w-[14rem] truncate text-xs text-text-muted">{a.displayName}</div>}
-                    </td>
-                    {isMaster && <td className="px-4 py-3"><TenantBadge tenantId={a.tenantId} tenantName={a.tenantName} /></td>}
-                    <td className="px-4 py-3 text-text-secondary">{a.planName ?? '—'}</td>
-                    <td className="px-4 py-3"><AccountStatusBadge status={a.status} message={a.statusMessage} /></td>
-                    <td className="px-4 py-3"><DiskBar usedMb={a.diskUsedMb} quotaMb={a.diskQuotaMb} mode={a.quotaMode} compact /></td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums">{a.siteCount}</td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums">{a.domainCount}</td>
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-text-muted">{new Date(a.createdAt).toLocaleDateString(i18n.language)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
-        </>
+                </>
+              ),
+            },
+            { id: 'plan', header: t('accounts.col.plan') || 'Plan', tdClassName: 'text-text-secondary', sort: (a) => a.planName ?? '', cell: (a) => a.planName ?? '—' },
+            { id: 'status', header: t('accounts.col.status') || 'Status', sort: (a) => a.status, cell: (a) => <AccountStatusBadge status={a.status} message={a.statusMessage} /> },
+            {
+              id: 'disk', header: t('accounts.col.disk') || 'Disk', sort: (a) => a.diskUsedMb ?? null,
+              cell: (a) => <DiskBar usedMb={a.diskUsedMb} quotaMb={a.diskQuotaMb} mode={a.quotaMode} compact />,
+            },
+            { id: 'sites', header: t('accounts.col.sites') || 'Sites', thClassName: 'text-right', tdClassName: 'text-right font-mono tabular-nums', sort: (a) => a.siteCount, cell: (a) => a.siteCount },
+            { id: 'domains', header: t('accounts.col.domains') || 'Domains', thClassName: 'text-right', tdClassName: 'text-right font-mono tabular-nums', sort: (a) => a.domainCount, cell: (a) => a.domainCount },
+            {
+              id: 'created', header: t('accounts.col.created') || 'Created', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-muted',
+              sort: (a) => a.createdAt, cell: (a) => new Date(a.createdAt).toLocaleDateString(i18n.language),
+            },
+          ]}
+        />
       )}
 
       <AccountCreateModal

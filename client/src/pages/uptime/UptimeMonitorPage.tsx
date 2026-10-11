@@ -11,9 +11,9 @@ import { IconButton } from '@/components/common/IconButton';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Card, InfoRow, Pill, headerAccentBtnCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { Card, InfoRow, Pill, headerAccentBtnCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { appsErrorMessage, isNotFound, toastAppsError } from '@/components/apps/appsErrors';
 import { formatDateTime, formatMs, formatPct, uptimeColor } from '@/components/apps/appsFormat';
@@ -201,30 +201,22 @@ export function UptimeMonitorPage() {
 
       <Card title={t('uptime.history') || 'Check history'}>
         {history.length === 0 ? <p className="text-sm text-text-muted">{t('uptime.noCheck') || 'No check yet.'}</p> : (
-          <TableScroll className="bg-bg-primary">
-            <table className="w-full min-w-[560px] text-xs">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('apps.history.date') || 'Date'}</th>
-                  <th className={thCls}>{t('apps.list.status') || 'Status'}</th>
-                  <th className={thCls}>{t('uptime.latency') || 'Latency'}</th>
-                  <th className={thCls}>HTTP</th>
-                  <th className={thCls}>{t('uptime.error') || 'Error'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((c, i) => (
-                  <tr key={`${c.at}-${i}`} className="border-t border-border/40">
-                    <td className="px-4 py-2 text-text-secondary">{formatDateTime(c.at, i18n.language)}</td>
-                    <td className="px-4 py-2">{c.ok ? <Pill tone="green">{t('uptime.status.up') || 'Up'}</Pill> : <Pill tone="red">{t('uptime.status.down') || 'Down'}</Pill>}</td>
-                    <td className="px-4 py-2 font-mono text-text-secondary">{formatMs(c.latencyMs)}</td>
-                    <td className="px-4 py-2 font-mono text-text-secondary">{c.statusCode ?? '—'}</td>
-                    <td className="max-w-[22rem] truncate px-4 py-2 text-status-down" title={c.error ?? undefined}>{c.error ?? ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
+          <GroupedTable<UptimeCheckPoint>
+            singleGroupFlat
+            className="bg-bg-primary"
+            minWidth={560}
+            groups={[{ key: 'all', label: '', sortLabel: '', nodes: history.map((c, i) => ({ key: `${c.at}-${i}`, row: c, children: [] })) }]}
+            columns={[
+              { id: 'at', header: t('apps.history.date') || 'Date', tdClassName: 'text-xs text-text-secondary', sort: (c) => c.at, cell: (c) => formatDateTime(c.at, i18n.language) },
+              {
+                id: 'status', header: t('apps.list.status') || 'Status', sort: (c) => c.ok,
+                cell: (c) => (c.ok ? <Pill tone="green">{t('uptime.status.up') || 'Up'}</Pill> : <Pill tone="red">{t('uptime.status.down') || 'Down'}</Pill>),
+              },
+              { id: 'latency', header: t('uptime.latency') || 'Latency', tdClassName: 'font-mono text-xs text-text-secondary', sort: (c) => c.latencyMs ?? null, cell: (c) => formatMs(c.latencyMs) },
+              { id: 'http', header: 'HTTP', tdClassName: 'font-mono text-xs text-text-secondary', sort: (c) => c.statusCode ?? null, cell: (c) => c.statusCode ?? '—' },
+              { id: 'error', header: t('uptime.error') || 'Error', tdClassName: 'max-w-[22rem] truncate text-xs text-status-down', sort: (c) => c.error ?? '', cell: (c) => <span title={c.error ?? undefined}>{c.error ?? ''}</span> },
+            ]}
+          />
         )}
       </Card>
 

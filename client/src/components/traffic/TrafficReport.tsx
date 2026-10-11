@@ -5,15 +5,14 @@ import { type ProxyTrafficRange, type ProxyTrafficReport, type ProxyTrafficSampl
 import { trafficApi } from '@/api/traffic.api';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
-import { TableScroll } from '@/components/common/TableScroll';
-import { Card, EmptyState, Pill, thCls, theadRowCls } from '@/components/hosting/hostingUi';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { Card, EmptyState, Pill } from '@/components/hosting/hostingUi';
 import { ChartLegend, Donut, LineChart } from '@/components/usage/UsageCharts';
 import { formatCount } from '@/components/usage/usageFormat';
 import { useByteFormat } from '@/components/usage/usageUi';
 import { proxyLoadError } from '@/components/proxy/proxyErrors';
 import { GeoLine } from '@/components/security/bansUi';
 import { flagEmoji } from '@/components/proxy/proxyFormat';
-import { cn } from '@/utils/cn';
 import { LATENCY_COLORS, STATUS_COLORS, StatTile, bucketLabel, formatMs, formatPct, useVisiblePoll } from './trafficUi';
 
 type StatusFilter = 'all' | '4xx' | '5xx';
@@ -180,33 +179,36 @@ function SamplesCard({ title, icon, samples }: { title: string; icon: React.Reac
   return (
     <Card title={title} icon={icon}>
       {samples.length === 0 ? <p className="py-3 text-center text-xs text-text-muted">{t('traffic.noSample') || 'None in this period.'}</p> : (
-        <TableScroll className="rounded-lg bg-bg-primary">
-          <table className="w-full min-w-[760px] text-xs">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('traffic.at') || 'Time'}</th>
-                <th className={thCls}>{t('traffic.status') || 'Status'}</th>
-                <th className={thCls}>{t('traffic.request') || 'Request'}</th>
-                <th className={thCls}>{t('traffic.duration') || 'Duration'}</th>
-                <th className={thCls}>{t('traffic.client') || 'Client'}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {samples.slice(0, 50).map((s, i) => (
-                <tr key={`${s.at}-${i}`} className="align-top">
-                  <td className="whitespace-nowrap px-4 py-2 font-mono text-text-muted">{new Date(s.at).toLocaleString(i18n.language, { dateStyle: 'short', timeStyle: 'medium' })}</td>
-                  <td className="px-4 py-2">
-                    <Pill tone={s.status >= 500 ? 'red' : s.status >= 400 ? 'amber' : 'green'}>{s.status}</Pill>
-                    {s.upstreamStatus && s.upstreamStatus !== String(s.status) && <span className="ml-1 font-mono text-[10px] text-text-muted">↑{s.upstreamStatus}</span>}
-                  </td>
-                  <td className="max-w-[26rem] px-4 py-2 font-mono text-text-secondary"><span className="text-text-muted">{s.method}</span> <span className="break-all">{s.uri}</span></td>
-                  <td className={cn('whitespace-nowrap px-4 py-2 font-mono', s.requestTimeMs >= 1000 ? 'text-amber-400' : 'text-text-secondary')}>{formatMs(s.requestTimeMs)}</td>
-                  <td className="px-4 py-2 font-mono text-text-secondary" title={s.userAgent ?? undefined}>{s.ip}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<ProxyTrafficSample>
+          singleGroupFlat
+          className="bg-bg-primary"
+          minWidth={760}
+          groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(samples.slice(0, 50), (x) => `${x.at}-${x.uri}-${x.ip}`) }]}
+          columns={[
+            {
+              id: 'at', header: t('traffic.at') || 'Time', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-muted', sort: (x) => x.at,
+              cell: (x) => new Date(x.at).toLocaleString(i18n.language, { dateStyle: 'short', timeStyle: 'medium' }),
+            },
+            {
+              id: 'status', header: t('traffic.status') || 'Status', sort: (x) => x.status,
+              cell: (x) => (
+                <>
+                  <Pill tone={x.status >= 500 ? 'red' : x.status >= 400 ? 'amber' : 'green'}>{x.status}</Pill>
+                  {x.upstreamStatus && x.upstreamStatus !== String(x.status) && <span className="ml-1 font-mono text-[10px] text-text-muted">↑{x.upstreamStatus}</span>}
+                </>
+              ),
+            },
+            {
+              id: 'request', header: t('traffic.request') || 'Request', tdClassName: 'max-w-[26rem] font-mono text-xs text-text-secondary', sort: (x) => x.uri,
+              cell: (x) => <><span className="text-text-muted">{x.method}</span> <span className="break-all">{x.uri}</span></>,
+            },
+            {
+              id: 'duration', header: t('traffic.duration') || 'Duration', tdClassName: 'whitespace-nowrap font-mono text-xs', sort: (x) => x.requestTimeMs,
+              cell: (x) => <span className={x.requestTimeMs >= 1000 ? 'text-amber-400' : 'text-text-secondary'}>{formatMs(x.requestTimeMs)}</span>,
+            },
+            { id: 'client', header: t('traffic.client') || 'Client', tdClassName: 'font-mono text-xs text-text-secondary', sort: (x) => x.ip, cell: (x) => <span title={x.userAgent ?? undefined}>{x.ip}</span> },
+          ]}
+        />
       )}
     </Card>
   );

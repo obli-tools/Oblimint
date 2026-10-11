@@ -7,10 +7,11 @@ import { mailApi } from '@/api/mail.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, Pill, headerAccentBtnCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, Pill, headerAccentBtnCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { MailAliasModal } from './MailAliasModal';
 import { MailSearch } from './MailListParts';
@@ -69,6 +70,7 @@ export function MailAliasesPanel({ accountId, tenantId, mailDomainId, showTenant
     return accountId == null || payload.accountId == null || payload.accountId === accountId;
   }, 800);
 
+  const accountDir = useAccountDirectory();
   const manageableDomains = useMemo(() => domains.filter((d) => can('mail.manage', d.accountId)), [domains, can]);
   const createBtn = manageableDomains.length > 0 ? (
     <button onClick={() => setEditing('new')} className={headerAccentBtnCls}><Plus size={14} />{t('mail.aliases.add') || 'New alias'}</button>
@@ -116,53 +118,46 @@ export function MailAliasesPanel({ accountId, tenantId, mailDomainId, showTenant
       ) : items.length === 0 ? (
         <EmptyState icon={<Forward />} text={q ? (t('common.noMatch') || 'No match') : (t('mail.aliases.empty') || 'No alias yet.')} action={!q ? createBtn ?? undefined : undefined} />
       ) : (
-        <>
-          <ul className="space-y-2 md:hidden">
-            {items.map((a) => (
-              <li key={a.id} className={cn('rounded-xl bg-bg-secondary px-3 py-2.5', !a.enabled && 'opacity-60')}>
-                <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-text-primary">{a.address}</span>
-                  {!a.enabled && <Pill>{t('mail.aliases.disabled') || 'disabled'}</Pill>}
-                  {rowMenu(a)}
+        <GroupedTable<MailAlias>
+          storageKey="mail-aliases"
+          singleGroupFlat
+          minWidth={720}
+          defaultSort={{ column: 'address' }}
+          groups={mailDomainId == null
+            ? groupRowsByAccount(items, accountDir, (a) => ({ id: a.accountId, username: domains.find((d) => d.id === a.mailDomainId)?.accountUsername }), (rows) => flatNodes(rows, (a) => a.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (a) => a.id) }]}
+          renderCard={(a) => (
+            <div className={cn('rounded-xl bg-bg-secondary px-3 py-2.5', !a.enabled && 'opacity-60')}>
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-text-primary">{a.address}</span>
+                {!a.enabled && <Pill>{t('mail.aliases.disabled') || 'disabled'}</Pill>}
+                {rowMenu(a)}
+              </div>
+              <div className="mt-1">→ {targets(a)}</div>
+              {(a.comment || showTenant) && (
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                  {a.comment && <span>{a.comment}</span>}
+                  {showTenant && <TenantBadge tenantId={a.tenantId} />}
                 </div>
-                <div className="mt-1">→ {targets(a)}</div>
-                {(a.comment || showTenant) && (
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-                    {a.comment && <span>{a.comment}</span>}
-                    {showTenant && <TenantBadge tenantId={a.tenantId} />}
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-          <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('mail.aliases.address') || 'Alias address'}</th>
-                  <th className={thCls}>{t('mail.aliases.targets') || 'Destinations'}</th>
-                  {showTenant && <th className={thCls}>{t('hostingCommon.tenant') || 'Workspace'}</th>}
-                  <th className={thCls}>{t('mail.aliases.comment') || 'Comment'}</th>
-                  <th className={`${thCls} w-14`}><span className="sr-only">{t('mail.actions') || 'Actions'}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((a) => (
-                  <tr key={a.id} className={cn('align-top transition-colors hover:bg-bg-hover', !a.enabled && 'opacity-60')}>
-                    <td className="px-4 py-3">
-                      <span className="font-mono font-medium text-text-primary">{a.address}</span>
-                      {!a.enabled && <Pill className="ml-2">{t('mail.aliases.disabled') || 'disabled'}</Pill>}
-                    </td>
-                    <td className="max-w-[28rem] px-4 py-3">{targets(a)}</td>
-                    {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={a.tenantId} /></td>}
-                    <td className="px-4 py-3 text-xs text-text-muted">{a.comment ?? '—'}</td>
-                    <td className="px-4 py-3 text-right">{rowMenu(a)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
-        </>
+              )}
+            </div>
+          )}
+          columns={[
+            {
+              id: 'address', header: t('mail.aliases.address') || 'Alias address', sort: (a) => a.address,
+              cell: (a) => (
+                <span className={cn(!a.enabled && 'opacity-60')}>
+                  <span className="font-mono font-medium text-text-primary">{a.address}</span>
+                  {!a.enabled && <Pill className="ml-2">{t('mail.aliases.disabled') || 'disabled'}</Pill>}
+                </span>
+              ),
+            },
+            { id: 'targets', header: t('mail.aliases.targets') || 'Destinations', tdClassName: 'max-w-[28rem]', sort: (a) => a.targets.join(', '), cell: (a) => targets(a) },
+            ...(showTenant && mailDomainId != null ? [{ id: 'tenant', header: t('hostingCommon.tenant') || 'Workspace', cell: (a: MailAlias) => <TenantBadge tenantId={a.tenantId} /> }] : []),
+            { id: 'comment', header: t('mail.aliases.comment') || 'Comment', tdClassName: 'text-xs text-text-muted', sort: (a) => a.comment ?? '', cell: (a) => a.comment ?? '—' },
+            { id: 'actions', header: <span className="sr-only">{t('mail.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (a) => rowMenu(a) },
+          ]}
+        />
       )}
 
       <MailAliasModal

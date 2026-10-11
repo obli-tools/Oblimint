@@ -1,10 +1,11 @@
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type {
   CwpCertificate, CwpCronEntry, CwpDatabase, CwpDbUser, CwpDkimKey, CwpDnsZone, CwpDomain, CwpFtpUser, CwpMailAlias,
   CwpMailbox, CwpMailDomain, CwpOutsideItem,
 } from '@oblimint/shared';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { Pill, theadRowCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { formatBytes, formatDateTime, paramEntries } from '../migrationFormat';
@@ -93,7 +94,7 @@ export function DomainDetails({ d }: { d: CwpDomain }) {
   );
 }
 
-export function DomainNode({ d, idPrefix }: { d: CwpDomain; idPrefix: string }) {
+export function DomainNode({ d, idPrefix, showKind = false }: { d: CwpDomain; idPrefix: string; showKind?: boolean }) {
   const { t } = useTranslation();
   return (
     <Node
@@ -102,6 +103,7 @@ export function DomainNode({ d, idPrefix }: { d: CwpDomain; idPrefix: string }) 
       title={<span className="font-mono text-[13px]">{d.fqdn}</span>}
       badges={
         <span className="inline-flex flex-wrap gap-1">
+          {showKind && <Pill tone="muted">{cwpKindLabel(t, d.kind)}</Pill>}
           <Pill tone={SERVING_TONE[d.serving]}>{servingLabel(t, d.serving)}</Pill>
           {d.php?.version && <Pill tone={d.php.version.startsWith('5') ? 'red' : 'muted'}>PHP {d.php.version}</Pill>}
           {d.docrootNonStandard && <Pill tone="amber">{t('migration.inventory.nonStandard') || 'non-standard'}</Pill>}
@@ -120,19 +122,20 @@ export function DomainNode({ d, idPrefix }: { d: CwpDomain; idPrefix: string }) 
 export function DatabasesTable({ databases }: { databases: CwpDatabase[] }) {
   const { t } = useTranslation();
   const units = useByteUnits();
+  const { sorted, sort } = useTableSort(databases, { name: (d) => d.name, size: (d) => d.sizeBytes, tables: (d) => d.tables, collation: (d) => d.collation, objects: (d) => d.objects.length });
   return (
     <TableScroll>
       <table className={cn(tableCls, 'min-w-[720px]')}>
         <thead><tr className={theadRowCls}>
-          <th className={smallTh}>{t('migration.inventory.database') || 'Database'}</th>
-          <th className={smallTh}>{t('migration.inventory.size') || 'Size'}</th>
-          <th className={smallTh}>{t('migration.inventory.tables') || 'Tables'}</th>
+          <SortTh k="name" sort={sort} className={smallTh}>{t('migration.inventory.database') || 'Database'}</SortTh>
+          <SortTh k="size" sort={sort} className={smallTh}>{t('migration.inventory.size') || 'Size'}</SortTh>
+          <SortTh k="tables" sort={sort} className={smallTh}>{t('migration.inventory.tables') || 'Tables'}</SortTh>
           <th className={smallTh}>{t('migration.inventory.engines') || 'Engines'}</th>
-          <th className={smallTh}>{t('migration.inventory.collation') || 'Collation'}</th>
-          <th className={smallTh}>{t('migration.inventory.objects') || 'Objects (DEFINER)'}</th>
+          <SortTh k="collation" sort={sort} className={smallTh}>{t('migration.inventory.collation') || 'Collation'}</SortTh>
+          <SortTh k="objects" sort={sort} className={smallTh}>{t('migration.inventory.objects') || 'Objects (DEFINER)'}</SortTh>
         </tr></thead>
         <tbody>
-          {databases.map((db) => (
+          {sorted.map((db) => (
             <tr key={db.name} className="border-t border-white/[0.04]">
               <td className={smallTd}>
                 <code className="font-mono text-text-primary">{db.name}</code>
@@ -168,16 +171,17 @@ export function DatabasesTable({ databases }: { databases: CwpDatabase[] }) {
 
 export function DbUsersTable({ users }: { users: CwpDbUser[] }) {
   const { t } = useTranslation();
+  const { sorted, sort } = useTableSort(users, { user: (u) => `${u.user}@${u.host}`, hash: (u) => u.hashKind, grants: (u) => u.grants.length });
   return (
     <TableScroll>
       <table className={cn(tableCls, 'min-w-[680px]')}>
         <thead><tr className={theadRowCls}>
-          <th className={smallTh}>{t('migration.inventory.dbUser') || 'User'}</th>
-          <th className={smallTh}>{t('migration.inventory.hashKind') || 'Hash'}</th>
-          <th className={smallTh}>{t('migration.inventory.grants') || 'Grants'}</th>
+          <SortTh k="user" sort={sort} className={smallTh}>{t('migration.inventory.dbUser') || 'User'}</SortTh>
+          <SortTh k="hash" sort={sort} className={smallTh}>{t('migration.inventory.hashKind') || 'Hash'}</SortTh>
+          <SortTh k="grants" sort={sort} className={smallTh}>{t('migration.inventory.grants') || 'Grants'}</SortTh>
         </tr></thead>
         <tbody>
-          {users.map((u) => (
+          {sorted.map((u) => (
             <tr key={`${u.user}@${u.host}`} className="border-t border-white/[0.04]">
               <td className={smallTd}>
                 <code className="font-mono text-text-primary">{u.user}</code><span className="font-mono text-text-muted">@{u.host}</span>
@@ -221,6 +225,7 @@ export function MailDomainNode({ md, mailboxes, aliases, dkim, idPrefix }: {
 }) {
   const { t } = useTranslation();
   const units = useByteUnits();
+  const { sorted, sort } = useTableSort(mailboxes, { address: (m) => m.address, used: (m) => m.usedBytes ?? m.maildirBytes, scheme: (m) => m.hashScheme, maildir: (m) => m.maildirPath });
   return (
     <Node
       id={`${idPrefix}:mail:${md.name}`}
@@ -239,13 +244,13 @@ export function MailDomainNode({ md, mailboxes, aliases, dkim, idPrefix }: {
         <TableScroll>
           <table className={cn(tableCls, 'min-w-[640px]')}>
             <thead><tr className={theadRowCls}>
-              <th className={smallTh}>{t('migration.inventory.mailbox') || 'Mailbox'}</th>
-              <th className={smallTh}>{t('migration.inventory.usedQuota') || 'Used / quota'}</th>
-              <th className={smallTh}>{t('migration.inventory.scheme') || 'Hash scheme'}</th>
-              <th className={smallTh}>{t('migration.inventory.maildir') || 'Maildir'}</th>
+              <SortTh k="address" sort={sort} className={smallTh}>{t('migration.inventory.mailbox') || 'Mailbox'}</SortTh>
+              <SortTh k="used" sort={sort} className={smallTh}>{t('migration.inventory.usedQuota') || 'Used / quota'}</SortTh>
+              <SortTh k="scheme" sort={sort} className={smallTh}>{t('migration.inventory.scheme') || 'Hash scheme'}</SortTh>
+              <SortTh k="maildir" sort={sort} className={smallTh}>{t('migration.inventory.maildir') || 'Maildir'}</SortTh>
             </tr></thead>
             <tbody>
-              {mailboxes.map((m) => (
+              {sorted.map((m) => (
                 <tr key={m.address} className="border-t border-white/[0.04]">
                   <td className={smallTd}>
                     <code className="font-mono text-text-primary">{m.address}</code>
@@ -281,16 +286,17 @@ export function MailDomainNode({ md, mailboxes, aliases, dkim, idPrefix }: {
 
 export function FtpTable({ users }: { users: CwpFtpUser[] }) {
   const { t } = useTranslation();
+  const { sorted, sort } = useTableSort(users, { login: (u) => u.login, dir: (u) => u.directory, scheme: (u) => u.hashScheme });
   return (
     <TableScroll>
       <table className={cn(tableCls, 'min-w-[520px]')}>
         <thead><tr className={theadRowCls}>
-          <th className={smallTh}>{t('migration.inventory.login') || 'Login'}</th>
-          <th className={smallTh}>{t('migration.inventory.directory') || 'Directory'}</th>
-          <th className={smallTh}>{t('migration.inventory.scheme') || 'Hash scheme'}</th>
+          <SortTh k="login" sort={sort} className={smallTh}>{t('migration.inventory.login') || 'Login'}</SortTh>
+          <SortTh k="dir" sort={sort} className={smallTh}>{t('migration.inventory.directory') || 'Directory'}</SortTh>
+          <SortTh k="scheme" sort={sort} className={smallTh}>{t('migration.inventory.scheme') || 'Hash scheme'}</SortTh>
         </tr></thead>
         <tbody>
-          {users.map((u) => (
+          {sorted.map((u) => (
             <tr key={u.login} className="border-t border-white/[0.04]">
               <td className={`${smallTd} font-mono text-text-primary`}>{u.login}</td>
               <td className={`${smallTd} font-mono text-text-muted`}>{u.directory}{u.chroot && <Pill className="ml-1.5">chroot</Pill>}</td>
@@ -305,16 +311,17 @@ export function FtpTable({ users }: { users: CwpFtpUser[] }) {
 
 export function CronsTable({ crons }: { crons: CwpCronEntry[] }) {
   const { t } = useTranslation();
+  const { sorted, sort } = useTableSort(crons, { schedule: (c) => c.schedule, command: (c) => c.command, owner: (c) => `${c.owner}:${String(c.lineNo).padStart(6, '0')}` });
   return (
     <TableScroll>
       <table className={cn(tableCls, 'min-w-[640px]')}>
         <thead><tr className={theadRowCls}>
-          <th className={smallTh}>{t('migration.inventory.schedule') || 'Schedule'}</th>
-          <th className={smallTh}>{t('migration.inventory.command') || 'Command'}</th>
-          <th className={smallTh}>{t('migration.inventory.owner') || 'Owner'}</th>
+          <SortTh k="schedule" sort={sort} className={smallTh}>{t('migration.inventory.schedule') || 'Schedule'}</SortTh>
+          <SortTh k="command" sort={sort} className={smallTh}>{t('migration.inventory.command') || 'Command'}</SortTh>
+          <SortTh k="owner" sort={sort} className={smallTh}>{t('migration.inventory.owner') || 'Owner'}</SortTh>
         </tr></thead>
         <tbody>
-          {crons.map((c) => (
+          {sorted.map((c) => (
             <tr key={c.key} className={cn('border-t border-white/[0.04]', c.disabled && 'opacity-60')}>
               <td className={`${smallTd} whitespace-nowrap font-mono text-text-primary`}>{c.schedule}</td>
               <td className={smallTd}>
@@ -336,17 +343,18 @@ export function CronsTable({ crons }: { crons: CwpCronEntry[] }) {
 
 export function CertificatesTable({ certs }: { certs: CwpCertificate[] }) {
   const { t, i18n } = useTranslation();
+  const { sorted, sort } = useTableSort(certs, { fqdn: (c) => c.fqdn, names: (c) => c.names.length, notAfter: (c) => c.notAfter, issuer: (c) => c.issuer });
   return (
     <TableScroll>
       <table className={cn(tableCls, 'min-w-[640px]')}>
         <thead><tr className={theadRowCls}>
-          <th className={smallTh}>{t('migration.inventory.certificate') || 'Certificate'}</th>
-          <th className={smallTh}>{t('migration.inventory.names') || 'Names'}</th>
-          <th className={smallTh}>{t('migration.inventory.notAfter') || 'Expires'}</th>
-          <th className={smallTh}>{t('migration.inventory.issuer') || 'Issuer'}</th>
+          <SortTh k="fqdn" sort={sort} className={smallTh}>{t('migration.inventory.certificate') || 'Certificate'}</SortTh>
+          <SortTh k="names" sort={sort} className={smallTh}>{t('migration.inventory.names') || 'Names'}</SortTh>
+          <SortTh k="notAfter" sort={sort} className={smallTh}>{t('migration.inventory.notAfter') || 'Expires'}</SortTh>
+          <SortTh k="issuer" sort={sort} className={smallTh}>{t('migration.inventory.issuer') || 'Issuer'}</SortTh>
         </tr></thead>
         <tbody>
-          {certs.map((c) => (
+          {sorted.map((c) => (
             <tr key={c.fqdn} className="border-t border-white/[0.04]">
               <td className={smallTd}>
                 <code className="font-mono text-text-primary">{c.fqdn}</code>
@@ -400,24 +408,26 @@ export function RecordsTable({ records, extra }: {
   extra?: (index: number) => ReactNode;
 }) {
   const { t } = useTranslation();
+  const indexed = useMemo(() => records.map((r, i) => ({ ...r, i })), [records]);
+  const { sorted, sort } = useTableSort(indexed, { name: (r) => r.name, type: (r) => r.type, ttl: (r) => r.ttl, content: (r) => r.content });
   return (
     <TableScroll>
       <table className={cn(tableCls, 'min-w-[560px]')}>
         <thead><tr className={theadRowCls}>
-          <th className={smallTh}>{t('migration.inventory.recordName') || 'Name'}</th>
-          <th className={smallTh}>{t('migration.inventory.recordType') || 'Type'}</th>
-          <th className={smallTh}>TTL</th>
-          <th className={smallTh}>{t('migration.inventory.recordContent') || 'Content'}</th>
+          <SortTh k="name" sort={sort} className={smallTh}>{t('migration.inventory.recordName') || 'Name'}</SortTh>
+          <SortTh k="type" sort={sort} className={smallTh}>{t('migration.inventory.recordType') || 'Type'}</SortTh>
+          <SortTh k="ttl" sort={sort} className={smallTh}>TTL</SortTh>
+          <SortTh k="content" sort={sort} className={smallTh}>{t('migration.inventory.recordContent') || 'Content'}</SortTh>
           {extra && <th className={smallTh} />}
         </tr></thead>
         <tbody>
-          {records.map((r, i) => (
-            <tr key={`${r.name}-${r.type}-${r.content}-${i}`} className="border-t border-white/[0.04]">
+          {sorted.map((r) => (
+            <tr key={`${r.name}-${r.type}-${r.content}-${r.i}`} className="border-t border-white/[0.04]">
               <td className={`${smallTd} font-mono text-text-secondary`}>{r.name}</td>
               <td className={`${smallTd} font-mono text-text-primary`}>{r.type}</td>
               <td className={`${smallTd} font-mono text-text-muted`}>{r.ttl}</td>
               <td className={`${smallTd} break-all font-mono text-[11px] text-text-secondary`}>{r.priority != null ? `${r.priority} ` : ''}{r.content}</td>
-              {extra && <td className={smallTd}>{extra(i)}</td>}
+              {extra && <td className={smallTd}>{extra(r.i)}</td>}
             </tr>
           ))}
         </tbody>

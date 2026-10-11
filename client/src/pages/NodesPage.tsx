@@ -13,6 +13,7 @@ import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { nodesApi } from '@/api/dashboard.api';
 import { PageContainer } from '@/components/common/PageContainer';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { InfraCards } from '@/components/hosting/InfraCards';
 
@@ -54,6 +55,7 @@ export function NodesPage() {
       : e === 'ssh' ? (t('nodes.engine.ssh') || 'Remote (SSH)')
       : (t('nodes.engine.tls') || 'Remote (TLS)');
 
+  const { sorted, sort } = useTableSort(nodes, { name: (n) => n.name, engine: (n) => n.engineType, created: (n) => n.createdAt });
   return (
     <PageContainer className="flex flex-col gap-5">
       <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
@@ -100,14 +102,14 @@ export function NodesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[11px] font-mono uppercase tracking-[0.12em] text-text-muted">
-                <th className="px-4 py-3 font-medium">{t('nodes.col.name') || 'Name'}</th>
-                <th className="px-4 py-3 font-medium">{t('nodes.col.engine') || 'Engine'}</th>
-                <th className="px-4 py-3 font-medium">{t('nodes.col.created') || 'Created'}</th>
+                <SortTh k="name" sort={sort} className="px-4 py-3 font-medium">{t('nodes.col.name') || 'Name'}</SortTh>
+                <SortTh k="engine" sort={sort} className="px-4 py-3 font-medium">{t('nodes.col.engine') || 'Engine'}</SortTh>
+                <SortTh k="created" sort={sort} className="px-4 py-3 font-medium">{t('nodes.col.created') || 'Created'}</SortTh>
                 {masterAdmin && <th className="px-4 py-3 font-medium">{t('platformUpdates.col.updates') || 'Updates'}</th>}
               </tr>
             </thead>
             <tbody>
-              {nodes.map((n) => (
+              {sorted.map((n) => (
                 <tr key={n.id} className="hover:bg-bg-hover transition-colors">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">

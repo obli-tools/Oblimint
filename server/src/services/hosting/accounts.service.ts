@@ -38,7 +38,8 @@ export function selectAccounts() {
     .join('plans as p', 'p.id', 'a.plan_id')
     .select('a.*', 't.name as tenant_name', 'p.name as plan_name', 'p.limits as plan_limits',
       db.raw('(SELECT COUNT(*) FROM sites s WHERE s.account_id = a.id) AS site_count'),
-      db.raw('(SELECT COUNT(*) FROM domains d WHERE d.account_id = a.id) AS domain_count'));
+      db.raw('(SELECT COUNT(*) FROM domains d WHERE d.account_id = a.id) AS domain_count'),
+      db.raw("(SELECT d.name FROM domains d WHERE d.account_id = a.id AND d.kind = 'primary' ORDER BY d.id LIMIT 1) AS primary_domain"));
 }
 
 /** One account mapped with its joins (after an access check by the caller). */

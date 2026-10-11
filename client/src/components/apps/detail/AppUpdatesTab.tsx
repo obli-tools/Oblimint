@@ -5,11 +5,10 @@ import { ArrowUpCircle, CheckCircle2, RefreshCw, RotateCcw } from 'lucide-react'
 import type { AppDeployment, AppStackDetail, AppUpdateCheck } from '@oblimint/shared';
 import { appsApi } from '@/api/apps.api';
 import { Button } from '@/components/common/Button';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, Pill, thCls, theadRowCls } from '@/components/hosting/hostingUi';
-import { cn } from '@/utils/cn';
+import { EmptyState, Pill } from '@/components/hosting/hostingUi';
 import { toastAppsError } from '../appsErrors';
 import { formatDateTime, shortDigest } from '../appsFormat';
 
@@ -40,6 +39,7 @@ export function AppUpdatesTab({ stack, canManage, onStarted, onChanged }: {
       checkError: c?.error ?? null,
     };
   });
+  type UpdateRow = (typeof rows)[number];
   const updatable = rows.filter((r) => r.updateAvailable && !r.excludedFromUpdates);
 
   const runCheck = async () => {
@@ -128,54 +128,48 @@ export function AppUpdatesTab({ stack, canManage, onStarted, onChanged }: {
           </>
         )}
       </div>
-      <TableScroll className="bg-bg-secondary" stickyFirstCol>
-        <table className="w-full min-w-[820px] text-sm">
-          <thead>
-            <tr className={theadRowCls}>
-              <th className={thCls}>{t('apps.effective.service') || 'Service'}</th>
-              <th className={thCls}>{t('apps.effective.image') || 'Image'}</th>
-              <th className={thCls}>{t('apps.updates.current') || 'Current'}</th>
-              <th className={thCls}>{t('apps.updates.latest') || 'Latest'}</th>
-              <th className={thCls}>{t('apps.list.status') || 'Status'}</th>
-              <th className={thCls}>{t('apps.updates.excluded') || 'Excluded'}</th>
-              <th className={cn(thCls, 'text-right')}><span className="sr-only">{t('apps.list.actions') || 'Actions'}</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.name} className="border-t border-border/40">
-                <td className="px-4 py-3">
-                  <label className="flex items-center gap-2">
-                    {canManage && r.updateAvailable && !r.excludedFromUpdates && (
-                      <input type="checkbox" checked={selected.has(r.name)} onChange={() => toggle(r.name)} className="accent-accent" aria-label={r.name} />
-                    )}
-                    <span className="font-mono text-[13px] text-text-primary">{r.name}</span>
-                  </label>
-                </td>
-                <td className="px-4 py-3 break-all font-mono text-xs text-text-secondary">{r.image ?? (t('apps.effective.build') || 'built from source')}</td>
-                <td className="px-4 py-3 font-mono text-xs text-text-secondary" title={r.currentDigest ?? undefined}>{shortDigest(r.currentDigest)}</td>
-                <td className="px-4 py-3 font-mono text-xs text-text-secondary" title={r.latestDigest ?? undefined}>{shortDigest(r.latestDigest)}</td>
-                <td className="px-4 py-3">
-                  {r.checkError ? <Pill tone="red" title={r.checkError}>{t('apps.updates.checkError') || 'check failed'}</Pill>
-                    : r.image == null ? <Pill tone="muted">{t('apps.updates.notApplicable') || 'n/a'}</Pill>
-                      : r.updateAvailable ? <Pill tone="blue"><ArrowUpCircle size={10} />{t('apps.status.updateAvailable') || 'Update'}</Pill>
-                        : <Pill tone="green"><CheckCircle2 size={10} />{t('apps.updates.upToDateShort') || 'up to date'}</Pill>}
-                </td>
-                <td className="px-4 py-3">
-                  <ToggleSwitch size="sm" checked={r.excludedFromUpdates} disabled={!canManage || busy === `ex-${r.name}`} onChange={(c) => { void setExcluded(r.name, c); }} ariaLabel={t('apps.updates.excluded') || 'Excluded'} />
-                </td>
-                <td className="px-4 py-2 text-right">
-                  {canManage && r.previousDigest && (
-                    <Button size="sm" variant="ghost" loading={busy === `rb-${r.name}`} disabled={busy !== null} onClick={() => { void rollbackImage(r.name, r.previousDigest); }} title={shortDigest(r.previousDigest)}>
-                      <RotateCcw size={13} className="mr-1" />{t('apps.updates.previous') || 'Previous image'}
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </TableScroll>
+      <GroupedTable<UpdateRow>
+        storageKey="app-updates"
+        singleGroupFlat
+        minWidth={820}
+        defaultSort={{ column: 'service' }}
+        groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(rows, (r) => r.name) }]}
+        columns={[
+          {
+            id: 'service', header: t('apps.effective.service') || 'Service', sort: (r) => r.name,
+            cell: (r) => (
+              <label className="flex items-center gap-2">
+                {canManage && r.updateAvailable && !r.excludedFromUpdates && (
+                  <input type="checkbox" checked={selected.has(r.name)} onChange={() => toggle(r.name)} className="accent-accent" aria-label={r.name} />
+                )}
+                <span className="font-mono text-[13px] text-text-primary">{r.name}</span>
+              </label>
+            ),
+          },
+          { id: 'image', header: t('apps.effective.image') || 'Image', tdClassName: 'break-all font-mono text-xs text-text-secondary', sort: (r) => r.image ?? '', cell: (r) => r.image ?? (t('apps.effective.build') || 'built from source') },
+          { id: 'current', header: t('apps.updates.current') || 'Current', tdClassName: 'font-mono text-xs text-text-secondary', sort: (r) => r.currentDigest ?? '', cell: (r) => <span title={r.currentDigest ?? undefined}>{shortDigest(r.currentDigest)}</span> },
+          { id: 'latest', header: t('apps.updates.latest') || 'Latest', tdClassName: 'font-mono text-xs text-text-secondary', sort: (r) => r.latestDigest ?? '', cell: (r) => <span title={r.latestDigest ?? undefined}>{shortDigest(r.latestDigest)}</span> },
+          {
+            id: 'status', header: t('apps.list.status') || 'Status', sort: (r) => (r.checkError ? 0 : r.image == null ? 3 : r.updateAvailable ? 1 : 2),
+            cell: (r) => (r.checkError ? <Pill tone="red" title={r.checkError}>{t('apps.updates.checkError') || 'check failed'}</Pill>
+              : r.image == null ? <Pill tone="muted">{t('apps.updates.notApplicable') || 'n/a'}</Pill>
+                : r.updateAvailable ? <Pill tone="blue"><ArrowUpCircle size={10} />{t('apps.status.updateAvailable') || 'Update'}</Pill>
+                  : <Pill tone="green"><CheckCircle2 size={10} />{t('apps.updates.upToDateShort') || 'up to date'}</Pill>),
+          },
+          {
+            id: 'excluded', header: t('apps.updates.excluded') || 'Excluded', sort: (r) => r.excludedFromUpdates,
+            cell: (r) => <ToggleSwitch size="sm" checked={r.excludedFromUpdates} disabled={!canManage || busy === `ex-${r.name}`} onChange={(c) => { void setExcluded(r.name, c); }} ariaLabel={t('apps.updates.excluded') || 'Excluded'} />,
+          },
+          {
+            id: 'actions', header: <span className="sr-only">{t('apps.list.actions') || 'Actions'}</span>, thClassName: 'text-right', tdClassName: 'text-right',
+            cell: (r) => (canManage && r.previousDigest ? (
+              <Button size="sm" variant="ghost" loading={busy === `rb-${r.name}`} disabled={busy !== null} onClick={() => { void rollbackImage(r.name, r.previousDigest); }} title={shortDigest(r.previousDigest)}>
+                <RotateCcw size={13} className="mr-1" />{t('apps.updates.previous') || 'Previous image'}
+              </Button>
+            ) : null),
+          },
+        ]}
+      />
     </div>
   );
 }

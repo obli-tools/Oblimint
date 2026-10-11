@@ -6,11 +6,12 @@ import { BarChart3, Pencil, Plus, Power, RotateCcw, Trash2, Waypoints } from 'lu
 import { HostingSocketEvents, type CertificateListItem, type ProxyHost, type ProxyUpdatedPayload } from '@oblimint/shared';
 import { proxyApi } from '@/api/proxy.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Pill, headerAccentBtnCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { Pill, headerAccentBtnCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { MailSearch } from '@/components/mail/MailListParts';
 import { useDebounced } from '@/components/mail/useDebounced';
 import { cn } from '@/utils/cn';
@@ -110,6 +111,9 @@ export function ProxyHostsPanel({ accountId, tenantId, showAccount, showTenant }
     }
   };
 
+  const accountDir = useAccountDirectory();
+  // Tree key of a host: its first bound domain (a host without domain stays at the root).
+  const hostKey = (h: ProxyHost) => h.domains[0]?.name ?? `~${h.id}`;
   const manageAny = canManage(accountId);
   const newHref = accountId != null ? `/proxy/hosts/new?account=${accountId}` : '/proxy/hosts/new';
   const createBtn = manageAny ? <Link to={newHref} className={headerAccentBtnCls}><Plus size={14} />{t('proxy.hosts.add') || 'New proxy host'}</Link> : null;
@@ -148,9 +152,17 @@ export function ProxyHostsPanel({ accountId, tenantId, showAccount, showTenant }
         emptyText={q ? (t('common.noMatch') || 'No match') : (t('proxy.hosts.empty') || 'No proxy host yet. A proxy host publishes an application, a site or an external machine on verified domains.')}
         emptyAction={!q ? createBtn ?? undefined : undefined}
       >
-        <ul className="space-y-2 md:hidden">
-          {items.map((h) => (
-            <li key={h.id} className={cn('rounded-xl bg-bg-secondary px-3 py-2.5', !h.enabled && 'opacity-60')}>
+        <GroupedTable<ProxyHost>
+          storageKey="proxy-hosts"
+          singleGroupFlat
+          minWidth={820}
+          defaultSort={{ column: 'name' }}
+          // Grouped by account, a host under the host of its parent domain (first bound domain).
+          groups={showAccount
+            ? groupRowsByAccount(items, accountDir, (h) => ({ id: h.accountId, username: h.accountUsername }), (rows) => domainTree(rows, hostKey, (h) => h.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: domainTree(items, hostKey, (h) => h.id) }]}
+          renderCard={(h) => (
+            <div className={cn('rounded-xl bg-bg-secondary px-3 py-2.5', !h.enabled && 'opacity-60')}>
               <div className="flex items-center gap-2">
                 <Link to={`/proxy/hosts/${h.id}`} className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary hover:text-accent">{h.name}</Link>
                 <EdgeUnitPill unit={h.edge} />
@@ -161,47 +173,34 @@ export function ProxyHostsPanel({ accountId, tenantId, showAccount, showTenant }
               <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
                 <SslState domains={h.domains} enabled={h.ssl.mode !== 'none'} imported={importedOf(h)} />
                 {!h.enabled && <Pill>{t('proxy.disabled') || 'disabled'}</Pill>}
-                {showAccount && <span className="font-mono">{h.accountUsername}</span>}
                 {showTenant && <TenantBadge tenantId={h.tenantId} />}
               </div>
-            </li>
-          ))}
-        </ul>
-        <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-          <table className="w-full min-w-[900px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('proxy.hosts.name') || 'Proxy host'}</th>
-                <th className={thCls}>{t('proxy.hosts.target') || 'Target'}</th>
-                <th className={thCls}>{t('proxy.ssl.title') || 'SSL'}</th>
-                <th className={thCls}>{t('proxy.unit.title') || 'Edge'}</th>
-                {showAccount && <th className={thCls}>{t('proxy.account') || 'Hosting account'}</th>}
-                {showTenant && <th className={thCls}>{t('proxy.tenant') || 'Workspace'}</th>}
-                <th className={`${thCls} w-20`}>{t('proxy.enabled') || 'Enabled'}</th>
-                <th className={`${thCls} w-14`}><span className="sr-only">{t('proxy.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((h) => (
-                <tr key={h.id} className={cn('align-top transition-colors hover:bg-bg-hover', !h.enabled && 'opacity-60', unitNeedsAttention(h.edge?.status) && 'bg-amber-400/[0.03]')}>
-                  <td className="max-w-[22rem] px-4 py-3">
-                    <Link to={`/proxy/hosts/${h.id}`} className="font-medium text-text-primary hover:text-accent">{h.name}</Link>
-                    <div className="mt-0.5"><DomainNames domains={h.domains} /></div>
-                  </td>
-                  <td className="max-w-[18rem] px-4 py-3">{target(h)}</td>
-                  <td className="px-4 py-3"><SslState domains={h.domains} enabled={h.ssl.mode !== 'none'} imported={importedOf(h)} /></td>
-                  <td className="px-4 py-3"><EdgeUnitPill unit={h.edge} /></td>
-                  {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{h.accountUsername}</td>}
-                  {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={h.tenantId} /></td>}
-                  <td className="px-4 py-3">
-                    <ToggleSwitch size="sm" checked={h.enabled} disabled={!canManage(h.accountId) || busy === h.id} onChange={(v) => { void setEnabled(h, v); }} ariaLabel={t('proxy.enabled') || 'Enabled'} />
-                  </td>
-                  <td className="px-4 py-3 text-right">{rowMenu(h)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+            </div>
+          )}
+          columns={[
+            {
+              id: 'name', header: t('proxy.hosts.name') || 'Proxy host', tdClassName: 'max-w-[22rem]', sort: (h) => h.domains[0]?.name ?? h.name,
+              cell: (h) => (
+                <div className={cn(!h.enabled && 'opacity-60')}>
+                  <Link to={`/proxy/hosts/${h.id}`} className="font-medium text-text-primary hover:text-accent">{h.name}</Link>
+                  <div className="mt-0.5"><DomainNames domains={h.domains} /></div>
+                </div>
+              ),
+            },
+            { id: 'target', header: t('proxy.hosts.target') || 'Target', tdClassName: 'max-w-[18rem]', sort: (h) => h.targetLabel, cell: (h) => target(h) },
+            { id: 'ssl', header: t('proxy.ssl.title') || 'SSL', sort: (h) => h.ssl.mode, cell: (h) => <SslState domains={h.domains} enabled={h.ssl.mode !== 'none'} imported={importedOf(h)} /> },
+            {
+              id: 'edge', header: t('proxy.unit.title') || 'Edge', sort: (h) => h.edge?.status ?? '',
+              cell: (h) => <span className={cn(unitNeedsAttention(h.edge?.status) && 'rounded bg-amber-400/[0.06] px-1 py-0.5')}><EdgeUnitPill unit={h.edge} /></span>,
+            },
+            ...(showTenant && !showAccount ? [{ id: 'tenant', header: t('proxy.tenant') || 'Workspace', cell: (h: ProxyHost) => <TenantBadge tenantId={h.tenantId} /> }] : []),
+            {
+              id: 'enabled', header: t('proxy.enabled') || 'Enabled', thClassName: 'w-20', sort: (h) => h.enabled,
+              cell: (h) => <ToggleSwitch size="sm" checked={h.enabled} disabled={!canManage(h.accountId) || busy === h.id} onChange={(v) => { void setEnabled(h, v); }} ariaLabel={t('proxy.enabled') || 'Enabled'} />,
+            },
+            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (h) => rowMenu(h) },
+          ]}
+        />
       </ListState>
     </div>
   );

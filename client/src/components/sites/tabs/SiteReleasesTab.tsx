@@ -7,14 +7,13 @@ import { releasesApi } from '@/api/releases.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm, usePrompt } from '@/components/common/ConfirmDialog';
 import { Pill, ReleaseStatusBadge, ScanVerdictChip } from '../SiteBadges';
 import { ReleaseDrawer, triggerLabel } from '../ReleaseDrawer';
 import { formatDateTime } from '../siteForm';
 import { apiErrorCode, isNotImplemented, siteErrorMessage, toastSiteError } from '../siteErrors';
 import { useHostingEvent } from '../useHostingEvent';
-import { tdCls, thCls } from '../styles';
 import type { SiteTabProps } from './types';
 
 const PAGE_SIZE = 25;
@@ -195,73 +194,85 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
           <p className="text-sm text-text-secondary">{t('releases.empty') || 'No release yet: upload the site to the staging folder, then publish.'}</p>
         </div>
       ) : (
-        <TableScroll className="bg-bg-secondary rounded-xl" stickyFirstCol>
-          <table className="w-full min-w-[1040px] text-sm">
-            <thead>
-              <tr>
-                <th className={thCls}>#</th>
-                <th className={thCls}>{t('releases.fields.status') || 'Status'}</th>
-                <th className={thCls}>{t('releases.fields.trigger') || 'Trigger'}</th>
-                <th className={thCls}>{t('releases.fields.message') || 'Message'}</th>
-                <th className={thCls}>{t('releases.fields.changes') || 'Changes'}</th>
-                <th className={thCls}>{t('releases.fields.scan') || 'Scan'}</th>
-                <th className={thCls}>{t('releases.fields.onDisk') || 'On disk'}</th>
-                <th className={thCls}>{t('releases.fields.date') || 'Date'}</th>
-                <th className={thCls}><span className="sr-only">{t('releases.fields.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((r) => (
-                <tr
-                  key={r.id}
-                  onClick={(e) => { if (!(e.target as HTMLElement).closest('button,a')) setOpenId(r.id); }}
-                  className={`cursor-pointer transition-colors hover:bg-bg-tertiary ${r.isCurrent ? 'bg-accent/[0.04]' : ''}`}
-                >
-                  <td className={`${tdCls} whitespace-nowrap`}>
-                    <span className="font-mono font-semibold text-text-primary">#{r.number}</span>
-                    {r.isCurrent && <Pill tone="accent" className="ml-2 text-[10px]">{t('releases.current') || 'current'}</Pill>}
-                  </td>
-                  <td className={tdCls}><ReleaseStatusBadge status={r.status} /></td>
-                  <td className={`${tdCls} text-xs text-text-secondary`}>
-                    <div>{triggerLabel(r.trigger, t)}</div>
-                    {r.authorName && <div className="text-text-muted">{r.authorName}</div>}
-                  </td>
-                  <td className={`${tdCls} max-w-[18rem]`}>
-                    <span className="line-clamp-2 break-words text-xs text-text-secondary" title={r.message ?? undefined}>{r.message || <span className="text-text-muted">—</span>}</span>
-                    {r.error && <span className="mt-0.5 block truncate text-[11px] text-red-400" title={r.error}>{r.error}</span>}
-                  </td>
-                  <td className={`${tdCls} whitespace-nowrap font-mono text-xs`}>
-                    <span className="text-status-up">+{r.filesAdded}</span>{' '}
-                    <span className="text-amber-400">~{r.filesModified}</span>{' '}
-                    <span className="text-red-400">−{r.filesDeleted}</span>
-                  </td>
-                  <td className={tdCls}>
-                    {r.scan ? (
-                      <span className="inline-flex flex-wrap items-center gap-1">
-                        <ScanVerdictChip verdict={r.scan.verdict} />
-                        {isScanBlocked(r) && (
-                          <Pill tone="red" className="text-[10px]">
-                            <ShieldAlert size={11} className="mr-0.5" />{t('scanner.blocked.chip') || 'blocked'}
-                          </Pill>
-                        )}
-                      </span>
-                    ) : <span className="text-text-muted">—</span>}
-                  </td>
-                  <td className={`${tdCls} text-xs`}>
-                    {r.onDisk ? <Check className="h-4 w-4 text-status-up" aria-label={t('releases.onDiskYes') || 'yes'} /> : <span className="text-text-muted">—</span>}
-                  </td>
-                  <td className={`${tdCls} whitespace-nowrap font-mono text-xs text-text-muted`}>
-                    <div title={t('releases.fields.created') || 'Created'}>{formatDateTime(r.createdAt, i18n.language)}</div>
-                    {r.publishedAt && <div className="text-status-up/80" title={t('releases.fields.published') || 'Published'}>↑ {formatDateTime(r.publishedAt, i18n.language)}</div>}
-                  </td>
-                  <td className={`${tdCls} whitespace-nowrap text-right`}>
-                    <div className="flex justify-end gap-1">{renderActions(r)}</div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<Release>
+          storageKey="site-releases"
+          singleGroupFlat
+          minWidth={1040}
+          defaultSort={{ column: 'number', dir: 'desc' }}
+          groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (r) => r.id) }]}
+          onRowClick={(r) => setOpenId(r.id)}
+          rowClassName={(r) => r.isCurrent && 'bg-accent/[0.04]'}
+          columns={[
+            {
+              id: 'number', header: '#', tdClassName: 'whitespace-nowrap', sort: (r) => r.number,
+              cell: (r) => (
+                <>
+                  <span className="font-mono font-semibold text-text-primary">#{r.number}</span>
+                  {r.isCurrent && <Pill tone="accent" className="ml-2 text-[10px]">{t('releases.current') || 'current'}</Pill>}
+                </>
+              ),
+            },
+            { id: 'status', header: t('releases.fields.status') || 'Status', sort: (r) => r.status, cell: (r) => <ReleaseStatusBadge status={r.status} /> },
+            {
+              id: 'trigger', header: t('releases.fields.trigger') || 'Trigger', tdClassName: 'text-xs text-text-secondary', sort: (r) => r.trigger,
+              cell: (r) => (
+                <>
+                  <div>{triggerLabel(r.trigger, t)}</div>
+                  {r.authorName && <div className="text-text-muted">{r.authorName}</div>}
+                </>
+              ),
+            },
+            {
+              id: 'message', header: t('releases.fields.message') || 'Message', tdClassName: 'max-w-[18rem]', sort: (r) => r.message ?? '',
+              cell: (r) => (
+                <>
+                  <span className="line-clamp-2 break-words text-xs text-text-secondary" title={r.message ?? undefined}>{r.message || <span className="text-text-muted">—</span>}</span>
+                  {r.error && <span className="mt-0.5 block truncate text-[11px] text-red-400" title={r.error}>{r.error}</span>}
+                </>
+              ),
+            },
+            {
+              id: 'changes', header: t('releases.fields.changes') || 'Changes', tdClassName: 'whitespace-nowrap font-mono text-xs', sort: (r) => r.filesAdded + r.filesModified + r.filesDeleted,
+              cell: (r) => (
+                <>
+                  <span className="text-status-up">+{r.filesAdded}</span>{' '}
+                  <span className="text-amber-400">~{r.filesModified}</span>{' '}
+                  <span className="text-red-400">−{r.filesDeleted}</span>
+                </>
+              ),
+            },
+            {
+              id: 'scan', header: t('releases.fields.scan') || 'Scan', sort: (r) => r.scan?.verdict ?? '',
+              cell: (r) => (r.scan ? (
+                <span className="inline-flex flex-wrap items-center gap-1">
+                  <ScanVerdictChip verdict={r.scan.verdict} />
+                  {isScanBlocked(r) && (
+                    <Pill tone="red" className="text-[10px]">
+                      <ShieldAlert size={11} className="mr-0.5" />{t('scanner.blocked.chip') || 'blocked'}
+                    </Pill>
+                  )}
+                </span>
+              ) : <span className="text-text-muted">—</span>),
+            },
+            {
+              id: 'onDisk', header: t('releases.fields.onDisk') || 'On disk', tdClassName: 'text-xs', sort: (r) => r.onDisk,
+              cell: (r) => (r.onDisk ? <Check className="h-4 w-4 text-status-up" aria-label={t('releases.onDiskYes') || 'yes'} /> : <span className="text-text-muted">—</span>),
+            },
+            {
+              id: 'date', header: t('releases.fields.date') || 'Date', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-muted', sort: (r) => r.createdAt,
+              cell: (r) => (
+                <>
+                  <div title={t('releases.fields.created') || 'Created'}>{formatDateTime(r.createdAt, i18n.language)}</div>
+                  {r.publishedAt && <div className="text-status-up/80" title={t('releases.fields.published') || 'Published'}>↑ {formatDateTime(r.publishedAt, i18n.language)}</div>}
+                </>
+              ),
+            },
+            {
+              id: 'actions', header: <span className="sr-only">{t('releases.fields.actions') || 'Actions'}</span>, tdClassName: 'whitespace-nowrap text-right',
+              cell: (r) => <div className="flex justify-end gap-1">{renderActions(r)}</div>,
+            },
+          ]}
+        />
       )}
 
       {pages > 1 && (

@@ -485,7 +485,8 @@
       "upstreamHint": "La cible n’a pas répondu à la sonde de disponibilité : la version précédente est conservée. Nouvel essai chaque minute.",
       "upstreamUnreachable": "Cible injoignable"
     },
-    "usedBy": "Utilisé par"
+    "usedBy": "Utilisé par",
+    "platformGroup": "Plateforme"
   },
   "bans": {
     "activeOnly": "Actifs",

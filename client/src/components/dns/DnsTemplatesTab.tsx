@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { AlertTriangle, FileStack, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react';
@@ -39,6 +39,10 @@ export function DnsTemplatesTab() {
 
   useEffect(() => { void load(); }, [load, currentTenantId]);
 
+  // Cards (not a table): the default template first, then by name.
+  const sortedTemplates = useMemo(() => [...templates].sort((a, b) => Number(b.isDefault) - Number(a.isDefault)
+    || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })), [templates]);
+
   const remove = async (tp: DnsTemplate) => {
     if (!(await confirm({
       title: t('dns.templates.deleteTitle') || 'Delete the template',
@@ -74,7 +78,7 @@ export function DnsTemplatesTab() {
         <EmptyState icon={<FileStack />} text={t('dns.templates.empty') || 'No template yet.'} />
       ) : (
         <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          {templates.map((tp) => (
+          {sortedTemplates.map((tp) => (
             <li key={tp.id} className="rounded-xl bg-bg-secondary p-4">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">

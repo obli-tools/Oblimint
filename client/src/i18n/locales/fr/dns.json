@@ -82,7 +82,8 @@
         "status": "État",
         "records": "Enregistrements",
         "lastSync": "Dernière synchro"
-      }
+      },
+      "platformGroup": "Plateforme"
     },
     "zone": {
       "title": "Zone DNS",

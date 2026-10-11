@@ -7,9 +7,9 @@ import { appsApi } from '@/api/apps.api';
 import { Button } from '@/components/common/Button';
 import { Drawer } from '@/components/common/Drawer';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, InfoRow, sectionTitleCls, thCls, theadRowCls } from '@/components/hosting/hostingUi';
+import { EmptyState, InfoRow, sectionTitleCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { appsErrorMessage, toastAppsError } from '../appsErrors';
 import { formatDateTime, formatSpan, shortDigest, shortSha } from '../appsFormat';
@@ -65,39 +65,39 @@ export function AppHistoryTab({ stack, canManage, onStarted }: { stack: AppStack
 
   return (
     <div className="flex flex-col gap-3">
-      <TableScroll className="bg-bg-secondary">
-        <table className="w-full min-w-[760px] text-sm">
-          <thead>
-            <tr className={theadRowCls}>
-              <th className={thCls}>{t('apps.history.date') || 'Date'}</th>
-              <th className={thCls}>{t('apps.history.action') || 'Action'}</th>
-              <th className={thCls}>{t('apps.list.status') || 'Status'}</th>
-              <th className={thCls}>{t('apps.history.duration') || 'Duration'}</th>
-              <th className={thCls}>{t('apps.history.by') || 'By'}</th>
-              <th className={cn(thCls, 'text-right')}><span className="sr-only">{t('apps.list.actions') || 'Actions'}</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((d) => (
-              <tr key={d.id} className="cursor-pointer border-t border-border/40 hover:bg-bg-hover/40" onClick={() => setSelected(d)}>
-                <td className="px-4 py-3 text-xs text-text-secondary">{formatDateTime(d.createdAt, i18n.language)}</td>
-                <td className="px-4 py-3">
-                  <div className="text-text-primary">{deploymentActionLabel(t, d.action)}</div>
-                  <div className="text-[11px] text-text-muted">{deploymentTriggerLabel(t, d.trigger)}{d.commitSha ? ` · ${shortSha(d.commitSha)}` : ''}</div>
-                </td>
-                <td className="px-4 py-3"><DeploymentStatusPill status={d.status} /></td>
-                <td className="px-4 py-3 font-mono text-xs text-text-muted">{formatSpan(d.startedAt ?? d.createdAt, d.finishedAt)}</td>
-                <td className="px-4 py-3 text-xs text-text-secondary">{d.userName ?? '—'}</td>
-                <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
-                  {canManage && d.canRollback && d.status === 'succeeded' && (
-                    <Button size="sm" variant="ghost" loading={busy === d.id} onClick={() => { void rollback(d); }}><RotateCcw size={13} className="mr-1" />{t('apps.history.rollback') || 'Roll back'}</Button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </TableScroll>
+      <GroupedTable<AppDeployment>
+        storageKey="app-history"
+        singleGroupFlat
+        minWidth={760}
+        defaultSort={{ column: 'date', dir: 'desc' }}
+        groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (d) => d.id) }]}
+        onRowClick={(d) => setSelected(d)}
+        columns={[
+          { id: 'date', header: t('apps.history.date') || 'Date', tdClassName: 'text-xs text-text-secondary', sort: (d) => d.createdAt, cell: (d) => formatDateTime(d.createdAt, i18n.language) },
+          {
+            id: 'action', header: t('apps.history.action') || 'Action', sort: (d) => d.action,
+            cell: (d) => (
+              <>
+                <div className="text-text-primary">{deploymentActionLabel(t, d.action)}</div>
+                <div className="text-[11px] text-text-muted">{deploymentTriggerLabel(t, d.trigger)}{d.commitSha ? ` · ${shortSha(d.commitSha)}` : ''}</div>
+              </>
+            ),
+          },
+          { id: 'status', header: t('apps.list.status') || 'Status', sort: (d) => d.status, cell: (d) => <DeploymentStatusPill status={d.status} /> },
+          {
+            id: 'duration', header: t('apps.history.duration') || 'Duration', tdClassName: 'font-mono text-xs text-text-muted',
+            sort: (d) => (d.finishedAt ? new Date(d.finishedAt).getTime() - new Date(d.startedAt ?? d.createdAt).getTime() : null),
+            cell: (d) => formatSpan(d.startedAt ?? d.createdAt, d.finishedAt),
+          },
+          { id: 'by', header: t('apps.history.by') || 'By', tdClassName: 'text-xs text-text-secondary', sort: (d) => d.userName ?? '', cell: (d) => d.userName ?? '—' },
+          {
+            id: 'actions', header: <span className="sr-only">{t('apps.list.actions') || 'Actions'}</span>, thClassName: 'text-right', tdClassName: 'text-right',
+            cell: (d) => (canManage && d.canRollback && d.status === 'succeeded' ? (
+              <Button size="sm" variant="ghost" loading={busy === d.id} onClick={() => { void rollback(d); }}><RotateCcw size={13} className="mr-1" />{t('apps.history.rollback') || 'Roll back'}</Button>
+            ) : null),
+          },
+        ]}
+      />
       {total > PAGE && (
         <div className="flex items-center justify-end gap-2 text-xs text-text-muted">
           <span>{offset + 1}–{Math.min(offset + PAGE, total)} / {total}</span>

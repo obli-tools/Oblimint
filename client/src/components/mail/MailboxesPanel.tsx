@@ -8,9 +8,10 @@ import { mailApi } from '@/api/mail.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
-import { EmptyState, headerAccentBtnCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, headerAccentBtnCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { MailboxFlags, MailQuotaBar } from './MailBadges';
 import { MailboxCreateModal } from './MailboxCreateModal';
 import { PasswordRevealModal } from './MailPasswordModals';
@@ -90,6 +91,7 @@ export function MailboxesPanel({ accountId, tenantId, mailDomainId, showAccount 
     return accountId == null || payload.accountId == null || payload.accountId === accountId;
   }, 800);
 
+  const accountDir = useAccountDirectory();
   const actions = useMailboxActions({ staff, onChanged: () => { void load(); } });
   const manageableDomains = useMemo(() => domains.filter((d) => can('mail.manage', d.accountId)), [domains, can]);
   const canCreate = manageableDomains.length > 0;
@@ -131,9 +133,17 @@ export function MailboxesPanel({ accountId, tenantId, mailDomainId, showAccount 
         />
       ) : (
         <>
-          <ul className="space-y-2 md:hidden">
-            {items.map((m) => (
-              <li key={m.id} className="rounded-xl bg-bg-secondary px-3 py-2.5">
+          <GroupedTable<Mailbox>
+            storageKey="mail-mailboxes"
+            singleGroupFlat
+            minWidth={760}
+            defaultSort={{ column: 'address' }}
+            groups={showAccount
+              ? groupRowsByAccount(items, accountDir, (m) => ({ id: m.accountId, username: domains.find((d) => d.id === m.mailDomainId)?.accountUsername }), (rows) => flatNodes(rows, (m) => m.id))
+              : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (m) => m.id) }]}
+            onRowClick={(m) => navigate(`/mail/mailboxes/${m.id}`)}
+            renderCard={(m) => (
+              <div className="rounded-xl bg-bg-secondary px-3 py-2.5">
                 <div className="flex items-center gap-2">
                   <Link to={`/mail/mailboxes/${m.id}`} className="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-text-primary hover:text-accent">{m.address}</Link>
                   {rowMenu(m) ?? <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />}
@@ -144,38 +154,24 @@ export function MailboxesPanel({ accountId, tenantId, mailDomainId, showAccount 
                   <MailboxFlags box={m} />
                   {showTenant && <TenantBadge tenantId={m.tenantId} />}
                 </div>
-              </li>
-            ))}
-          </ul>
-          <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-            <table className="w-full min-w-[860px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('mail.mailboxes.address') || 'Address'}</th>
-                  {showAccount && <th className={thCls}>{t('mail.account') || 'Hosting account'}</th>}
-                  {showTenant && <th className={thCls}>{t('hostingCommon.tenant') || 'Workspace'}</th>}
-                  <th className={thCls}>{t('mail.mailboxes.quota') || 'Quota'}</th>
-                  <th className={thCls}>{t('mail.mailboxes.flags') || 'State'}</th>
-                  <th className={`${thCls} w-14`}><span className="sr-only">{t('mail.actions') || 'Actions'}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((m) => (
-                  <tr key={m.id} onClick={() => navigate(`/mail/mailboxes/${m.id}`)} className="cursor-pointer transition-colors hover:bg-bg-hover">
-                    <td className="px-4 py-3">
-                      <Link to={`/mail/mailboxes/${m.id}`} onClick={(e) => e.stopPropagation()} className="font-mono font-medium text-text-primary hover:text-accent">{m.address}</Link>
-                      {m.displayName && <div className="text-[11px] text-text-muted">{m.displayName}</div>}
-                    </td>
-                    {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{domains.find((d) => d.id === m.mailDomainId)?.accountUsername ?? `#${m.accountId}`}</td>}
-                    {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={m.tenantId} /></td>}
-                    <td className="px-4 py-3"><MailQuotaBar usedBytes={m.usedBytes} quotaMb={m.quotaMb} compact /></td>
-                    <td className="px-4 py-3"><MailboxFlags box={m} /></td>
-                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>{rowMenu(m)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
+              </div>
+            )}
+            columns={[
+              {
+                id: 'address', header: t('mail.mailboxes.address') || 'Address', sort: (m) => m.address,
+                cell: (m) => (
+                  <>
+                    <Link to={`/mail/mailboxes/${m.id}`} className="font-mono font-medium text-text-primary hover:text-accent">{m.address}</Link>
+                    {m.displayName && <div className="text-[11px] text-text-muted">{m.displayName}</div>}
+                  </>
+                ),
+              },
+              ...(showTenant && !showAccount ? [{ id: 'tenant', header: t('hostingCommon.tenant') || 'Workspace', cell: (m: Mailbox) => <TenantBadge tenantId={m.tenantId} /> }] : []),
+              { id: 'quota', header: t('mail.mailboxes.quota') || 'Quota', sort: (m) => m.usedBytes ?? null, cell: (m) => <MailQuotaBar usedBytes={m.usedBytes} quotaMb={m.quotaMb} compact /> },
+              { id: 'flags', header: t('mail.mailboxes.flags') || 'State', sort: (m) => m.enabled, cell: (m) => <MailboxFlags box={m} /> },
+              { id: 'actions', header: <span className="sr-only">{t('mail.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (m) => rowMenu(m) },
+            ]}
+          />
           <Pager offset={offset} total={total} pageSize={PAGE} onOffset={setOffset} />
         </>
       )}

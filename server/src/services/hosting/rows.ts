@@ -28,7 +28,7 @@ export interface AccountRow {
   access_apply_error?: string | null; over_quota_state?: OverQuotaState; over_quota_since?: Date | string | null;
   created_at: Date | string; updated_at: Date | string;
   /** joined */ tenant_name?: string | null; plan_name?: string | null; plan_limits?: unknown;
-  site_count?: number | string | null; domain_count?: number | string | null;
+  site_count?: number | string | null; domain_count?: number | string | null; primary_domain?: string | null;
 }
 
 export interface SiteRow {
@@ -161,6 +161,7 @@ export function toHostingAccount(r: AccountRow): HostingAccount {
     usageCheckedAt: iso(r.usage_checked_at),
     siteCount: num(r.site_count),
     domainCount: num(r.domain_count),
+    primaryDomain: r.primary_domain ?? null,
     accessMode: r.access_mode ?? 'open',
     overQuota: r.over_quota_state ?? 'ok',
     createdAt: isoReq(r.created_at),

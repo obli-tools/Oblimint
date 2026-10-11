@@ -8,6 +8,7 @@ import { migrationApi } from '@/api/migration.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
@@ -65,6 +66,10 @@ export function DiscoveriesTab({ sources, sourceFilter, onSourceFilter, onPlanCr
   useHostingEvents([HostingSocketEvents.MIGRATION_UPDATED], () => { void load(); }, (_e, p) => (p as MigrationUpdatedPayload | null)?.entity === 'discovery', 700);
 
   const sourceName = (id: number) => sources.find((s) => s.id === id)?.name ?? `#${id}`;
+  const { sorted: sortedItems, sort } = useTableSort(items, {
+    id: (d) => d.id, source: (d) => sourceName(d.sourceId), status: (d) => d.status,
+    progress: (d) => progressPct(d.progress.done, d.progress.total) ?? 0, inventory: (d) => d.counts?.accounts ?? null, started: (d) => d.startedAt ?? '',
+  }, { key: 'id', dir: 'desc' });
 
   const cancel = async (d: MigrationDiscovery) => {
     if (!(await confirm({
@@ -136,17 +141,17 @@ export function DiscoveriesTab({ sources, sourceFilter, onSourceFilter, onPlanCr
           <table className="w-full min-w-[960px] text-sm">
             <thead>
               <tr className={theadRowCls}>
-                <th className={thCls}>#</th>
-                <th className={thCls}>{t('migration.common.source') || 'Source'}</th>
-                <th className={thCls}>{t('migration.common.status') || 'Status'}</th>
-                <th className={`${thCls} w-56`}>{t('migration.discoveries.progress') || 'Progress'}</th>
-                <th className={thCls}>{t('migration.discoveries.inventory') || 'Inventory'}</th>
-                <th className={thCls}>{t('migration.common.startedFinished') || 'Started / finished'}</th>
+                <SortTh k="id" sort={sort} className={thCls}>#</SortTh>
+                <SortTh k="source" sort={sort} className={thCls}>{t('migration.common.source') || 'Source'}</SortTh>
+                <SortTh k="status" sort={sort} className={thCls}>{t('migration.common.status') || 'Status'}</SortTh>
+                <SortTh k="progress" sort={sort} className={`${thCls} w-56`}>{t('migration.discoveries.progress') || 'Progress'}</SortTh>
+                <SortTh k="inventory" sort={sort} className={thCls}>{t('migration.discoveries.inventory') || 'Inventory'}</SortTh>
+                <SortTh k="started" sort={sort} className={thCls}>{t('migration.common.startedFinished') || 'Started / finished'}</SortTh>
                 <th className={`${thCls} w-36`}><span className="sr-only">{t('migration.common.actions') || 'Actions'}</span></th>
               </tr>
             </thead>
             <tbody>
-              {items.map((d) => {
+              {sortedItems.map((d) => {
                 const pct = progressPct(d.progress.done, d.progress.total);
                 return (
                   <tr key={d.id} className="transition-colors hover:bg-bg-hover">

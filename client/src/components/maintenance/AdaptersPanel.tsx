@@ -10,6 +10,7 @@ import { adaptersApi } from '@/api/maintenance.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { Card, isStepUpHandled, thCls, theadRowCls } from '@/components/hosting/hostingUi';
 import { useHostingEvent } from '@/components/sites/useHostingEvent';
 import { formatDateTime } from '@/components/sites/siteForm';
@@ -224,10 +225,14 @@ export function RunsTable({ runs, onOpen, siteLabel }: { runs: AdapterRun[]; onO
   const { t, i18n } = useTranslation();
   const adapterName = useAdapterName();
   const actionLabel = (r: AdapterRun) => (r.action === 'check' ? (t('adapters.check') || 'Check') : (t('adapters.update') || 'Update'));
+  const { sorted, sort } = useTableSort(runs, {
+    id: (r) => r.id, site: (r) => (siteLabel ? siteLabel(r) : ''), adapter: (r) => adapterName(r.adapter), action: (r) => r.action,
+    status: (r) => r.status, updates: (r) => r.updates.length, risk: (r) => r.risk?.score ?? null, date: (r) => r.startedAt ?? r.createdAt,
+  });
   return (
     <>
       <ul className="space-y-2 md:hidden">
-        {runs.map((r) => (
+        {sorted.map((r) => (
           <li key={r.id}>
             <button type="button" onClick={() => onOpen(r)} className="w-full rounded-lg bg-bg-primary px-3 py-2 text-left hover:bg-bg-hover">
               <div className="flex items-center gap-2">
@@ -247,18 +252,18 @@ export function RunsTable({ runs, onOpen, siteLabel }: { runs: AdapterRun[]; onO
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className={theadRowCls}>
-              <th className={thCls}>#</th>
-              {siteLabel && <th className={thCls}>{t('windows.col.site') || 'Site'}</th>}
-              <th className={thCls}>{t('adapters.col.adapter') || 'Application'}</th>
-              <th className={thCls}>{t('adapters.col.action') || 'Action'}</th>
-              <th className={thCls}>{t('adapters.col.status') || 'Status'}</th>
-              <th className={thCls}>{t('adapters.col.updates') || 'Updates'}</th>
-              <th className={thCls}>{t('adapters.col.risk') || 'Risk'}</th>
-              <th className={thCls}>{t('adapters.col.date') || 'Date'}</th>
+              <SortTh k="id" sort={sort} className={thCls}>#</SortTh>
+              {siteLabel && <SortTh k="site" sort={sort} className={thCls}>{t('windows.col.site') || 'Site'}</SortTh>}
+              <SortTh k="adapter" sort={sort} className={thCls}>{t('adapters.col.adapter') || 'Application'}</SortTh>
+              <SortTh k="action" sort={sort} className={thCls}>{t('adapters.col.action') || 'Action'}</SortTh>
+              <SortTh k="status" sort={sort} className={thCls}>{t('adapters.col.status') || 'Status'}</SortTh>
+              <SortTh k="updates" sort={sort} className={thCls}>{t('adapters.col.updates') || 'Updates'}</SortTh>
+              <SortTh k="risk" sort={sort} className={thCls}>{t('adapters.col.risk') || 'Risk'}</SortTh>
+              <SortTh k="date" sort={sort} className={thCls}>{t('adapters.col.date') || 'Date'}</SortTh>
             </tr>
           </thead>
           <tbody>
-            {runs.map((r) => (
+            {sorted.map((r) => (
               <tr key={r.id} onClick={() => onOpen(r)} className="cursor-pointer transition-colors hover:bg-bg-hover">
                 <td className="px-4 py-2 font-mono text-xs text-text-muted">{r.id}</td>
                 {siteLabel && <td className="max-w-[12rem] truncate px-4 py-2 text-text-primary">{siteLabel(r)}</td>}

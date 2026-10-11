@@ -7,12 +7,13 @@ import { proxyApi } from '@/api/proxy.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { ChipsInput } from '@/components/settings/ChipsInput';
-import { CopyButton, Pill, headerAccentBtnCls, inputCls, labelCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { CopyButton, Pill, headerAccentBtnCls, inputCls, labelCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { AccountField, ListState, useProxyAccess } from './proxyUi';
 import { proxyErrorMessage, proxyLoadError, toastProxyError } from './proxyErrors';
@@ -42,6 +43,7 @@ export function AuthProvidersPanel({ accountId, tenantId, accounts, showAccount,
   const [items, setItems] = useState<AuthProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const accountDir = useAccountDirectory();
   const [editing, setEditing] = useState<AuthProvider | 'new' | null>(null);
 
   const seq = useRef(0);
@@ -103,37 +105,31 @@ export function AuthProvidersPanel({ accountId, tenantId, accounts, showAccount,
         <div className="ml-auto">{createBtn}</div>
       </div>
       <ListState loading={loading} error={error} empty={items.length === 0} emptyIcon={<Fingerprint />} emptyText={t('proxy.auth.empty') || 'No authentication provider yet.'} emptyAction={createBtn ?? undefined}>
-        <TableScroll className="rounded-xl bg-bg-secondary">
-          <table className="w-full min-w-[760px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('proxy.auth.name') || 'Provider'}</th>
-                <th className={thCls}>{t('proxy.auth.azureTenant') || 'Directory (tenant)'}</th>
-                <th className={thCls}>{t('proxy.auth.sidecar') || 'Sidecar'}</th>
-                <th className={thCls}>{t('proxy.usedBy') || 'Used by'}</th>
-                {showAccount && <th className={thCls}>{t('proxy.account') || 'Hosting account'}</th>}
-                {showTenant && <th className={thCls}>{t('proxy.tenant') || 'Workspace'}</th>}
-                <th className={`${thCls} w-14`}><span className="sr-only">{t('proxy.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((a) => (
-                <tr key={a.id} className="align-top transition-colors hover:bg-bg-hover">
-                  <td className="px-4 py-3">
-                    <span className="font-medium text-text-primary">{a.name}</span>
-                    {!a.hasSecret && <Pill tone="amber" className="ml-2">{t('proxy.auth.noSecret') || 'no secret'}</Pill>}
-                  </td>
-                  <td className="px-4 py-3 break-all font-mono text-xs text-text-secondary">{a.azureTenantId}</td>
-                  <td className="px-4 py-3"><SidecarPill provider={a} /></td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{a.usedBy}</td>
-                  {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{accounts.find((x) => x.id === a.accountId)?.username ?? `#${a.accountId}`}</td>}
-                  {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={a.tenantId} /></td>}
-                  <td className="px-4 py-3 text-right">{menu(a)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<AuthProvider>
+          storageKey="proxy-auth-providers"
+          singleGroupFlat
+          minWidth={760}
+          defaultSort={{ column: 'name' }}
+          groups={showAccount
+            ? groupRowsByAccount(items, accountDir, (a) => ({ id: a.accountId, username: accounts.find((x) => x.id === a.accountId)?.username }), (rows) => flatNodes(rows, (a) => a.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (a) => a.id) }]}
+          columns={[
+            {
+              id: 'name', header: t('proxy.auth.name') || 'Provider', sort: (a) => a.name,
+              cell: (a) => (
+                <>
+                  <span className="font-medium text-text-primary">{a.name}</span>
+                  {!a.hasSecret && <Pill tone="amber" className="ml-2">{t('proxy.auth.noSecret') || 'no secret'}</Pill>}
+                </>
+              ),
+            },
+            { id: 'tenantDir', header: t('proxy.auth.azureTenant') || 'Directory (tenant)', tdClassName: 'break-all font-mono text-xs text-text-secondary', sort: (a) => a.azureTenantId, cell: (a) => a.azureTenantId },
+            { id: 'sidecar', header: t('proxy.auth.sidecar') || 'Sidecar', cell: (a) => <SidecarPill provider={a} /> },
+            { id: 'usedBy', header: t('proxy.usedBy') || 'Used by', tdClassName: 'font-mono text-xs text-text-secondary', sort: (a) => a.usedBy, cell: (a) => a.usedBy },
+            ...(showTenant && !showAccount ? [{ id: 'tenant', header: t('proxy.tenant') || 'Workspace', cell: (a: AuthProvider) => <TenantBadge tenantId={a.tenantId} /> }] : []),
+            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (a) => menu(a) },
+          ]}
+        />
       </ListState>
 
       <AuthProviderModal

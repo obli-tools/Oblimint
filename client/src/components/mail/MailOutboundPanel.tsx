@@ -12,10 +12,10 @@ import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm, usePrompt } from '@/components/common/ConfirmDialog';
-import { Card, InfoRow, Pill, inputCls, labelCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { Card, InfoRow, Pill, inputCls, labelCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { formatBytes } from '@/components/databases/dbFormat';
 import { cn } from '@/utils/cn';
 import { OutboundStatusBadge, QueueStatusBadge } from './MailBadges';
@@ -407,43 +407,39 @@ function QueueCard({ accountId }: { accountId: number }) {
         <p className="py-4 text-center text-xs text-text-muted">{t('mail.queue.empty') || 'The queue is empty: every message was delivered.'}</p>
       ) : (
         <div className="space-y-2">
-          <TableScroll className="rounded-lg bg-bg-primary">
-            <table className="w-full min-w-[820px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('mail.queue.arrived') || 'Arrived'}</th>
-                  <th className={thCls}>{t('mail.queue.sender') || 'Sender'}</th>
-                  <th className={thCls}>{t('mail.queue.recipients') || 'Recipients'}</th>
-                  <th className={thCls}>{t('mail.queue.status.title') || 'State'}</th>
-                  <th className={`${thCls} text-right`}>{t('mail.queue.size') || 'Size'}</th>
-                  <th className={`${thCls} w-20`}><span className="sr-only">{t('mail.actions') || 'Actions'}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((q) => (
-                  <tr key={q.queueId} className="align-top transition-colors hover:bg-bg-hover">
-                    <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-text-secondary">{new Date(q.arrivedAt).toLocaleString(i18n.language)}</td>
-                    <td className="max-w-[14rem] break-all px-4 py-2.5 font-mono text-xs text-text-primary">{q.sender || '<>'}</td>
-                    <td className="max-w-[16rem] break-all px-4 py-2.5 font-mono text-xs text-text-secondary">{q.recipients.join(', ')}</td>
-                    <td className="px-4 py-2.5">
-                      <QueueStatusBadge status={q.status} />
-                      {q.reason && <div className="mt-1 max-w-[18rem] break-words text-[11px] text-text-muted">{q.reason}</div>}
-                      {q.nextAttemptAt && <div className="mt-0.5 text-[10px] text-text-muted">{t('mail.queue.next', { date: new Date(q.nextAttemptAt).toLocaleString(i18n.language), defaultValue: 'next try {{date}}' })}</div>}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{formatBytes(t, q.sizeBytes)}</td>
-                    <td className="px-4 py-2.5 text-right">
-                      {manage && (
-                        <span className="inline-flex gap-1">
-                          <IconButton label={t('mail.queue.retry') || 'Retry now'} icon={<RotateCw size={13} />} disabled={busy !== null} onClick={() => { void act(q, 'retry'); }} />
-                          <IconButton label={t('common.delete') || 'Delete'} variant="danger" icon={<Trash2 size={13} />} disabled={busy !== null} onClick={() => { void act(q, 'delete'); }} />
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
+          <GroupedTable<MailQueueItem>
+            storageKey="mail-queue"
+            singleGroupFlat
+            className="bg-bg-primary"
+            minWidth={820}
+            defaultSort={{ column: 'arrived', dir: 'desc' }}
+            groups={[{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (q) => q.queueId) }]}
+            columns={[
+              { id: 'arrived', header: t('mail.queue.arrived') || 'Arrived', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-secondary', sort: (q) => q.arrivedAt, cell: (q) => new Date(q.arrivedAt).toLocaleString(i18n.language) },
+              { id: 'sender', header: t('mail.queue.sender') || 'Sender', tdClassName: 'max-w-[14rem] break-all font-mono text-xs text-text-primary', sort: (q) => q.sender, cell: (q) => q.sender || '<>' },
+              { id: 'recipients', header: t('mail.queue.recipients') || 'Recipients', tdClassName: 'max-w-[16rem] break-all font-mono text-xs text-text-secondary', sort: (q) => q.recipients.join(','), cell: (q) => q.recipients.join(', ') },
+              {
+                id: 'status', header: t('mail.queue.status.title') || 'State', sort: (q) => q.status,
+                cell: (q) => (
+                  <>
+                    <QueueStatusBadge status={q.status} />
+                    {q.reason && <div className="mt-1 max-w-[18rem] break-words text-[11px] text-text-muted">{q.reason}</div>}
+                    {q.nextAttemptAt && <div className="mt-0.5 text-[10px] text-text-muted">{t('mail.queue.next', { date: new Date(q.nextAttemptAt).toLocaleString(i18n.language), defaultValue: 'next try {{date}}' })}</div>}
+                  </>
+                ),
+              },
+              { id: 'size', header: t('mail.queue.size') || 'Size', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs tabular-nums', sort: (q) => q.sizeBytes, cell: (q) => formatBytes(t, q.sizeBytes) },
+              {
+                id: 'actions', header: <span className="sr-only">{t('mail.actions') || 'Actions'}</span>, thClassName: 'w-20', tdClassName: 'text-right',
+                cell: (q) => (manage ? (
+                  <span className="inline-flex gap-1">
+                    <IconButton label={t('mail.queue.retry') || 'Retry now'} icon={<RotateCw size={13} />} disabled={busy !== null} onClick={() => { void act(q, 'retry'); }} />
+                    <IconButton label={t('common.delete') || 'Delete'} variant="danger" icon={<Trash2 size={13} />} disabled={busy !== null} onClick={() => { void act(q, 'delete'); }} />
+                  </span>
+                ) : null),
+              },
+            ]}
+          />
           <Pager offset={offset} total={total} pageSize={QUEUE_PAGE} onOffset={setOffset} />
         </div>
       )}

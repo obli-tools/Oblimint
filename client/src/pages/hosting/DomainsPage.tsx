@@ -8,17 +8,16 @@ import { HostingSocketEvents } from '@oblimint/shared';
 import { domainsApi } from '@/api/domains.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { useTenantStore } from '@/store/tenantStore';
-import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { TenantBadge } from '@/components/common/TenantBadge';
 import { Drawer } from '@/components/common/Drawer';
 import { DomainCreateModal, domainKindLabel } from '@/components/hosting/DomainCreateModal';
 import { DomainPanel } from '@/components/hosting/DomainPanel';
 import {
-  EmptyState, ForceHttpsIcon, TlsBadge, headerAccentBtnCls, headerBtnCls, thCls, theadRowCls, useHostingEvents,
+  EmptyState, ForceHttpsIcon, TlsBadge, headerAccentBtnCls, headerBtnCls, useHostingEvents,
 } from '@/components/hosting/hostingUi';
 import { VerificationBadge, ZoneKindBadge } from '@/components/dns/DnsBadges';
 import { DomainClaimsCard } from '@/components/dns/DomainClaims';
@@ -71,7 +70,6 @@ export function DomainsPage() {
 function DomainsTab() {
   const { t } = useTranslation();
   const { can } = useHostingMe();
-  const isMaster = useIsMasterTenant();
   const currentTenantId = useTenantStore((s) => s.currentTenantId);
   const [params, setParams] = useSearchParams();
   const selectedId = Number(params.get('domain')) || null;
@@ -113,6 +111,7 @@ function DomainsTab() {
     return domains.filter((d) => d.name.includes(q) || d.accountUsername.toLowerCase().includes(q));
   }, [domains, search]);
 
+  const accountDir = useAccountDirectory();
   const canCreate = can('domains.manage');
   const selected = domains.find((d) => d.id === selectedId) ?? null;
   const pendingCount = domains.filter((d) => d.verification?.status === 'pending').length;
@@ -156,78 +155,57 @@ function DomainsTab() {
           action={canCreate && !search ? <button onClick={() => setCreating(true)} className={headerAccentBtnCls}><Plus size={14} />{t('domains.create') || 'Add a domain'}</button> : undefined}
         />
       ) : (
-        <>
-          {/* Phone: cards */}
-          <ul className="space-y-2 md:hidden">
-            {filtered.map((d) => (
-              <li key={d.id}>
-                <button type="button" onClick={() => select(d.id)} className="w-full rounded-xl bg-bg-secondary px-3 py-2.5 text-left hover:bg-bg-tertiary/30">
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 truncate font-mono text-sm font-semibold text-text-primary">{d.name}</span>
-                    <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-                    <VerificationBadge verification={d.verification} />
-                    <TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} />
-                    <span>{domainKindLabel(t, d.kind)}</span>
-                    <span className="font-mono">{d.accountUsername}</span>
-                    <span>{t('domains.routesCount', { count: d.routes.length, defaultValue: '{{count}} route(s)' })}</span>
-                    {isMaster && <TenantBadge tenantId={d.tenantId} />}
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-
-          <TableScroll className="hidden rounded-xl bg-bg-secondary md:block">
-            <table className="w-full min-w-[980px] text-sm">
-              <thead>
-                <tr className={theadRowCls}>
-                  <th className={thCls}>{t('domains.col.name') || 'Domain'}</th>
-                  <th className={thCls}>{t('domains.col.account') || 'Account'}</th>
-                  {isMaster && <th className={thCls}>{t('hostingCommon.tenant') || 'Workspace'}</th>}
-                  <th className={thCls}>{t('domains.col.kind') || 'Kind'}</th>
-                  <th className={thCls}>{t('domainOwnership.col') || 'Ownership'}</th>
-                  <th className={thCls}>{t('dns.zone.label') || 'DNS zone'}</th>
-                  <th className={`${thCls} text-right`}>{t('domains.col.routes') || 'Routes'}</th>
-                  <th className={thCls}>{t('domains.col.tls') || 'TLS'}</th>
-                  <th className={thCls}>{t('domains.col.https') || 'HTTPS'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((d) => (
-                  <tr key={d.id} onClick={() => select(d.id)} className={`cursor-pointer transition-colors hover:bg-bg-hover ${d.id === selectedId ? 'bg-bg-hover' : ''}`}>
-                    <td className="px-4 py-3">
-                      <div className="whitespace-nowrap font-mono font-medium text-text-primary">{d.name}</div>
-                      {(d.includeWww || d.wildcard) && (
-                        <div className="font-mono text-[11px] text-text-muted">
-                          {[d.includeWww ? '+ www' : null, d.wildcard ? '+ *' : null].filter(Boolean).join(' ')}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link to={`/accounts/${d.accountId}`} onClick={(e) => e.stopPropagation()} className="font-mono text-text-secondary hover:text-accent">{d.accountUsername}</Link>
-                    </td>
-                    {isMaster && <td className="px-4 py-3"><TenantBadge tenantId={d.tenantId} /></td>}
-                    <td className="whitespace-nowrap px-4 py-3 text-text-secondary">{domainKindLabel(t, d.kind)}</td>
-                    <td className="px-4 py-3"><VerificationBadge verification={d.verification} /></td>
-                    <td className="px-4 py-3">
-                      {d.zone ? (
-                        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                          <Link to={`/dns/zones/${d.zone.id}`} onClick={(e) => e.stopPropagation()} className="font-mono text-xs text-text-secondary hover:text-accent">{d.zone.name}</Link>
-                          <ZoneKindBadge kind={d.zone.kind} />
-                        </span>
-                      ) : <span className="text-text-muted">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums">{d.routes.length}</td>
-                    <td className="px-4 py-3"><TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} /></td>
-                    <td className="px-4 py-3"><ForceHttpsIcon on={d.forceHttps} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableScroll>
-        </>
+        <GroupedTable<Domain>
+          storageKey="domains"
+          singleGroupFlat
+          minWidth={900}
+          defaultSort={{ column: 'name' }}
+          selectedKey={selectedId}
+          // example.com at the root of its account, shop.example.com below it.
+          groups={groupRowsByAccount(filtered, accountDir, (d) => ({ id: d.accountId, username: d.accountUsername }), (rows) => domainTree(rows, (d) => d.name, (d) => d.id))}
+          onRowClick={(d) => select(d.id)}
+          renderCard={(d) => (
+            <button type="button" onClick={() => select(d.id)} className="w-full rounded-xl bg-bg-secondary px-3 py-2.5 text-left hover:bg-bg-tertiary/30">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 truncate font-mono text-sm font-semibold text-text-primary">{d.name}</span>
+                <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                <VerificationBadge verification={d.verification} />
+                <TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} />
+                <span>{domainKindLabel(t, d.kind)}</span>
+                <span>{t('domains.routesCount', { count: d.routes.length, defaultValue: '{{count}} route(s)' })}</span>
+              </div>
+            </button>
+          )}
+          columns={[
+            {
+              id: 'name', header: t('domains.col.name') || 'Domain', sort: (d) => d.name,
+              cell: (d) => (
+                <>
+                  <div className="whitespace-nowrap font-mono font-medium text-text-primary">{d.name}</div>
+                  {(d.includeWww || d.wildcard) && (
+                    <div className="font-mono text-[11px] text-text-muted">{[d.includeWww ? '+ www' : null, d.wildcard ? '+ *' : null].filter(Boolean).join(' ')}</div>
+                  )}
+                </>
+              ),
+            },
+            { id: 'kind', header: t('domains.col.kind') || 'Kind', tdClassName: 'whitespace-nowrap text-text-secondary', sort: (d) => d.kind, cell: (d) => domainKindLabel(t, d.kind) },
+            { id: 'ownership', header: t('domainOwnership.col') || 'Ownership', sort: (d) => d.verification?.status ?? '', cell: (d) => <VerificationBadge verification={d.verification} /> },
+            {
+              id: 'zone', header: t('dns.zone.label') || 'DNS zone', sort: (d) => d.zone?.name ?? '',
+              cell: (d) => (d.zone ? (
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                  <Link to={`/dns/zones/${d.zone.id}`} className="font-mono text-xs text-text-secondary hover:text-accent">{d.zone.name}</Link>
+                  <ZoneKindBadge kind={d.zone.kind} />
+                </span>
+              ) : <span className="text-text-muted">—</span>),
+            },
+            { id: 'routes', header: t('domains.col.routes') || 'Routes', thClassName: 'text-right', tdClassName: 'text-right font-mono tabular-nums', sort: (d) => d.routes.length, cell: (d) => d.routes.length },
+            { id: 'tls', header: t('domains.col.tls') || 'TLS', sort: (d) => d.certificate?.status ?? d.tlsMode, cell: (d) => <TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} /> },
+            { id: 'https', header: t('domains.col.https') || 'HTTPS', sort: (d) => d.forceHttps, cell: (d) => <ForceHttpsIcon on={d.forceHttps} /> },
+          ]}
+        />
       )}
 
       <Drawer

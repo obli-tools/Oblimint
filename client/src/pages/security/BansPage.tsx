@@ -12,6 +12,7 @@ import { proxyApi } from '@/api/proxy.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { PageContainer } from '@/components/common/PageContainer';
 import { TableScroll } from '@/components/common/TableScroll';
+import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { TenantFilterChips } from '@/components/common/TenantFilterChips';
 import { Tip } from '@/components/common/Tip';
@@ -148,6 +149,10 @@ export function BansPage() {
     ];
     return items.some((i) => !i.hidden) ? <ActionMenu items={items} /> : null;
   };
+  const { sorted, sort } = useTableSort(list.items, {
+    ip: (b) => b.ip, origin: (b) => b.geo?.countryName ?? '', source: (b) => b.source, scope: (b) => b.scope, hits: (b) => b.hitCount,
+    seen: (b) => b.lastSeenAt, until: (b) => (b.bannedUntil ?? '9999'), obliguard: (b) => b.obliguardStatus,
+  });
   const until = (b: WebBan) => {
     if (!b.active) return <Pill>{t('bans.inactive') || 'lifted / expired'}</Pill>;
     return b.bannedUntil == null ? <Pill tone="red">{t('bans.permanent') || 'permanent'}</Pill> : <span className="font-mono text-xs text-text-secondary">{fmt(b.bannedUntil)}</span>;
@@ -252,20 +257,21 @@ export function BansPage() {
           <table className="w-full min-w-[1040px] text-sm">
             <thead>
               <tr className={theadRowCls}>
-                <th className={thCls}>{t('bans.ip') || 'Address'}</th>
-                <th className={thCls}>{t('bans.origin') || 'Origin'}</th>
-                <th className={thCls}>{t('bans.sourceLabel') || 'Source'}</th>
-                <th className={thCls}>{t('bans.scopeLabel') || 'Scope'}</th>
-                <th className={thCls}>{t('bans.hits') || 'Hits'}</th>
-                <th className={thCls}>{t('bans.seen') || 'First / last seen'}</th>
-                <th className={thCls}>{t('bans.until') || 'Until'}</th>
-                <th className={thCls}>Obliguard</th>
+                {/* Sort of the page shown (the list is paged by the server, newest first). */}
+                <SortTh k="ip" sort={sort} className={thCls}>{t('bans.ip') || 'Address'}</SortTh>
+                <SortTh k="origin" sort={sort} className={thCls}>{t('bans.origin') || 'Origin'}</SortTh>
+                <SortTh k="source" sort={sort} className={thCls}>{t('bans.sourceLabel') || 'Source'}</SortTh>
+                <SortTh k="scope" sort={sort} className={thCls}>{t('bans.scopeLabel') || 'Scope'}</SortTh>
+                <SortTh k="hits" sort={sort} className={thCls}>{t('bans.hits') || 'Hits'}</SortTh>
+                <SortTh k="seen" sort={sort} className={thCls}>{t('bans.seen') || 'First / last seen'}</SortTh>
+                <SortTh k="until" sort={sort} className={thCls}>{t('bans.until') || 'Until'}</SortTh>
+                <SortTh k="obliguard" sort={sort} className={thCls}>Obliguard</SortTh>
                 {scope.showTenant && <th className={thCls}>{t('proxy.tenant') || 'Workspace'}</th>}
                 <th className={`${thCls} w-14`}><span className="sr-only">{t('proxy.actions') || 'Actions'}</span></th>
               </tr>
             </thead>
             <tbody>
-              {list.items.map((b) => (
+              {sorted.map((b) => (
                 <tr key={b.id} className={cn('align-top transition-colors hover:bg-bg-hover', !b.active && 'opacity-60')}>
                   <td className="px-4 py-3">
                     <span className="font-mono font-medium text-text-primary">{b.ip}</span>

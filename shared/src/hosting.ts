@@ -419,6 +419,8 @@ export interface HostingAccount {
   usageCheckedAt: string | null;
   siteCount: number;
   domainCount: number;
+  /** Name of the primary domain of the account (lists group by account under this name; null = none yet). */
+  primaryDomain?: string | null;
   /** P2: access allow-list mode of the account's ports (SFTP, external SQL). */
   accessMode: AccessMode;
   /** P2: quota enforcement state (usage module). */

@@ -8,11 +8,12 @@ import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { Modal } from '@/components/common/Modal';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { generatePassword } from '@/components/hosting/hostingFormat';
 import { cn } from '@/utils/cn';
 import { AccountField, ListState, useProxyAccess } from './proxyUi';
@@ -33,6 +34,7 @@ export function AccessListsPanel({ accountId, tenantId, accounts, showAccount, s
   const [items, setItems] = useState<AccessList[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const accountDir = useAccountDirectory();
   const [editing, setEditing] = useState<AccessList | 'new' | null>(null);
 
   const seq = useRef(0);
@@ -119,32 +121,22 @@ export function AccessListsPanel({ accountId, tenantId, accounts, showAccount, s
         <div className="ml-auto">{createBtn}</div>
       </div>
       <ListState loading={loading} error={error} empty={items.length === 0} emptyIcon={<ListChecks />} emptyText={t('proxy.accessLists.empty') || 'No access list yet.'} emptyAction={createBtn ?? undefined}>
-        <TableScroll className="rounded-xl bg-bg-secondary">
-          <table className="w-full min-w-[640px] text-sm">
-            <thead>
-              <tr className={theadRowCls}>
-                <th className={thCls}>{t('proxy.accessLists.name') || 'Access list'}</th>
-                <th className={thCls}>{t('proxy.accessLists.content') || 'Rules'}</th>
-                <th className={thCls}>{t('proxy.usedBy') || 'Used by'}</th>
-                {showAccount && <th className={thCls}>{t('proxy.account') || 'Hosting account'}</th>}
-                {showTenant && <th className={thCls}>{t('proxy.tenant') || 'Workspace'}</th>}
-                <th className={`${thCls} w-14`}><span className="sr-only">{t('proxy.actions') || 'Actions'}</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((a) => (
-                <tr key={a.id} className="align-top transition-colors hover:bg-bg-hover">
-                  <td className="px-4 py-3 font-medium text-text-primary">{a.name}</td>
-                  <td className="px-4 py-3">{summary(a)}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{a.usedBy}</td>
-                  {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{accounts.find((x) => x.id === a.accountId)?.username ?? `#${a.accountId}`}</td>}
-                  {showTenant && <td className="px-4 py-3"><TenantBadge tenantId={a.tenantId} /></td>}
-                  <td className="px-4 py-3 text-right">{menu(a)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScroll>
+        <GroupedTable<AccessList>
+          storageKey="proxy-access-lists"
+          singleGroupFlat
+          minWidth={640}
+          defaultSort={{ column: 'name' }}
+          groups={showAccount
+            ? groupRowsByAccount(items, accountDir, (a) => ({ id: a.accountId, username: accounts.find((x) => x.id === a.accountId)?.username }), (rows) => flatNodes(rows, (a) => a.id))
+            : [{ key: 'all', label: '', sortLabel: '', nodes: flatNodes(items, (a) => a.id) }]}
+          columns={[
+            { id: 'name', header: t('proxy.accessLists.name') || 'Access list', tdClassName: 'font-medium text-text-primary', sort: (a) => a.name, cell: (a) => a.name },
+            { id: 'rules', header: t('proxy.accessLists.content') || 'Rules', cell: (a) => summary(a) },
+            { id: 'usedBy', header: t('proxy.usedBy') || 'Used by', tdClassName: 'font-mono text-xs text-text-secondary', sort: (a) => a.usedBy, cell: (a) => a.usedBy },
+            ...(showTenant && !showAccount ? [{ id: 'tenant', header: t('proxy.tenant') || 'Workspace', cell: (a: AccessList) => <TenantBadge tenantId={a.tenantId} /> }] : []),
+            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (a) => menu(a) },
+          ]}
+        />
       </ListState>
 
       <AccessListModal

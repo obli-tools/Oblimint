@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { CheckCircle2, Fingerprint, Pencil, PlugZap, Server, Trash2, XCircle } from 'lucide-react';
@@ -12,10 +12,11 @@ import { Button } from '@/components/common/Button';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { Modal } from '@/components/common/Modal';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
-import { TableScroll } from '@/components/common/TableScroll';
+import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
+import { groupRowsByAccount } from '@/components/common/accountGroups';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { EmptyState, apiErrorCode, inputCls, labelCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, apiErrorCode, inputCls, labelCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { appsErrorMessage, toastAppsError } from '@/components/apps/appsErrors';
@@ -31,6 +32,7 @@ export function SftpTargetsPanel({ accountId, tenantId, accounts, showAccount, c
   const [editing, setEditing] = useState<SftpTarget | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [results, setResults] = useState<Record<number, SftpTargetTestResult & { mismatch?: boolean }>>({});
+  const accountDir = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
   const seq = useRef(0);
   const load = useCallback(async () => {
@@ -103,57 +105,54 @@ export function SftpTargetsPanel({ accountId, tenantId, accounts, showAccount, c
       {items === null ? <div className="flex justify-center py-12"><LoadingSpinner /></div>
         : items.length === 0 ? <EmptyState icon={<Server />} text={error ?? (t('automation.sftp.empty') || 'No SFTP target.')} />
           : (
-            <TableScroll className="bg-bg-secondary" stickyFirstCol>
-              <table className="w-full min-w-[820px] text-sm">
-                <thead>
-                  <tr className={theadRowCls}>
-                    <th className={thCls}>{t('automation.form.name') || 'Name'}</th>
-                    <th className={thCls}>{t('automation.sftp.server') || 'Server'}</th>
-                    <th className={thCls}>{t('automation.sftp.auth') || 'Authentication'}</th>
-                    <th className={thCls}>{t('automation.sftp.hostKey') || 'Host key'}</th>
-                    {showAccount && <th className={thCls}>{t('apps.list.account') || 'Account'}</th>}
-                    <th className={cn(thCls, 'w-12')}><span className="sr-only">{t('apps.list.actions') || 'Actions'}</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((s) => {
-                    const r = results[s.id];
-                    const manage = can('monitoring.manage', s.accountId);
+            <GroupedTable<SftpTarget>
+              storageKey="automation-sftp"
+              singleGroupFlat
+              minWidth={760}
+              defaultSort={{ column: 'name' }}
+              groups={groupRowsByAccount(items, accountDir, (x) => ({ id: showAccount ? x.accountId : null }), (rows) => flatNodes(rows, (x) => x.id), t('uptime.platformGroup') || 'Platform')}
+              columns={[
+                {
+                  id: 'name', header: t('automation.form.name') || 'Name', tdClassName: 'align-top', sort: (x) => x.name,
+                  cell: (x) => {
+                    const r = results[x.id];
                     return (
-                      <tr key={s.id} className="border-t border-border/40 align-top">
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5"><span className="font-medium text-text-primary">{s.name}</span>{isStaff && <TenantBadge tenantId={s.tenantId} />}</div>
-                          {r && (r.ok
-                            ? <div className="mt-1 inline-flex items-center gap-1 text-[11px] text-green-400"><CheckCircle2 size={11} />{t('automation.sftp.testOk') || 'Connection OK'}</div>
-                            : <div className="mt-1 inline-flex items-start gap-1 text-[11px] text-status-down"><XCircle size={11} className="mt-0.5 shrink-0" />{r.mismatch ? (t('automation.errors.hostKeyMismatch') || 'The host key changed.') : (r.error ?? '')}</div>)}
-                        </td>
-                        <td className="px-4 py-3 font-mono text-xs text-text-secondary">
-                          {s.username}@{s.host}:{s.port}
-                          <div className="text-[11px] text-text-muted">{s.basePath || '/'}</div>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-text-secondary">{s.authMethod === 'key' ? (t('automation.sftp.authKey') || 'SSH key') : (t('automation.sftp.authPassword') || 'Password')}</td>
-                        <td className="max-w-[16rem] px-4 py-3">
-                          {s.hostKeyFingerprint
-                            ? <span className="inline-flex items-start gap-1 break-all font-mono text-[11px] text-text-secondary"><Fingerprint size={12} className="mt-0.5 shrink-0 text-green-400" />{s.hostKeyFingerprint}</span>
-                            : <span className="text-[11px] text-text-muted">{t('automation.sftp.notPinned') || 'pinned at the first test'}</span>}
-                        </td>
-                        {showAccount && <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.accountId == null ? (t('uptime.platformShort') || 'platform') : (accounts.find((a) => a.id === s.accountId)?.username ?? `#${s.accountId}`)}</td>}
-                        <td className="px-2 py-2">
-                          {busy === s.id ? <div className="p-2"><LoadingSpinner size="sm" /></div> : manage && (
-                            <ActionMenu items={[
-                              { key: 'test', icon: <PlugZap size={14} />, label: t('automation.sftp.test') || 'Test the connection', onClick: () => { void test(s); } },
-                              { key: 'repin', icon: <Fingerprint size={14} />, label: t('automation.sftp.repinAction') || 'Re-pin the host key', onClick: () => { void repin(s); }, hidden: !s.hostKeyFingerprint },
-                              { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(s), separator: true },
-                              { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(s); }, danger: true },
-                            ]} />
-                          )}
-                        </td>
-                      </tr>
+                      <>
+                        <div className="flex items-center gap-1.5"><span className="font-medium text-text-primary">{x.name}</span>{isStaff && <TenantBadge tenantId={x.tenantId} />}</div>
+                        {r && (r.ok
+                          ? <div className="mt-1 inline-flex items-center gap-1 text-[11px] text-green-400"><CheckCircle2 size={11} />{t('automation.sftp.testOk') || 'Connection OK'}</div>
+                          : <div className="mt-1 inline-flex items-start gap-1 text-[11px] text-status-down"><XCircle size={11} className="mt-0.5 shrink-0" />{r.mismatch ? (t('automation.errors.hostKeyMismatch') || 'The host key changed.') : (r.error ?? '')}</div>)}
+                      </>
                     );
-                  })}
-                </tbody>
-              </table>
-            </TableScroll>
+                  },
+                },
+                {
+                  id: 'server', header: t('automation.sftp.server') || 'Server', tdClassName: 'align-top font-mono text-xs text-text-secondary', sort: (x) => `${x.host}:${x.port}`,
+                  cell: (x) => <>{x.username}@{x.host}:{x.port}<div className="text-[11px] text-text-muted">{x.basePath || '/'}</div></>,
+                },
+                {
+                  id: 'auth', header: t('automation.sftp.auth') || 'Authentication', tdClassName: 'align-top text-xs text-text-secondary', sort: (x) => x.authMethod,
+                  cell: (x) => (x.authMethod === 'key' ? (t('automation.sftp.authKey') || 'SSH key') : (t('automation.sftp.authPassword') || 'Password')),
+                },
+                {
+                  id: 'hostKey', header: t('automation.sftp.hostKey') || 'Host key', tdClassName: 'max-w-[16rem] align-top', sort: (x) => x.hostKeyFingerprint ?? '',
+                  cell: (x) => (x.hostKeyFingerprint
+                    ? <span className="inline-flex items-start gap-1 break-all font-mono text-[11px] text-text-secondary"><Fingerprint size={12} className="mt-0.5 shrink-0 text-green-400" />{x.hostKeyFingerprint}</span>
+                    : <span className="text-[11px] text-text-muted">{t('automation.sftp.notPinned') || 'pinned at the first test'}</span>),
+                },
+                {
+                  id: 'actions', header: <span className="sr-only">{t('apps.list.actions') || 'Actions'}</span>, thClassName: 'w-12', tdClassName: 'px-2 align-top',
+                  cell: (x) => (busy === x.id ? <div className="p-2"><LoadingSpinner size="sm" /></div> : can('monitoring.manage', x.accountId) && (
+                    <ActionMenu items={[
+                      { key: 'test', icon: <PlugZap size={14} />, label: t('automation.sftp.test') || 'Test the connection', onClick: () => { void test(x); } },
+                      { key: 'repin', icon: <Fingerprint size={14} />, label: t('automation.sftp.repinAction') || 'Re-pin the host key', onClick: () => { void repin(x); }, hidden: !x.hostKeyFingerprint },
+                      { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(x), separator: true },
+                      { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(x); }, danger: true },
+                    ]} />
+                  )),
+                },
+              ]}
+            />
           )}
       {(creating || editing) && (
         <SftpTargetModal
