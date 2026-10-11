@@ -90,12 +90,26 @@ run_panel() {      # (re)create the panel container from $CONF_FILE
   local envs=(-e "OBLIMINT_DATA_DIR=$DATA_DIR" -e "PANEL_TLS=selfsigned" -e "OBLIMINT_IMAGE_TAG=$IMAGE_TAG")
   [ -n "${PDNS_BIND:-}" ] && envs+=(-e "OBLIMINT_PDNS_BIND=$PDNS_BIND")
   [ -n "${EXTRA_ENV:-}" ] && for kv in $EXTRA_ENV; do envs+=(-e "$kv"); done
+  # Networks of the previous panel container (platform network 'oblimint' carrying
+  # the oblimint-panel alias, account fabrics, mail network…): a plain 'docker run'
+  # only joins the default bridge, so they are re-attached below — the panel reaches
+  # its PostgreSQL and the edge reaches the panel through them.
+  local nets n seen=" "
+  nets=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$PANEL_NAME" 2>/dev/null || true)
+  docker network inspect oblimint >/dev/null 2>&1 && nets="oblimint $nets"
   docker rm -f "$PANEL_NAME" >/dev/null 2>&1 || true
   docker run -d --name "$PANEL_NAME" --restart unless-stopped \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "$DATA_DIR:$DATA_DIR" \
     -p "$PANEL_PORT:$PANEL_PORT" \
     "${envs[@]}" "$OBLIMINT_IMAGE_REPO:$IMAGE_TAG" >/dev/null
+  for n in $nets; do
+    case "$n" in bridge|host|none) continue ;; esac
+    case "$seen" in *" $n "*) continue ;; esac
+    seen="$seen$n "
+    docker network connect --alias oblimint-panel "$n" "$PANEL_NAME" >/dev/null 2>&1 \
+      || warn "Reconnexion du panel au réseau $n impossible : docker network connect --alias oblimint-panel $n $PANEL_NAME"
+  done
 }
 do_upgrade() {
   [ -r "$CONF_FILE" ] || die "Aucune installation trouvée ($CONF_FILE)."
