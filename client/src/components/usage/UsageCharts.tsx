@@ -106,7 +106,7 @@ export function BarChart({ data, color = '#36B98F', height = 220, formatValue, e
         {ticks.map((v, i) => (
           <g key={i}>
             <line x1={pad.l} x2={w - pad.r} y1={yOf(v)} y2={yOf(v)} stroke={GRID} strokeWidth="1" />
-            <text x={pad.l - 6} y={yOf(v) + 3} fontSize="10" fontFamily="JetBrains Mono" fill={AXIS_TEXT} textAnchor="end">{formatValue(v)}</text>
+            <text x={pad.l - 6} y={yOf(v) + 3} fontSize="10" fontFamily="'JetBrains Mono', Consolas, monospace" fill={AXIS_TEXT} textAnchor="end">{formatValue(v)}</text>
           </g>
         ))}
         {data.map((d, i) => {
@@ -120,7 +120,7 @@ export function BarChart({ data, color = '#36B98F', height = 220, formatValue, e
           );
         })}
         {labelIdx.map((i) => (
-          <text key={i} x={pad.l + i * slot + slot / 2} y={h - 8} fontSize="10" fontFamily="JetBrains Mono" fill={AXIS_TEXT} textAnchor="middle">
+          <text key={i} x={pad.l + i * slot + slot / 2} y={h - 8} fontSize="10" fontFamily="'JetBrains Mono', Consolas, monospace" fill={AXIS_TEXT} textAnchor="middle">
             {data[i].label}
           </text>
         ))}
@@ -181,7 +181,7 @@ export function LineChart({ series, labels, height = 220, formatValue, yMax: fix
         {ticks.map((v, i) => (
           <g key={i}>
             <line x1={pad.l} x2={w - pad.r} y1={yOf(v)} y2={yOf(v)} stroke={GRID} strokeWidth="1" />
-            <text x={pad.l - 6} y={yOf(v) + 3} fontSize="10" fontFamily="JetBrains Mono" fill={AXIS_TEXT} textAnchor="end">{formatValue(v)}</text>
+            <text x={pad.l - 6} y={yOf(v) + 3} fontSize="10" fontFamily="'JetBrains Mono', Consolas, monospace" fill={AXIS_TEXT} textAnchor="end">{formatValue(v)}</text>
           </g>
         ))}
         {series.map((s) => {
@@ -195,7 +195,7 @@ export function LineChart({ series, labels, height = 220, formatValue, yMax: fix
           );
         })}
         {labelIdx.map((i, k) => (
-          <text key={k} x={xOf(i)} y={h - 8} fontSize="10" fontFamily="JetBrains Mono" fill={AXIS_TEXT} textAnchor={k === 0 ? 'start' : k === 2 ? 'end' : 'middle'}>
+          <text key={k} x={xOf(i)} y={h - 8} fontSize="10" fontFamily="'JetBrains Mono', Consolas, monospace" fill={AXIS_TEXT} textAnchor={k === 0 ? 'start' : k === 2 ? 'end' : 'middle'}>
             {labels[i]}
           </text>
         ))}
@@ -239,7 +239,7 @@ export function Donut({ slices, total, centerText, centerSub }: { slices: DonutS
             strokeDasharray={`${a.len} ${100 - a.len}`} strokeDashoffset={a.offset} transform="rotate(-90 21 21)" />
         ))}
         <text x="21" y="20" textAnchor="middle" dominantBaseline="middle" fill="rgb(var(--c-text-primary))" fontSize="5.5" fontWeight="600">{centerText}</text>
-        <text x="21" y="26" textAnchor="middle" dominantBaseline="middle" fill="rgb(var(--c-text-muted))" fontSize="2.6" fontFamily="JetBrains Mono">{centerSub}</text>
+        <text x="21" y="26" textAnchor="middle" dominantBaseline="middle" fill="rgb(var(--c-text-muted))" fontSize="2.6" fontFamily="'JetBrains Mono', Consolas, monospace">{centerSub}</text>
       </svg>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         {slices.map((s) => {
@@ -275,7 +275,7 @@ export function GaugeArc({ pct, label }: { pct: number | null; label: string }) 
       {pct != null && (
         <path d="M3 25 A18 18 0 0 1 39 25" fill="none" stroke={quotaColor(pct)} strokeWidth="3.5" strokeLinecap="round" pathLength="100" strokeDasharray={`${shown} 100`} />
       )}
-      <text x="21" y="22" textAnchor="middle" fill="rgb(var(--c-text-primary))" fontSize="8" fontWeight="700" fontFamily="Rajdhani">{label}</text>
+      <text x="21" y="22" textAnchor="middle" fill="rgb(var(--c-text-primary))" fontSize="8" fontWeight="700" fontFamily="Rajdhani, Inter, 'Segoe UI', sans-serif">{label}</text>
     </svg>
   );
 }

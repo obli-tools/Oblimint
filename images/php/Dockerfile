@@ -85,6 +85,13 @@ RUN --mount=type=bind,source=php/oblimint_exec,target=/usr/src/oblimint_exec-src
     apk del .oblimint-exec-build; \
     php -m | grep -qx oblimint_exec
 
+# mod_oblimint_https (php/mod_oblimint_https/, Apache only): a request forwarded
+# by the edge with X-Forwarded-Proto: https is seen as TLS by mod_rewrite
+# (%{HTTPS} on, like mod_rpaf on CWP) — otherwise the usual .htaccess rule
+# "RewriteCond %{HTTPS} off → https" loops forever. Built with apxs; the build
+# dependencies are removed in the same layer.
+RUN --mount=type=bind,source=php/mod_oblimint_https,target=/usr/src/mod_oblimint_https-src     set -eux;     if [ "$ENGINE" = apache ]; then         apk add --no-cache --virtual .oblimint-https-build apache2-dev gcc musl-dev;         cp -r /usr/src/mod_oblimint_https-src /tmp/mod_oblimint_https;         cd /tmp/mod_oblimint_https;         apxs -c mod_oblimint_https.c;         install -m 0755 .libs/mod_oblimint_https.so /usr/lib/apache2/mod_oblimint_https.so;         cd /;         rm -rf /tmp/mod_oblimint_https;         apk del .oblimint-https-build;     fi
+
 COPY --from=siteconf /out/siteconf /usr/local/bin/siteconf
 COPY common/oblimint-entrypoint common/oblimint-reload /usr/local/bin/
 COPY common/lib.sh /usr/local/lib/oblimint/lib.sh

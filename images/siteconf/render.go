@@ -103,6 +103,8 @@ var apacheModules = []apacheModule{
 	{"autoindex_module", "mod_autoindex.so"},
 	{"alias_module", "mod_alias.so"},
 	{"rewrite_module", "mod_rewrite.so"},
+	// Built into the apache-php images (php/mod_oblimint_https): X-Forwarded-Proto https → %{HTTPS} on.
+	{"oblimint_https_module", "mod_oblimint_https.so"},
 }
 
 type dataPathView struct {

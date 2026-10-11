@@ -133,7 +133,7 @@ export function TimeChart({ series, labels, formatY, height = 220, emptyText }: 
             <line x1={pad.l} x2={w - pad.r} y1={yOf(v)} y2={yOf(v)} stroke="rgb(var(--c-text-muted) / 0.12)" strokeWidth="1" />
             {/* The ½ label is dropped when it rounds to a neighbour (yMax 1 → 0 / 1 / 1). */}
             {(i !== 1 || (fmt(v) !== fmt(ticks[0]) && fmt(v) !== fmt(ticks[2]))) && (
-              <text x={pad.l - 6} y={yOf(v) + 3} fontSize="10" fontFamily="JetBrains Mono" fill="rgb(var(--c-text-muted))" textAnchor="end">{fmt(v)}</text>
+              <text x={pad.l - 6} y={yOf(v) + 3} fontSize="10" fontFamily="'JetBrains Mono', Consolas, monospace" fill="rgb(var(--c-text-muted))" textAnchor="end">{fmt(v)}</text>
             )}
           </g>
         ))}
@@ -142,7 +142,7 @@ export function TimeChart({ series, labels, formatY, height = 220, emptyText }: 
           <path key={`l${si}`} d={pathOf(s.values)} fill="none" stroke={s.color} strokeWidth="1.7" strokeLinejoin="round" strokeDasharray={s.dashed ? '4 3' : undefined} />
         ))}
         {xIdx.map((i) => (
-          <text key={i} x={xOf(i)} y={h - 8} fontSize="10" fontFamily="JetBrains Mono" fill="rgb(var(--c-text-muted))" textAnchor={i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}>
+          <text key={i} x={xOf(i)} y={h - 8} fontSize="10" fontFamily="'JetBrains Mono', Consolas, monospace" fill="rgb(var(--c-text-muted))" textAnchor={i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}>
             {labels[i]}
           </text>
         ))}
