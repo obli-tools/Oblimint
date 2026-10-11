@@ -44,10 +44,10 @@
   --c-status-paused:         75 82 115;
   --c-status-paused-bg:      19 23 40;
 
-  --c-accent:                224 58 58;
-  --c-accent-hover:          255 104 104;
-  --c-accent-dark:           180 30 30;
-  --c-primary:               224 58 58;
+  --c-accent:                54 185 143;
+  --c-accent-hover:          152 232 200;
+  --c-accent-dark:           35 133 106;
+  --c-primary:               54 185 143;
 }
 
 /* ── Obli Daylight — light companion to Obli Operator (Obliance red accent) ─
@@ -86,11 +86,11 @@
   --c-status-warning:        217 119 6;
   --c-status-critical:       220 38 38;
 
-  --c-accent:                220 38 38;    /* Obliance red-600 — kept from Operator */
-  --c-accent-hover:          239 68 68;
-  --c-accent-dark:           153 27 27;
+  --c-accent:                23 138 102;    /* Oblimint mint (daylight) */
+  --c-accent-hover:          31 163 122;
+  --c-accent-dark:           15 107 79;
   --c-accent-text:           255 255 255;
-  --c-primary:               220 38 38;
+  --c-primary:               23 138 102;
 
   --shadow-card: 0 1px 2px 0 rgba(46,52,64,0.03), 0 6px 24px -12px rgba(46,52,64,0.08);
   --shadow-glow: 0 0 0 1px rgb(var(--c-accent) / 0.18) inset, 0 8px 32px -12px rgb(var(--c-accent) / 0.22);
@@ -150,11 +150,11 @@
   --c-status-critical:       255 107 107;   /* #ff6b6b  (parity with Daylight) */
 
   /* Accent — verbatim from Obli Operator (Obliance red). */
-  --c-accent:                224 58 58;
-  --c-accent-hover:          255 104 104;
-  --c-accent-dark:           180 30 30;
+  --c-accent:                54 185 143;
+  --c-accent-hover:          152 232 200;
+  --c-accent-dark:           35 133 106;
   --c-accent-text:           255 255 255;
-  --c-primary:               224 58 58;
+  --c-primary:               54 185 143;
 
   --shadow-card: 0 1px 0 0 rgba(255,255,255,0.03), 0 6px 20px -8px rgba(20,23,30,0.40);
   --shadow-glow: 0 0 0 1px rgb(var(--c-accent) / 0.20) inset, 0 6px 26px -10px rgb(var(--c-accent) / 0.28);
@@ -182,7 +182,7 @@
    page). Fills, borders and rings keep the brand red (--c-accent). Hover
    variants to another colour still win (higher specificity below). */
 [data-theme="obli-dim"] {
-  --c-accent-as-text:        255 104 104;   /* #ff6868 = --c-accent-hover */
+  --c-accent-as-text:        152 232 200;   /* #ff6868 = --c-accent-hover */
 }
 [data-theme="obli-dim"] .text-accent,
 [data-theme="obli-dim"] .text-primary,

@@ -81,7 +81,7 @@ function NotEnoughData({ height, text }: { height: number; text?: ReactNode }) {
 export interface BarPoint { label: string; value: number; title?: string }
 
 /** Vertical bars with a 3-line grid and first / middle / last x labels. */
-export function BarChart({ data, color = '#ff6868', height = 220, formatValue, emptyText }: {
+export function BarChart({ data, color = '#36B98F', height = 220, formatValue, emptyText }: {
   data: BarPoint[];
   color?: string;
   height?: number;

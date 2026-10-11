@@ -132,7 +132,7 @@ export function AccountUsageTab({ accountId }: { accountId: number }) {
           <div className="min-w-0">
             <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary"><Cpu size={12} />{t('usage.resources.cpu') || 'CPU'}</div>
             <LineChart
-              series={[{ key: 'cpu', label: 'CPU', color: '#ff6868', values: res.cpu, area: true }]}
+              series={[{ key: 'cpu', label: 'CPU', color: '#36B98F', values: res.cpu, area: true }]}
               labels={resLabels}
               height={170}
               formatValue={(v) => `${Math.round(v)} %`}
@@ -151,7 +151,7 @@ export function AccountUsageTab({ accountId }: { accountId: number }) {
           </div>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <ChartLegend items={[{ label: t('usage.resources.cpuLegend') || 'CPU (% of one core)', color: '#ff6868' }, { label: t('usage.resources.memLegend') || 'Memory (without cache)', color: '#38bdf8' }]} />
+          <ChartLegend items={[{ label: t('usage.resources.cpuLegend') || 'CPU (% of one core)', color: '#36B98F' }, { label: t('usage.resources.memLegend') || 'Memory (without cache)', color: '#38bdf8' }]} />
           <span className="text-[11px] text-text-muted">{t('usage.resources.hint') || 'All containers of the account summed (sites, databases, file server).'}</span>
         </div>
       </Card>

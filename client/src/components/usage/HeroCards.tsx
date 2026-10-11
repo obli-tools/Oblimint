@@ -19,7 +19,7 @@ export function HeroFeatured({ label, value, color, series, days, sub }: {
       <div className="mb-3 text-[11px] font-mono uppercase tracking-[0.14em] text-text-muted">{label}</div>
       <div className={`font-display text-[48px] font-semibold leading-none max-sm:text-[40px] ${color}`}>{value}</div>
       {sub && <div className="mt-2 text-[12px] font-mono text-text-muted">{sub}</div>}
-      <div className="mt-3"><Sparkline data={series} color="#ff6868" /></div>
+      <div className="mt-3"><Sparkline data={series} color="#98E8C8" /></div>
       {days.length > 0 && (
         <div className="mt-2 grid grid-cols-4 gap-2">
           {days.map((d, i) => {

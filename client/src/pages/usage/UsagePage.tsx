@@ -322,13 +322,13 @@ function PlatformSection({ usage, bytes }: { usage: PlatformUsage; bytes: (n: nu
           <div className="space-y-4">
             <div>
               <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary"><Cpu size={12} />{t('usage.resources.cpu') || 'CPU'}</div>
-              <LineChart series={[{ key: 'cpu', label: 'CPU', color: '#ff6868', values: res.cpu, area: true }]} labels={labels} height={150} formatValue={(v) => `${Math.round(v)} %`} emptyText={t('usage.resources.none') || 'No sample yet.'} />
+              <LineChart series={[{ key: 'cpu', label: 'CPU', color: '#36B98F', values: res.cpu, area: true }]} labels={labels} height={150} formatValue={(v) => `${Math.round(v)} %`} emptyText={t('usage.resources.none') || 'No sample yet.'} />
             </div>
             <div>
               <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary"><MemoryStick size={12} />{t('usage.resources.memory') || 'Memory'}</div>
               <LineChart series={[{ key: 'mem', label: 'RAM', color: '#38bdf8', values: res.mem, area: true }]} labels={labels} height={150} formatValue={(v) => bytes(v)} emptyText={t('usage.resources.none') || 'No sample yet.'} />
             </div>
-            <ChartLegend items={[{ label: t('usage.resources.cpuLegend') || 'CPU (% of one core)', color: '#ff6868' }, { label: t('usage.resources.memLegend') || 'Memory (without cache)', color: '#38bdf8' }]} />
+            <ChartLegend items={[{ label: t('usage.resources.cpuLegend') || 'CPU (% of one core)', color: '#36B98F' }, { label: t('usage.resources.memLegend') || 'Memory (without cache)', color: '#38bdf8' }]} />
           </div>
         </Card>
       </div>
@@ -432,7 +432,7 @@ function ClientAccountCard({ account, usage }: { account: HostingAccount; usage:
               <BarChart3 size={11} />{t('usage.hero.traffic') || 'Traffic of the month'}
               <span className="ml-auto text-text-secondary">{bytes(sumBy(data.traffic, (p) => p.bytesOut))}</span>
             </div>
-            <Sparkline data={traffic.map((d) => d.value)} color="#ff6868" height={40} />
+            <Sparkline data={traffic.map((d) => d.value)} color="#98E8C8" height={40} />
           </div>
         </div>
       )}

@@ -77,6 +77,8 @@ function NormalRoutes() {
     <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
+      {/* Client space: local accounts never go through Obligate → local form, no SSO redirect. */}
+      <Route path="/client" element={<Navigate to="/login?local=1" replace />} />
       {/* P4b: public status pages (no session) */}
       <Route path="/status/:slug" element={<StatusPublicPage />} />
       {/* The wizard is gone once the server runs in normal mode. */}

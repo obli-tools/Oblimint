@@ -207,7 +207,7 @@ export function Header() {
     ) : size === 'md' ? (
       <div
         className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold text-white"
-        style={{ background: 'linear-gradient(135deg, rgba(224,58,58,0.6), rgba(255,100,100,0.4))' }}
+        style={{ background: 'linear-gradient(135deg, rgba(54,185,143,0.6), rgba(152,232,200,0.4))' }}
       >
         {(displayedUsername?.[0] ?? '?').toUpperCase()}
       </div>
