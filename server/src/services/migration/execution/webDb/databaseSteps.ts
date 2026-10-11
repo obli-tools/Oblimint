@@ -10,6 +10,7 @@ import { DB_USER_RE, isReservedName, mysqlAccount, mysqlGrantTarget, quoteString
 import { logger } from '../../../../utils/logger';
 import { createDefinerFilter, type DefinerFilterStats } from '../definerFilter';
 import { scrubSecrets, StepError } from '../errors';
+import { SourceCommandError } from '../../contracts/source';
 import type { InstanceState } from './deps';
 import { StepEnv } from './helpers';
 import { credentialDigest } from '../mailDns/common';
@@ -41,6 +42,13 @@ const PRIVILEGES = new Map<string, string>([
 ]);
 
 /** GRANT privilege list of a planned grant (unknown names returned apart). */
+
+/** Attempts of a database dump that fails with a retryable MariaDB / MySQL error (1412, 1213 deadlock, 1205 lock wait). */
+export const DUMP_RETRY_ATTEMPTS = 4;
+export function isRetryableDumpError(err: unknown): boolean {
+  return err instanceof SourceCommandError && /\bError (1412|1213|1205)\b/.test(err.message);
+}
+
 export function grantPrivileges(privileges: string[], level: 'all' | 'readonly'): { sql: string; unknown: string[] } {
   const out: string[] = [];
   const unknown: string[] = [];
@@ -258,39 +266,50 @@ export async function databaseStep(ctx: MigrationStepContext, planned: PlannedDa
   const spool = env.deps.files.ensureSpool(ctx.run.id);
   const file = path.join(spool, `${name}.sql.gz`);
   try {
-    // Dump: streamed from the source (mysqldump --single-transaction, read-only) into the spool.
+    // Dump: streamed from the source (mysqldump --single-transaction, read-only) into the spool. MariaDB error 1412
+    // ("Table definition has changed, please retry transaction"): a table of the database was re-created during the
+    // dump (an application that drops / creates a table on every request) — retried from scratch, a few times.
     const session = await ctx.session();
-    const out = fs.createWriteStream(file, { mode: 0o600 });
-    // A spool write error (ENOSPC on a multi-GB dump, EACCES…) must fail THIS step, never be an unhandled
-    // 'error' event (it would kill the panel, then crash-loop on the resumed step): listened from the start,
-    // it aborts the dump channel and becomes a StepError.
-    let spoolError: NodeJS.ErrnoException | null = null;
-    const dumpAbort = new AbortController();
-    const onRunAbort = () => dumpAbort.abort();
-    if (ctx.signal.aborted) dumpAbort.abort();
-    else ctx.signal.addEventListener('abort', onRunAbort, { once: true });
-    out.on('error', (err: NodeJS.ErrnoException) => {
-      spoolError ??= err;
-      dumpAbort.abort();
-    });
-    const spoolFailure = () => new StepError(
-      `Écriture du dump de la base ${name} impossible dans le spool (${spoolError?.code ?? 'erreur disque'}) : libérez de l'espace puis relancez`,
-      'spoolWriteFailed', { database: name, code: spoolError?.code ?? null });
     let dumped = 0;
-    try {
-      await session.stream('mysql.dumpData', { database: name, charset: planned.dumpCharset, gzip: true }, {
-        stdout: out, signal: dumpAbort.signal, onBytes: (b) => { dumped = b; ctx.progress({ bytes: b }); },
-      });
-      if (spoolError) throw spoolFailure();
-      out.end();
-      await finished(out).catch(() => undefined);
-      if (spoolError) throw spoolFailure();
-    } catch (err) {
-      out.destroy();
-      if (spoolError && !ctx.signal.aborted) throw spoolFailure();
-      throw err;
-    } finally {
-      ctx.signal.removeEventListener('abort', onRunAbort);
+    for (let attempt = 1; ; attempt++) {
+      const out = fs.createWriteStream(file, { mode: 0o600 });
+      try {
+        // A spool write error (ENOSPC on a multi-GB dump, EACCES…) must fail THIS step, never be an unhandled
+        // 'error' event (it would kill the panel, then crash-loop on the resumed step): listened from the start,
+        // it aborts the dump channel and becomes a StepError.
+        let spoolError: NodeJS.ErrnoException | null = null;
+        const dumpAbort = new AbortController();
+        const onRunAbort = () => dumpAbort.abort();
+        if (ctx.signal.aborted) dumpAbort.abort();
+        else ctx.signal.addEventListener('abort', onRunAbort, { once: true });
+        out.on('error', (err: NodeJS.ErrnoException) => {
+          spoolError ??= err;
+          dumpAbort.abort();
+        });
+        const spoolFailure = () => new StepError(
+          `Écriture du dump de la base ${name} impossible dans le spool (${spoolError?.code ?? 'erreur disque'}) : libérez de l'espace puis relancez`,
+          'spoolWriteFailed', { database: name, code: spoolError?.code ?? null });
+        try {
+          await session.stream('mysql.dumpData', { database: name, charset: planned.dumpCharset, gzip: true }, {
+            stdout: out, signal: dumpAbort.signal, onBytes: (b) => { dumped = b; ctx.progress({ bytes: b }); },
+          });
+          if (spoolError) throw spoolFailure();
+          out.end();
+          await finished(out).catch(() => undefined);
+          if (spoolError) throw spoolFailure();
+        } catch (err) {
+          out.destroy();
+          if (spoolError && !ctx.signal.aborted) throw spoolFailure();
+          throw err;
+        } finally {
+          ctx.signal.removeEventListener('abort', onRunAbort);
+        }
+        break;
+      } catch (err) {
+        if (attempt >= DUMP_RETRY_ATTEMPTS || ctx.signal.aborted || !isRetryableDumpError(err)) throw err;
+        await ctx.log('warn', 'databaseDumpRetry', { database: name, attempt, error: (err as Error).message.slice(0, 200) });
+        await new Promise((r) => setTimeout(r, attempt * 2_000));
+      }
     }
     await ctx.checkpoint();
     const bytes = fs.statSync(file).size;

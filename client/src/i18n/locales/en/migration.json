@@ -545,6 +545,7 @@
       "aliasNotCreated": "Alias not created",
       "catchAll": "Catch-all address",
       "databaseDumped": "Database dumped",
+      "databaseDumpRetry": "Database dump retried (a table changed during the dump)",
       "dbInstanceCreated": "Database instance created",
       "dkimImported": "DKIM key imported (same selector)",
       "dkimNotImported": "DKIM key not imported",
