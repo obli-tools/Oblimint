@@ -107,7 +107,7 @@
    theme for every light/dark decision (logo, native controls via
    color-scheme, xterm / graph editor, system bars). Dim changes NEUTRALS
    ONLY: the accent lines below are copied verbatim from Obli Operator and
-   must never diverge (Obliance red #e03a3a). Every token is a plain RGB
+   must never diverge (Oblimint mint). Every token is a plain RGB
    triplet (no alpha), same rule as Daylight.
    Status tokens keep the SEMANTICS of Operator / Daylight (only the tones are
    retuned for the slate surfaces): status-down is the neutral "offline" slate
@@ -225,10 +225,10 @@
   --c-status-paused:         112 102 104;
   --c-status-paused-bg:      30 24 25;
 
-  --c-accent:                194 0 27;
-  --c-accent-hover:          224 30 55;
-  --c-accent-dark:           150 0 20;
-  --c-primary:               194 0 27;
+  --c-accent:                54 185 143;
+  --c-accent-hover:          152 232 200;
+  --c-accent-dark:           35 133 106;
+  --c-primary:               54 185 143;
 }
 
 /* ── Neon UI — fonds neutres (Obliguard-style) + accent lilas ───────────────── */
@@ -257,10 +257,10 @@
   --c-status-paused:         114 88 52;
   --c-status-paused-bg:      20 13 6;
 
-  --c-accent:                194 0 27;
-  --c-accent-hover:          224 30 55;
-  --c-accent-dark:           150 0 20;
-  --c-primary:               194 0 27;
+  --c-accent:                54 185 143;
+  --c-accent-hover:          152 232 200;
+  --c-accent-dark:           35 133 106;
+  --c-primary:               54 185 143;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -282,8 +282,8 @@
   height: 1px;
   background: radial-gradient(
     ellipse 70% 100% at 50% 100%,
-    rgb(194 0 27 / 0.9) 0%,
-    rgb(194 0 27 / 0.4) 40%,
+    rgb(54 185 143 / 0.9) 0%,
+    rgb(54 185 143 / 0.4) 40%,
     transparent 70%
   );
   pointer-events: none;
@@ -291,14 +291,14 @@
 
 /* ── Active nav item — barre rouge + fond teinté + glow icône ──────────────── */
 [data-theme="neon"] .bg-bg-active {
-  background-color: rgb(194 0 27 / 0.12) !important;
-  box-shadow: inset 3px 0 0 rgb(194 0 27 / 1), inset 0 0 12px rgb(194 0 27 / 0.08);
+  background-color: rgb(54 185 143 / 0.12) !important;
+  box-shadow: inset 3px 0 0 rgb(54 185 143 / 1), inset 0 0 12px rgb(54 185 143 / 0.08);
 }
 [data-theme="neon"] .bg-bg-active .text-text-primary {
-  color: rgb(194 0 27 / 1) !important;
+  color: rgb(54 185 143 / 1) !important;
 }
 [data-theme="neon"] .bg-bg-active svg {
-  color: rgb(194 0 27 / 1) !important;
+  color: rgb(54 185 143 / 1) !important;
 }
 
 /* ── Accent & primary text — no glow ───────────────────────────────────────── */

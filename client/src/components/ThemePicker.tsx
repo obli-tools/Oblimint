@@ -17,14 +17,14 @@ function OperatorPreviewSvg() {
  <rect width="280" height="170" fill="#0b0d1a" rx="6" />
  {/* Sidebar — pas de bordure, juste différence de fond */}
  <rect x="0" y="0" width="60" height="170" fill="#0f1220" rx="6" />
- <rect x="10" y="12" width="16" height="16" rx="3" fill="#e03a3a" />
+ <rect x="10" y="12" width="16" height="16" rx="3" fill="#36b98f" />
  <rect x="31" y="15" width="22" height="5" rx="2" fill="#8c93b6" />
  {[40, 62, 84, 106].map((y, i) => (
  <g key={y}>
  <rect x="7" y={y} width="46" height="16" rx="3"
  fill={i === 0 ? 'rgba(255,255,255,0.06)' : 'transparent'} />
  <rect x="13" y={y + 4} width="8" height="8" rx="2"
- fill={i === 0 ? '#e03a3a' : '#4b5273'} />
+ fill={i === 0 ? '#36b98f' : '#4b5273'} />
  <rect x="25" y={y + 6} width={i === 0 ? 22 : 18} height="4" rx="2"
  fill={i === 0 ? '#e8ecf5' : '#8c93b6'} />
  </g>
@@ -54,7 +54,7 @@ function OperatorPreviewSvg() {
  <rect x="70" y="68" width="200" height="58" rx="4" fill="#131728" />
  <rect x="78" y="76" width="50" height="5" rx="2" fill="#e8ecf5" />
  <rect x="78" y="86" width="184" height="3" rx="1.5" fill="#181c30" />
- <rect x="78" y="86" width="120" height="3" rx="1.5" fill="#e03a3a" />
+ <rect x="78" y="86" width="120" height="3" rx="1.5" fill="#36b98f" />
  <rect x="78" y="96" width="184" height="3" rx="1.5" fill="#181c30" />
  <rect x="78" y="96" width="80" height="3" rx="1.5" fill="#1edd8a" />
  <rect x="78" y="106" width="184" height="3" rx="1.5" fill="#181c30" />
@@ -63,7 +63,7 @@ function OperatorPreviewSvg() {
  <rect x="70" y="132" width="200" height="30" rx="4" fill="#131728" />
  <rect x="78" y="140" width="35" height="4" rx="2" fill="#e8ecf5" />
  <rect x="78" y="150" width="90" height="3" rx="1.5" fill="#181c30" />
- <rect x="78" y="150" width="55" height="3" rx="1.5" fill="#e03a3a" />
+ <rect x="78" y="150" width="55" height="3" rx="1.5" fill="#36b98f" />
  </svg>
  );
 }
@@ -79,7 +79,7 @@ function ModernPreviewSvg() {
  <rect x="0" y="0" width="60" height="170" fill="#13101b" rx="6" />
  <rect x="60" y="0" width="1" height="170" fill="#363048" />
  {/* Sidebar logo */}
- <rect x="10" y="12" width="16" height="16" rx="3" fill="#c2001b" opacity="0.9" />
+ <rect x="10" y="12" width="16" height="16" rx="3" fill="#36b98f" opacity="0.9" />
  <rect x="31" y="15" width="22" height="5" rx="2" fill="#8c857e" />
  {/* Sidebar nav items */}
  {[40, 62, 84, 106].map((y, i) => (
@@ -87,7 +87,7 @@ function ModernPreviewSvg() {
  <rect x="7" y={y} width="46" height="16" rx="3"
  fill={i === 0 ? '#28233a' : 'transparent'} />
  <rect x="13" y={y + 4} width="8" height="8" rx="2"
- fill={i === 0 ? '#c2001b' : '#6b657a'} />
+ fill={i === 0 ? '#36b98f' : '#6b657a'} />
  <rect x="25" y={y + 6} width={i === 0 ? 22 : 18} height="4" rx="2"
  fill={i === 0 ? '#e4e0f2' : '#6b657a'} />
  </g>
@@ -147,9 +147,9 @@ function ModernPreviewSvg() {
  <rect x="78" y="132" width="5" height="5" rx="2.5" fill="#2ea043" />
  <rect x="87" y="133" width="35" height="4" rx="2" fill="#e4e0f2" />
  <rect x="78" y="143" width="90" height="3" rx="2" fill="#1a1725" />
- <rect x="78" y="143" width="55" height="3" rx="2" fill="#c2001b" opacity="0.85" />
+ <rect x="78" y="143" width="55" height="3" rx="2" fill="#36b98f" opacity="0.85" />
  <rect x="175" y="143" width="88" height="3" rx="2" fill="#1a1725" />
- <rect x="175" y="143" width="40" height="3" rx="2" fill="#c2001b" opacity="0.85" />
+ <rect x="175" y="143" width="40" height="3" rx="2" fill="#36b98f" opacity="0.85" />
  </svg>
  );
 }
@@ -181,7 +181,7 @@ function NeonPreviewSvg() {
  <rect x="60" y="0" width="1" height="#342355" />
  <line x1="60" y1="0" x2="60" y2="170" stroke="#342355" strokeWidth="1" />
  {/* Sidebar logo — neon rouge */}
- <rect x="10" y="12" width="16" height="16" rx="3" fill="#c2001b" opacity="0.9" filter="url(#glow-red)" />
+ <rect x="10" y="12" width="16" height="16" rx="3" fill="#36b98f" opacity="0.9" filter="url(#glow-red)" />
  <rect x="31" y="15" width="22" height="5" rx="2" fill="#9b80c8" />
  {/* Sidebar nav items */}
  {[40, 62, 84, 106].map((y, i) => (
@@ -189,15 +189,15 @@ function NeonPreviewSvg() {
  {/* Active item (i=0) has left border glow */}
  {i === 0 && (
  <rect x="7" y={y} width="3" height="16" rx="1.5"
- fill="#c2001b" filter="url(#glow-red)" />
+ fill="#36b98f" filter="url(#glow-red)" />
  )}
  <rect x="10" y={y} width="43" height="16" rx="3"
  fill={i === 0 ? 'rgba(192,132,252,0.12)' : 'transparent'} />
  <rect x="13" y={y + 4} width="8" height="8" rx="2"
- fill={i === 0 ? '#c2001b' : '#6c5594'}
+ fill={i === 0 ? '#36b98f' : '#6c5594'}
  filter={i === 0 ? 'url(#glow-red)' : undefined} />
  <rect x="25" y={y + 6} width={i === 0 ? 22 : 18} height="4" rx="2"
- fill={i === 0 ? '#c2001b' : '#6c5594'}
+ fill={i === 0 ? '#36b98f' : '#6c5594'}
  filter={i === 0 ? 'url(#glow-red)' : undefined} />
  </g>
  ))}
@@ -271,7 +271,7 @@ function NeonPreviewSvg() {
  <rect x="78" y="132" width="5" height="5" rx="2.5" fill="#00dc6e" filter="url(#glow-green)" />
  <rect x="87" y="133" width="35" height="4" rx="2" fill="#ece4ff" />
  <rect x="78" y="143" width="90" height="3" rx="2" fill="#110d1c" />
- <rect x="78" y="143" width="55" height="3" rx="2" fill="#c2001b" opacity="0.95" filter="url(#glow-red)" />
+ <rect x="78" y="143" width="55" height="3" rx="2" fill="#36b98f" opacity="0.95" filter="url(#glow-red)" />
  <rect x="175" y="143" width="88" height="3" rx="2" fill="#110d1c" />
  <rect x="175" y="143" width="40" height="3" rx="2" fill="#9333ea" opacity="0.9" />
  </svg>
@@ -289,14 +289,14 @@ function DaylightPreviewSvg() {
  {/* Sidebar */}
  <rect x="0" y="0" width="60" height="170" fill="#eceff4" rx="6" />
  <line x1="60" y1="0" x2="60" y2="170" stroke="#d4dce7" />
- <rect x="10" y="12" width="16" height="16" rx="3" fill="#dc2626" />
+ <rect x="10" y="12" width="16" height="16" rx="3" fill="#178a66" />
  <rect x="31" y="15" width="22" height="5" rx="2" fill="#818da1" />
  {[40, 62, 84, 106].map((y, i) => (
  <g key={y}>
  <rect x="7" y={y} width="46" height="16" rx="3"
  fill={i === 0 ? 'rgba(220,38,38,0.08)' : 'transparent'} />
  <rect x="13" y={y + 4} width="8" height="8" rx="2"
- fill={i === 0 ? '#dc2626' : '#aeb8c9'} />
+ fill={i === 0 ? '#178a66' : '#aeb8c9'} />
  <rect x="25" y={y + 6} width={i === 0 ? 22 : 18} height="4" rx="2"
  fill={i === 0 ? '#2e3440' : '#818da1'} />
  </g>
@@ -327,7 +327,7 @@ function DaylightPreviewSvg() {
  <rect x="70" y="68" width="200" height="58" rx="4" fill="#eceff4" stroke="#d4dce7" />
  <rect x="78" y="76" width="50" height="5" rx="2" fill="#2e3440" />
  <rect x="78" y="86" width="184" height="3" rx="1.5" fill="#d8dee9" />
- <rect x="78" y="86" width="120" height="3" rx="1.5" fill="#dc2626" />
+ <rect x="78" y="86" width="120" height="3" rx="1.5" fill="#178a66" />
  <rect x="78" y="96" width="184" height="3" rx="1.5" fill="#d8dee9" />
  <rect x="78" y="96" width="80" height="3" rx="1.5" fill="#10a360" />
  <rect x="78" y="106" width="184" height="3" rx="1.5" fill="#d8dee9" />
@@ -336,7 +336,7 @@ function DaylightPreviewSvg() {
  <rect x="70" y="132" width="200" height="30" rx="4" fill="#eceff4" stroke="#d4dce7" />
  <rect x="78" y="140" width="35" height="4" rx="2" fill="#2e3440" />
  <rect x="78" y="150" width="90" height="3" rx="1.5" fill="#d8dee9" />
- <rect x="78" y="150" width="55" height="3" rx="1.5" fill="#dc2626" />
+ <rect x="78" y="150" width="55" height="3" rx="1.5" fill="#178a66" />
  </svg>
  );
 }
@@ -354,7 +354,7 @@ function DimPreviewSvg() {
  const borderLight = '#5e6a82';
  const text = '#eceff4';
  const muted = '#a3abbc';
- const accent = '#e03a3a';
+ const accent = '#36b98f';
  return (
  <svg viewBox="0 0 280 170" xmlns="http://www.w3.org/2000/svg" className="w-full rounded-md">
  <rect width="280" height="170" fill={bg} rx="6" />

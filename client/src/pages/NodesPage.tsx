@@ -63,7 +63,17 @@ export function NodesPage() {
         <span className="text-xs font-mono tracking-wider text-text-muted">
           {t('nodes.count', { count: nodes.length, defaultValue: '{{count}} node(s)' })}
         </span>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {masterAdmin && (
+            <button
+              onClick={() => setParams({ tab: 'updates' })}
+              className="inline-flex items-center gap-2 h-9 px-3.5 rounded-md bg-accent/12 hover:bg-accent/20 text-[13px] font-medium text-accent transition-colors whitespace-nowrap coarse:h-10"
+            >
+              <PackageCheck size={14} />
+              {t('platformUpdates.openButton') || 'Update Oblimint'}
+              {summary && summary.available + summary.failed > 0 && <span className="rounded-full bg-accent px-1.5 text-[10px] font-semibold text-white">{summary.available + summary.failed}</span>}
+            </button>
+          )}
           <button
             onClick={() => { void load(); }}
             className="inline-flex items-center gap-2 h-9 px-3.5 rounded-md bg-bg-hover hover:bg-bg-active text-[13px] font-medium text-text-primary transition-colors whitespace-nowrap coarse:h-10"

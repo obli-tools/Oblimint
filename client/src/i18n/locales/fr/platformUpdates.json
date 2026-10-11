@@ -99,6 +99,15 @@
       "saved": "Politique de maintenance enregistrée",
       "saveFailed": "Impossible d’enregistrer la politique"
     },
-    "day": { "0": "Dim", "1": "Lun", "2": "Mar", "3": "Mer", "4": "Jeu", "5": "Ven", "6": "Sam" }
+    "day": {
+      "0": "Dim",
+      "1": "Lun",
+      "2": "Mar",
+      "3": "Mer",
+      "4": "Jeu",
+      "5": "Ven",
+      "6": "Sam"
+    },
+    "openButton": "Mettre à jour Oblimint"
   }
 }
