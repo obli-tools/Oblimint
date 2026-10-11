@@ -39,7 +39,7 @@ function ItemRow({ item, disabled, onToggle, onForce }: { item: MigrationCutover
           {item.done ? <CheckCircle2 size={16} className="text-green-400" /> : <Circle size={16} className="text-text-muted" />}
         </span>
       ) : (
-        <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[#E03A3A]" disabled={disabled} checked={item.done} onChange={(e) => onToggle(e.target.checked)} aria-label={t(`migration.cutover.items.${item.code}.label`, { defaultValue: fb.label })} />
+        <input type="checkbox" className="mt-0.5 h-4 w-4 accent-accent" disabled={disabled} checked={item.done} onChange={(e) => onToggle(e.target.checked)} aria-label={t(`migration.cutover.items.${item.code}.label`, { defaultValue: fb.label })} />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 text-sm">

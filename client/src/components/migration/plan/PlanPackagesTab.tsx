@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Package, Save } from 'lucide-react';
 import type { MigrationPackageChoice, MigrationTargetCatalog, PlanLimits } from '@oblimint/shared';
 import { Button } from '@/components/common/Button';
 import { Card, EmptyState, Pill, inputCls, labelCls, selectCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
+import { checkboxCls } from '../migrationUi';
 import type { PlanEditor } from './usePlanEditor';
 
 type LimitKey = 'diskMb' | 'trafficMbPerMonth' | 'maxSites' | 'maxDomains' | 'maxMailboxes' | 'maxDatabases' | 'maxCronJobs' | 'maxProxyHosts' | 'mailQuotaMb';
@@ -54,10 +56,22 @@ export function PlanPackagesTab({ editor, catalog }: { editor: PlanEditor; catal
   // The draft lives in the editor: switching tab keeps it, and it counts as an unsaved change (badge + beforeunload).
   const pkgs: Record<string, MigrationPackageChoice> = editor.sectionValue('packages') ?? {};
   const dirty = editor.sectionDirty('packages');
-  const planned = plan.result?.packages ?? [];
-  const ids = [...new Set([...planned.map((p) => String(p.cwpPackageId)), ...Object.keys(pkgs)])].sort((a, b) => Number(a) - Number(b));
+  const [everyPackage, setEveryPackage] = useState(false);
+  const allPlanned = plan.result?.packages ?? [];
+  // Only the packages of the SELECTED accounts by default (a partial migration only creates those plans).
+  const usedKeys = new Set((plan.result?.accounts ?? []).filter((a) => a.selected).map((a) => a.packageKey));
+  const planned = everyPackage ? allPlanned : allPlanned.filter((p) => usedKeys.has(p.key));
+  const ids = [...new Set([...planned.map((p) => String(p.cwpPackageId)), ...(everyPackage ? Object.keys(pkgs) : [])])].sort((a, b) => Number(a) - Number(b));
+  const hidden = new Set(allPlanned.map((p) => String(p.cwpPackageId))).size
+    - new Set(allPlanned.filter((p) => usedKeys.has(p.key)).map((p) => String(p.cwpPackageId))).size;
+  const toggle = hidden > 0 || everyPackage ? (
+    <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-text-muted">
+      <input type="checkbox" className={checkboxCls} checked={everyPackage} onChange={(e) => setEveryPackage(e.target.checked)} />
+      {t('migration.packages.showUnused', { count: hidden, defaultValue: 'Show the packages of the unselected accounts ({{count}})' })}
+    </label>
+  ) : null;
 
-  if (ids.length === 0) return <EmptyState icon={<Package />} text={t('migration.packages.empty') || 'No CWP package in this plan.'} />;
+  if (ids.length === 0) return <div className="space-y-3">{toggle}<EmptyState icon={<Package />} text={t('migration.packages.empty') || 'No CWP package in this plan.'} /></div>;
 
   const patch = (id: string, p: Partial<MigrationPackageChoice>) => editor.setSection('packages', (all) => {
     const cur = all ?? {};
@@ -74,6 +88,7 @@ export function PlanPackagesTab({ editor, catalog }: { editor: PlanEditor; catal
           <Save size={13} className="mr-1.5" />{t('migration.overview.saveAndCompute') || 'Save and recompute'}
         </Button>
       </div>
+      {toggle}
       {ids.map((id) => {
         const rows = planned.filter((p) => String(p.cwpPackageId) === id);
         const choice = pkgs[id] ?? { action: rows[0]?.action ?? 'create' };

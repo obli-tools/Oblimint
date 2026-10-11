@@ -412,10 +412,11 @@
       "empty": "No zone migrated by this plan.",
       "orphanAccount": "Account of {{zone}}",
       "orphanRecords": "{{count}} records",
-      "orphanSkip": "Do not migrate",
-      "orphanUndeclared": "not declared in named.conf",
       "orphansHint": "These zones exist on the CWP server but belong to no account (forge, extra name servers, the hostname…). Attach one to a migrated account to import it into that account; otherwise it is not migrated.",
+      "orphanSkip": "Do not migrate",
+      "orphansSummary": "{{count}} zone(s) · {{attached}} attached",
       "orphansTitle": "Zones attached to no account",
+      "orphanUndeclared": "not declared in named.conf",
       "rewritten": "{{count}} rewritten",
       "search": "Zone or account…"
     },
@@ -835,7 +836,8 @@
       },
       "limitsTitle": "Limits (empty = mapped from the package, ∞ = unlimited)",
       "name": "Plan name",
-      "pickPlan": "Choose a plan…"
+      "pickPlan": "Choose a plan…",
+      "showUnused": "Show the packages of the unselected accounts ({{count}})"
     },
     "parts": {
       "data": "Data",
@@ -1248,6 +1250,7 @@
       "allAccounts": "Every account",
       "allScopes": "Every object",
       "followUps": "Manual follow-ups ({{count}})",
+      "includeUnselected": "Include the unselected accounts ({{count}})",
       "noFollowUp": "No manual follow-up.",
       "scope": "Object",
       "title": "Warnings ({{count}})"

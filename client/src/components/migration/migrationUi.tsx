@@ -393,4 +393,4 @@ export function MonoExpand({ text, max = 90 }: { text: string; max?: number }) {
 }
 
 export const tdCls = 'px-4 py-2.5 align-top';
-export const checkboxCls = 'h-4 w-4 rounded border-bg-tertiary bg-bg-tertiary accent-[#E03A3A] coarse:h-5 coarse:w-5';
+export const checkboxCls = 'h-4 w-4 rounded border-bg-tertiary bg-bg-tertiary accent-accent coarse:h-5 coarse:w-5';

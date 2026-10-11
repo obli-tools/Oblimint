@@ -73,7 +73,7 @@ export function AppConsoleTab({ stack }: { stack: AppStackDetail }) {
       fontFamily: '"JetBrains Mono", ui-monospace, monospace',
       fontSize: 13,
       scrollback: 5000,
-      theme: { background: token('--c-bg-primary'), foreground: token('--c-text-primary'), cursor: token('--c-accent'), selectionBackground: 'rgba(224, 58, 58, 0.3)' },
+      theme: { background: token('--c-bg-primary'), foreground: token('--c-text-primary'), cursor: token('--c-accent'), selectionBackground: 'rgba(54, 185, 143, 0.3)' },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);

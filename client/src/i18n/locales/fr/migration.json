@@ -412,10 +412,11 @@
       "empty": "Aucune zone migrée par ce plan.",
       "orphanAccount": "Compte de {{zone}}",
       "orphanRecords": "{{count}} enregistrement(s)",
-      "orphanSkip": "Ne pas migrer",
-      "orphanUndeclared": "non déclarée dans named.conf",
       "orphansHint": "Ces zones existent sur le serveur CWP mais n’appartiennent à aucun compte (forge, serveurs de noms supplémentaires, nom d’hôte…). Rattachez-en une à un compte migré pour l’importer dans ce compte ; sinon elle n’est pas migrée.",
+      "orphanSkip": "Ne pas migrer",
+      "orphansSummary": "{{count}} zone(s) · {{attached}} rattachée(s)",
       "orphansTitle": "Zones rattachées à aucun compte",
+      "orphanUndeclared": "non déclarée dans named.conf",
       "rewritten": "{{count}} réécrit(s)",
       "search": "Zone ou compte…"
     },
@@ -835,7 +836,8 @@
       },
       "limitsTitle": "Limites (vide = d’après le paquet, ∞ = illimité)",
       "name": "Nom du plan",
-      "pickPlan": "Choisir un plan…"
+      "pickPlan": "Choisir un plan…",
+      "showUnused": "Afficher les paquets des comptes non sélectionnés ({{count}})"
     },
     "parts": {
       "data": "Données",
@@ -1248,6 +1250,7 @@
       "allAccounts": "Tous les comptes",
       "allScopes": "Tous les objets",
       "followUps": "Suivis manuels ({{count}})",
+      "includeUnselected": "Inclure les comptes non sélectionnés ({{count}})",
       "noFollowUp": "Aucun suivi manuel.",
       "scope": "Objet",
       "title": "Avertissements ({{count}})"

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Network, Unlink } from 'lucide-react';
+import { ChevronDown, ChevronRight, Network, Unlink } from 'lucide-react';
 import type { CwpInventory, MigrationPlanChoices } from '@oblimint/shared';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { Card, EmptyState, Pill, selectCls } from '@/components/hosting/hostingUi';
@@ -16,23 +16,41 @@ type OrphanZones = NonNullable<MigrationPlanChoices['orphanZones']>;
 /**
  * Zones of the source attached to no CWP account (forge, ns3/ns4, hostname…): the only way to migrate one is to
  * attach it to a migrated account (choices.orphanZones, compute.ts zoneOwner); empty = not migrated (zoneOrphan).
+ * Folded while none is attached (most migrations leave them out); only the selected accounts are offered.
  */
 function OrphanZonesCard({ editor, inventory }: { editor: PlanEditor; inventory: CwpInventory }) {
   const { t } = useTranslation();
   const orphans = inventory.dnsZones.filter((z) => z.account == null);
   if (orphans.length === 0) return null;
   const current: OrphanZones = editor.plan.choices.orphanZones ?? {};
-  const users = inventory.accounts.map((a) => a.username).sort();
+  const attached = orphans.filter((z) => current[z.name]?.account ?? current[z.name.toLowerCase()]?.account).length;
+  const [open, setOpen] = useState(attached > 0);
+  const result = editor.plan.result;
+  const users = (result ? result.accounts.filter((a) => a.selected).map((a) => a.cwpUsername) : inventory.accounts.map((a) => a.username)).sort();
   const set = (zone: string, account: string | null) => {
     const next: OrphanZones = { ...current, [zone]: { account } };
     void editor.saveChoices({ orphanZones: next });
   };
   return (
     <Card
-      title={t('migration.dns.orphansTitle') || 'Zones attached to no account'}
+      title={(
+        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="inline-flex items-center gap-1.5 uppercase">
+          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          {t('migration.dns.orphansTitle') || 'Zones attached to no account'}
+        </button>
+      )}
       icon={<Unlink size={14} className="text-amber-400" />}
-      actions={editor.savingChoices ? <LoadingSpinner size="sm" /> : null}
+      actions={(
+        <>
+          {editor.savingChoices && <LoadingSpinner size="sm" />}
+          <span className="font-mono text-[11px] text-text-muted">
+            {t('migration.dns.orphansSummary', { count: orphans.length, attached, defaultValue: '{{count}} zone(s) · {{attached}} attached' })}
+          </span>
+        </>
+      )}
+      className={open ? undefined : 'pb-1'}
     >
+      {open && (<>
       <p className="mb-3 text-xs text-text-muted">{t('migration.dns.orphansHint') || 'These zones exist on the CWP server but belong to no account (forge, extra name servers, the hostname…). Attach one to a migrated account to import it into that account; otherwise it is not migrated.'}</p>
       <div className="space-y-1.5">
         {orphans.map((z) => {
@@ -57,6 +75,7 @@ function OrphanZonesCard({ editor, inventory }: { editor: PlanEditor; inventory:
           );
         })}
       </div>
+      </>)}
     </Card>
   );
 }
@@ -66,7 +85,8 @@ export function PlanDnsTab({ editor, inventory, inventoryStatus }: { editor: Pla
   const { t } = useTranslation();
   const [search, setSearch] = useState('');
   const accounts = editor.plan.result?.accounts ?? [];
-  const zones = accounts.flatMap((a) => a.zones.map((z) => ({ account: a, zone: z }))).filter(({ zone, account }) => matches(search, zone.name, account.cwpUsername));
+  // Zones of the selected accounts only: an unselected account is not migrated.
+  const zones = accounts.filter((a) => a.selected).flatMap((a) => a.zones.map((z) => ({ account: a, zone: z }))).filter(({ zone, account }) => matches(search, zone.name, account.cwpUsername));
   // The orphan-zones card needs the inventory: while it loads / when it failed, say so instead of hiding the card.
   const orphans = inventory ? <OrphanZonesCard editor={editor} inventory={inventory} />
     : inventoryStatus && (inventoryStatus.loading || inventoryStatus.error) ? <InventoryStatus status={inventoryStatus} compact /> : null;

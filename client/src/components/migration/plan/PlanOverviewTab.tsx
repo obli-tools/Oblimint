@@ -6,7 +6,7 @@ import { Button } from '@/components/common/Button';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { Card, inputCls, labelCls, selectCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
-import { formatBytes, formatDateTime, severityCounts } from '../migrationFormat';
+import { formatBytes, formatDateTime, planWarnings, severityCounts } from '../migrationFormat';
 import { FollowUpList, MiniStat, SeverityCounts, WarningList, useByteUnits } from '../migrationUi';
 import type { PlanEditor } from './usePlanEditor';
 
@@ -55,7 +55,7 @@ export function PlanOverviewTab({ editor, catalog }: { editor: PlanEditor; catal
   const set = <K extends keyof MigrationGlobalChoices>(k: K, v: MigrationGlobalChoices[K]) => editor.setSection('global', (cur) => ({ ...cur, [k]: v }));
 
   const r = plan.result;
-  const allWarnings = useMemo(() => (r ? [...r.warnings, ...r.accounts.flatMap((a) => a.warnings)] : []), [r]);
+  const allWarnings = useMemo(() => (r ? planWarnings(r).warnings : []), [r]);
   const counts = severityCounts(allWarnings);
   const mariadb = (catalog?.dbVersions ?? []).filter((v) => v.engine === 'mariadb');
   const mysql = (catalog?.dbVersions ?? []).filter((v) => v.engine === 'mysql');

@@ -19,7 +19,7 @@ import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { headerAccentBtnCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
-import { formatDateTime, patchSearchParams, severityCounts } from '@/components/migration/migrationFormat';
+import { formatDateTime, patchSearchParams, planWarnings, severityCounts } from '@/components/migration/migrationFormat';
 import { ErrorBlock, InlineError, PlanStatusPill, loadErrorOf, toastMigrationError, type InventoryLoad, type LoadError } from '@/components/migration/migrationUi';
 import { StaleBadge } from '@/components/migration/plans/PlansTab';
 import { isNewerPlan, usePlanEditor } from '@/components/migration/plan/usePlanEditor';
@@ -176,7 +176,7 @@ function PlanPage({ planId }: { planId: number }) {
   if (!plan || !editor) return <PageContainer className="flex justify-center py-16"><LoadingSpinner /></PageContainer>;
 
   const r = plan.result;
-  const counts = r ? severityCounts([...r.warnings, ...r.accounts.flatMap((a) => a.warnings)]) : null;
+  const counts = r ? severityCounts(planWarnings(r).warnings) : null;
   const badge = (n: number | undefined, tone = 'bg-accent/15 text-accent') => (n ? <span className={`ml-1 rounded-full px-1.5 font-mono text-[10px] ${tone}`}>{n}</span> : null);
 
   const remove = async () => {

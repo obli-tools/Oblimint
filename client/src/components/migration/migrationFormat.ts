@@ -1,5 +1,5 @@
 import type {
-  MigrationDiscoveryStatus, MigrationRunStatus, MigrationSeverity, MigrationWarning,
+  MigrationDiscoveryStatus, MigrationFollowUp, MigrationPlanResult, MigrationRunStatus, MigrationSeverity, MigrationWarning,
 } from '@oblimint/shared';
 
 // Pure helpers of the CWP migration screens (docs/P5-PLAN.md §11). OWNED BY MODULE `ui-migration`.
@@ -173,5 +173,20 @@ export function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: numb
       if (a) fn(...a);
     },
     cancel: () => { if (timer) clearTimeout(timer); timer = undefined; pending = null; },
+  };
+}
+
+/**
+ * Warnings / follow-ups of a dry-run. By default only what concerns the SELECTED accounts: plan-level items with no
+ * account, or an account that is selected (an unselected account is not executed, its warnings are noise).
+ * `all` = every account of the discovery.
+ */
+export function planWarnings(r: MigrationPlanResult, all = false): { warnings: MigrationWarning[]; followUps: MigrationFollowUp[] } {
+  const accounts = all ? r.accounts : r.accounts.filter((a) => a.selected);
+  const keep = new Set(accounts.map((a) => a.cwpUsername));
+  const ofSelected = (s: { account?: string | null }) => all || !s.account || keep.has(s.account);
+  return {
+    warnings: [...r.warnings.filter((w) => ofSelected(w.scope)), ...accounts.flatMap((a) => a.warnings)],
+    followUps: [...r.followUps.filter((f) => ofSelected(f.scope)), ...accounts.flatMap((a) => a.followUps)],
   };
 }
