@@ -554,6 +554,7 @@
       "catchAll": "Adresse fourre-tout",
       "databaseDumped": "Base dumpée",
       "databaseDumpRetry": "Dump de la base relancé (une table a changé pendant le dump)",
+      "databaseDumpInconsistent": "Base dumpée sans instantané cohérent (une table est recréée en continu sur la source) : la synchronisation finale la redumpera",
       "dbInstanceCreated": "Instance de bases créée",
       "dkimImported": "Clé DKIM importée (même sélecteur)",
       "dkimNotImported": "Clé DKIM non importée",

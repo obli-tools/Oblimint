@@ -15,7 +15,7 @@
 // =============================================================================
 
 import type { AppProfileId, DataPathTemplate, DomainKind, PlanLimits, SiteBaseId } from './hosting';
-import type { DbEngine } from './databases';
+import type { DbEngine, DbTuningProfile } from './databases';
 import type { DnsRecordType } from './dns';
 import type { MailPasswordScheme } from './mail';
 import type { MailEngine } from './types';
@@ -786,6 +786,18 @@ export interface PlannedDbInstance {
   name: string;
   engine: DbEngine;
   version: string;
+  /**
+   * Tuning profile of a created instance, sized from the selected databases (migrationDbProfile): an import into an
+   * instance whose buffer pool / memory limit is far below the data thrashes for hours. Absent = 'S' (older results).
+   */
+  profile?: DbTuningProfile;
+}
+
+/** Profile of an instance created by the migration for `bytes` of data (on-disk size reported by the source). */
+export function migrationDbProfile(bytes: number): DbTuningProfile {
+  if (bytes > 4 * 1024 ** 3) return 'L';
+  if (bytes > 64 * 1024 ** 2) return 'M';
+  return 'S';
 }
 
 export interface PlannedDatabase {

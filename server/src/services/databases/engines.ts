@@ -88,13 +88,14 @@ export function dbTuning(profile: DbTuningProfile): DbTuning {
   return {
     memoryMb,
     maxConnections,
-    innodbBufferPoolMb: Math.floor(memoryMb * 0.5),
+    // S: 25 % (64 MB) — the server, its per-connection buffers and the /tmp tmpfs share the same 256 MB cgroup.
+    innodbBufferPoolMb: Math.floor(memoryMb * (profile === 'S' ? 0.25 : 0.5)),
     sharedBuffersMb: Math.floor(memoryMb * 0.25),
     effectiveCacheMb: Math.floor(memoryMb * 0.5),
     workMemMb: profile === 'S' ? 2 : profile === 'M' ? 4 : 8,
     maintenanceWorkMemMb: Math.floor(memoryMb / 16),
     tmpTableMb: profile === 'S' ? 16 : profile === 'M' ? 32 : 64,
-    tmpfsMb: profile === 'S' ? 64 : profile === 'M' ? 128 : 256,
+    tmpfsMb: profile === 'S' ? 32 : profile === 'M' ? 128 : 256,
     pidsLimit: maxConnections + 128,
   };
 }

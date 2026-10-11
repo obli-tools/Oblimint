@@ -121,9 +121,9 @@ test('instance spec: hash is stable and tracks every relevant change', () => {
   assert.equal(hashes.size, variants.length + 1);
 });
 
-test('tuning: memory per profile, buffer pool ≈ 50 %, shared_buffers ≈ 25 %, connections 50/100/200', () => {
+test('tuning: memory per profile, buffer pool ≈ 50 % (S: 25 %), shared_buffers ≈ 25 %, connections 50/100/200', () => {
   const expect: Record<DbTuningProfile, [number, number, number, number]> = {
-    S: [256, 50, 128, 64], M: [768, 100, 384, 192], L: [2048, 200, 1024, 512],
+    S: [256, 50, 64, 64], M: [768, 100, 384, 192], L: [2048, 200, 1024, 512],
   };
   for (const p of ['S', 'M', 'L'] as DbTuningProfile[]) {
     const t = dbTuning(p);

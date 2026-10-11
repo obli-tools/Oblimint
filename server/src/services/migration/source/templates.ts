@@ -360,11 +360,14 @@ const SPECS: TemplateSpec[] = [
   {
     id: 'mysql.dumpData', phases: TRANSFER, sensitive: false, timeoutMs: DUMP_TIMEOUT_MS, internal: false,
     render: (args) => {
-      const o = obj(args); onlyKeys(o, ['database', 'charset', 'gzip']);
+      const o = obj(args); onlyKeys(o, ['database', 'charset', 'gzip', 'consistent']);
       const dbName = checkDumpDatabase(o.database);
       if (o.charset !== 'utf8mb4' && o.charset !== 'latin1' && o.charset !== 'binary') throw new ArgError('charset: utf8mb4, latin1 or binary expected');
       if (typeof o.gzip !== 'boolean') throw new ArgError('gzip: boolean expected');
-      const dump = `mysqldump --single-transaction --skip-lock-tables --quick --routines --triggers --events --hex-blob --default-character-set=${o.charset} --skip-dump-date -- ${shQuote(dbName)}`;
+      if (o.consistent !== undefined && typeof o.consistent !== 'boolean') throw new ArgError('consistent: boolean expected');
+      // Read-only either way (--skip-lock-tables: never a LOCK TABLES on the source).
+      const snapshot = o.consistent === false ? '' : '--single-transaction ';
+      const dump = `mysqldump ${snapshot}--skip-lock-tables --quick --routines --triggers --events --hex-blob --default-character-set=${o.charset} --skip-dump-date -- ${shQuote(dbName)}`;
       return o.gzip ? sh(PIPEFAIL_GZIP_SCRIPT, dump.split(' ')) : PREFIX + dump;
     },
   },

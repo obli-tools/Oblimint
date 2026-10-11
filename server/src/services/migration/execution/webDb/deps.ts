@@ -3,7 +3,7 @@ import { config } from '../../../../config';
 import { localPaths } from '../../../hosting/paths';
 import type { Readable } from 'stream';
 import type { Request } from 'express';
-import type {
+import type { DbTuningProfile,
   AppProfileId, DataPathPolicy, DbEngine, DomainKind, MigrationObjectKind, PlanLimits, ProxyHostInput, ProxyHostUpdate,
   ReleaseStatus, ScanSummary, SiteBaseId,
 } from '@oblimint/shared';
@@ -134,7 +134,7 @@ export interface WebDbDeps {
     inFlight(siteId: number): Promise<ReleaseState | null>;
   };
   databases: {
-    createInstance(req: Request, actor: HostingActor, body: { accountId: number; name: string; engine: DbEngine; version: string }): Promise<{ id: number }>;
+    createInstance(req: Request, actor: HostingActor, body: { accountId: number; name: string; engine: DbEngine; version: string; profile?: DbTuningProfile }): Promise<{ id: number }>;
     instance(instanceId: number): Promise<InstanceState | null>;
     findInstance(accountId: number, name: string): Promise<InstanceState | null>;
     createDatabase(req: Request, actor: HostingActor, instanceId: number, body: { name: string; charset: string | null; collation: string | null }): Promise<{ id: number }>;

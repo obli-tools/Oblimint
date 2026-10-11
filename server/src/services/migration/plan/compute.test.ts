@@ -325,7 +325,7 @@ test('proxies: refused target ranges and unverifiable domains are blocking in th
 
 test('databases: instance, grants expanded with escaped patterns, levels, definer, reserved / long names', () => {
   const a = acct(run());
-  assert.deepEqual(a.dbInstance, { mode: 'create', instanceId: null, name: 'main', engine: 'mariadb', version: '10.11' });
+  assert.deepEqual(a.dbInstance, { mode: 'create', instanceId: null, name: 'main', engine: 'mariadb', version: '10.11', profile: 'M' });
   assert.deepEqual(a.databases.map((d) => d.name).sort(), ['acct1_shop', 'acct1_wp', 'acct1x']);
   const users = Object.fromEntries(a.dbUsers.map((u) => [u.username, u]));
   // acct1\_% : literal underscore → matches acct1_wp, acct1_shop but NOT acct1x.
@@ -1005,4 +1005,13 @@ test('zone files not declared in named.conf: not planned by default (zoneNotDecl
   assert.ok(a.zones.some((z) => z.name === 'cloud.example.tld'), 'explicit opt-in');
   assert.equal(codes(a.warnings, 'zoneNotDeclared', 'cloud.example.tld')[0].params?.selected, true);
   assert.equal(a.domains.find((d) => d.fqdn === 'cloud.example.tld')?.dnsZone, 'migrated');
+});
+
+test('migrationDbProfile: the created instance is sized from the selected databases', async () => {
+  const { migrationDbProfile } = await import('@oblimint/shared');
+  assert.equal(migrationDbProfile(0), 'S');
+  assert.equal(migrationDbProfile(64 * 1024 ** 2), 'S');
+  assert.equal(migrationDbProfile(64 * 1024 ** 2 + 1), 'M');
+  assert.equal(migrationDbProfile(4 * 1024 ** 3), 'M');
+  assert.equal(migrationDbProfile(4 * 1024 ** 3 + 1), 'L');
 });

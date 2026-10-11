@@ -101,7 +101,11 @@ export interface CommandTemplateArgs {
   'ftp.listUsers': Record<string, never>;
   // ── transfer only (phase 'transfer') ──
   /** mysqldump --single-transaction --skip-lock-tables --quick --routines --triggers --events --hex-blob --default-character-set=<cs> --skip-dump-date -- <db> [| gzip -1c] */
-  'mysql.dumpData': { database: string; charset: 'utf8mb4' | 'latin1' | 'binary'; gzip: boolean };
+  /**
+   * consistent (default true): --single-transaction (one InnoDB snapshot). false = last resort when a table keeps being
+   * re-created during the dump (MariaDB 1412 on every attempt): each table read as it is, still never locked.
+   */
+  'mysql.dumpData': { database: string; charset: 'utf8mb4' | 'latin1' | 'binary'; gzip: boolean; consistent?: boolean };
   /** SENSITIVE. SELECT username, password FROM postfix.mailbox WHERE domain = '<domain>' */
   'secret.mailboxHashes': { domain: string };
   /** SENSITIVE. SELECT User, Host, plugin, Password, authentication_string FROM mysql.user WHERE User IN (…) */

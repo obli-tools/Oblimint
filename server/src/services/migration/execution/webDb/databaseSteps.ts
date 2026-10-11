@@ -111,8 +111,10 @@ export async function dbInstanceStep(ctx: MigrationStepContext): Promise<Migrati
     id = await env.resolve('dbInstance', env.username);
     if (!id) id = (await env.deps.databases.findInstance(acc.id, planned.name))?.id ?? null;
     if (!id) {
-      id = (await env.deps.databases.createInstance(ctx.req, ctx.actor, { accountId: acc.id, name: planned.name, engine: 'mariadb', version: planned.version })).id;
-      await ctx.log('info', 'dbInstanceCreated', { name: planned.name, version: planned.version });
+      // Sized from the databases (plan result): the staff may go above the plan profile (mayExceedPlanProfile).
+      const profile = planned.profile ?? 'S';
+      id = (await env.deps.databases.createInstance(ctx.req, ctx.actor, { accountId: acc.id, name: planned.name, engine: 'mariadb', version: planned.version, profile })).id;
+      await ctx.log('info', 'dbInstanceCreated', { name: planned.name, version: planned.version, profile });
     }
   }
   await env.put('dbInstance', env.username, id, { name: planned.name });
@@ -294,7 +296,12 @@ export async function databaseStep(ctx: MigrationStepContext, planned: PlannedDa
           `Écriture du dump de la base ${name} impossible dans le spool (${spoolError?.code ?? 'erreur disque'}) : libérez de l'espace puis relancez`,
           'spoolWriteFailed', { database: name, code: spoolError?.code ?? null });
         try {
-          await session.stream('mysql.dumpData', { database: name, charset: planned.dumpCharset, gzip: true }, {
+          // Last attempt without the snapshot: a table re-created more often than the dump lasts makes every
+          // --single-transaction attempt fail (1412) — the tables are then read one after the other (the final sync
+          // re-dumps everything anyway).
+          const consistent = attempt < DUMP_RETRY_ATTEMPTS;
+          if (!consistent) await ctx.log('warn', 'databaseDumpInconsistent', { database: name });
+          await session.stream('mysql.dumpData', { database: name, charset: planned.dumpCharset, gzip: true, consistent }, {
             stdout: out, signal: dumpAbort.signal, onBytes: (b) => { dumped = b; ctx.progress({ bytes: b }); },
           });
           if (spoolError) throw spoolFailure();

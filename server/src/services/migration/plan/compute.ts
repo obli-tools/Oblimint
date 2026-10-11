@@ -1,4 +1,4 @@
-import {
+import { migrationDbProfile,
   DB_ENGINE_VERSIONS, DEFAULT_PLAN_LIMITS, appProfileDef, normalizePathPrefix, normalizeRelPath, siteBaseDef,
   type AppProfileId, type CwpAccount, type CwpDatabase, type CwpDomain, type CwpDomainKind, type CwpInventory, type CwpPackage,
   type DataPathTemplate, type DomainKind, type MigrationAccountChoice, type MigrationAccountPlan, type MigrationDomainChoice,
@@ -793,7 +793,7 @@ export function computePlan(
         let name = ic?.name && INSTANCE_NAME_RE.test(ic.name) ? ic.name : DEFAULT_INSTANCE_NAME;
         const names = new Set(accountInstances.map((i) => i.name));
         for (let i = 2; names.has(name) && i < 100; i++) name = `${DEFAULT_INSTANCE_NAME}-${i}`;
-        dbInstance = { mode: 'create', instanceId: null, name, engine, version };
+        dbInstance = { mode: 'create', instanceId: null, name, engine, version, profile: migrationDbProfile(selectedDbs.reduce((n, d) => n + (d.sizeBytes ?? 0), 0)) };
       }
       if (dbInstance.engine !== 'mariadb' || !DB_ENGINE_VERSIONS.some((v) => v.engine === dbInstance!.engine && v.version === dbInstance!.version)) {
         warn('blocking', 'dbEngineUnsupported', iScope, { engine: dbInstance.engine, version: dbInstance.version });
