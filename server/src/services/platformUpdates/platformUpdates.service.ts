@@ -659,7 +659,7 @@ export const platformUpdatesWorker = {
   stop: () => platformUpdatesService.stop(),
 };
 
-/** Tests / the DEVLINUX check: launches the helper directly (no pull, no plan). */
+/** Tests / the Linux test host check: launches the helper directly (no pull, no plan). */
 export async function launchSelfUpdateForTests(image: string, healthTimeoutSec = 90): Promise<string> {
   const node = await deps.localNodeId();
   const docker = await deps.docker(node);
