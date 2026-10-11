@@ -73,7 +73,16 @@ function serveClient(app: express.Express): void {
     logger.warn({ clientDist: config.clientDist }, 'Client build not found: the web UI is not served by this process');
     return;
   }
-  app.use(express.static(config.clientDist, { index: false, maxAge: '1h' }));
+  app.use(express.static(config.clientDist, {
+    index: false,
+    maxAge: '1h',
+    // Public branding images (favicon, logos) are embedded by the other Obli apps
+    // (Obligate's app list, the cross-app switchers): helmet's default
+    // Cross-Origin-Resource-Policy: same-origin would block them there.
+    setHeaders: (res, filePath) => {
+      if (/^(favicon|logo[\w-]*)\.(svg|png|ico)$/i.test(path.basename(filePath))) res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    },
+  }));
   app.get('*', (req, res, next) => {
     if (/^\/(api|auth|socket\.io|health)(\/|$)/.test(req.path)) return next();
     res.setHeader('Cache-Control', 'no-cache');
