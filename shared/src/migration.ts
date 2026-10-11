@@ -236,6 +236,27 @@ export interface CwpAccount {
   phpIniFiles: string[];
   /** Directories of the home that are neither a docroot nor CWP internals (scripts/, node/…). */
   extraDirs: string[];
+  /**
+   * Entries of the home (or of a directory between the home and a docroot) outside every docroot, not hidden,
+   * not CWP internals, that NO site of the account cites: not migrated unless the staff attaches them to a site
+   * (MigrationDomainChoice.outside). Absent = older inventory.
+   */
+  homeLeftovers?: CwpOutsideEntry[];
+}
+
+/** An entry below the home and outside every docroot (CWP layout: ~/private_html, ~/sc/config.php…). */
+export interface CwpOutsideEntry {
+  /** Absolute path on the source. */
+  path: string;
+  type: 'dir' | 'file';
+  /** du / file size, null = unknown. */
+  bytes: number | null;
+}
+
+/** An outside-docroot entry cited by the code of a docroot (relative path: __DIR__ . "/../private_html/…"). */
+export interface CwpOutsideRef extends CwpOutsideEntry {
+  /** First file citing it, relative to the docroot. */
+  citedBy: string;
 }
 
 export type CwpDomainKind = 'main' | 'addon' | 'parked' | 'subdomain';
@@ -309,6 +330,10 @@ export interface CwpDomain {
   dnsZone: string | null;
   app: CwpAppDetection | null;
   docrootBytes: number | null;
+  /** Entries outside the docroot its code cites (absent = older inventory). */
+  outsideRefs?: CwpOutsideRef[];
+  /** Files of the docroot citing an absolute /home/<user>/ path (relative to the docroot, sample; absent = older inventory). */
+  absoluteHomeRefs?: string[];
   vhostFiles: string[];
   /** Same fqdn listed twice in root_cwp (kept once, the other row is reported). */
   duplicateOf: CwpDomainKind | null;
@@ -666,6 +691,11 @@ export interface MigrationDomainChoice {
   secondaryRuntimes?: MigrationSecondaryRuntimeChoice[] | null;
   /** Extra rsync excludes (relative patterns). */
   excludes?: string[] | null;
+  /**
+   * Entries outside the docroot copied with the site, at the same place relative to it (absolute source paths).
+   * null / absent = automatic: what the code of the docroot cites (CwpDomain.outsideRefs), up to OUTSIDE_AUTO_MAX_BYTES.
+   */
+  outside?: string[] | null;
   proxy?: { host: string; port: number; scheme: ProxyScheme; websocket: boolean } | null;
   /**
    * Staff confirmation that this proxied domain may target a PRIVATE address (RFC1918 / CGNAT / ULA): the
@@ -766,10 +796,31 @@ export interface PlannedSite {
   dataPaths: DataPathTemplate[];
   secondaryRuntimes: MigrationSecondaryRuntimeChoice[];
   excludes: string[];
+  /**
+   * Entries outside the docroot known for this site (cited by its code or attached by the staff). The attached
+   * ones are copied besides the docroot (selective copy: sourceRoot is then their common parent, usually the home).
+   */
+  outside: PlannedOutsideEntry[];
+  /**
+   * Selective copy: only these paths (relative to sourceRoot, the application root first) are copied.
+   * [] / absent = the whole sourceRoot (no outside entry attached, or an older result).
+   */
+  copyPaths?: string[];
   php: CwpPhpInfo | null;
   estimatedBytes: number | null;
   scanOverride: boolean;
 }
+
+export interface PlannedOutsideEntry extends CwpOutsideEntry {
+  /** Path relative to the site sourceRoot (only meaningful when attached). */
+  rel: string;
+  /** File of the docroot citing it (null = attached by the staff only). */
+  citedBy: string | null;
+  attached: boolean;
+}
+
+/** Automatic attachment limit of a cited outside entry: a bigger one (an archive, a backup) waits for the staff. */
+export const OUTSIDE_AUTO_MAX_BYTES = 256 * 1024 * 1024;
 
 export interface PlannedProxyHost {
   key: string;

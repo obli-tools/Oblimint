@@ -6,7 +6,7 @@ import { migrationDbProfile,
   type MigrationSecondaryRuntimeChoice, type MigrationSeverity, type MigrationWarning, type PlanLimits, type PlannedAlias,
   type PlannedCertificate, type PlannedCron, type PlannedDatabase, type PlannedDbInstance, type PlannedDbUser, type PlannedDkimKey,
   type PlannedDomain, type PlannedFtpCredential, type PlannedMailbox, type PlannedMailDomain, type PlannedPackage,
-  type PlannedProxyHost, type PlannedSite, type PlannedZone, type SiteBaseId,
+  type PlannedOutsideEntry, type PlannedProxyHost, type PlannedSite, type PlannedZone, type SiteBaseId,
 } from '@oblimint/shared';
 import { isReservedName } from '../../databases/sql';
 import { DOCKER_DEFAULT_RANGES, addressProblem } from '../../proxy/targets';
@@ -21,6 +21,7 @@ import {
 } from './defaults';
 import { rewriteZone, type MailManagedDomain } from './dns';
 import { normalizePhpVersion, selectBase } from './php';
+import { copiedAreas, planOutside } from './outside';
 import {
   MIB, basename, canonicalIp, ceilMib, choicesHash, dirname, inZone, isCleanAbsolutePath, isPrivateAddress, lower, pathWithin,
   trimSlash, warning,
@@ -468,6 +469,29 @@ export function computePlan(
       }
       if (ordered.some((d) => d.docrootNonStandard)) warn('info', 'docrootNonStandard', sScope, { fqdn: key, path: docrootAbs });
 
+      // Entries outside the docroot (CWP layout: ~/private_html, ~/sc/config.php): the attached ones make the copy
+      // selective from their common parent (plan/outside.ts). A staff source root keeps its own copy.
+      let copyPaths: string[] = [];
+      let outside: PlannedOutsideEntry[] = [];
+      let outsideBytes = 0;
+      if (!chosenRoot && sourceRoot && docrootAbs) {
+        const memberRoots = new Set(ordered.map((d) => (d.docroot ? trimSlash(d.docroot) : '')).filter(Boolean));
+        const refs = [...new Map(ordered.flatMap((d) => d.outsideRefs ?? []).map((r) => [r.path, r] as const)).values()];
+        const o = planOutside({
+          home: account.homeDir, appRoot: sourceRoot, docroot, refs, leftovers: account.homeLeftovers ?? [],
+          choice: pick(cs.map((c) => c.outside)),
+          otherRoots: domains.map((d) => (d.docroot ? trimSlash(d.docroot) : '')).filter((r) => r && !memberRoots.has(r)),
+        });
+        sourceRoot = o.sourceRoot;
+        docroot = o.docroot;
+        copyPaths = o.copyPaths;
+        outside = o.outside;
+        outsideBytes = o.attachedBytes;
+        for (const p of o.problems) warn(p.severity, p.code, sScope, { fqdn: key, ...p.params });
+      }
+      const absoluteRefs = [...new Set(ordered.flatMap((d) => d.absoluteHomeRefs ?? []))].sort();
+      if (absoluteRefs.length) warn('warning', 'absoluteHomePaths', sScope, { fqdn: key, home: account.homeDir, files: absoluteRefs.slice(0, 5).join(', ') });
+
       // Base (D-PHP) + profile + data paths.
       const php = pick(ordered.map((d) => d.php));
       const app = pick(ordered.map((d) => d.app));
@@ -543,8 +567,10 @@ export function computePlan(
         dataPaths,
         secondaryRuntimes,
         excludes,
+        outside,
+        copyPaths,
         php,
-        estimatedBytes: pick(ordered.map((d) => d.docrootBytes)),
+        estimatedBytes: outsideBytes ? (pick(ordered.map((d) => d.docrootBytes)) ?? 0) + outsideBytes : pick(ordered.map((d) => d.docrootBytes)),
         scanOverride: g.scanOverride,
       };
       sites.push(site);
@@ -553,23 +579,36 @@ export function computePlan(
     // Nested docroots: a site inside another site of the account is copied apart (its own subtree).
     // The outer site's copy EXCLUDES the nested tree: otherwise the nested site's uploads (data there, inert)
     // would also be served from the outer release as executable code (/blog/wp-content/uploads/x.php).
+    // A selective copy (outside entries attached) only covers its copied areas; its own tree is its application root.
+    const coreOf = (x: PlannedSite) => copiedAreas(x)[0];
+    const holds = (o: PlannedSite, core: string) => copiedAreas(o).some((a) => pathWithin(core, a) && trimSlash(core) !== trimSlash(a));
     for (const s of sites) {
+      if (!s.sourceRoot) continue;
+      const core = coreOf(s);
       for (const outer of sites) {
-        if (outer === s || !outer.sourceRoot || !s.sourceRoot || !pathWithin(s.sourceRoot, outer.sourceRoot)) continue;
-        if (trimSlash(s.sourceRoot) === trimSlash(outer.sourceRoot)) continue;
-        const rel = trimSlash(s.sourceRoot).slice(trimSlash(outer.sourceRoot).length).replace(/^\/+/, '');
+        if (outer === s || !outer.sourceRoot || !holds(outer, core)) continue;
+        const rel = trimSlash(core).slice(trimSlash(outer.sourceRoot).length).replace(/^\/+/, '');
         const pattern = `/${rel.replace(/[^A-Za-z0-9._@+/-]/g, '?')}/`;
         if (rel && EXCLUDE_RE.test(pattern) && !pattern.includes('..')) {
           if (!outer.excludes.includes(pattern)) outer.excludes.push(pattern);
         } else {
-          warn('blocking', 'docrootNestedNotExcluded', scope('site', outer.key), { fqdn: outer.key, nested: s.key, path: s.sourceRoot });
+          warn('blocking', 'docrootNestedNotExcluded', scope('site', outer.key), { fqdn: outer.key, nested: s.key, path: core });
         }
       }
-      const outer = sites.filter((o) => o !== s && o.sourceRoot && s.sourceRoot && pathWithin(s.sourceRoot, o.sourceRoot) && trimSlash(s.sourceRoot) !== trimSlash(o.sourceRoot))
-        .sort((a, b) => b.sourceRoot.length - a.sourceRoot.length)[0];
-      if (outer) warn('warning', 'docrootNested', scope('site', s.key), { fqdn: s.key, parent: outer.key, path: s.sourceRoot });
+      const outer = sites.filter((o) => o !== s && o.sourceRoot && holds(o, core)).sort((a, b) => coreOf(b).length - coreOf(a).length)[0];
+      if (outer) warn('warning', 'docrootNested', scope('site', s.key), { fqdn: s.key, parent: outer.key, path: core });
     }
     if (account.phpIniFiles.length && sites.length) warn('info', 'phpIni', acctScope, { files: account.phpIniFiles.length, sample: account.phpIniFiles[0] });
+    // Home entries no site cites nor copies (an archive, a copy of the site…): not migrated, said once.
+    const copiedOutside = new Set(sites.flatMap((s) => s.outside.filter((o) => o.attached).map((o) => o.path)));
+    const leftovers = (account.homeLeftovers ?? []).filter((e) => !copiedOutside.has(e.path));
+    if (leftovers.length && sites.length) {
+      warn('info', 'homeLeftovers', acctScope, {
+        count: leftovers.length,
+        bytes: leftovers.reduce((n, e) => n + (e.bytes ?? 0), 0),
+        sample: leftovers.slice(0, 8).map((e) => e.path.slice(trimSlash(account.homeDir).length + 1)).join(', '),
+      });
+    }
 
     // Proxies (D-PROXY): grouped by identical target.
     const proxies: PlannedProxyHost[] = [];
@@ -964,8 +1003,11 @@ export function computePlan(
         if (!site) {
           // The site of the paths the command USES (longest root first); redirection targets (log files) only
           // when nothing else matches — a log under another site's tree must not move the job there.
-          const pick = (paths: string[]) => [...sites].filter((s) => s.sourceRoot && paths.some((p) => pathWithin(p, s.sourceRoot)))
-            .sort((a, b) => b.sourceRoot.length - a.sourceRoot.length)[0] ?? null;
+          // Copied areas: a selective copy rooted at the home only owns its application root + attached entries.
+          const areaOf = (s: PlannedSite, paths: string[]) => (s.sourceRoot ? copiedAreas(s).filter((a) => paths.some((p) => pathWithin(p, a)))
+            .sort((a, b) => b.length - a.length)[0] ?? null : null);
+          const pick = (paths: string[]) => [...sites].filter((s) => areaOf(s, paths))
+            .sort((a, b) => (areaOf(b, paths) as string).length - (areaOf(a, paths) as string).length)[0] ?? null;
           site = pick(usedPaths(c.command)) ?? pick(commandPaths(c.command));
           if (!site) {
             site = sites[0];
@@ -981,7 +1023,8 @@ export function computePlan(
           for (const m of rw.messages) warn(m.severity, m.code, cScope, m.params);
           // A path of the CWP home the command still uses after the rewrite (outside the chosen site's root:
           // another site, ~/app, ~/scripts…) does not exist in the site container: the job would fail.
-          const stale = usedPaths(command).find((p) => pathWithin(p, account.homeDir));
+          const stale = usedPaths(command).find((p) => pathWithin(p, account.homeDir))
+            ?? usedPaths(c.command).find((p) => pathWithin(p, site.sourceRoot) && !copiedAreas(site).some((a) => pathWithin(p, a)));
           if (stale && !unmapped) warn('warning', 'cronPathUnmapped', cScope, { path: stale, site: site.key, command: c.command.slice(0, 200) });
         }
         const interval = minIntervalMinutes(schedule);

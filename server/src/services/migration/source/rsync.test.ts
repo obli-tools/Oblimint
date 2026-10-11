@@ -146,6 +146,12 @@ test('local argv per preset (MG6: --safe-links, never owner / devices; --delete 
     '--rsh=/usr/local/bin/node /app/dist/src/services/migration/source/rsyncShim.js',
     'oblimint-source:/var/vmail/example.tld/info/', '.',
   ]);
+  // Selective copy: includes first, then the excludes (catch-all per level last).
+  assert.deepEqual(buildLocalRsyncArgv(validateRsyncRequest(req({ includes: ['/private_html', '/public_html'], excludes: ['/public_html/uploads/', '/*'] }), ROOT, 0), rsh).slice(7, 11), [
+    '--include=/private_html', '--include=/public_html', '--exclude=/public_html/uploads/', '--exclude=/*',
+  ]);
+  assert.throws(() => validateRsyncRequest(req({ includes: ['../x'] }), ROOT, 0), RsyncRequestError);
+  assert.throws(() => validateRsyncRequest(req({ includes: ['a b'] }), ROOT, 0), RsyncRequestError);
   assert.equal(rshCommandLine(['C:/Program Files/node.exe', '--import', 'tsx', '/x/rsyncShim.ts']), "'C:/Program Files/node.exe' --import tsx /x/rsyncShim.ts");
   assert.throws(() => rshCommandLine(["/it's/node"]), RsyncRequestError);
   const shim = defaultShimCommand();

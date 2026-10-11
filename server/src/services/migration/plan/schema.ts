@@ -83,6 +83,7 @@ export const domainChoiceSchema = z.object({
   docroot: relPath.nullable().optional(),
   secondaryRuntimes: z.array(z.object({ pathPrefix, base: baseId }).strict()).max(50).nullable().optional(),
   excludes: z.array(exclude).max(200).nullable().optional(),
+  outside: z.array(absPath).max(64).nullable().optional(),
   proxy: z.object({
     host: hostName, port: z.number().int().min(1).max(65535), scheme: proxyScheme, websocket: z.boolean(),
   }).strict().nullable().optional(),

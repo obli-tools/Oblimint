@@ -192,7 +192,12 @@
       "zoneDomainCreated": "Zone sans domaine servi du compte (vhost désactivé, zone orpheline…) : le domaine est créé sans site pour y rattacher la zone.",
       "zoneDomainElsewhere": "Le nom de la zone est un domaine d’un autre compte : la zone n’est pas migrée avec ce compte.",
       "zoneNotDeclared": "Fichier de zone présent mais non déclaré dans named.conf (non servi par la source) : non migré par défaut, sinon PowerDNS servirait ses enregistrements périmés à la place de la zone parente. À sélectionner explicitement pour l’importer.",
-      "cronPathUnmapped": "Après réécriture, le cron utilise encore un chemin du home CWP hors de son site : il échouerait dans le conteneur, corrigez la commande."
+      "cronPathUnmapped": "Après réécriture, le cron utilise encore un chemin du home CWP hors de son site : il échouerait dans le conteneur, corrigez la commande.",
+      "outsideAttached": "Des éléments hors du docroot cités par le code sont copiés avec le site, à la même place relative (jamais servis, en lecture seule : un dossier où le code écrit doit devenir un dossier de données).",
+      "outsideTooLarge": "Un élément hors du docroot cité par le code est trop gros pour être copié automatiquement : rattachez-le dans les options du site si le site en a besoin.",
+      "outsideInvalid": "Un élément hors du docroot ne peut pas être copié avec ce site (autre site, hors du home, élément inconnu ou nom non pris en charge).",
+      "absoluteHomePaths": "Le code écrit des chemins absolus /home/<utilisateur>/ : ils n’existent pas sur Oblimint, passez-les en chemins relatifs.",
+      "homeLeftovers": "Des éléments du home cités par aucun site ne sont pas migrés (archives, copies…) : rattachez-en un à un site s’il est nécessaire."
     },
     "commands": {
       "allPhases": "Toutes les phases",
@@ -503,7 +508,13 @@
       "verifyTxt": "Enregistrement TXT chez l’hébergeur DNS actuel",
       "version": "Version",
       "zoneStats": "{{records}} enregistrements · {{rewritten}} réécrits · {{dropped}} écartés",
-      "zones": "Zones DNS"
+      "zones": "Zones DNS",
+      "outside": "Hors du docroot",
+      "outsideHint": "Copiés avec le site à la même place relative au docroot (jamais servis par le web, en lecture seule).",
+      "outsideCitedBy": "cité dans {{file}}",
+      "outsideManual": "rattaché à la main",
+      "outsideLeftovers": "Autres éléments du home (non migrés)",
+      "outsideAuto": "Revenir à la détection automatique"
     },
     "errors": {
       "authFailed": "Authentification refusée par le serveur (clé / mot de passe / utilisateur).",
@@ -1202,7 +1213,8 @@
         "lineCount": "Compte des lignes (ex. authorized_keys, jamais lu).",
         "ls": "Liste un répertoire.",
         "realpath": "Interne : contrôle des liens symboliques avant une lecture ou une copie (MG10).",
-        "stat": "Métadonnées de fichiers (type, taille, propriétaire, droits, date)."
+        "stat": "Métadonnées de fichiers (type, taille, propriétaire, droits, date).",
+        "grepRefs": "Chemins hors du docroot cités par le code d’une racine web (fragments trouvés uniquement)."
       },
       "ftp": {
         "listUsers": "Utilisateurs Pure-FTPd sans le champ empreinte."

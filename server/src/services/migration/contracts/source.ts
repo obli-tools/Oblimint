@@ -70,6 +70,14 @@ export interface CommandTemplateArgs {
    * find <root> -maxdepth N -name .htaccess -type f -size -1024k -exec grep -HinE '^[[:space:]]*(AddHandler|SetHandler|AddType)[[:space:]].*php' {} +
    */
   'fs.grepHtaccess': { root: string; maxDepth: number };
+  /**
+   * Paths outside a docroot cited by its code (CWP layout: ~/private_html/secrets.php, ../config.php):
+   * find <root> -maxdepth 6 (vendor / node_modules / .git pruned) -type f (code files < 1 MiB, never wp-config.php
+   * nor .env*) -exec grep -HoE <regex> {} +. Only the MATCHED fragment is printed (a name between path
+   * delimiters, or /home/<user>/ when `home` is given): never a line of the file.
+   * names: [A-Za-z0-9_@+-][A-Za-z0-9._@+-]{0,99}, at most 64.
+   */
+  'fs.grepRefs': { root: string; names: string[]; home?: string };
   // ── MySQL / MariaDB (root via /root/.my.cnf) ──
   /**
    * mysql --batch --skip-column-names (header: false) | --batch (header: true) -e <sql>.
@@ -178,6 +186,11 @@ export interface RsyncPullRequest {
   preset: RsyncPreset;
   /** rsync exclude patterns, relative ([A-Za-z0-9._*?/@+-], no '..'). */
   excludes?: string[];
+  /**
+   * rsync include patterns, rendered BEFORE the excludes (selective copy: the kept paths of the source root,
+   * then catch-all excludes per level). Same character set as the excludes.
+   */
+  includes?: string[];
   /** --delete (receiver side, inside localPath only). */
   deleteExtraneous?: boolean;
   /** KiB/s, 0 / undefined = settings default. */

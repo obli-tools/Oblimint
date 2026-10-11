@@ -2,6 +2,7 @@ import { APP_PROFILES, detectAppProfile, type CwpAppDetection, type CwpDomain } 
 import { parseHtaccessGrep, summarizeHtaccess, type HtaccessPhpLine } from '../parsers/htaccess';
 import { baseName, dirName } from '../parsers/system';
 import { DiscoveryContext, isCleanPath, isUnder, stripSlash } from './context';
+import { collectOutsideRefs } from './outsideRefs';
 import { effectivePhp } from './web';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -10,7 +11,8 @@ import { effectivePhp } from './web';
 // overrides), application markers (APP_PROFILES, stat only — wp-config.php is
 // never read), parent markers for public/ web/ www/ layouts (Laravel,
 // Symfony), ~/.conf/.addons_wp WordPress registry; then the effective PHP
-// (normative algorithm) and the account extra directories.
+// (normative algorithm), the account extra directories and the outside
+// entries the code cites (collect/outsideRefs.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const HTACCESS_DEPTH = 4;
@@ -121,4 +123,7 @@ export async function phaseDocroots(ctx: DiscoveryContext): Promise<void> {
       .filter((n) => !roots.some((r) => isUnder(r, `${a.homeDir}/${n}`) || isUnder(`${a.homeDir}/${n}`, r)))
       .sort();
   }
+
+  // Entries outside the docroots cited by their code (~/private_html, ~/sc/config.php).
+  await collectOutsideRefs(ctx, CWP_HOME_INTERNALS);
 }

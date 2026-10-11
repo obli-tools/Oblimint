@@ -7,6 +7,11 @@
 
 /** Warning / follow-up / skip codes (§8.4 catalogue + step warnings). */
 export const CODES_FR: Readonly<Record<string, string>> = {
+  outsideAttached: 'Des éléments hors du docroot cités par le code sont copiés avec le site, à la même place relative (jamais servis, en lecture seule : un dossier où le code écrit doit devenir un dossier de données).',
+  outsideTooLarge: 'Un élément hors du docroot cité par le code est trop gros pour être copié automatiquement : rattachez-le dans les options du site si le site en a besoin.',
+  outsideInvalid: 'Un élément hors du docroot ne peut pas être copié avec ce site (autre site, hors du home, élément inconnu ou nom non pris en charge).',
+  absoluteHomePaths: 'Le code écrit des chemins absolus /home/<utilisateur>/ : ils n’existent pas sur Oblimint, passez-les en chemins relatifs.',
+  homeLeftovers: 'Des éléments du home cités par aucun site ne sont pas migrés (archives, copies…) : rattachez-en un à un site s’il est nécessaire.',
   accountSuspended: 'Compte suspendu sur CWP.',
   accountSuspendedDbSkipped: 'Compte suspendu : les bases de données ne sont pas importées.',
   accountSuspendedPublishSkipped: 'Compte suspendu : fichiers copiés mais non publiés.',

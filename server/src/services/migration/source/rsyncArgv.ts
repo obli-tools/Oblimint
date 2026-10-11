@@ -53,6 +53,8 @@ export interface ValidatedRsyncRequest {
   gid: number;
   preset: RsyncPreset;
   excludes: string[];
+  /** Rendered before the excludes (selective copy). */
+  includes: string[];
   deleteExtraneous: boolean;
   dryRun: boolean;
   bwLimitKbps: number;
@@ -166,10 +168,15 @@ export function validateRsyncRequest(req: RsyncPullRequest, dataRoot: string, de
   for (const x of excludes) {
     if (typeof x !== 'string' || !EXCLUDE_RE.test(x) || x.includes('..')) throw new RsyncRequestError(`excludes: invalid pattern`);
   }
+  const includes = req.includes ?? [];
+  if (!Array.isArray(includes) || includes.length > MAX_EXCLUDES) throw new RsyncRequestError(`includes: at most ${MAX_EXCLUDES}`);
+  for (const x of includes) {
+    if (typeof x !== 'string' || !EXCLUDE_RE.test(x) || x.includes('..')) throw new RsyncRequestError(`includes: invalid pattern`);
+  }
   const bw = req.bwLimitKbps && req.bwLimitKbps > 0 ? req.bwLimitKbps : defaultBwLimitKbps;
   if (!Number.isInteger(bw) || bw < 0 || bw > 10_000_000) throw new RsyncRequestError('bwLimitKbps: integer 0..10000000 expected');
   return {
-    remotePath, localPath, uid, gid, preset: req.preset, excludes: [...excludes],
+    remotePath, localPath, uid, gid, preset: req.preset, excludes: [...excludes], includes: [...includes],
     deleteExtraneous: req.deleteExtraneous === true, dryRun: req.dryRun === true, bwLimitKbps: bw, runAs,
   };
 }
@@ -219,6 +226,7 @@ export function buildLocalRsyncArgv(v: ValidatedRsyncRequest, rsh: string): stri
   } else {
     argv.push('--no-owner', '--no-group', '--chmod=D0755,F0644', '--partial-dir=.oblimint-partial');
   }
+  for (const x of v.includes) argv.push(`--include=${x}`);
   for (const x of v.excludes) argv.push(`--exclude=${x}`);
   if (v.deleteExtraneous) argv.push('--delete');
   if (v.bwLimitKbps > 0) argv.push(`--bwlimit=${v.bwLimitKbps}`);

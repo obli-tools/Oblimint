@@ -1,3 +1,4 @@
+import { selectiveFilters } from '../../plan/outside';
 import type {
   MigrationStepOutcome, MigrationStepContext,
 } from '../../contracts/execution';
@@ -403,6 +404,8 @@ export async function siteFilesStep(ctx: MigrationStepContext, site: PlannedSite
   await env.deps.sites.ensureTree(acc, state, []);
   const { excludes, rejected } = siteExcludes(site, await declaredDataPaths(env, state.id));
   for (const r of rejected) env.warn('rsyncExcludeRejected', { kind: 'site', key: site.key }, { pattern: r.slice(0, 200) });
+  // Selective copy (entries outside the docroot attached): only the application root + those entries.
+  const selective = selectiveFilters(site.copyPaths ?? []);
   const session = await ctx.session();
   const mirror = ctx.run.mirrorDeletes && !env.initial;
   const res = await session.rsyncPull({
@@ -410,7 +413,8 @@ export async function siteFilesStep(ctx: MigrationStepContext, site: PlannedSite
     localPath: localPaths.siteStaging(acc.id, state.slug),
     binding: { kind: 'account', cwpUsername: env.username, targetAccountId: acc.id },
     uid: acc.uid, gid: acc.gid, preset: 'site-files',
-    excludes,
+    includes: selective.includes,
+    excludes: [...excludes, ...selective.excludes],
     deleteExtraneous: mirror,
     bwLimitKbps: env.deps.config().rsyncBwLimitKbps || undefined,
     signal: ctx.signal,

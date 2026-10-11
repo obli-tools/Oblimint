@@ -161,6 +161,27 @@ export const FTP_LIST_AWK =
   + 'else if (h ~ /^\\$6\\$/) s = "6"; else if (h ~ /^\\$5\\$/) s = "5"; else if (h ~ /^\\$1\\$/) s = "1"; '
   + 'print $1 ":" $3 ":" $4 ":" $6 ":" s }';
 
+/** fs.grepRefs: depth, pruned directories, code files read (never wp-config.php / .env*). */
+export const REFS_DEPTH = 6;
+export const MAX_REF_NAMES = 64;
+const REF_NAME_RE = /^[A-Za-z0-9_@+-][A-Za-z0-9._@+-]{0,99}$/;
+const REF_HOME_RE = /^\/home\/[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
+const REFS_PRUNE = ['vendor', 'node_modules', '.git'];
+const REFS_CODE = ['*.php', '*.inc', '*.phtml', '*.ini', '*.py', '*.pl', '*.cgi', '*.sh', '.htaccess', '.user.ini'];
+const reEscape = (v: string) => v.replace(/[.+]/g, (c) => `\\${c}`);
+
+/**
+ * ERE of fs.grepRefs: a name preceded by a slash and followed by a path delimiter (/../private_html/,
+ * /../config.php'), or quoted and followed by a slash ('private_html/), plus /home/<user>/ when given.
+ * A bare quoted word ('Save') never matches.
+ */
+export function refsRegex(names: string[], home?: string): string {
+  const alt = names.map(reEscape).join('|');
+  const parts = names.length ? [`/(${alt})([/'"]|$)`, `['"](${alt})/`] : [];
+  if (home) parts.push(`${reEscape(home)}/`);
+  return parts.join('|');
+}
+
 const HTACCESS_GREP = '^[[:space:]]*(AddHandler|SetHandler|AddType)[[:space:]].*php';
 const FIND_PRINTF = '%y|%m|%u|%g|%s|%T@|%p|%l\\n';
 const NAMED_SED = 's/(secret[[:space:]]+)"[^"]*"/\\1"<redacted>"/g';
@@ -311,6 +332,28 @@ const SPECS: TemplateSpec[] = [
       return onPath(root, [
         'find', '-P', shQuote(root), '-maxdepth', String(depth), '-name', '.htaccess', '-type', 'f', '-size', '-1024k',
         '-exec', 'grep', '-HinE', shQuote(HTACCESS_GREP), "'{}'", '+',
+      ]);
+    },
+  },
+  {
+    id: 'fs.grepRefs', phases: BOTH, sensitive: false, timeoutMs: WALK_TIMEOUT_MS, internal: false,
+    render: (args) => {
+      const o = obj(args); onlyKeys(o, ['root', 'names', 'home']);
+      const root = checkReadPath(o.root, 'refs', 'root');
+      const names = strList(o.names, 'names', MAX_REF_NAMES);
+      for (const n of names) if (!REF_NAME_RE.test(n)) throw new ArgError('names: invalid name');
+      let home: string | undefined;
+      if (o.home !== undefined && o.home !== null) {
+        if (typeof o.home !== 'string' || !REF_HOME_RE.test(o.home)) throw new ArgError('home: /home/<user> expected');
+        home = o.home;
+      }
+      if (names.length === 0 && !home) throw new ArgError('names: at least one name (or home) expected');
+      const prune = REFS_PRUNE.flatMap((n, i) => [...(i ? ['-o'] : []), '-name', shQuote(n)]);
+      const code = REFS_CODE.flatMap((n, i) => [...(i ? ['-o'] : []), '-name', shQuote(n)]);
+      return onPath(root, [
+        'find', '-P', shQuote(root), '-maxdepth', String(REFS_DEPTH), shQuote('('), ...prune, shQuote(')'), '-prune', '-o',
+        '-type', 'f', shQuote('('), ...code, shQuote(')'), '!', '-name', shQuote('wp-config.php'), '!', '-name', shQuote('.env*'),
+        '-size', '-1024k', '-exec', 'grep', '-HoE', '--', shQuote(refsRegex(names, home)), "'{}'", '+',
       ]);
     },
   },

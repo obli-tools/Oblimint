@@ -4,6 +4,7 @@ import { SQL } from '../collect/accounts';
 import { DB_SQL } from '../collect/databases';
 import { MAIL_SQL } from '../collect/mail';
 import { caPem, eccExampleOrgPem, exampleTldPem, oldExamplePem, selfSignedPem } from './certs';
+import { REFS_DEPTH, refsRegex } from '../../source/templates';
 import { SRC_IP, apacheSite, nginxFpm, nginxProxy, nginxRedirect, nginxSite } from './vhosts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,6 +153,12 @@ export function buildScenario(): Scenario {
 
   // acct2: example.org (suPHP default), Varnish site, Varnish custom backend, ECC cert + custom template, redirect, disabled.
   node('/home/acct2/public_html/index.php', 300, 1002);
+  // Outside the docroot: secrets cited by the code (attached), an archive nobody cites (left over), an absolute path.
+  file('/home/acct2/public_html/config.php', "<?php\n$s = require __DIR__ . '/../private_html/secrets.php';\n", 1002);
+  file('/home/acct2/public_html/abs.php', "<?php\ninclude '/home/acct2/lib/x.php';\n", 1002);
+  file('/home/acct2/private_html/secrets.php', '<?php\nreturn [];\n', 1002);
+  node('/home/acct2/lib/x.php', 50, 1002);
+  node('/home/acct2/Save/old.zip', 5000, 1002);
   node('/home/acct2/other.example.org/index.html', 300, 1002);
   node('/home/acct2/ecc.example.org/index.php', 300, 1002);
   file('/home/acct2/.conf/webservers/ecc.example.org.conf', JSON.stringify({
@@ -460,6 +467,16 @@ export function buildScenario(): Scenario {
     'fs.lineCount': ({ paths }) => {
       const rows = paths.filter((p) => vfs.get(p)?.lines !== undefined).map((p) => `  ${vfs.get(p)?.lines} ${p}`);
       return { stdout: rows.join('\n') + '\n', exitCode: rows.length === paths.length ? 0 : 1 };
+    },
+    'fs.grepRefs': ({ root, names, home }) => {
+      const re = new RegExp(refsRegex(names, home), 'gm');
+      const out: string[] = [];
+      for (const [p, content] of Object.entries(files)) {
+        if (!p.startsWith(`${root}/`) || depth(p) - depth(root) > REFS_DEPTH || p.endsWith('/wp-config.php')) continue;
+        if (!/\.(php|inc|phtml|ini|py|pl|cgi|sh)$|\/\.htaccess$/.test(p)) continue;
+        for (const m of content.matchAll(re)) out.push(`${p}:${m[0]}`);
+      }
+      return { stdout: out.join('\n') + (out.length ? '\n' : ''), exitCode: out.length ? 0 : 1 };
     },
     'fs.grepHtaccess': ({ root, maxDepth }) => {
       const base = depth(root);

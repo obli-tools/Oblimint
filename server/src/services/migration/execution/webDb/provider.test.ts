@@ -63,7 +63,7 @@ function accountPlan(over: Partial<MigrationAccountPlan> = {}): MigrationAccount
       key: 'example.tld', name: 'example.tld', slug: 'example-tld', base: 'apache-php8.3', unmaintained: false, profile: 'wordpress',
       sourceRoot: '/home/acct1/public_html', docroot: '', routes: [{ fqdn: 'example.tld', pathPrefix: '/' }, { fqdn: 'shop.tld', pathPrefix: '/' }],
       dataPaths: [{ path: 'wp-content/uploads', policy: 'persistent' }, { path: 'cache', policy: 'ephemeral' }],
-      secondaryRuntimes: [{ pathPrefix: '/legacy', base: 'apache-php7.4' }], excludes: ['.git', 'error_log'], php: null,
+      secondaryRuntimes: [{ pathPrefix: '/legacy', base: 'apache-php7.4' }], excludes: ['.git', 'error_log'], outside: [], php: null,
       estimatedBytes: 50 * MIB, scanOverride: true,
     }],
     proxies: [{ key: 'app.example.tld', name: 'app.example.tld', fqdns: ['app.example.tld'], target: { host: '192.168.1.20', port: 8123, scheme: 'http', allowPrivate: true }, websocket: true, certificateFqdn: 'app.example.tld' }],

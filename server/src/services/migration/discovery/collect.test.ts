@@ -18,7 +18,7 @@ import { SRC_IP } from './fixtures/vhosts';
 
 const READ_TEMPLATES = new Set([
   'sys.osRelease', 'sys.hostname', 'sys.ipAddrs', 'sys.whoami', 'sys.passwd', 'sys.toolVersions', 'sys.unitFile', 'fs.cat', 'fs.catMany',
-  'fs.ls', 'fs.stat', 'fs.find', 'fs.du', 'fs.lineCount', 'fs.grepHtaccess', 'mysql.query', 'mysql.userMeta', 'mysql.dumpSchema',
+  'fs.ls', 'fs.stat', 'fs.find', 'fs.du', 'fs.lineCount', 'fs.grepHtaccess', 'fs.grepRefs', 'mysql.query', 'mysql.userMeta', 'mysql.dumpSchema',
   'mail.mailboxMeta', 'mail.postconf', 'mail.doveconf', 'dns.namedConf', 'dns.zoneDump', 'dns.axfr', 'ftp.listUsers',
 ]);
 
@@ -503,4 +503,25 @@ test('scrub: URL passwords are redacted (URL kept readable)', () => {
   assert.equal(redactSecrets(r.value).hits, 0);
   assert.throws(() => assertNoSecrets({ x: 'postgres://u:pw@h/db' }));
   assert.doesNotThrow(() => assertNoSecrets({ x: 'postgres://u:<redacted>@h/db' }));
+});
+
+test('collectInventory: entries outside the docroot cited by the code (CWP layout ~/private_html)', { timeout: 60_000 }, async () => {
+  const { inv, session } = await discover();
+  const org = inv.domains.find((d) => d.fqdn === 'example.org');
+  assert.ok(org);
+  // `require __DIR__ . '/../private_html/secrets.php'` → cited; the absolute include is reported, never attached.
+  assert.deepEqual(org.outsideRefs?.map((r) => ({ path: r.path, type: r.type, citedBy: r.citedBy })), [
+    { path: '/home/acct2/private_html', type: 'dir', citedBy: 'config.php' },
+  ]);
+  assert.ok((org.outsideRefs?.[0].bytes ?? 0) > 0);
+  assert.deepEqual(org.absoluteHomeRefs, ['abs.php']);
+  const acct2 = inv.accounts.find((a) => a.username === 'acct2');
+  assert.deepEqual(acct2?.homeLeftovers?.map((e) => e.path), ['/home/acct2/lib', '/home/acct2/Save']);
+  // Only matched fragments: the grep never targets another account and is bounded to the docroots.
+  const refs = session.calls.filter((c) => c.template === 'fs.grepRefs').map((c) => c.args as { root: string; names: string[]; home?: string });
+  assert.ok(refs.length > 0);
+  for (const r of refs) {
+    assert.ok(r.home && r.root.startsWith(`${r.home}/`), r.root);
+    assert.ok(!r.names.includes('public_html') && !r.names.includes('mail') && !r.names.some((n) => n.startsWith('.')), r.names.join(','));
+  }
 });

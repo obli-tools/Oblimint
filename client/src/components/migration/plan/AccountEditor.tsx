@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   APP_PROFILES, SITE_BASES,
-  type AppProfileId, type CwpDomain, type CwpInventory, type MigrationAccountChoice, type MigrationAccountPlan,
-  type MigrationDomainChoice, type MigrationTargetCatalog, type SiteBaseId,
+  type AppProfileId, type CwpAccount, type CwpDomain, type CwpInventory, type MigrationAccountChoice, type MigrationAccountPlan,
+  type MigrationDomainChoice, type MigrationTargetCatalog, type PlannedSite, type SiteBaseId,
 } from '@oblimint/shared';
 import { IconButton } from '@/components/common/IconButton';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
@@ -79,7 +79,59 @@ function LinesField({ id, value, onChange }: { id: string; value: string[]; onCh
   );
 }
 
-function DomainEditor({ d, editor, account, catalog }: { d: CwpDomain; editor: PlanEditor; account: MigrationAccountPlan | null; catalog: MigrationTargetCatalog | null }) {
+/**
+ * Entries outside the docroot copied with the site (CWP layout: ~/private_html…): the detected / attached ones of
+ * the planned site + the home entries nobody cites. Ticking writes the full list (the detection is then replaced).
+ */
+function OutsideField({ site, cwp, value, onChange }: {
+  site: PlannedSite; cwp: CwpAccount | null; value: string[] | null | undefined; onChange: (v: string[] | null) => void;
+}) {
+  const { t } = useTranslation();
+  const units = useByteUnits();
+  const home = (cwp?.homeDir ?? '').replace(/\/+$/, '');
+  const short = (p: string) => (home && p.startsWith(`${home}/`) ? `~/${p.slice(home.length + 1)}` : p);
+  // Absent on a result computed before this field existed.
+  const outside = site.outside ?? [];
+  const listed = new Set(outside.map((o) => o.path));
+  const leftovers = (cwp?.homeLeftovers ?? []).filter((e) => !listed.has(e.path));
+  const attached = outside.filter((o) => o.attached).map((o) => o.path);
+  const toggle = (path: string, on: boolean) => onChange(on ? [...new Set([...attached, path])] : attached.filter((p) => p !== path));
+  if (outside.length === 0 && leftovers.length === 0) return null;
+  const row = (path: string, checked: boolean, bytes: number | null, note: string | null) => (
+    <label key={path} className="flex flex-wrap items-center gap-2 text-xs">
+      <input type="checkbox" className={checkboxCls} checked={checked} onChange={(e) => toggle(path, e.target.checked)} />
+      <code className="font-mono text-text-primary">{short(path)}</code>
+      <span className="font-mono text-[11px] text-text-muted">{formatBytes(bytes, units)}</span>
+      {note && <span className="text-[11px] text-text-muted">{note}</span>}
+    </label>
+  );
+  return (
+    <div className="md:col-span-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={labelCls}>{t('migration.editor.outside') || 'Outside the docroot'}</span>
+        {value != null && (
+          <button type="button" className="text-[11px] text-accent hover:underline" onClick={() => onChange(null)}>
+            {t('migration.editor.outsideAuto') || 'Back to automatic detection'}
+          </button>
+        )}
+      </div>
+      <p className="mb-1 text-[10px] text-text-muted">{t('migration.editor.outsideHint') || 'Copied with the site at the same place relative to the docroot (never served by the web, read-only).'}</p>
+      <div className="space-y-1">
+        {outside.map((o) => row(o.path, o.attached, o.bytes, o.citedBy
+          ? t('migration.editor.outsideCitedBy', { file: o.citedBy, defaultValue: 'cited in {{file}}' })
+          : (t('migration.editor.outsideManual') || 'attached by hand')))}
+      </div>
+      {leftovers.length > 0 && (
+        <details className="mt-1.5">
+          <summary className="cursor-pointer text-[11px] text-text-muted">{t('migration.editor.outsideLeftovers') || 'Other entries of the home (not migrated)'} ({leftovers.length})</summary>
+          <div className="mt-1 space-y-1">{leftovers.map((e) => row(e.path, false, e.bytes, null))}</div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function DomainEditor({ d, editor, account, catalog, cwp }: { d: CwpDomain; editor: PlanEditor; account: MigrationAccountPlan | null; catalog: MigrationTargetCatalog | null; cwp: CwpAccount | null }) {
   const { t } = useTranslation();
   const user = d.account;
   const choice = editor.accountChoice(user).domains?.[d.fqdn] ?? {};
@@ -170,6 +222,7 @@ function DomainEditor({ d, editor, account, catalog }: { d: CwpDomain; editor: P
             <label className={labelCls} htmlFor={`ex-${d.fqdn}`}>{t('migration.editor.excludes') || 'Excluded from the copy (one pattern per line)'}</label>
             <LinesField id={`ex-${d.fqdn}`} value={excludes} onChange={(v) => patch({ excludes: v })} />
           </div>
+          {site && !choice.sourceRoot && <OutsideField site={site} cwp={cwp} value={choice.outside} onChange={(v) => patch({ outside: v })} />}
         </div>
       )}
 
@@ -302,7 +355,7 @@ export function AccountEditor({ username, editor, inventory, inventoryStatus, ca
       </Section>
 
       <Section title={t('migration.editor.domains') || 'Domains'} count={domains.length}>
-        {domains.map((d) => <DomainEditor key={d.fqdn} d={d} editor={editor} account={account} catalog={catalog} />)}
+        {domains.map((d) => <DomainEditor key={d.fqdn} d={d} editor={editor} account={account} catalog={catalog} cwp={inv?.accounts.find((a) => a.username === username) ?? null} />)}
         {sites.length > 0 && (
           <p className="text-[11px] text-text-muted">
             {t('migration.editor.sitesResult') || 'Resulting sites'}: {sites.map((s) => `${s.slug} (${s.base}, ${s.routes.length})`).join(' · ')}

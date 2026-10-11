@@ -192,7 +192,12 @@
       "zoneDomainCreated": "Zone with no served domain of the account (disabled vhost, orphan zone…): the domain is created without site so the zone can be attached.",
       "zoneDomainElsewhere": "The zone name is a domain of another account: the zone is not migrated with this account.",
       "zoneNotDeclared": "Zone file present but not declared in named.conf (not served by the source): not migrated by default, otherwise PowerDNS would serve its stale records instead of the parent zone. Select it explicitly to import it.",
-      "cronPathUnmapped": "The cron still uses a path of the CWP home outside its site after the rewrite: it would fail in the container, fix the command."
+      "cronPathUnmapped": "The cron still uses a path of the CWP home outside its site after the rewrite: it would fail in the container, fix the command.",
+      "outsideAttached": "Entries outside the docroot cited by the code are copied with the site, at the same place relative to it (never served, read-only: a directory the code writes into must become a data path).",
+      "outsideTooLarge": "An entry outside the docroot cited by the code is too large to be copied automatically: attach it in the site options if the site needs it.",
+      "outsideInvalid": "An entry outside the docroot cannot be copied with this site (another site, outside the home, unknown entry or unsupported name).",
+      "absoluteHomePaths": "The code writes absolute /home/<user>/ paths: they do not exist on Oblimint, change them to relative paths.",
+      "homeLeftovers": "Entries of the home cited by no site are not migrated (archives, copies…): attach one to a site if it is needed."
     },
     "commands": {
       "allPhases": "Every phase",
@@ -503,7 +508,13 @@
       "verifyTxt": "TXT record at the current DNS host",
       "version": "Version",
       "zoneStats": "{{records}} records · {{rewritten}} rewritten · {{dropped}} dropped",
-      "zones": "DNS zones"
+      "zones": "DNS zones",
+      "outside": "Outside the docroot",
+      "outsideHint": "Copied with the site at the same place relative to the docroot (never served by the web, read-only).",
+      "outsideCitedBy": "cited in {{file}}",
+      "outsideManual": "attached by hand",
+      "outsideLeftovers": "Other entries of the home (not migrated)",
+      "outsideAuto": "Back to automatic detection"
     },
     "errors": {
       "authFailed": "Authentication refused by the server (key / password / user).",
@@ -1202,7 +1213,8 @@
         "lineCount": "Counts lines (e.g. authorized_keys, never read).",
         "ls": "Lists a directory.",
         "realpath": "Internal: symlink check before a read or a copy (MG10).",
-        "stat": "File metadata (type, size, owner, mode, date)."
+        "stat": "File metadata (type, size, owner, mode, date).",
+        "grepRefs": "Paths outside the docroot cited by the code of a docroot (matched fragments only)."
       },
       "ftp": {
         "listUsers": "Pure-FTPd users without the hash field."

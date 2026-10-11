@@ -1015,3 +1015,32 @@ test('migrationDbProfile: the created instance is sized from the selected databa
   assert.equal(migrationDbProfile(4 * 1024 ** 3), 'M');
   assert.equal(migrationDbProfile(4 * 1024 ** 3 + 1), 'L');
 });
+
+test('outside entries cited by the code: selective copy from the home, data paths re-based, sibling sites untouched', () => {
+  const wp = { profile: 'wordpress' as const, markers: ['wp-config.php'], wordpress: null, hasGit: false, hasPackageJson: false, hasComposerJson: false, htaccess: true, userIni: false };
+  const inv = inventory({
+    accounts: [{ ...account('acct1'), homeLeftovers: [{ path: '/home/acct1/Save', type: 'dir', bytes: 9000 }] }],
+    domains: [
+      domain('example.tld', 'acct1', {
+        docroot: '/home/acct1/public_html', app: wp,
+        outsideRefs: [{ path: '/home/acct1/private_html', type: 'dir', bytes: 4096, citedBy: 'api/config.php' }],
+        absoluteHomeRefs: ['legacy/old.php'],
+      }),
+      domain('other.tld', 'acct1', { kind: 'addon', docroot: '/home/acct1/other.tld' }),
+    ],
+  });
+  const a = acct(run(inv));
+  const s = a.sites.find((x) => x.key === 'example.tld')!;
+  assert.equal(s.sourceRoot, '/home/acct1');
+  assert.equal(s.docroot, 'public_html');
+  assert.deepEqual(s.copyPaths, ['public_html', 'private_html']);
+  assert.deepEqual(s.outside.map((o) => [o.rel, o.attached]), [['private_html', true]]);
+  assert.ok(s.dataPaths.every((d) => d.path.startsWith('public_html/')), JSON.stringify(s.dataPaths));
+  const other = a.sites.find((x) => x.key === 'other.tld')!;
+  assert.equal(other.sourceRoot, '/home/acct1/other.tld');
+  assert.equal(codes(a.warnings, 'docrootNested').length, 0);
+  assert.ok(!s.excludes.some((e) => e.includes('other.tld')), JSON.stringify(s.excludes));
+  assert.equal(codes(a.warnings, 'outsideAttached', 'example.tld').length, 1);
+  assert.equal(codes(a.warnings, 'absoluteHomePaths', 'example.tld').length, 1);
+  assert.equal(codes(a.warnings, 'homeLeftovers')[0].params?.sample, 'Save');
+});

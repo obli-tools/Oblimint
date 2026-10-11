@@ -31,6 +31,8 @@ export type PathAccess =
   | 'list'
   /** PHP handler lines of .htaccess files (fs.grepHtaccess). */
   | 'htaccess'
+  /** Outside-docroot path references of code files (fs.grepRefs: matched fragments only). */
+  | 'refs'
   /** Metadata (fs.stat). */
   | 'stat'
   /** Sizes (fs.du). */
@@ -44,7 +46,7 @@ interface ReadRoot {
   access: ReadonlySet<PathAccess>;
 }
 
-const ALL: ReadonlySet<PathAccess> = new Set<PathAccess>(['content', 'lineCount', 'list', 'htaccess', 'stat', 'du']);
+const ALL: ReadonlySet<PathAccess> = new Set<PathAccess>(['content', 'lineCount', 'list', 'htaccess', 'refs', 'stat', 'du']);
 const NO_HTACCESS: ReadonlySet<PathAccess> = new Set<PathAccess>(['content', 'lineCount', 'list', 'stat', 'du']);
 const FILE_ONLY: ReadonlySet<PathAccess> = new Set<PathAccess>(['content', 'lineCount', 'stat']);
 
@@ -143,7 +145,7 @@ export function checkReadPath(p: unknown, access: PathAccess, what = 'path'): st
   const root = rootOf(p);
   if (!root) throw new PathPolicyError(`${what}: outside the read roots`);
   if (!root.access.has(access)) throw new PathPolicyError(`${what}: ${access} not allowed under ${root.path}`);
-  if (access === 'content' || access === 'lineCount' || access === 'htaccess') {
+  if (access === 'content' || access === 'lineCount' || access === 'htaccess' || access === 'refs') {
     const denied = denyReason(p, access);
     if (denied) throw new PathPolicyError(`${what}: ${denied}`);
   } else {
