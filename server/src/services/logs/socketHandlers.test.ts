@@ -81,6 +81,18 @@ function deps(over: Partial<LogTailDeps> = {}): Partial<LogTailDeps> & { bus: Ed
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Waits until `cond()` holds (polled on every timer turn) or fails after
+ * `timeoutMs`: deterministic whatever the machine load, unlike a fixed sleep.
+ */
+async function waitFor(cond: () => boolean, what: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    await wait(5);
+  }
+}
+
 test('subscribe: request validation and access check (rebuilt actor)', async () => {
   const sock = new FakeSocket();
   registerLogSocketHandlers(sock as unknown as Socket, deps());
@@ -122,7 +134,8 @@ test('access tail: only the subscribed site, batched ≤ 200 lines per emit, to 
   d.bus.send({ uri: '/site8', siteId: 8 });
   d.bus.send({ uri: '/forged', siteId: 7, accountId: 4 }); // site id of another account: dropped
   d.bus.send({ uri: '/panel', siteId: null, accountId: null, kind: 'panel' });
-  await wait(60);
+  // The four sends are synchronous: the first flush carries everything that was kept.
+  await waitFor(() => sock.emitted.length > 0, 'the first batch');
   assert.deepEqual(sock.lines().map((l) => l.access?.uri), ['/mine']);
   assert.equal(sock.emitted[0][0], 'LOG_LINES');
   assert.equal(sock.emitted[0][1].siteId, 7);
@@ -130,8 +143,9 @@ test('access tail: only the subscribed site, batched ≤ 200 lines per emit, to 
   assert.equal(other.emitted.length, 0);
 
   sock.emitted = [];
+  // 450 synchronous sends: buffered before any flush can run, then drained ≤ 200 per emit, in order.
   for (let i = 0; i < 450; i++) d.bus.send({ uri: `/n${i}` });
-  await wait(150);
+  await waitFor(() => sock.lines().length === 450, 'the 450 lines');
   assert.deepEqual(sock.emitted.map(([, p]) => p.lines.length), [200, 200, 50]);
   assert.equal(sock.lines()[449].access?.uri, '/n449');
 
@@ -139,9 +153,11 @@ test('access tail: only the subscribed site, batched ≤ 200 lines per emit, to 
   assert.deepEqual(await sock.unsubscribe({ siteId: 7, source: 'access' }), { ok: true });
   assert.equal(d.bus.listeners.size, 0);
   sock.emitted = [];
-  d.bus.send({ uri: '/after' });
-  await wait(50);
+  d.bus.send({ uri: '/after' }); // no listener left: nothing can be buffered
+  // Let several flush periods elapse (a slow machine only shortens the window: never a false failure).
+  await wait((d.batchMs ?? 20) * 3);
   assert.equal(sock.emitted.length, 0);
+  assert.equal(other.emitted.length, 0);
 });
 
 test('at most 4 subscriptions per socket; disconnect closes everything', async () => {

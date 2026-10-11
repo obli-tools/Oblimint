@@ -4,7 +4,7 @@ import {
 } from '../contracts/source';
 import {
   PathPolicyError, checkDepth, checkDumpDatabase, checkDkimSelector, checkDomain, checkFindName, checkFtpLogin, checkMysqlUser,
-  checkReadPath, checkRpmPackage, checkUnitFilePath, checkZoneFilePath, needsSymlinkGuard, assertCleanPath,
+  checkReadPath, checkUnitFilePath, checkZoneFilePath, needsSymlinkGuard, assertCleanPath,
 } from './pathPolicy';
 import { SqlGuardError, checkSql } from './sqlGuard';
 
@@ -100,7 +100,29 @@ export const STAT_SCRIPT = `for p do ${PARENT_GUARD}stat -c "%n|%F|%s|%u|%g|%a|%
 export const DU_SCRIPT = `for p do ${PARENT_GUARD}du -sb -- "$p" 2>/dev/null; done; exit 0`;
 export const PIPEFAIL_GZIP_SCRIPT = 'set -o pipefail; "$@" | gzip -1c';
 
-for (const s of [GUARD_SCRIPT, CAT_MANY_SCRIPT, LINE_COUNT_SCRIPT, STAT_SCRIPT, DU_SCRIPT, PIPEFAIL_GZIP_SCRIPT]) {
+/**
+ * sys.toolVersions (P6, replaces the rpm query — docs/P6-PLAN.md §17): the CLOSED list of tools discovery
+ * reports, each located with `command -v` then asked its own version (first line, ≤ 200 characters, stdin
+ * closed). Pure reads: no package manager, no /var/lib/rpm (an rpm query may write its lock / environment
+ * files there, MG1). Output, one line per tool, in this order:
+ *   <tool>|<absolute path>|<first line of its version output, without '|' / CR>
+ *   <tool>|-|                      (not installed / not in PATH)
+ * doveconf has no version flag: its line carries `dovecot --version` (same package).
+ */
+export const VERSION_TOOLS = ['rsync', 'mysqldump', 'mysql', 'named-checkzone', 'postconf', 'doveconf'] as const;
+export const TOOL_VERSIONS_SCRIPT =
+  'PATH="$PATH:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"; '
+  + `for t in ${VERSION_TOOLS.join(' ')}; do p=$(command -v "$t" 2>/dev/null) || p=; `
+  + 'case "$p" in /*) ;; *) printf "%s|-|\\n" "$t"; continue ;; esac; '
+  + 'case "$t" in '
+  + 'named-checkzone) v=$("$p" -v 2>&1 </dev/null | head -n 1) ;; '
+  + 'postconf) v=$("$p" -d mail_version 2>/dev/null </dev/null | head -n 1) ;; '
+  + 'doveconf) d=$(command -v dovecot 2>/dev/null) || d=; v=; case "$d" in /*) v=$("$d" --version 2>/dev/null </dev/null | head -n 1) ;; esac ;; '
+  + '*) v=$("$p" --version 2>&1 </dev/null | head -n 1) ;; '
+  + 'esac; '
+  + 'printf "%s|%s|%s\\n" "$t" "$p" "$(printf "%s" "$v" | tr -d "|\\r" | cut -c 1-200)"; done; exit 0';
+
+for (const s of [GUARD_SCRIPT, CAT_MANY_SCRIPT, LINE_COUNT_SCRIPT, STAT_SCRIPT, DU_SCRIPT, PIPEFAIL_GZIP_SCRIPT, TOOL_VERSIONS_SCRIPT]) {
   if (s.includes("'")) throw new Error('executor script contains a single quote');
 }
 
@@ -203,14 +225,7 @@ const SPECS: TemplateSpec[] = [
   constant('sys.ipAddrs', 'ip -o addr show'),
   constant('sys.whoami', 'id -un'),
   constant('sys.passwd', 'getent passwd'),
-  {
-    id: 'sys.rpmVersions', phases: BOTH, sensitive: false, timeoutMs: READ_TIMEOUT_MS, internal: false,
-    render: (args) => {
-      const o = obj(args); onlyKeys(o, ['packages']);
-      const pkgs = strList(o.packages, 'packages', 64).map(checkRpmPackage);
-      return `${PREFIX}rpm -q --qf ${shQuote('%{NAME}|%{VERSION}-%{RELEASE}\\n')} -- ${pkgs.map(shQuote).join(' ')}`;
-    },
-  },
+  constant('sys.toolVersions', `sh -c ${shQuote(TOOL_VERSIONS_SCRIPT)}`),
   {
     id: 'sys.unitFile', phases: BOTH, sensitive: false, timeoutMs: READ_TIMEOUT_MS, internal: false,
     render: (args) => {

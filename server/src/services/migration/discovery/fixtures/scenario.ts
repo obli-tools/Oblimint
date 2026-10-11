@@ -411,13 +411,16 @@ export function buildScenario(): Scenario {
       '3: eth1    inet 10.99.0.2/24 brd 10.99.0.255 scope global eth1\\       valid_lft forever preferred_lft forever', '',
     ].join('\n'),
     'sys.passwd': () => passwd,
-    'sys.rpmVersions': ({ packages }) => ({
-      stdout: packages.map((p) => ({
-        cwpsrv: 'cwpsrv|1.24.0-2', nginx: 'nginx|1.14.1-1.module_el8', rsync: 'rsync|3.1.3-19.el8', 'mariadb-server': 'mariadb-server|10.3.39-1',
-        postfix: 'postfix|3.4.8-1', dovecot: 'dovecot|2.3.16-3', bind: 'bind|9.11.36-11',
-      } as Record<string, string>)[p] ?? `package ${p} is not installed`).join('\n') + '\n',
-      exitCode: 1,
-    }),
+    // P6: tool versions (command -v + version flag), never rpm — what the fake CWP image answers.
+    'sys.toolVersions': () => [
+      'rsync|/usr/bin/rsync|rsync  version 3.1.3  protocol version 31',
+      'mysqldump|/usr/bin/mysqldump|mysqldump  Ver 10.19 Distrib 10.3.39-MariaDB, for Linux (x86_64)',
+      'mysql|/usr/bin/mysql|mysql  Ver 15.1 Distrib 10.3.39-MariaDB, for Linux (x86_64) using readline 5.1',
+      'named-checkzone|/usr/sbin/named-checkzone|9.11.36-RedHat-9.11.36-11.el8_9',
+      'postconf|/usr/sbin/postconf|mail_version = 3.5.8',
+      'doveconf|/usr/bin/doveconf|2.3.16 (7e2e900c1a)',
+      '',
+    ].join('\n'),
     'sys.unitFile': ({ path }) => (path in unitFiles ? unitFiles[path] : { stdout: '', exitCode: 1 }),
     'mysql.query': ({ sql }) => {
       sqlSeen.push(sql);

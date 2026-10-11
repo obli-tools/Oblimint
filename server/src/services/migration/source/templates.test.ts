@@ -5,8 +5,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
-  CAT_MANY_SCRIPT, DU_SCRIPT, GUARD_SCRIPT, LINE_COUNT_SCRIPT, STAT_SCRIPT, SYMLINK_EXIT, TEMPLATE_REGISTRY, renderCommand, shQuote, templateInfos,
+  CAT_MANY_SCRIPT, DU_SCRIPT, GUARD_SCRIPT, LINE_COUNT_SCRIPT, STAT_SCRIPT, SYMLINK_EXIT, TEMPLATE_REGISTRY, TOOL_VERSIONS_SCRIPT, VERSION_TOOLS, renderCommand,
+  shQuote, templateInfos,
 } from './templates';
+import { parseToolVersions } from '../discovery/parsers/system';
 import { SqlGuardError, checkSql } from './sqlGuard';
 import { parseCatManyFrames } from './session';
 
@@ -32,9 +34,9 @@ const SNAPSHOTS: Array<[string, unknown, string, string]> = [
   ["sys.passwd", {},
     "LC_ALL=C getent passwd",
     "sudo -n -- sh -c 'LC_ALL=C getent passwd'"],
-  ["sys.rpmVersions", {"packages":["nginx","cwp-httpd"]},
-    "LC_ALL=C rpm -q --qf '%{NAME}|%{VERSION}-%{RELEASE}\\n' -- 'nginx' 'cwp-httpd'",
-    "sudo -n -- sh -c 'LC_ALL=C rpm -q --qf '\\''%{NAME}|%{VERSION}-%{RELEASE}\\n'\\'' -- '\\''nginx'\\'' '\\''cwp-httpd'\\'''"],
+  ["sys.toolVersions", {},
+    "LC_ALL=C sh -c 'PATH=\"$PATH:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"; for t in rsync mysqldump mysql named-checkzone postconf doveconf; do p=$(command -v \"$t\" 2>/dev/null) || p=; case \"$p\" in /*) ;; *) printf \"%s|-|\\n\" \"$t\"; continue ;; esac; case \"$t\" in named-checkzone) v=$(\"$p\" -v 2>&1 </dev/null | head -n 1) ;; postconf) v=$(\"$p\" -d mail_version 2>/dev/null </dev/null | head -n 1) ;; doveconf) d=$(command -v dovecot 2>/dev/null) || d=; v=; case \"$d\" in /*) v=$(\"$d\" --version 2>/dev/null </dev/null | head -n 1) ;; esac ;; *) v=$(\"$p\" --version 2>&1 </dev/null | head -n 1) ;; esac; printf \"%s|%s|%s\\n\" \"$t\" \"$p\" \"$(printf \"%s\" \"$v\" | tr -d \"|\\r\" | cut -c 1-200)\"; done; exit 0'",
+    "sudo -n -- sh -c 'LC_ALL=C sh -c '\\''PATH=\"$PATH:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"; for t in rsync mysqldump mysql named-checkzone postconf doveconf; do p=$(command -v \"$t\" 2>/dev/null) || p=; case \"$p\" in /*) ;; *) printf \"%s|-|\\n\" \"$t\"; continue ;; esac; case \"$t\" in named-checkzone) v=$(\"$p\" -v 2>&1 </dev/null | head -n 1) ;; postconf) v=$(\"$p\" -d mail_version 2>/dev/null </dev/null | head -n 1) ;; doveconf) d=$(command -v dovecot 2>/dev/null) || d=; v=; case \"$d\" in /*) v=$(\"$d\" --version 2>/dev/null </dev/null | head -n 1) ;; esac ;; *) v=$(\"$p\" --version 2>&1 </dev/null | head -n 1) ;; esac; printf \"%s|%s|%s\\n\" \"$t\" \"$p\" \"$(printf \"%s\" \"$v\" | tr -d \"|\\r\" | cut -c 1-200)\"; done; exit 0'\\'''"],
   ["sys.unitFile", {"path":"/etc/systemd/system/app.service"},
     "LC_ALL=C sed -E 's/^([[:space:]]*Environment[[:space:]]*=).*/\\1<redacted>/' -- '/etc/systemd/system/app.service'",
     "sudo -n -- sh -c 'LC_ALL=C sed -E '\\''s/^([[:space:]]*Environment[[:space:]]*=).*/\\1<redacted>/'\\'' -- '\\''/etc/systemd/system/app.service'\\'''"],
@@ -144,6 +146,22 @@ test('rendering snapshot of every template (plain and sudo)', () => {
   for (const id of publicIds) assert.ok(covered.has(id), `no snapshot for ${id}`);
 });
 
+test('P6 / MG1: no template invokes a package manager or reads its database (rpm, dnf, yum, /var/lib/rpm)', () => {
+  const pm = /\b(?:rpm|dnf|yum|rpmdb|repoquery)\b|\/var\/lib\/rpm/i;
+  assert.ok(!TEMPLATE_REGISTRY.has('sys.rpmVersions' as never), 'the rpm template is gone');
+  for (const [t, , plain, sudo] of SNAPSHOTS) {
+    assert.doesNotMatch(plain, pm, t);
+    assert.doesNotMatch(sudo, pm, `${t} (sudo)`);
+  }
+  for (const s of [GUARD_SCRIPT, CAT_MANY_SCRIPT, DU_SCRIPT, LINE_COUNT_SCRIPT, STAT_SCRIPT, TOOL_VERSIONS_SCRIPT]) assert.doesNotMatch(s, pm);
+  // The tool list is closed and constant; the rendering takes no argument at all.
+  assert.deepEqual([...VERSION_TOOLS], ['rsync', 'mysqldump', 'mysql', 'named-checkzone', 'postconf', 'doveconf']);
+  const r = renderCommand('sys.toolVersions', {}, 'discovery', false);
+  assert.ok(r.ok);
+  assert.ok(r.ok && r.command.startsWith("LC_ALL=C sh -c 'PATH="));
+  assert.ok(!TOOL_VERSIONS_SCRIPT.includes("'"));
+});
+
 test('internal templates render only for the executor itself', () => {
   assert.deepEqual(renderCommand('fs.realpath', { path: '/home/acct1/public_html' }, 'transfer', false, true),
     { ok: true, spec: TEMPLATE_REGISTRY.get('fs.realpath'), command: "LC_ALL=C realpath -e -- '/home/acct1/public_html'" });
@@ -181,7 +199,7 @@ test('allow-list: public templates only, secret.* sensitive, transfer-only phase
   }
   // contracts/source.ts CommandTemplateArgs, in order.
   assert.deepEqual(infos.map((i) => i.id), [
-    'sys.osRelease', 'sys.hostname', 'sys.ipAddrs', 'sys.whoami', 'sys.passwd', 'sys.rpmVersions', 'sys.unitFile',
+    'sys.osRelease', 'sys.hostname', 'sys.ipAddrs', 'sys.whoami', 'sys.passwd', 'sys.toolVersions', 'sys.unitFile',
     'fs.cat', 'fs.catMany', 'fs.ls', 'fs.stat', 'fs.find', 'fs.du', 'fs.lineCount', 'fs.grepHtaccess',
     'mysql.query', 'mysql.userMeta', 'mysql.dumpSchema', 'mail.mailboxMeta', 'mail.postconf', 'mail.doveconf',
     'dns.namedConf', 'dns.zoneDump', 'dns.axfr', 'ftp.listUsers',
@@ -292,8 +310,10 @@ test('refusals: find name / depth / type, identifiers', () => {
   }
   for (const s of ['a/b', '../x', '.hidden', 'a b', "a'b", '', 'x'.repeat(64)]) refused('secret.dkimPrivateKey', { domain: 'example.tld', selector: s });
   for (const l of ['a b', "a'b", 'a;b', '$(id)', 'a:b', '', '-v', 'x'.repeat(129)]) refused('secret.ftpUserHash', { login: l });
-  for (const p of ['-q', 'a b', "a'b", '$(id)', '']) refused('sys.rpmVersions', { packages: [p] });
-  refused('sys.rpmVersions', { packages: Array.from({ length: 65 }, (_, i) => `p${i}`) });
+  // P6: the rpm template is gone; the tool list is constant (no caller value at all).
+  assert.equal(refused('sys.rpmVersions', { packages: ['rsync'] }), 'unknown template');
+  assert.match(refused('sys.toolVersions', { packages: ['rsync'] }), /no argument/);
+  assert.match(refused('sys.toolVersions', { tools: ['sh'] }), /no argument/);
   refused('sys.unitFile', { path: '/etc/systemd/system/../shadow' });
   refused('sys.unitFile', { path: '/etc/systemd/system/app.conf' });
   refused('sys.unitFile', { path: '/usr/lib/systemd/system/sshd.service' });
@@ -492,4 +512,40 @@ test('fs.stat / fs.du scripts: a path whose PARENT crosses a symlink is skipped 
     assert.ok(out.includes(`${home}/ok`));
     assert.ok(out.includes(`${home}/lnk`), 'a final symlink is reported as a link (not followed)');
   }
+});
+
+test('sys.toolVersions script on a real shell: located tools, version line bounded and stripped of |, absent tools marked', (t) => {
+  const sh = findSh();
+  if (!sh) { t.skip('no POSIX sh on this machine'); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oblimint-tools-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const tool = (name: string, body: string) => {
+    const p = path.join(dir, name);
+    fs.writeFileSync(p, `#!/bin/sh\n${body}\n`);
+    fs.chmodSync(p, 0o755);
+  };
+  tool('rsync', 'echo "rsync  version 3.2.7  protocol version 31"; echo "Copyright (C) 1996-2022"');
+  tool('mysqldump', `echo "mysqldump  Ver 10.19 Distrib 10.11.9-MariaDB, for Linux | ${'x'.repeat(400)}"`);
+  tool('named-checkzone', '[ "$1" = -v ] && echo "9.18.28-1~deb12u2-Debian" || exit 3');
+  tool('postconf', '[ "$1 $2" = "-d mail_version" ] && echo "mail_version = 3.7.11" || exit 3');
+  tool('doveconf', 'exit 3');
+  tool('dovecot', '[ "$1" = --version ] && echo "2.3.19.1 (9b53102964)" || exit 3');
+  const r = spawnSync(sh, ['-c', TOOL_VERSIONS_SCRIPT], { env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}` }, input: '' });
+  if (r.status !== 0 && /not found|cut|head|tr/.test(String(r.stderr))) { t.skip('coreutils missing'); return; }
+  assert.equal(r.status, 0, String(r.stderr));
+  const out = String(r.stdout).split('\n').filter(Boolean);
+  assert.deepEqual(out.map((l) => l.split('|')[0]), [...VERSION_TOOLS], 'one line per tool, in order');
+  for (const l of out) assert.equal(l.split('|').length, 3, l);
+  const line = (name: string) => out.find((l) => l.startsWith(`${name}|`))!;
+  assert.match(line('rsync'), /^rsync\|\/.+\|rsync {2}version 3\.2\.7 {2}protocol version 31$/);
+  assert.ok(line('mysqldump').split('|')[2].length <= 200, 'version line bounded');
+  assert.match(line('postconf'), /\|mail_version = 3\.7\.11$/);
+  assert.match(line('doveconf'), /\|2\.3\.19\.1 \(9b53102964\)$/);
+  assert.match(line('named-checkzone'), /\|9\.18\.28-1~deb12u2-Debian$/);
+  const parsed = parseToolVersions(String(r.stdout));
+  assert.equal(parsed.rsync, '3.2.7');
+  assert.equal(parsed.mysqldump, '10.11.9-MariaDB');
+  assert.equal(parsed.postconf, '3.7.11');
+  assert.equal(parsed.doveconf, '2.3.19.1');
+  assert.equal(parsed['named-checkzone'], '9.18.28-1~deb12u2-Debian');
 });

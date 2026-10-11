@@ -3,11 +3,12 @@ import {
   parseCwpPro, parseCwpVersionPhp, parseMysqlUserPrefixes, parseSuphpHandlers, parseVhostsSslJson, parseWebServersConf,
   phpDigitsToVersion, phpVersionOfBinary,
 } from '../parsers/cwpConf';
-import { baseName, classifyIp, parseIpAddrs, parseOsRelease, parseRpmVersions } from '../parsers/system';
+import { baseName, classifyIp, parseIpAddrs, parseOsRelease, parseToolVersions } from '../parsers/system';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phases connect + server (P5-PLAN §7.1, CWP-MAP §1): who we are, OS, CWP
-// version / Pro, web stack, addresses, rpm versions (rsync required for the
+// version / Pro, web stack, addresses, tool versions (P6: `command -v` +
+// version flag of a closed list, never rpm — rsync required for the
 // transfers), PHP default + FPM versions, suPHP handler map, SSL registry.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -20,11 +21,6 @@ export const CWP_PATHS = {
   suphpConf: '/usr/local/etc/suphp.conf',
   templatesDir: '/usr/local/cwpsrv/htdocs/resources/conf/web_servers/vhosts',
 } as const;
-
-export const RPM_PACKAGES = [
-  'cwpsrv', 'cwp-httpd', 'nginx', 'varnish', 'cwp-suphp', 'cwpphp', 'mariadb-server', 'MariaDB-server', 'mysql-server', 'postfix',
-  'dovecot', 'opendkim', 'bind', 'pure-ftpd', 'rsync', 'nodejs', 'git', 'redis', 'memcached', 'python39', 'python3',
-];
 
 /**
  * suPHP / CLI default PHP. /usr/local/bin/php is compiled by CWP (no rpm, no template prints `php -v`): the
@@ -56,9 +52,10 @@ export async function phaseServer(ctx: DiscoveryContext): Promise<void> {
     else if (c === 'private' && !s.privateIps.includes(a.address)) s.privateIps.push(a.address);
   }
 
-  const rpm = await ctx.tryRun('rpm', 'sys.rpmVersions', { packages: RPM_PACKAGES }, { allowNonZeroExit: true });
-  s.packages = rpm ? parseRpmVersions(rpm.stdout) : {};
-  if (rpm && !s.packages.rsync) {
+  // Tool → version (inventory `packages`, same shape as the former rpm map). The template never fails on a missing tool.
+  const tools = await ctx.tryRun('tool versions', 'sys.toolVersions', {}, { allowNonZeroExit: true });
+  s.packages = tools ? parseToolVersions(tools.stdout) : {};
+  if (tools && !s.packages.rsync) {
     ctx.warn('rsyncMissing', 'blocking', { kind: 'server', key: 'source' });
   }
 

@@ -28,7 +28,9 @@ LABEL org.opencontainers.image.title="oblimint-fake-cwp" \
 
 # - mariadb:10.3 = the stream of the source (CWP-MAP §1); nodejs:18 = the source's Node (and the generator);
 # - EPEL (+ PowerTools for its dependencies): opendkim, pure-ftpd;
-# - nginx is installed for its layout / rpm only (never started); Apache (cwp-httpd), Varnish, PHP are files / stubs;
+# - nginx is installed for its layout only (never started); Apache (cwp-httpd), Varnish, PHP are files / stubs;
+# - discovery (P6) reads the versions of rsync, mysqldump, mysql, named-checkzone, postconf, doveconf / dovecot
+#   (`command -v` + version flag, template sys.toolVersions): never rpm, so /var/lib/rpm is compared by MG1 too;
 # - postfix-mysql is optional (only `postconf -n` must answer).
 RUN set -eux; \
     dnf -y install dnf-plugins-core epel-release; \

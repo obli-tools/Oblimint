@@ -692,7 +692,7 @@
       "redirectTo": "Redirige vers",
       "remote": "distant",
       "reseller": "revendeur",
-      "rpm": "Paquets (rpm)",
+      "rpm": "Versions des outils",
       "schedule": "Planification",
       "scheme": "Schéma d’empreinte",
       "search": "Compte, domaine, base, boîte…",
@@ -1221,7 +1221,7 @@
         "ipAddrs": "Adresses de la source (ip -o addr show).",
         "osRelease": "Lit /etc/os-release et /etc/redhat-release.",
         "passwd": "Utilisateurs Linux (getent passwd, sans empreinte).",
-        "rpmVersions": "Versions des paquets installés (rpm -q).",
+        "toolVersions": "Versions de rsync, mysqldump, mysql, named-checkzone, postconf et dovecot (command -v + option de version, jamais rpm).",
         "unitFile": "Une unité systemd, valeurs Environment= masquées sur la source.",
         "whoami": "Utilisateur distant (id -un)."
       }

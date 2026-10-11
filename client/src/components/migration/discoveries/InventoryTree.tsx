@@ -206,7 +206,7 @@ export function InventoryTree({ inv }: { inv: CwpInventory }) {
               {s.extraDbPrefixes.length > 0 && <InfoRow label={t('migration.inventory.dbPrefixes') || 'Extra DB prefixes'} mono>{s.extraDbPrefixes.join(', ')}</InfoRow>}
             </div>
             {Object.keys(s.packages).length > 0 && (
-              <Node id="server:rpm" level={1} title={t('migration.inventory.rpm') || 'Packages (rpm)'} meta={String(Object.keys(s.packages).length)}>
+              <Node id="server:rpm" level={1} title={t('migration.inventory.rpm') || 'Tool versions'} meta={String(Object.keys(s.packages).length)}>
                 <div className="flex flex-wrap gap-1 px-1">{Object.entries(s.packages).map(([n, v]) => <Pill key={n}>{n} {v}</Pill>)}</div>
               </Node>
             )}

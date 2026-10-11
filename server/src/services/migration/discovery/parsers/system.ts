@@ -2,7 +2,7 @@ import ipaddr from 'ipaddr.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parsers of the sys.* / fs.* template outputs (docs/P5-PLAN.md §5.2): getent
-// passwd, os-release, `ip -o addr show`, rpm --qf, `find -printf`, stat -c,
+// passwd, os-release, `ip -o addr show`, tool versions, `find -printf`, stat -c,
 // du -sb, wc -l. Pure functions; unknown / malformed lines are skipped.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -120,14 +120,45 @@ export function isPrivateAddress(host: string): boolean {
   return c === 'private' || c === 'loopback' || c === 'link-local';
 }
 
-// ── rpm ─────────────────────────────────────────────────────────────────────
+// ── tool versions (sys.toolVersions, P6: no rpm) ────────────────────────────
 
-/** `rpm -q --qf '%{NAME}|%{VERSION}-%{RELEASE}\n'`; "package x is not installed" lines are skipped. */
-export function parseRpmVersions(text: string): Record<string, string> {
+/** Version printed by a tool when it cannot be parsed (the tool is there: rsyncMissing must not fire). */
+export const UNKNOWN_TOOL_VERSION = 'unknown';
+
+/**
+ * Version out of the first line a tool prints:
+ *   rsync  version 3.1.3  protocol version 31                       → 3.1.3
+ *   mysqldump  Ver 10.19 Distrib 10.3.39-MariaDB, for Linux (x86_64) → 10.3.39-MariaDB
+ *   mysql from 11.4.2-MariaDB, client 15.2 for linux-systemd (x86_64) → 11.4.2-MariaDB
+ *   mysql  Ver 8.0.36 for Linux on x86_64 (MySQL Community Server)   → 8.0.36
+ *   9.11.36-RedHat-9.11.36-11.el8_9 (named-checkzone -v)             → 9.11.36-RedHat-9.11.36-11.el8_9
+ *   mail_version = 3.5.8 (postconf -d mail_version)                  → 3.5.8
+ *   2.3.16 (7e2e900c1a) (dovecot --version)                          → 2.3.16
+ */
+export function toolVersionOf(line: string): string | null {
+  const l = line.trim();
+  if (!l) return null;
+  const tok = '(\\d+(?:\\.\\d+)+[A-Za-z0-9._+~-]*)';
+  for (const re of [
+    new RegExp(`\\bDistrib\\s+${tok}`), new RegExp(`\\bfrom\\s+${tok}`), new RegExp(`\\bversion\\s+${tok}`, 'i'),
+    new RegExp(`^mail_version\\s*=\\s*${tok}`), new RegExp(`\\bVer\\s+${tok}`), new RegExp(`(?:^|\\s)v?${tok}`),
+  ]) {
+    const m = re.exec(l);
+    if (m) return m[1].replace(/[.,;:]+$/, '').slice(0, 64);
+  }
+  return null;
+}
+
+/**
+ * `sys.toolVersions` output (`<tool>|<path>|<version line>` per line, `<tool>|-|` when absent) → tool → version.
+ * Absent tools are left out; a present tool whose version cannot be read maps to UNKNOWN_TOOL_VERSION.
+ */
+export function parseToolVersions(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const l of lines(text)) {
-    const m = /^([A-Za-z0-9._+-]{1,64})\|(\S+)$/.exec(l.trim());
-    if (m) out[m[1]] = m[2];
+    const m = /^([a-z][a-z0-9-]{0,31})\|([^|]*)\|(.*)$/.exec(l.replace(/\r$/, ''));
+    if (!m || !m[2].startsWith('/')) continue;
+    out[m[1]] = toolVersionOf(m[3]) ?? UNKNOWN_TOOL_VERSION;
   }
   return out;
 }

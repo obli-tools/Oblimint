@@ -31,9 +31,6 @@
 #                                   named's runtime state (statistics, managed keys) — the zone files and
 #                                   the .jnl of the dynamic zone ARE compared;
 #   /var/lib/fake-cwp               entrypoint markers;
-#   /var/lib/rpm/__db.*             Berkeley DB environment / lock region files of rpm 4.14: a root
-#                                   `rpm -q` (template sys.rpmVersions, run by discovery) creates or
-#                                   updates them — not package data (Packages etc. stay compared);
 #   /etc/hosts /etc/hostname /etc/resolv.conf
 #                                   bind-mounted and rewritten by Docker.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -83,7 +80,7 @@ echo "## newer than the BEFORE marker"
 if [ -e "$marker" ]; then
 	find / -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /tmp -o -path /var/tmp \
 		-o -path /var/log -o -path /var/lib/mysql -o -path /var/named/data -o -path /var/named/dynamic \
-		-o -path /var/lib/fake-cwp -o -path '/var/lib/rpm/__db.*' -o -path /etc/hosts -o -path /etc/hostname -o -path /etc/resolv.conf \) -prune \
+		-o -path /var/lib/fake-cwp -o -path /etc/hosts -o -path /etc/hostname -o -path /etc/resolv.conf \) -prune \
 		-o -newer "$marker" -print | sort
 else
 	echo "(no marker: run 'snapshot before' first)"

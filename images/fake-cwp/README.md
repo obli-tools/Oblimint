@@ -181,7 +181,9 @@ Avant le plan, `e2e` autorise les cibles de proxy externes pour le tenant Defaul
 - Pas de systemd en PID 1 : les unités de `/etc/systemd/system` ne sont que des fichiers ; Node / Python ne tournent pas.
 - Postfix, Dovecot, OpenDKIM, Pure-FTPd, nginx, Apache (cwp-httpd), Varnish, cron, cwpsrv, Roundcube **ne tournent
   pas** : seuls leurs fichiers et CLIs (`postconf -n`, `doveconf -n`) existent. Apache et Varnish ne sont même pas
-  installés (fichiers seulement) ; nginx l'est pour son arborescence et `rpm -q`.
+  installés (fichiers seulement) ; nginx l'est pour son arborescence. La découverte (P6) ne lance jamais `rpm` : elle lit
+  la version de `rsync`, `mysqldump`, `mysql`, `named-checkzone`, `postconf`, `doveconf` / `dovecot` (modèle
+  `sys.toolVersions`, `command -v` puis l'option de version), tous installés ici.
 - Les binaires PHP (`/usr/local/bin/php`, `/opt/alt/php*/usr/bin/php*`, `php-fpm`) sont des **scripts factices**
   (`-v` répond la version) ; aucun RPM CWP (`cwpsrv`, `cwp-httpd`, `cwp-suphp`) : la version CWP vient de `version.php`.
 - Seuls `sshd`, MariaDB et `named` tournent. Les tables MEMORY sont vides après le premier démarrage (normal).
@@ -208,7 +210,7 @@ Avant le plan, `e2e` autorise les cibles de proxy externes pour le tenant Defaul
 7. `chpasswd -c SHA512`, `htpasswd -nbBC 10` (httpd-tools), `openssl ca -startdate/-enddate`, `req -addext` (OpenSSL 1.1.1).
 8. `verify-readonly.sh` : deux instantanés consécutifs **sans** scénario donnent déjà une différence vide, y compris
    quand on exécute entre les deux les commandes de lecture que lance le panel en root (au minimum
-   `docker exec oblimint-fake-cwp rpm -q nginx`, `postconf -n`, `doveconf -n`, `mysqldump` d'une base) ; sinon
+   `postconf -n`, `doveconf -n`, `mysqldump` d'une base et la découverte complète, qui ne lance plus `rpm`) ; sinon
    compléter la liste d'exclusions en la justifiant.
 
 ## Contrôles locaux (Windows compris)

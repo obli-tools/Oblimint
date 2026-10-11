@@ -692,7 +692,7 @@
       "redirectTo": "Redirects to",
       "remote": "remote",
       "reseller": "reseller",
-      "rpm": "Packages (rpm)",
+      "rpm": "Tool versions",
       "schedule": "Schedule",
       "scheme": "Hash scheme",
       "search": "Account, domain, database, mailbox…",
@@ -1221,7 +1221,7 @@
         "ipAddrs": "Addresses of the source (ip -o addr show).",
         "osRelease": "Reads /etc/os-release and /etc/redhat-release.",
         "passwd": "Linux users (getent passwd, no hash).",
-        "rpmVersions": "Versions of installed packages (rpm -q).",
+        "toolVersions": "Versions of rsync, mysqldump, mysql, named-checkzone, postconf and dovecot (command -v + version flag, never rpm).",
         "unitFile": "A systemd unit with its Environment= values redacted on the source.",
         "whoami": "Remote user (id -un)."
       }

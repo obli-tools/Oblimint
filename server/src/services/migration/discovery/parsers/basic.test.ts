@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { cellInt, parseMysqlBatch, parseMysqlRows } from './mysqlBatch';
 import {
   classifyIp, isInteractiveShell, isPrivateAddress, parseDu, parseFind, parseIpAddrs, parseLineCount, parseOsRelease, parsePasswd,
-  parseRpmVersions, parseStat,
+  parseStat, parseToolVersions, toolVersionOf, UNKNOWN_TOOL_VERSION,
 } from './system';
 import {
   parseAddonsWp, parseCwpPro, parseCwpVersionPhp, parseDomainWebConf, parseMysqlUserPrefixes, parseSuphpHandlers, parseVhostsSslJson,
@@ -43,7 +43,7 @@ test('getent passwd + shells', () => {
   assert.equal(isInteractiveShell(''), false);
 });
 
-test('os-release / ip addr / rpm', () => {
+test('os-release / ip addr', () => {
   assert.equal(parseOsRelease('NAME="Rocky Linux"\nPRETTY_NAME="Rocky Linux 8.10 (Green Obsidian)"\nRocky Linux release 8.10\n'), 'Rocky Linux 8.10 (Green Obsidian)');
   assert.equal(parseOsRelease('CentOS Linux release 7.9.2009 (Core)\n'), 'CentOS Linux release 7.9.2009 (Core)');
   const ips = parseIpAddrs([
@@ -67,7 +67,30 @@ test('os-release / ip addr / rpm', () => {
   assert.equal(isPrivateAddress('localhost'), true);
   assert.equal(isPrivateAddress('192.168.1.30'), true);
   assert.equal(isPrivateAddress('backend.example'), false);
-  assert.deepEqual(parseRpmVersions('rsync|3.1.3-19.el8\npackage foo is not installed\nnginx|1.14.1-1\n'), { rsync: '3.1.3-19.el8', nginx: '1.14.1-1' });
+});
+
+test('tool versions (sys.toolVersions, P6: no rpm): version of each first line, absent tools left out', () => {
+  const out = [
+    'rsync|/usr/bin/rsync|rsync  version 3.1.3  protocol version 31',
+    'mysqldump|/usr/bin/mysqldump|mysqldump  Ver 10.19 Distrib 10.3.39-MariaDB, for Linux (x86_64)',
+    'mysql|/usr/bin/mysql|mysql from 11.4.2-MariaDB, client 15.2 for linux-systemd (x86_64) using  EditLine wrapper',
+    'named-checkzone|/usr/sbin/named-checkzone|9.11.36-RedHat-9.11.36-11.el8_9',
+    'postconf|/usr/sbin/postconf|mail_version = 3.5.8',
+    'doveconf|-|',
+    'garbage line',
+    'nginx|relative/path|nginx version: nginx/1.14.1',
+    '',
+  ].join('\r\n');
+  assert.deepEqual(parseToolVersions(out), {
+    rsync: '3.1.3', mysqldump: '10.3.39-MariaDB', mysql: '11.4.2-MariaDB', 'named-checkzone': '9.11.36-RedHat-9.11.36-11.el8_9', postconf: '3.5.8',
+  });
+  assert.equal(parseToolVersions('rsync|/usr/bin/rsync|\n').rsync, UNKNOWN_TOOL_VERSION, 'present, version unreadable: still present (no rsyncMissing)');
+  assert.deepEqual(parseToolVersions('rsync|-|\n'), {});
+  assert.equal(toolVersionOf('mysql  Ver 8.0.36 for Linux on x86_64 (MySQL Community Server - GPL)'), '8.0.36');
+  assert.equal(toolVersionOf('2.3.16 (7e2e900c1a)'), '2.3.16');
+  assert.equal(toolVersionOf('rsync  version v3.2.7  protocol version 31'), '3.2.7');
+  assert.equal(toolVersionOf('no digits here'), null);
+  assert.ok((toolVersionOf(`9.${'1'.repeat(200)}`) ?? '').length <= 64);
 });
 
 test('find -printf / stat / du / wc outputs', () => {

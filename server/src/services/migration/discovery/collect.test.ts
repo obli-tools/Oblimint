@@ -17,7 +17,7 @@ import { SRC_IP } from './fixtures/vhosts';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const READ_TEMPLATES = new Set([
-  'sys.osRelease', 'sys.hostname', 'sys.ipAddrs', 'sys.whoami', 'sys.passwd', 'sys.rpmVersions', 'sys.unitFile', 'fs.cat', 'fs.catMany',
+  'sys.osRelease', 'sys.hostname', 'sys.ipAddrs', 'sys.whoami', 'sys.passwd', 'sys.toolVersions', 'sys.unitFile', 'fs.cat', 'fs.catMany',
   'fs.ls', 'fs.stat', 'fs.find', 'fs.du', 'fs.lineCount', 'fs.grepHtaccess', 'mysql.query', 'mysql.userMeta', 'mysql.dumpSchema',
   'mail.mailboxMeta', 'mail.postconf', 'mail.doveconf', 'dns.namedConf', 'dns.zoneDump', 'dns.axfr', 'ftp.listUsers',
 ]);
@@ -77,7 +77,11 @@ test('collectInventory: full fake CWP → expected inventory', { timeout: 60_000
   assert.equal(inv.server.mariadbVersion, '10.3.39-MariaDB');
   assert.equal(inv.server.phpDefault, '8.3');
   assert.deepEqual(inv.server.phpFpmVersions, ['5.6', '7.3', '7.4', '8.1', '8.3']);
-  assert.equal(inv.server.packages.rsync, '3.1.3-19.el8');
+  // P6: tool → version (sys.toolVersions), never an rpm query.
+  assert.deepEqual(inv.server.packages, {
+    rsync: '3.1.3', mysqldump: '10.3.39-MariaDB', mysql: '10.3.39-MariaDB', 'named-checkzone': '9.11.36-RedHat-9.11.36-11.el8_9',
+    postconf: '3.5.8', doveconf: '2.3.16',
+  });
   assert.deepEqual(inv.server.nameservers, ['ns3.srvdomain.test', 'ns4.srvdomain.test']);
   assert.deepEqual(inv.server.extraDbPrefixes, ['acct1x']);
   assert.ok(!inv.warnings.some((w) => w.code === 'rsyncMissing'));
@@ -345,7 +349,7 @@ test('MG10 / resilience: unreadable files and failing reads become warnings, roo
   const sc2 = buildScenario();
   const h = sc2.options.handlers ?? {};
   h['ftp.listUsers'] = () => { throw new Error('boom'); };
-  h['sys.rpmVersions'] = () => 'nginx|1.14.1-1\n';
+  h['sys.toolVersions'] = () => 'rsync|-|\nmysql|/usr/bin/mysql|mysql  Ver 8.0.36 for Linux on x86_64\n';
   const inv2 = await collectInventory(createFakeSession(sc2.options), { now: FIXTURE_NOW });
   assert.equal(inv2.ftpUsers.length, 0);
   assert.ok(inv2.warnings.some((w) => w.code === 'readFailed' && w.params?.what === 'ftp users'));

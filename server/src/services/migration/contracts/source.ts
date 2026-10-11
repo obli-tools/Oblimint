@@ -35,8 +35,12 @@ export interface CommandTemplateArgs {
   'sys.whoami': Record<string, never>;
   /** getent passwd (no hash: passwd has none) */
   'sys.passwd': Record<string, never>;
-  /** rpm -q --qf '%{NAME}|%{VERSION}-%{RELEASE}\n' <names>  (names: [A-Za-z0-9._+-]{1,64}, ≤ 64) */
-  'sys.rpmVersions': { packages: string[] };
+  /**
+   * Versions of a CLOSED list of tools (rsync, mysqldump, mysql, named-checkzone, postconf, doveconf): for each,
+   * `command -v` then its own version flag, first line only, 200 characters at most. Never rpm / dnf / yum, never
+   * /var/lib/rpm (P6: an rpm query is not a pure read, MG1). One line per tool: `<tool>|<path or ->|<version line>`.
+   */
+  'sys.toolVersions': Record<string, never>;
   /** One systemd unit file with Environment= values redacted ON THE SOURCE (path under /etc/systemd/system, *.service). */
   'sys.unitFile': { path: string };
   // ── files (read roots + deny list of §5.3) ──
