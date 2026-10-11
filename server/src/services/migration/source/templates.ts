@@ -479,7 +479,8 @@ const SPECS: TemplateSpec[] = [
       let argv = rsync;
       if (o.runAs !== undefined && o.runAs !== null) {
         if (typeof o.runAs !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/.test(o.runAs) || o.runAs === 'root') throw new ArgError('runAs: invalid');
-        if (!dir.startsWith(`/home/${o.runAs}/`)) throw new ArgError('runAs: path outside the user home');
+        // The home itself: selective site copy (rsyncArgv.ts allows it only with includes + the '/*' catch-all).
+        if (!dir.startsWith(`/home/${o.runAs}/`) && dir !== `/home/${o.runAs}`) throw new ArgError('runAs: path outside the user home');
         argv = ['runuser', '-u', shQuote(o.runAs), '--', ...rsync];
       } else if (dir.startsWith('/home/')) {
         throw new ArgError('runAs: required for a /home pull');

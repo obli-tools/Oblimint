@@ -180,6 +180,10 @@ test('internal templates render only for the executor itself', () => {
   // /home without a user, another user's home, root: refused.
   assert.equal(renderCommand('rsync.sender', { options: ['-ltre.'], path: '/home/acct1/x/' }, 'transfer', false, true).ok, false);
   assert.equal(renderCommand('rsync.sender', { options: ['-ltre.'], path: '/home/acct2/x/', runAs: 'acct1' }, 'transfer', false, true).ok, false);
+  // The home itself (selective site copy) as its own user only.
+  assert.equal(renderCommand('rsync.sender', { options: ['-ltre.'], path: '/home/acct1/', runAs: 'acct1' }, 'transfer', false, true).ok, true);
+  assert.equal(renderCommand('rsync.sender', { options: ['-ltre.'], path: '/home/acct2/', runAs: 'acct1' }, 'transfer', false, true).ok, false);
+  assert.equal(renderCommand('rsync.sender', { options: ['-ltre.'], path: '/home/', runAs: 'acct1' }, 'transfer', false, true).ok, false);
   assert.equal(renderCommand('rsync.sender', { options: ['-ltre.'], path: '/home/root/x/', runAs: 'root' }, 'transfer', false, true).ok, false);
   assert.equal(renderCommand('rsync.sender', { options: ['-ltre.'], path: '/home/a/x/', runAs: "a' ; id" }, 'transfer', false, true).ok, false);
   for (const id of ['fs.realpath', 'rsync.sender']) {
