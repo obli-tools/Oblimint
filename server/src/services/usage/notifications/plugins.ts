@@ -107,6 +107,9 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'edge.unitQuarantined': 'Configuration de proxy refusée',
   'edge.rollback': 'Configuration du proxy restaurée',
   'workflow.failed': 'Workflow en échec',
+  'platform.updateAvailable': 'Mise à jour de la plateforme disponible',
+  'platform.updated': 'Plateforme mise à jour',
+  'platform.updateFailed': 'Échec de la mise à jour de la plateforme',
   test: 'Test',
 };
 

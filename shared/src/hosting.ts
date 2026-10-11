@@ -1079,6 +1079,8 @@ export const HostingSocketEvents = {
   // ── P5 (payloads: ids only, room role:admin — migration.ts) ──
   /** MigrationUpdatedPayload (sources, discoveries, plans, runs, steps, cutover) */
   MIGRATION_UPDATED: 'MIGRATION_UPDATED',
+  /** Platform updates of a node (images, checks, update runs): PlatformUpdatesEvent — role:admin room only. */
+  PLATFORM_UPDATES: 'PLATFORM_UPDATES',
 } as const;
 export type HostingSocketEventName = typeof HostingSocketEvents[keyof typeof HostingSocketEvents];
 

@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Server, RefreshCw } from 'lucide-react';
+import { Server, RefreshCw, PackageCheck, Boxes } from 'lucide-react';
 import toast from 'react-hot-toast';
-import type { PanelNode } from '@oblimint/shared';
+import type { PanelNode, PlatformUpdatesSummary } from '@oblimint/shared';
+import { HostingSocketEvents } from '@oblimint/shared';
+import { platformUpdatesApi } from '@/api/platformUpdates.api';
+import { SegmentedTabs } from '@/components/common/SegmentedTabs';
+import { PlatformUpdatesPanel } from '@/components/hosting/PlatformUpdatesPanel';
+import { Pill, useHostingEvents } from '@/components/hosting/hostingUi';
+import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { nodesApi } from '@/api/dashboard.api';
 import { PageContainer } from '@/components/common/PageContainer';
 import { TableScroll } from '@/components/common/TableScroll';
@@ -17,6 +24,17 @@ export function NodesPage() {
   const { t, i18n } = useTranslation();
   const [nodes, setNodes] = useState<PanelNode[]>([]);
   const [loading, setLoading] = useState(true);
+  // Platform updates: platform administrator on the master tenant only.
+  const masterAdmin = useIsMasterTenant();
+  const [params, setParams] = useSearchParams();
+  const tab = masterAdmin && params.get('tab') === 'updates' ? 'updates' : 'infra';
+  const [summary, setSummary] = useState<PlatformUpdatesSummary | null>(null);
+  const loadSummary = () => {
+    if (!masterAdmin) return;
+    platformUpdatesApi.summary().then(setSummary).catch(() => setSummary(null));
+  };
+  useEffect(loadSummary, [masterAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  useHostingEvents([HostingSocketEvents.PLATFORM_UPDATES], loadSummary, undefined, 1000);
 
   const load = async () => {
     setLoading(true);
@@ -75,6 +93,7 @@ export function NodesPage() {
                 <th className="px-4 py-3 font-medium">{t('nodes.col.name') || 'Name'}</th>
                 <th className="px-4 py-3 font-medium">{t('nodes.col.engine') || 'Engine'}</th>
                 <th className="px-4 py-3 font-medium">{t('nodes.col.created') || 'Created'}</th>
+                {masterAdmin && <th className="px-4 py-3 font-medium">{t('platformUpdates.col.updates') || 'Updates'}</th>}
               </tr>
             </thead>
             <tbody>
@@ -95,6 +114,19 @@ export function NodesPage() {
                   <td className="px-4 py-3 font-mono text-xs text-text-muted whitespace-nowrap">
                     {new Date(n.createdAt).toLocaleString(i18n.language)}
                   </td>
+                  {masterAdmin && (
+                    <td className="px-4 py-3">
+                      {summary && summary.nodeId === n.id ? (
+                        <button type="button" onClick={() => setParams({ tab: 'updates' })} className="rounded-full">
+                          {summary.updating ? <Pill tone="blue">{t('platformUpdates.status.updating') || 'Updating'}</Pill>
+                            : summary.failed > 0 ? <Pill tone="red">{t('platformUpdates.status.failed') || 'Failed'}</Pill>
+                            : summary.available > 0 ? <Pill tone="amber">{t('platformUpdates.availableCount', { count: summary.available, defaultValue: '{{count}} to apply' })}</Pill>
+                            : summary.checkedAt ? <Pill tone="green">{t('platformUpdates.status.upToDate') || 'Up to date'}</Pill>
+                            : <Pill>{t('platformUpdates.status.unchecked') || 'Not checked'}</Pill>}
+                        </button>
+                      ) : <span className="text-text-muted">—</span>}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -102,10 +134,28 @@ export function NodesPage() {
         </TableScroll>
       )}
 
-      <h2 className="mt-2 font-display text-lg font-semibold tracking-wide text-text-primary">
-        {t('infra.sectionTitle') || 'Platform services'}
-      </h2>
-      <InfraCards />
+      {masterAdmin && (
+        <SegmentedTabs
+          className="mt-2 self-start"
+          value={tab}
+          onChange={(id) => setParams(id === 'updates' ? { tab: 'updates' } : {})}
+          tabs={[
+            { id: 'infra', label: t('infra.sectionTitle') || 'Platform services', icon: <Boxes size={14} /> },
+            {
+              id: 'updates', label: t('platformUpdates.tab') || 'Updates', icon: <PackageCheck size={14} />,
+              badge: summary && summary.available + summary.failed > 0 ? summary.available + summary.failed : undefined,
+            },
+          ]}
+        />
+      )}
+      {tab === 'updates' ? <PlatformUpdatesPanel /> : (
+        <>
+          <h2 className="mt-2 font-display text-lg font-semibold tracking-wide text-text-primary">
+            {t('infra.sectionTitle') || 'Platform services'}
+          </h2>
+          <InfraCards />
+        </>
+      )}
     </PageContainer>
   );
 }

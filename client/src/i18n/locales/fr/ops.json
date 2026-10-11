@@ -430,7 +430,10 @@
       "appDeployFailed": "Échec de déploiement d’application",
       "edgeUnitQuarantined": "Configuration de proxy refusée",
       "edgeRollback": "Configuration du proxy restaurée",
-      "workflowFailed": "Workflow en échec"
+      "workflowFailed": "Workflow en échec",
+      "platformUpdateAvailable": "Mise à jour de la plateforme disponible",
+      "platformUpdated": "Plateforme mise à jour",
+      "platformUpdateFailed": "Échec de la mise à jour de la plateforme"
     },
     "form": {
       "botToken": "Jeton du bot",

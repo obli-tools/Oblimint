@@ -26,6 +26,7 @@ import releasesRoutes from './releases.routes';          // releases
 import runtimeRoutes from './runtime.routes';            // orchestration
 import fileServerRoutes from './filesrv.routes';         // orchestration
 import infraRoutes from './infra.routes';                // orchestration
+import platformUpdatesRoutes from './platformUpdates.routes';  // platform updates (Nodes > Updates)
 import edgeRoutes from './edge.routes';                  // edge
 import certificatesRoutes from './certificates.routes';  // edge
 // P2 — hosting complete (docs/P2-PLAN.md §6). One router file per owning module.
@@ -82,6 +83,7 @@ router.use('/auth', authRoutes);
 router.use('/auth', obligateCallbackRoutes);       // sso-config, connected-apps, app-info, sso-user-sync…
 router.use('/ip-probe', ipProbeRoutes);            // P2 hostd-firewall: public IP probe (v4-only / v6-only hosts)
 router.use('/system/infra', requireAuth, requireRole('admin'), infraRoutes); // P1 orchestration
+router.use('/system/updates', requireAuth, requirePlatformAdminOnMaster, platformUpdatesRoutes); // platform updates
 router.use('/system/edge', requireAuth, requireRole('admin'), edgeRoutes);   // P1 edge
 router.use('/system/edge', requireAuth, requireRole('admin'), systemEdgeUnitsRoutes); // P4b edge-robustness (units, applies, rollback)
 router.use('/system/network', requireAuth, requireRole('admin'), systemNetworkRoutes); // P4b segmentation

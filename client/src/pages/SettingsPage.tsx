@@ -2,7 +2,10 @@ import { useState, useEffect, type KeyboardEvent } from 'react';
 import { Server, Eye, EyeOff, ArrowLeftRight, Info, Cpu, HardDrive, Database, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
-import type { ObligateConfig } from '@oblimint/shared';
+import { Link } from 'react-router-dom';
+import type { ObligateConfig, PlatformUpdatesSummary } from '@oblimint/shared';
+import { platformUpdatesApi } from '@/api/platformUpdates.api';
+import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { useAuthStore } from '@/store/authStore';
 import { settingsApi } from '@/api/settings.api';
 import { isStepUpHandled } from '@/api/client';
@@ -62,6 +65,13 @@ export function SettingsPage() {
   // ── System info (About section) ──
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [systemInfoLoading, setSystemInfoLoading] = useState(false);
+  // Platform updates indicator (platform admin on the master tenant).
+  const masterAdmin = useIsMasterTenant();
+  const [updates, setUpdates] = useState<PlatformUpdatesSummary | null>(null);
+  useEffect(() => {
+    if (!masterAdmin) { setUpdates(null); return; }
+    platformUpdatesApi.summary().then(setUpdates).catch(() => setUpdates(null));
+  }, [masterAdmin]);
 
   // ── Obligate SSO Integration ──
   const [obligateCfg, setObligateCfg] = useState<ObligateConfig | null>(null);
@@ -195,6 +205,18 @@ export function SettingsPage() {
                 <AboutRow label={t('about.server') || 'Server'} value={`v${systemInfo.appVersion}`} />
                 <AboutRow label={t('about.client') || 'Client'} value={`v${__APP_VERSION__}`} />
                 <AboutRow label={t('about.node') || 'Node.js'} value={systemInfo.nodeVersion} />
+                {updates && (
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-xs text-text-muted shrink-0">{t('platformUpdates.aboutLabel') || 'Platform updates'}</span>
+                    <Link to="/manage/nodes?tab=updates" className={cn('font-mono text-xs hover:underline',
+                      updates.updating ? 'text-sky-400' : updates.failed > 0 ? 'text-status-down' : updates.available > 0 ? 'text-amber-400' : 'text-text-primary')}>
+                      {updates.updating ? (t('platformUpdates.status.updating') || 'Updating')
+                        : updates.failed > 0 ? (t('platformUpdates.status.failed') || 'Failed')
+                        : updates.available > 0 ? t('platformUpdates.availableCount', { count: updates.available, defaultValue: '{{count}} to apply' })
+                        : updates.checkedAt ? (t('platformUpdates.status.upToDate') || 'Up to date') : (t('platformUpdates.status.unchecked') || 'Not checked')}
+                    </Link>
+                  </div>
+                )}
               </div>
               <div className="space-y-2">
                 <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-muted mb-3">

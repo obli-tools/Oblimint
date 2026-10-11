@@ -17,3 +17,5 @@ export * from './security';
 export * from './monitoring';
 // P5 (docs/P5-PLAN.md)
 export * from './migration';
+// Platform updates (Nodes > Updates)
+export * from './platformUpdates';

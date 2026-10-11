@@ -164,7 +164,11 @@ export type NotificationEvent =
   | 'app.deployFailed'       // a deployment failed
   | 'edge.unitQuarantined'   // a proxy / site configuration was refused: last good version served
   | 'edge.rollback'          // the canary failed after a reload: whole edge configuration rolled back
-  | 'workflow.failed';       // a workflow run failed
+  | 'workflow.failed'        // a workflow run failed
+  // Platform updates (Nodes > Updates; master tenant channels)
+  | 'platform.updateAvailable' // a platform image has a new digest (once per digest)
+  | 'platform.updated'       // a platform update run succeeded
+  | 'platform.updateFailed'; // a platform update run failed / was rolled back
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'quota.warning', 'quota.exceeded', 'quota.action', 'certificate.failed', 'dns.syncFailed', 'db.instanceFailed', 'cron.failed', 'security.banned',
@@ -172,6 +176,7 @@ export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'supervision.digest', 'mail.outboundSuspended', 'mail.serviceFailed', 'mail.quotaWarning',
   'certificate.expiringSoon', 'uptime.down', 'uptime.up', 'app.updateAvailable', 'app.updated', 'app.updateFailed', 'app.deployFailed',
   'edge.unitQuarantined', 'edge.rollback', 'workflow.failed',
+  'platform.updateAvailable', 'platform.updated', 'platform.updateFailed',
 ];
 
 /**

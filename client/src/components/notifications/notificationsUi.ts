@@ -43,6 +43,9 @@ export function eventLabel(t: TFunction, e: NotificationEvent): string {
     'edge.unitQuarantined': 'Proxy configuration refused',
     'edge.rollback': 'Proxy configuration rolled back',
     'workflow.failed': 'Workflow failed',
+    'platform.updateAvailable': 'Platform update available',
+    'platform.updated': 'Platform updated',
+    'platform.updateFailed': 'Platform update failed',
   };
   return t(`notifications.event.${eventKey(e)}`) || fallback[e];
 }
