@@ -16,6 +16,7 @@ import {
   mergeItemList, migratedZoneOf, modeOf, rollbackGuidance, stateAfterRun, type CutoverFacts,
 } from './checklist';
 import { cutoverDeps } from './deps';
+import { migrationRequest } from '../jobContext';
 import {
   accountPlanOf, cutoverRow, cutoverRowsOfPlan, domainFacts, initialDone, lastFinalSyncAt, rowItems, sourceDnsOf, switchedDomainsOfAccount,
   toCutoverDomain, zoneStatus, type CutoverRow,
@@ -389,7 +390,12 @@ export const migrationCutoverService = {
       throw new AppError(409, 'The target is not ready: the initial migration must be done and the site published', 'cutoverNotReady');
     }
     const deps = cutoverDeps();
-    const actor = await deps.actor(req);
+    // The migration routes select no tenant (platform admin on the master): the take-over acts IN the tenant of the
+    // target domain, with the rights of this platform admin — like the runs (jobContext.migrationRequest).
+    const target = await db('domains').where({ id: fresh.target_domain_id }).first('tenant_id') as { tenant_id: number } | undefined;
+    if (!target) throw new AppError(409, 'The target is not ready: the initial migration must be done and the site published', 'cutoverNotReady');
+    const opReq = migrationRequest(Number(req.session?.userId), Number(target.tenant_id));
+    const actor = await deps.actor(opReq);
     const now = new Date();
     // A run of the account still queued / running / paused (final sync in progress…) decided "not switched"
     // when its steps started: a maildir mirror (--delete, UID files) or a database re-import after the switch
@@ -417,7 +423,7 @@ export const migrationCutoverService = {
     const followUps: Record<string, unknown> = {};
     try {
       const facts = await domainFacts(domainId, 'site');
-      if (facts.verificationStatus !== 'verified') await deps.ownershipCheck(req, actor, domainId);
+      if (facts.verificationStatus !== 'verified') await deps.ownershipCheck(opReq, actor, domainId);
       const after = await domainFacts(domainId, 'site');
       followUps.verified = after.verificationStatus === 'verified';
       if (after.verificationStatus === 'verified') {
@@ -425,7 +431,7 @@ export const migrationCutoverService = {
           // A host goes back to SSL auto only once EVERY name bound to it is
           // switched (Let's Encrypt would fail on the names still on CWP); the
           // switch of its last name flips it.
-          const proxy = await deps.proxySslAuto(req, actor, domainId);
+          const proxy = await deps.proxySslAuto(opReq, actor, domainId);
           followUps.proxyHosts = proxy.changed.length;
           if (proxy.deferred.length) followUps.proxyHostsDeferred = proxy.deferred.length;
         } else if (servedBy === 'site') {

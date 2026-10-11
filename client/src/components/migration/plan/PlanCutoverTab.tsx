@@ -76,7 +76,11 @@ function ItemRow({ item, disabled, onToggle, onForce, extra }: {
   );
 }
 
-function CutoverCard({ c, onChanged }: { c: MigrationCutoverDomain; onChanged: (c: MigrationCutoverDomain) => void }) {
+function CutoverCard({ c, onChanged, picked, onPick }: {
+  c: MigrationCutoverDomain; onChanged: (c: MigrationCutoverDomain) => void;
+  /** Bulk selection (switch several domains at once): absent once switched. */
+  picked?: boolean; onPick?: (v: boolean) => void;
+}) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const confirm = useConfirm();
@@ -171,6 +175,7 @@ function CutoverCard({ c, onChanged }: { c: MigrationCutoverDomain; onChanged: (
   return (
     <section className={cn('rounded-xl bg-bg-secondary p-4', switched && 'ring-1 ring-green-500/30')}>
       <div className="flex flex-wrap items-center gap-2">
+        {onPick && <input type="checkbox" className={checkboxCls} checked={!!picked} onChange={(e) => onPick(e.target.checked)} aria-label={c.fqdn} />}
         <Globe size={15} className="text-accent" />
         <h3 className="font-mono text-base text-text-primary">{c.fqdn}</h3>
         <CutoverStatePill state={c.state} />
@@ -297,6 +302,44 @@ export function PlanCutoverTab({ planId, selected = null }: { planId: number; se
   const shown = everyAccount || !keep ? items : items.filter((c) => keep.has(c.cwpUsername));
   const hidden = items.length - shown.length;
 
+  // Bulk switch: the domains picked (not switched yet) are switched one after the other after ONE confirmation.
+  const confirm = useConfirm();
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const pickable = shown.filter((c) => c.state !== 'switched');
+  const pickedRows = pickable.filter((c) => picked.has(c.id));
+  const pick = (id: number, v: boolean) => setPicked((cur) => { const n = new Set(cur); if (v) n.add(id); else n.delete(id); return n; });
+  const bulkSwitch = async () => {
+    const word = t('migration.cutover.bulkWord') || 'SWITCH';
+    if (!(await confirm({
+      title: t('migration.cutover.bulkTitle', { count: pickedRows.length, defaultValue: 'Switch {{count}} domains' }),
+      message: (
+        <div className="space-y-2">
+          <p>{t('migration.cutover.bulkMessage', { word, defaultValue: 'Each domain is switched to Oblimint in turn: its checklist is marked switched, Let\x27s Encrypt takes over the certificate, its maildirs are never mirrored again. Type {{word}} to confirm.' })}</p>
+          <ul className="max-h-48 overflow-y-auto font-mono text-xs text-text-secondary">{pickedRows.map((c) => <li key={c.id}>{c.fqdn}</li>)}</ul>
+        </div>
+      ),
+      confirmLabel: t('migration.cutover.switch') || 'Switch',
+      danger: true,
+      requireText: word,
+    }))) return;
+    setBulkBusy(true);
+    let ok = 0;
+    const failed: string[] = [];
+    for (const c of pickedRows) {
+      try {
+        upsert(await migrationApi.switchCutover(c.id, { confirm: c.fqdn }));
+        ok++;
+      } catch (err) {
+        failed.push(c.fqdn);
+        toastMigrationError(t, err, `${c.fqdn} — ${t('migration.cutover.actionFailed') || 'The action failed'}`);
+      }
+    }
+    setBulkBusy(false);
+    setPicked(new Set(failed.length ? pickedRows.filter((c) => failed.includes(c.fqdn)).map((c) => c.id) : []));
+    if (ok) toast.success(t('migration.cutover.bulkDone', { count: ok, defaultValue: '{{count}} domains switched' }));
+  };
+
   const upsert = (c: MigrationCutoverDomain) => setItems((cur) => cur.map((x) => (x.id === c.id ? c : x)));
 
   return (
@@ -315,9 +358,21 @@ export function PlanCutoverTab({ planId, selected = null }: { planId: number; se
           {t('migration.warnings.includeUnselected', { count: everyAccount ? items.length - (keep ? items.filter((c) => keep.has(c.cwpUsername)).length : 0) : hidden, defaultValue: 'Include the unselected accounts ({{count}})' })}
         </label>
       )}
+      {pickable.length > 1 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-bg-secondary px-4 py-2.5 text-xs">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-text-muted">
+            <input type="checkbox" className={checkboxCls} checked={pickedRows.length === pickable.length}
+              onChange={(e) => setPicked(e.target.checked ? new Set(pickable.map((c) => c.id)) : new Set())} />
+            {t('migration.cutover.pickAll', { count: pickable.length, defaultValue: 'Select every domain to switch ({{count}})' })}
+          </label>
+          <Button size="sm" variant="danger" className="ml-auto" loading={bulkBusy} disabled={bulkBusy || pickedRows.length === 0} onClick={() => { void bulkSwitch(); }}>
+            <ArrowRightLeft size={13} className="mr-1.5" />{t('migration.cutover.bulkSwitch', { count: pickedRows.length, defaultValue: 'Switch the selection ({{count}})' })}
+          </Button>
+        </div>
+      )}
       <LoadState loading={loading} error={error} empty={shown.length === 0} emptyIcon={<ArrowRightLeft />} emptyText={t('migration.cutover.empty') || 'No domain to switch yet: the checklist appears after the first successful run of an account.'}>
         <div className="space-y-3">
-          {shown.map((c) => <CutoverCard key={c.id} c={c} onChanged={upsert} />)}
+          {shown.map((c) => <CutoverCard key={c.id} c={c} onChanged={upsert} picked={picked.has(c.id)} onPick={c.state !== 'switched' && pickable.length > 1 ? (v) => pick(c.id, v) : undefined} />)}
         </div>
       </LoadState>
     </div>

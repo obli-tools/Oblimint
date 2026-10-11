@@ -356,7 +356,13 @@
       "zoneTtlTitle": "TTL of the zone: {{ttl}} s",
       "zoneTtlMessage": "The default TTL of the zone and of every record written by hand (or migrated) becomes {{ttl}} s on the Oblimint DNS. Resolvers keep the old answers until the previous TTL expires.",
       "zoneTtlConfirm": "Apply",
-      "zoneTtlDone": "TTL set to {{ttl}} s"
+      "zoneTtlDone": "TTL set to {{ttl}} s",
+      "bulkWord": "SWITCH",
+      "bulkTitle": "Switch {{count}} domains",
+      "bulkMessage": "Each domain is switched to Oblimint in turn: its checklist is marked switched, Let's Encrypt takes over the certificate, its maildirs are never mirrored again. Type {{word}} to confirm.",
+      "bulkDone": "{{count}} domains switched",
+      "pickAll": "Select every domain to switch ({{count}})",
+      "bulkSwitch": "Switch the selection ({{count}})"
     },
     "cwpKinds": {
       "addon": "Addon",

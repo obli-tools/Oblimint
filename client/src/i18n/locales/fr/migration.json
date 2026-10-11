@@ -356,7 +356,13 @@
       "zoneTtlTitle": "TTL de la zone : {{ttl}} s",
       "zoneTtlMessage": "Le TTL par défaut de la zone et de tous les enregistrements saisis à la main (ou migrés) passe à {{ttl}} s sur le DNS d’Oblimint. Les résolveurs gardent les anciennes réponses jusqu’à l’expiration du TTL précédent.",
       "zoneTtlConfirm": "Appliquer",
-      "zoneTtlDone": "TTL réglé à {{ttl}} s"
+      "zoneTtlDone": "TTL réglé à {{ttl}} s",
+      "bulkWord": "BASCULER",
+      "bulkTitle": "Basculer {{count}} domaines",
+      "bulkMessage": "Chaque domaine est basculé sur Oblimint tour à tour : sa checklist passe à « basculé », Let’s Encrypt reprend le certificat, ses boîtes ne sont plus jamais mises en miroir. Tapez {{word}} pour confirmer.",
+      "bulkDone": "{{count}} domaines basculés",
+      "pickAll": "Sélectionner tous les domaines à basculer ({{count}})",
+      "bulkSwitch": "Basculer la sélection ({{count}})"
     },
     "cwpKinds": {
       "addon": "Additionnel",
