@@ -6,6 +6,7 @@ import type { AccountRow } from '../services/hosting/rows';
 import { parseBody } from '../services/docker/parseBody';
 import { MAX_BATCH, filesService } from '../services/files/files.service';
 import { AppError } from '../middleware/errorHandler';
+import { filesLimiter } from '../middleware/rateLimiter';
 
 // /api/accounts/:id/files* — web file explorer (shared/src/files.ts), the
 // account's SFTP tree (/staging/<site>/…, /data/<site>/…). Every route needs
@@ -19,6 +20,7 @@ import { AppError } from '../middleware/errorHandler';
 //   POST   /:id/files/copy    {items}           → FileOpResult[]
 //   POST   /:id/files/extract {path, to?, overwrite} → FileExtractResult (zip, tar, tar.gz)
 //   GET    /:id/files/zip?path=<dir>&name=a&name=b   → application/zip (folders recursively, links skipped)
+//   PUT    /:id/files/put?path=&overwrite=1&expectedMtime= raw small file (≤ 8 MiB) in one request → {path}
 //   POST   /:id/files/uploads FileUploadRequest → FileUploadSession
 //   GET    /:id/files/uploads/:uid              → FileUploadStatus (resume)
 //   PUT    /:id/files/uploads/:uid/:index       raw chunk (application/octet-stream) → FileUploadChunkResult
@@ -26,6 +28,8 @@ import { AppError } from '../middleware/errorHandler';
 
 const router = Router();
 const NEED: HostingNeed = 'files.manage';
+// Its own budget (a folder upload is thousands of requests): see rateLimiter.ts.
+router.use('/:id/files', filesLimiter);
 
 const pathField = z.string().min(1).max(4096);
 const mkdirSchema = z.object({ path: pathField }).strict();
@@ -195,6 +199,23 @@ router.post('/:id/files/uploads', async (req, res, next) => {
     const body = parseBody(uploadSchema, req.body);
     res.json({ success: true, data: await filesService.uploadStart(row, userId, body) });
   } catch (err) { next(err); }
+});
+
+router.put('/:id/files/put', async (req, res, next) => {
+  try {
+    const { row } = await account(req);
+    const q = req.query;
+    const size = Number(req.headers['content-length']);
+    if (!Number.isSafeInteger(size) || size < 0) throw new AppError(411, 'Content-Length is required', 'invalidChunk');
+    const expected = q.expectedMtime === undefined ? undefined : Number(q.expectedMtime);
+    if (expected !== undefined && (!Number.isSafeInteger(expected) || expected < 0)) throw new AppError(400, 'Invalid expectedMtime', 'invalid');
+    const path = await filesService.putSmall(row, { path: String(q.path ?? ''), size, overwrite: q.overwrite === '1', ...(expected !== undefined ? { expectedMtime: expected } : {}) }, req);
+    await audit(req, row, 'files.upload', { path, size });
+    res.json({ success: true, data: { path } });
+  } catch (err) {
+    req.resume();
+    next(err);
+  }
 });
 
 router.get('/:id/files/uploads/:uid', async (req, res, next) => {

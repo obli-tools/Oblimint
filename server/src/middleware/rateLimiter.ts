@@ -132,6 +132,9 @@ const accountLoginLimiter = rateLimit({
 
 export const authLimiter = [ipUserLoginLimiter, ipLoginLimiter, accountLoginLimiter];
 
+/** Web file explorer routes: their own, larger budget (filesLimiter) — a folder upload is thousands of requests. */
+const FILES_PATH_RE = /^\/api\/accounts\/\d+\/files(?:\/|$)/;
+
 // Signed-in users (apiLimiter skips them): per USER, never per address
 // (shared proxy addresses), generous enough for the SPA (sockets carry the
 // live updates), bounding scripted floods. Mutations have a tighter budget.
@@ -141,7 +144,7 @@ export const userApiLimiter = [
     max: 3000,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => !req.session?.userId,
+    skip: (req) => !req.session?.userId || FILES_PATH_RE.test(req.path),
     keyGenerator: (req) => `user:${req.session?.userId}`,
     message: { success: false, error: 'Too many requests, please try again later' },
   }),
@@ -150,11 +153,24 @@ export const userApiLimiter = [
     max: 600,
     standardHeaders: true,
     legacyHeaders: false,
-    skip: (req) => !req.session?.userId || req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS',
+    skip: (req) => !req.session?.userId || req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS' || FILES_PATH_RE.test(req.path),
     keyGenerator: (req) => `user-write:${req.session?.userId}`,
     message: { success: false, error: 'Too many requests, please try again later' },
   }),
 ];
+
+/**
+ * Web file explorer (files.routes.ts), per user: a folder upload sends one
+ * request per small file, three for a chunked one, plus one per folder.
+ */
+export const filesLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 30_000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `files:${req.session?.userId ?? reqIpKey(req)}`,
+  message: { success: false, error: 'Too many requests, please try again later', code: 'rateLimited' },
+});
 
 // Expensive host operations (disk usage walk, staging tree walk, git diff,
 // Docker engine checks, container-creating changes): per user, 60 / min.

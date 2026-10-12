@@ -349,6 +349,16 @@ function session(a: AccountRow, userId: number, id: string): UploadSession {
   return s;
 }
 
+/** Editor save: the file must not have changed since it was opened (409 fileChanged). */
+async function assertUnchanged(a: AccountRow, segs: string[], expectedMtime: number): Promise<void> {
+  let current: number | null = null;
+  try {
+    const parent = await deps.hostd.list(target(a), rel(segs.slice(0, -1)));
+    current = parent.entries.find((e) => e.name === segs[segs.length - 1] && e.kind === 'file')?.mtime ?? null;
+  } catch (err) { throw fileError(err); }
+  if (current !== null && current !== expectedMtime) throw new AppError(409, 'The file was changed since it was opened', 'fileChanged');
+}
+
 async function uploadStart(a: AccountRow, userId: number, req: FileUploadRequest): Promise<FileUploadSession> {
   const segs = splitVirtual(req.path);
   if (segs.length < 3 || !validName(segs[segs.length - 1])) throw invalidPath();
@@ -357,15 +367,7 @@ async function uploadStart(a: AccountRow, userId: number, req: FileUploadRequest
   if ([...sessions.values()].filter((s) => s.accountId === a.id && !s.done).length >= UPLOAD_MAX_SESSIONS_PER_ACCOUNT) {
     throw new AppError(429, 'Too many uploads in progress for this account', 'tooManyUploads');
   }
-  if (req.expectedMtime !== undefined) {
-    // Editor save: the file must not have changed since it was opened.
-    let current: number | null = null;
-    try {
-      const parent = await deps.hostd.list(target(a), rel(segs.slice(0, -1)));
-      current = parent.entries.find((e) => e.name === segs[segs.length - 1] && e.kind === 'file')?.mtime ?? null;
-    } catch (err) { throw fileError(err); }
-    if (current !== null && current !== req.expectedMtime) throw new AppError(409, 'The file was changed since it was opened', 'fileChanged');
-  }
+  if (req.expectedMtime !== undefined) await assertUnchanged(a, segs, req.expectedMtime);
   const id = crypto.randomBytes(16).toString('hex');
   const overwrite = req.overwrite === true || req.expectedMtime !== undefined;
   try {
@@ -435,6 +437,33 @@ async function uploadAbort(a: AccountRow, userId: number, id: string): Promise<v
   } catch (err) { throw fileError(err); }
 }
 
+/**
+ * One-request upload of a small file (≤ UPLOAD_CHUNK_SIZE): begin, the whole
+ * body as one chunk, commit — a folder of many small files costs one request
+ * per file. Same rules as uploadStart (quota block, conflicts, editor mtime).
+ */
+async function putSmall(a: AccountRow, req: FileUploadRequest, body: Readable): Promise<string> {
+  const segs = splitVirtual(req.path);
+  if (segs.length < 3 || !validName(segs[segs.length - 1])) throw invalidPath();
+  if (!Number.isSafeInteger(req.size) || req.size < 0 || req.size > UPLOAD_CHUNK_SIZE) throw new AppError(400, 'Invalid size', 'invalid');
+  await assertWritable(a);
+  if (req.expectedMtime !== undefined) await assertUnchanged(a, segs, req.expectedMtime);
+  const id = crypto.randomBytes(16).toString('hex');
+  const overwrite = req.overwrite === true || req.expectedMtime !== undefined;
+  try {
+    await deps.hostd.uploadBegin(target(a), owner(a), rel(segs), id, req.size, overwrite);
+  } catch (err) { throw fileError(err); }
+  try {
+    await deps.hostd.uploadChunk(target(a), owner(a), rel(segs), id, 0, req.size, body);
+    await deps.hostd.uploadCommit(target(a), owner(a), rel(segs), id, req.size, overwrite);
+  } catch (err) {
+    await deps.hostd.uploadAbort(target(a), owner(a), rel(segs), id).catch(() => undefined);
+    throw fileError(err);
+  }
+  await notifyStaging(a, [segs]);
+  return joinVirtual(segs);
+}
+
 /** The upload session's target (audit). */
 function uploadInfo(id: string): { path: string; size: number } | null {
   const s = sessions.get(id);
@@ -445,5 +474,5 @@ export const filesService = {
   list, open, readText, mkdir, remove, extract, zip,
   move: (a: AccountRow, items: Array<{ from: unknown; to: unknown }>, overwrite: boolean) => moveOrCopy(a, 'move', items, overwrite),
   copy: (a: AccountRow, items: Array<{ from: unknown; to: unknown }>) => moveOrCopy(a, 'copy', items, false),
-  uploadStart, uploadStatus, uploadChunk, uploadAbort, uploadInfo,
+  uploadStart, uploadStatus, uploadChunk, uploadAbort, uploadInfo, putSmall,
 };

@@ -159,6 +159,18 @@ test('extract: into the archive folder by default, refused on the first level an
   await assert.rejects(filesService.extract(account, '/staging/site/wp.zip', undefined, false), (e: AppError) => e.code === 'uploadsBlocked');
 });
 
+test('small file in one request: begin + chunk + commit, aborted on failure', async () => {
+  const p = await filesService.putSmall(account, { path: '/staging/site/a.css', size: 4 }, bytes(4));
+  assert.equal(p, '/staging/site/a.css');
+  assert.deepEqual(calls.map((c) => c[0]), ['begin', 'chunk', 'commit']);
+  assert.deepEqual(notified, [31]);
+  calls = [];
+  failCommit = new HostdError(409, 'hostd POST /v1/x: exists', 'exists');
+  await assert.rejects(filesService.putSmall(account, { path: '/staging/site/a.css', size: 4 }, bytes(4)), (e: AppError) => e.code === 'fileExists');
+  assert.equal(calls.at(-1)?.[0], 'abort');
+  await assert.rejects(filesService.putSmall(account, { path: '/staging/site/big', size: UPLOAD_CHUNK_SIZE + 1 }, bytes(1)), (e: AppError) => e.code === 'invalid');
+});
+
 test('abandoned sessions are aborted by the sweeper', async () => {
   const s = await filesService.uploadStart(account, 5, { path: '/staging/site/x', size: 5 });
   now += 31 * 60_000;

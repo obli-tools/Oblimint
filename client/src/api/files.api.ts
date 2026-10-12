@@ -4,6 +4,9 @@ import type {
 } from '@oblimint/shared';
 
 // /api/accounts/:id/files* — web file explorer (shared/src/files.ts).
+/** Files up to this size go in one request (the server's chunk size). */
+export const SMALL_UPLOAD_BYTES = 8 * 1024 * 1024;
+
 const base = (accountId: number) => `/accounts/${accountId}/files`;
 
 /** URL of a file's content (inline = shown by the browser when its type is safe). */
@@ -87,6 +90,16 @@ export const filesApi = {
     return res.data.data!;
   },
 
+  /** A whole small file (≤ SMALL_UPLOAD_BYTES) in one request. */
+  async put(accountId: number, path: string, blob: Blob, opts: { overwrite?: boolean; expectedMtime?: number } = {}, onProgress?: (loaded: number) => void, signal?: AbortSignal): Promise<void> {
+    const params: Record<string, string> = { path };
+    if (opts.overwrite) params.overwrite = '1';
+    if (opts.expectedMtime !== undefined) params.expectedMtime = String(opts.expectedMtime);
+    await apiClient.put(`${base(accountId)}/put`, blob, {
+      params, headers: { 'Content-Type': 'application/octet-stream' }, onUploadProgress: (e) => onProgress?.(e.loaded), signal, timeout: 0,
+    });
+  },
+
   async uploadAbort(accountId: number, id: string): Promise<void> {
     await apiClient.delete(`${base(accountId)}/uploads/${id}`);
   },
@@ -120,6 +133,7 @@ function clickLink(href: string, name: string): void {
  * when the file changed since it was read.
  */
 export async function writeFileContent(accountId: number, path: string, blob: Blob, opts: { overwrite?: boolean; expectedMtime?: number } = {}): Promise<void> {
+  if (blob.size <= SMALL_UPLOAD_BYTES) { await filesApi.put(accountId, path, blob, opts); return; }
   const s = await filesApi.uploadStart(accountId, { path, size: blob.size, ...opts });
   for (let i = 0; i < s.count; i++) {
     await filesApi.uploadChunk(accountId, s.id, i, blob.slice(i * s.chunkSize, Math.min(blob.size, (i + 1) * s.chunkSize)));

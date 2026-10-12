@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import axios from 'axios';
-import { filesApi } from '@/api/files.api';
+import { SMALL_UPLOAD_BYTES, filesApi } from '@/api/files.api';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Upload queue of the file explorer (global: survives navigation, shown by the
@@ -124,14 +124,35 @@ export const useTransferStore = create<TransferState>((set, get) => {
     if (!t || !file || !batch) return;
     const ctl = new AbortController();
     controllers.set(id, ctl);
+    const finish = (path: string) => {
+      patch(id, { status: 'done', sent: file.size, finishedAt: Date.now(), path, name: path.split('/').pop()! });
+      files.delete(id);
+      set((s) => ({ changes: [...s.changes.slice(-50), { accountId: t.accountId, dir: parentOf(path), at: Date.now() }] }));
+    };
     try {
       await batch.ready;
       let path = t.path;
       let overwrite = batch.policy === 'overwrite';
-      let session;
+      const small = file.size <= SMALL_UPLOAD_BYTES;
+      let session: Awaited<ReturnType<typeof filesApi.uploadStart>> | null = null;
       for (let n = 2; ; n++) {
         try {
-          session = await filesApi.uploadStart(t.accountId, { path, size: file.size, overwrite }, ctl.signal);
+          if (small) {
+            // One request: retried on transient failures like a chunk.
+            for (let attempt = 0; ; attempt++) {
+              try {
+                patch(id, { status: 'uploading', path });
+                await filesApi.put(t.accountId, path, file, { overwrite }, (l) => patch(id, { sent: l }), ctl.signal);
+                break;
+              } catch (err) {
+                patch(id, { sent: 0 });
+                if (!retryable(err) || attempt >= RETRY_DELAYS.length) throw err;
+                await sleep(RETRY_DELAYS[attempt], ctl.signal);
+              }
+            }
+          } else {
+            session = await filesApi.uploadStart(t.accountId, { path, size: file.size, overwrite }, ctl.signal);
+          }
           break;
         } catch (err) {
           if (errCode(err) !== 'fileExists' || n > 100) throw err;
@@ -148,18 +169,23 @@ export const useTransferStore = create<TransferState>((set, get) => {
         }
       }
       if (path !== t.path) patch(id, { path, name: path.split('/').pop()! });
+      if (!session) {
+        finish(path);
+        return;
+      }
       patch(id, { status: 'uploading' });
       const loaded = new Map<number, number>();
       const report = () => patch(id, { sent: [...loaded.values()].reduce((a, b) => a + b, 0) });
-      const indexes = Array.from({ length: session.count }, (_, i) => i);
+      const sess = session;
+      const indexes = Array.from({ length: sess.count }, (_, i) => i);
       let done = false;
       const worker = async () => {
         for (let index = indexes.shift(); index !== undefined; index = indexes.shift()) {
-          const start = index * session.chunkSize;
-          const blob = file.slice(start, Math.min(file.size, start + session.chunkSize));
+          const start = index * sess.chunkSize;
+          const blob = file.slice(start, Math.min(file.size, start + sess.chunkSize));
           for (let attempt = 0; ; attempt++) {
             try {
-              const r = await filesApi.uploadChunk(t.accountId, session.id, index, blob, (l) => { loaded.set(index, l); report(); }, ctl.signal);
+              const r = await filesApi.uploadChunk(t.accountId, sess.id, index, blob, (l) => { loaded.set(index, l); report(); }, ctl.signal);
               loaded.set(index, blob.size);
               report();
               if (r.done) done = true;
@@ -172,11 +198,9 @@ export const useTransferStore = create<TransferState>((set, get) => {
           }
         }
       };
-      await Promise.all(Array.from({ length: Math.max(1, Math.min(session.parallel, session.count)) }, worker));
+      await Promise.all(Array.from({ length: Math.max(1, Math.min(sess.parallel, sess.count)) }, worker));
       if (!done) throw new Error('upload incomplete');
-      patch(id, { status: 'done', sent: file.size, finishedAt: Date.now() });
-      files.delete(id);
-      set((s) => ({ changes: [...s.changes.slice(-50), { accountId: t.accountId, dir: parentOf(path), at: Date.now() }] }));
+      finish(path);
     } catch (err) {
       if (ctl.signal.aborted || axios.isCancel(err)) return; // cancel() already set the status
       patch(id, { status: 'error', error: errMessage(err), finishedAt: Date.now() });

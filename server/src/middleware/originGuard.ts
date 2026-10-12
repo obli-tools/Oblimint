@@ -98,6 +98,8 @@ export const RAW_UPLOAD_PATHS: readonly RegExp[] = [
   /^\/api\/apps\/stacks\/\d+\/source\/zip$/,
   // Web file explorer: one chunk of a chunked upload (application/octet-stream).
   /^\/api\/accounts\/\d+\/files\/uploads\/[0-9a-f]{32}\/\d+$/,
+  // …and a whole small file in one request.
+  /^\/api\/accounts\/\d+\/files\/put$/,
 ];
 const RAW_UPLOAD_TYPES = [
   'application/octet-stream', 'application/sql', 'application/gzip', 'application/x-gzip',
