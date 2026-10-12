@@ -62,4 +62,4 @@ $cfg['ShowChgPassword'] = false;
 $cfg['ShowCreateDb'] = false;
 $cfg['ZeroConf'] = false;
 $cfg['DefaultLang'] = 'fr';
-$cfg['ThemeDefault'] = 'pmahomme';
+$cfg['ThemeDefault'] = 'bootstrap';

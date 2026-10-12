@@ -16,7 +16,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Official image, pinned (bump deliberately: config.inc.php follows its options).
-ARG PMA_IMAGE=phpmyadmin:5.2.2-apache
+ARG PMA_IMAGE=phpmyadmin:5.2.3-apache
 FROM ${PMA_IMAGE}
 ARG VERSION=dev
 
