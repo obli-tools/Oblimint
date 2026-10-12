@@ -1,0 +1,106 @@
+{
+  "files": {
+    "errors": {
+      "more": "… and {{count}} more error(s)",
+      "invalidName": "Invalid name",
+      "invalidPath": "Invalid path (under /staging or /data)"
+    },
+    "symlinkInfo": "Symbolic link to {{target}}: links are shown but never followed.",
+    "namePlaceholder": "Name",
+    "deleteConfirm": "Delete {{count}} item(s)? This cannot be undone.",
+    "deleteDirs": "{{count}} folder(s) will be deleted with everything they contain.",
+    "deleted": "{{count}} item(s) deleted",
+    "noFolderDownload": "Folders cannot be downloaded yet: only the selected files are.",
+    "replaceTitle": "Replace?",
+    "replaceMessage": "{{count}} item(s) already exist in the destination. Replace the files? (folders are never replaced)",
+    "copying": "Copying…",
+    "copied": "{{count}} item(s) copied",
+    "cut": "{{count}} item(s) cut",
+    "copiedDone": "{{count}} item(s) copied",
+    "moved": "{{count}} item(s) moved",
+    "moveTitle": "Move",
+    "moveConfirm": "Move {{count}} item(s) to {{dir}}?",
+    "readOnly": "read-only",
+    "readOnlyHere": "This folder is read-only.",
+    "readOnlyTop": "Site folders are managed by the panel",
+    "actions": {
+      "newFolder": "New folder",
+      "newFile": "New file",
+      "rename": "Rename",
+      "delete": "Delete",
+      "move": "Move",
+      "upload": "Upload files",
+      "uploadFolder": "Upload a folder",
+      "paste": "Paste",
+      "pasteInto": "Paste into",
+      "refresh": "Refresh",
+      "copyPath": "Copy the path",
+      "open": "Open",
+      "preview": "Preview",
+      "edit": "Edit",
+      "download": "Download",
+      "copy": "Copy",
+      "cut": "Cut"
+    },
+    "areas": {
+      "staging": "Code (staging)",
+      "data": "Data"
+    },
+    "back": "Back",
+    "forward": "Forward",
+    "up": "Parent folder",
+    "root": "Account root",
+    "account": "Account",
+    "noAccount": "No hosting account whose files you can manage.",
+    "filter": "Filter",
+    "quotaBlocked": "Disk quota exceeded: uploads are blocked (reading and deleting remain possible).",
+    "columns": {
+      "name": "Name",
+      "size": "Size",
+      "modified": "Modified",
+      "mode": "Permissions"
+    },
+    "noMatch": "Nothing matches the filter.",
+    "empty": "This folder is empty.",
+    "dropHint": "Drop files or folders here to upload them.",
+    "dropHere": "Drop to upload into {{dir}}",
+    "showMore": "Show {{count}} more ({{total}} in all)",
+    "truncated": "Too many entries: only the first 20 000 are listed.",
+    "status": {
+      "items": "{{count}} item(s)",
+      "selected": "{{count}} selected ({{size}})",
+      "clipboard": "{{count}} in the clipboard"
+    },
+    "editor": {
+      "saved": "Saved",
+      "changedTitle": "File changed on the server",
+      "changedMessage": "The file was modified since you opened it (SFTP, another tab…). Overwrite it with your version?",
+      "overwrite": "Overwrite",
+      "unsavedTitle": "Unsaved changes",
+      "unsavedMessage": "Close the editor and lose your changes?",
+      "discard": "Discard",
+      "binary": "This file looks binary: it cannot be edited here.",
+      "tooLarge": "This file is too large for the editor ({{size}}, 2 MB max).",
+      "hint": "Ctrl+S to save"
+    },
+    "preview": {
+      "previous": "Previous",
+      "next": "Next"
+    },
+    "transfers": {
+      "running": "{{count}} file(s) in progress — {{pct}} %",
+      "conflicts": "{{count}} conflict(s) to settle",
+      "finished": "{{done}} sent, {{errors}} failed",
+      "clear": "Clear finished",
+      "cancelAll": "Cancel all",
+      "collapse": "Collapse",
+      "expand": "Expand",
+      "applyAll": "Apply my choice to every conflict of the batch",
+      "retry": "Retry",
+      "exists": "A file with this name already exists.",
+      "overwrite": "Overwrite",
+      "keepBoth": "Keep both",
+      "skip": "Skip"
+    }
+  }
+}

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 )
 
 // errUnsupported is returned by OS specific helpers outside Linux.
@@ -33,10 +34,12 @@ type api struct {
 	gw *gateway
 	// P3 (nil = 501 unsupported).
 	p3 P3Ops
+	// Web file explorer (files.go).
+	files *fileManager
 }
 
 func newMux(ops Ops, l Layout, fw *firewallManager, gw *gateway, p3 P3Ops) *http.ServeMux {
-	a := &api{ops: ops, layout: l, fw: fw, gw: gw, p3: p3}
+	a := &api{ops: ops, layout: l, fw: fw, gw: gw, p3: p3, files: newFileManager(l, fdOwner, time.Now)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", a.health)
 	mux.HandleFunc("GET /v1/fs", a.fs)
@@ -67,6 +70,8 @@ func newMux(ops Ops, l Layout, fw *firewallManager, gw *gateway, p3 P3Ops) *http
 	registerP3(mux, a)
 	// P4b — segment policy, web bans (api_p4b.go).
 	registerP4b(mux)
+	// Web file explorer (api_files.go).
+	registerFiles(mux, a)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, &apiError{http.StatusNotFound, codeNotFound, "no route " + r.Method + " " + r.URL.Path})
 	})

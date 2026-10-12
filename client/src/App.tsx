@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
-import { FolderOpen } from 'lucide-react';
 import type { SetupMode } from '@oblimint/shared';
 import { useNativeTopOffset } from '@/hooks/useNativeTopOffset';
 import { useAuthStore } from '@/store/authStore';
@@ -17,7 +16,7 @@ import { TenantsPage } from '@/pages/TenantsPage';
 import { NodesPage } from '@/pages/NodesPage';
 import { AuditLogPage } from '@/pages/AuditLogPage';
 import { SettingsPage } from '@/pages/SettingsPage';
-import { ComingSoonPage } from '@/pages/ComingSoonPage';
+import { FilesPage } from '@/pages/files/FilesPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { SetupWizardPage } from '@/pages/SetupWizardPage';
 // P1 — hosting core (docs/P1-PLAN.md §UI)
@@ -122,7 +121,7 @@ function NormalRoutes() {
           <Route path="/uptime/monitors/:id" element={<UptimeMonitorPage />} />
           <Route path="/automation" element={<AutomationPage />} />
           <Route path="/automation/workflows/:id" element={<WorkflowPage />} />
-          <Route path="/files" element={<ComingSoonPage icon={<FolderOpen />} titleKey="nav.files" titleFallback="Files" descriptionKey="comingSoon.files" descriptionFallback="Browse and edit the files of an account, and open an SFTP/FTPS server on demand for it." />} />
+          <Route path="/files" element={<FilesPage />} />
 
           {/* Plans: platform admin or the plans.manage capability of the tenant */}
           <Route element={<ProtectedRoute requiredCapabilities={['plans.manage']} />}>

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import CodeMirror, { Decoration, EditorView, RangeSetBuilder, type Extension } from '@uiw/react-codemirror';
 import { yaml } from '@codemirror/lang-yaml';
 import { useCurrentTheme } from '@/hooks/useCurrentTheme';
@@ -33,6 +33,25 @@ function markerExtension(markers: LineMarker[]): Extension {
   });
 }
 
+export type CodeLanguage = 'yaml' | 'text' | 'php' | 'javascript' | 'typescript' | 'css' | 'html' | 'json' | 'markdown' | 'xml' | 'sql';
+
+/** Language support loaded on demand (separate chunks: only YAML ships with the main bundle). */
+async function loadLanguage(language: CodeLanguage): Promise<Extension | null> {
+  switch (language) {
+    case 'yaml': return yaml();
+    case 'php': return (await import('@codemirror/lang-php')).php();
+    case 'javascript': return (await import('@codemirror/lang-javascript')).javascript({ jsx: true });
+    case 'typescript': return (await import('@codemirror/lang-javascript')).javascript({ jsx: true, typescript: true });
+    case 'css': return (await import('@codemirror/lang-css')).css();
+    case 'html': return (await import('@codemirror/lang-html')).html();
+    case 'json': return (await import('@codemirror/lang-json')).json();
+    case 'markdown': return (await import('@codemirror/lang-markdown')).markdown();
+    case 'xml': return (await import('@codemirror/lang-xml')).xml();
+    case 'sql': return (await import('@codemirror/lang-sql')).sql();
+    default: return null;
+  }
+}
+
 /** Colours of the obli themes (tokens), on top of the base light / dark CodeMirror theme. */
 const obliTheme = EditorView.theme({
   '&': { fontSize: '13px' },
@@ -62,7 +81,7 @@ export function CodeEditor({
 }: {
   value: string;
   onChange?: (v: string) => void;
-  language?: 'yaml' | 'text';
+  language?: CodeLanguage;
   readOnly?: boolean;
   markers?: LineMarker[];
   height?: string;
@@ -75,13 +94,19 @@ export function CodeEditor({
 }) {
   const theme = useCurrentTheme();
   const markerKey = JSON.stringify(markers ?? []);
+  const [lang, setLang] = useState<{ id: CodeLanguage; ext: Extension | null }>(() => ({ id: language, ext: language === 'yaml' ? yaml() : null }));
+  useEffect(() => {
+    let live = true;
+    loadLanguage(language).then((ext) => { if (live) setLang({ id: language, ext }); }).catch(() => { if (live) setLang({ id: language, ext: null }); });
+    return () => { live = false; };
+  }, [language]);
   const extensions = useMemo<Extension[]>(() => {
     const ext: Extension[] = [obliTheme, EditorView.lineWrapping];
-    if (language === 'yaml') ext.push(yaml());
+    if (lang.ext && lang.id === language) ext.push(lang.ext);
     if (markers?.length) ext.push(markerExtension(markers));
     if (ariaLabel) ext.push(EditorView.contentAttributes.of({ 'aria-label': ariaLabel }));
     return ext;
-  }, [language, markerKey, ariaLabel]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [language, lang, markerKey, ariaLabel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div

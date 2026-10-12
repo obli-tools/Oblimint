@@ -480,9 +480,9 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 /** …except the quarantine list of an account (P3), which grows with every entry kept as evidence. */
 const MAX_LIST_RESPONSE_BYTES = 64 * 1024 * 1024;
 
-type Method = 'GET' | 'PUT' | 'POST' | 'DELETE';
+export type Method = 'GET' | 'PUT' | 'POST' | 'DELETE';
 
-function request<T>(socketPath: string, method: Method, path: string, body: unknown, timeoutMs: number, maxResponseBytes = MAX_RESPONSE_BYTES): Promise<T> {
+export function request<T>(socketPath: string, method: Method, path: string, body: unknown, timeoutMs: number, maxResponseBytes = MAX_RESPONSE_BYTES): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     let settled = false;
@@ -797,6 +797,14 @@ function isLocal(nodeId: number): Promise<boolean> {
     p.catch(() => localCache.delete(nodeId)); // do not cache failures
   }
   return p;
+}
+
+/** Socket of a node's hostd (P1: the local node only; other ids → HostdError 501 `nodeNotSupported`). */
+export async function hostdSocketFor(nodeId: number): Promise<string> {
+  if (!(await isLocal(nodeId))) {
+    throw new HostdError(501, `hostd: node ${nodeId} is not the local node (multi-node is not supported yet)`, 'nodeNotSupported');
+  }
+  return config.hosting.hostdSocket;
 }
 
 function client(): HostdClient {

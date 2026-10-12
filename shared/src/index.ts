@@ -19,3 +19,5 @@ export * from './monitoring';
 export * from './migration';
 // Platform updates (Nodes > Updates)
 export * from './platformUpdates';
+// Web file explorer
+export * from './files';

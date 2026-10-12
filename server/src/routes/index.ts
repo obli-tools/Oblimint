@@ -25,6 +25,7 @@ import domainsRoutes from './domains.routes';            // hosting-api
 import releasesRoutes from './releases.routes';          // releases
 import runtimeRoutes from './runtime.routes';            // orchestration
 import fileServerRoutes from './filesrv.routes';         // orchestration
+import filesRoutes from './files.routes';                // web file explorer
 import infraRoutes from './infra.routes';                // orchestration
 import platformUpdatesRoutes from './platformUpdates.routes';  // platform updates (Nodes > Updates)
 import edgeRoutes from './edge.routes';                  // edge
@@ -122,6 +123,7 @@ tenantRouter.use('/hosting', hostingMeRoutes);
 tenantRouter.use('/plans', plansRoutes);
 tenantRouter.use('/accounts', accountsRoutes);
 tenantRouter.use('/accounts', fileServerRoutes);
+tenantRouter.use('/accounts', filesRoutes);              // web file explorer
 tenantRouter.use('/sites', sitesRoutes);
 tenantRouter.use('/sites', releasesRoutes);
 tenantRouter.use('/sites', runtimeRoutes);

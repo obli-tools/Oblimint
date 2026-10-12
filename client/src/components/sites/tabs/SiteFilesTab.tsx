@@ -1,12 +1,20 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Code2, HardDrive } from 'lucide-react';
 import { FileAccessPanel } from '@/components/hosting/FileAccessPanel';
+import { FileExplorer } from '@/components/files/FileExplorer';
+import { useHostingMe } from '@/store/hostingStore';
 import type { SiteTabProps } from './types';
 
 export function SiteFilesTab({ site }: SiteTabProps) {
   const { t } = useTranslation();
+  const { can } = useHostingMe();
+  const [path, setPath] = useState(`/staging/${site.slug}`);
   return (
     <div className="space-y-4">
+      {can('files.manage', site.accountId) && (
+        <FileExplorer accountId={site.accountId} path={path} onPathChange={setPath} className="h-[65vh] min-h-[420px]" />
+      )}
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-xl bg-bg-secondary p-4">
           <div className="mb-1 flex items-center gap-2">

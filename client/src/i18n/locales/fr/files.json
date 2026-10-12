@@ -1,0 +1,106 @@
+{
+  "files": {
+    "errors": {
+      "more": "… et {{count}} autre(s) erreur(s)",
+      "invalidName": "Nom invalide",
+      "invalidPath": "Chemin invalide (sous /staging ou /data)"
+    },
+    "symlinkInfo": "Lien symbolique vers {{target}} : les liens sont affichés mais jamais suivis.",
+    "namePlaceholder": "Nom",
+    "deleteConfirm": "Supprimer {{count}} élément(s) ? C'est définitif.",
+    "deleteDirs": "{{count}} dossier(s) seront supprimés avec tout leur contenu.",
+    "deleted": "{{count}} élément(s) supprimé(s)",
+    "noFolderDownload": "Les dossiers ne se téléchargent pas encore : seuls les fichiers sélectionnés le sont.",
+    "replaceTitle": "Remplacer ?",
+    "replaceMessage": "{{count}} élément(s) existent déjà dans la destination. Remplacer les fichiers ? (un dossier n'est jamais remplacé)",
+    "copying": "Copie en cours…",
+    "copied": "{{count}} élément(s) copié(s)",
+    "cut": "{{count}} élément(s) coupé(s)",
+    "copiedDone": "{{count}} élément(s) copié(s)",
+    "moved": "{{count}} élément(s) déplacé(s)",
+    "moveTitle": "Déplacer",
+    "moveConfirm": "Déplacer {{count}} élément(s) vers {{dir}} ?",
+    "readOnly": "lecture seule",
+    "readOnlyHere": "Ce dossier est en lecture seule.",
+    "readOnlyTop": "Les dossiers des sites sont gérés par le panel",
+    "actions": {
+      "newFolder": "Nouveau dossier",
+      "newFile": "Nouveau fichier",
+      "rename": "Renommer",
+      "delete": "Supprimer",
+      "move": "Déplacer",
+      "upload": "Envoyer des fichiers",
+      "uploadFolder": "Envoyer un dossier",
+      "paste": "Coller",
+      "pasteInto": "Coller dans",
+      "refresh": "Actualiser",
+      "copyPath": "Copier le chemin",
+      "open": "Ouvrir",
+      "preview": "Aperçu",
+      "edit": "Modifier",
+      "download": "Télécharger",
+      "copy": "Copier",
+      "cut": "Couper"
+    },
+    "areas": {
+      "staging": "Code (staging)",
+      "data": "Données"
+    },
+    "back": "Précédent",
+    "forward": "Suivant",
+    "up": "Dossier parent",
+    "root": "Racine du compte",
+    "account": "Compte",
+    "noAccount": "Aucun compte d'hébergement dont vous pouvez gérer les fichiers.",
+    "filter": "Filtrer",
+    "quotaBlocked": "Quota disque dépassé : les envois sont bloqués (lecture et suppression restent possibles).",
+    "columns": {
+      "name": "Nom",
+      "size": "Taille",
+      "modified": "Modifié",
+      "mode": "Droits"
+    },
+    "noMatch": "Rien ne correspond au filtre.",
+    "empty": "Ce dossier est vide.",
+    "dropHint": "Déposez des fichiers ou des dossiers ici pour les envoyer.",
+    "dropHere": "Déposer pour envoyer dans {{dir}}",
+    "showMore": "Afficher {{count}} de plus ({{total}} au total)",
+    "truncated": "Trop d'éléments : seuls les 20 000 premiers sont listés.",
+    "status": {
+      "items": "{{count}} élément(s)",
+      "selected": "{{count}} sélectionné(s) ({{size}})",
+      "clipboard": "{{count}} dans le presse-papiers"
+    },
+    "editor": {
+      "saved": "Enregistré",
+      "changedTitle": "Fichier modifié sur le serveur",
+      "changedMessage": "Le fichier a été modifié depuis son ouverture (SFTP, autre onglet…). L'écraser avec votre version ?",
+      "overwrite": "Écraser",
+      "unsavedTitle": "Modifications non enregistrées",
+      "unsavedMessage": "Fermer l'éditeur et perdre vos modifications ?",
+      "discard": "Abandonner",
+      "binary": "Ce fichier semble binaire : il ne peut pas être modifié ici.",
+      "tooLarge": "Ce fichier est trop gros pour l'éditeur ({{size}}, 2 Mo maximum).",
+      "hint": "Ctrl+S pour enregistrer"
+    },
+    "preview": {
+      "previous": "Précédent",
+      "next": "Suivant"
+    },
+    "transfers": {
+      "running": "{{count}} fichier(s) en cours — {{pct}} %",
+      "conflicts": "{{count}} conflit(s) à régler",
+      "finished": "{{done}} envoyé(s), {{errors}} en échec",
+      "clear": "Effacer les terminés",
+      "cancelAll": "Tout annuler",
+      "collapse": "Réduire",
+      "expand": "Déplier",
+      "applyAll": "Appliquer mon choix à tous les conflits du lot",
+      "retry": "Réessayer",
+      "exists": "Un fichier de ce nom existe déjà.",
+      "overwrite": "Écraser",
+      "keepBoth": "Garder les deux",
+      "skip": "Ignorer"
+    }
+  }
+}

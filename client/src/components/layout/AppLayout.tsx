@@ -6,6 +6,7 @@ import { Header } from './Header';
 import { Drawer } from '@/components/common/Drawer';
 import { useUiStore, useEffectiveSidebar } from '@/store/uiStore';
 import { useTenantStore } from '@/store/tenantStore';
+import { TransferDock } from '@/components/files/TransferDock';
 import { cn } from '@/utils/cn';
 
 export function AppLayout() {
@@ -207,6 +208,8 @@ export function AppLayout() {
         <main className="flex min-w-0 flex-1 flex-col overflow-y-auto px-safe pb-safe">
           <Outlet />
         </main>
+        {/* Upload queue of the file explorer (follows the user across pages). */}
+        <TransferDock />
 
       </div>
 

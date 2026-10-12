@@ -154,6 +154,8 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     { label: t('nav.accounts') || 'Accounts',            path: '/accounts',  icon: <UserSquare size={18} /> },
     { label: t('nav.sites') || 'Sites',                  path: '/sites',     icon: <Globe size={18} /> },
     { label: t('nav.domains') || 'Domains & DNS',        path: '/domains',   icon: <AtSign size={18} /> },
+    // Web file explorer — client space too (files.manage per account, the server scopes).
+    { label: t('nav.files') || 'Files',                path: '/files',     icon: <FolderOpen size={18} /> },
     // P2: databases and usage are part of the client space too (the server scopes every list).
     { label: t('nav.databases') || 'Databases',          path: '/databases', icon: <Database size={18} /> },
     { label: t('nav.usage') || 'Usage',                  path: '/usage',     icon: <BarChart3 size={18} /> },
@@ -169,9 +171,6 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     { label: t('nav.uptime') || 'Uptime',                path: '/uptime',    icon: <Activity size={18} /> },
     { label: t('nav.automation') || 'Automation',        path: '/automation', icon: <Workflow size={18} /> },
     { label: t('nav.bans') || 'Bans',                    path: '/security/bans', icon: <ShieldBan size={18} /> },
-    ...(isClient ? [] : [
-      { label: t('nav.files') || 'Files',                path: '/files',     icon: <FolderOpen size={18} /> },
-    ] as NavItem[]),
   ];
 
   // Admin-tier section — hidden entirely when the list is empty.

@@ -96,6 +96,8 @@ export const RAW_UPLOAD_PATHS: readonly RegExp[] = [
   /^\/api\/databases\/instances\/\d+\/databases\/\d+\/restore$/,
   // P4b (docs/P4b-PLAN.md §5.3): ZIP source of an app stack (streamed by yauzl).
   /^\/api\/apps\/stacks\/\d+\/source\/zip$/,
+  // Web file explorer: one chunk of a chunked upload (application/octet-stream).
+  /^\/api\/accounts\/\d+\/files\/uploads\/[0-9a-f]{32}\/\d+$/,
 ];
 const RAW_UPLOAD_TYPES = [
   'application/octet-stream', 'application/sql', 'application/gzip', 'application/x-gzip',
