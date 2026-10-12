@@ -1,6 +1,6 @@
 import apiClient, { isInObliTools } from './client';
 import type {
-  ApiResponse, FileListing, FileMoveItem, FileOpResult, FileText, FileUploadChunkResult, FileUploadRequest, FileUploadSession, FileUploadStatus,
+  ApiResponse, FileExtractResult, FileListing, FileMoveItem, FileOpResult, FileText, FileUploadChunkResult, FileUploadRequest, FileUploadSession, FileUploadStatus,
 } from '@oblimint/shared';
 
 // /api/accounts/:id/files* — web file explorer (shared/src/files.ts).
@@ -12,7 +12,31 @@ export function fileContentUrl(accountId: number, path: string, inline = false):
   return `/api${base(accountId)}/download?${q}`;
 }
 
+/** URL of a zip of entries of one folder. */
+export function fileZipUrl(accountId: number, dir: string, names: string[]): string {
+  const q = new URLSearchParams({ path: dir });
+  for (const n of names) q.append('name', n);
+  return `/api${base(accountId)}/zip?${q}`;
+}
+
 export const filesApi = {
+  async extract(accountId: number, path: string, to?: string, overwrite = false): Promise<FileExtractResult> {
+    const res = await apiClient.post<ApiResponse<FileExtractResult>>(`${base(accountId)}/extract`, { path, ...(to ? { to } : {}), overwrite }, { timeout: 0 });
+    return res.data.data!;
+  },
+
+  /** Downloads a zip of entries of one folder (folders recursively). */
+  async downloadZip(accountId: number, dir: string, names: string[]): Promise<void> {
+    const name = `${names.length === 1 ? names[0] : dir.split('/').filter(Boolean).pop() || 'files'}.zip`;
+    if (isInObliTools) {
+      const res = await apiClient.get<Blob>(fileZipUrl(accountId, dir, names).slice('/api'.length), { responseType: 'blob', timeout: 0 });
+      const url = URL.createObjectURL(res.data);
+      try { clickLink(url, name); } finally { setTimeout(() => URL.revokeObjectURL(url), 60_000); }
+      return;
+    }
+    clickLink(fileZipUrl(accountId, dir, names), name);
+  },
+
   async list(accountId: number, path: string): Promise<FileListing> {
     const res = await apiClient.get<ApiResponse<FileListing>>(base(accountId), { params: { path } });
     return res.data.data!;

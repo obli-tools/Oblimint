@@ -21,6 +21,8 @@ func registerFiles(mux *http.ServeMux, a *api) {
 	mux.HandleFunc("PUT "+base+"/uploads/{uid}", a.uploadChunk)
 	mux.HandleFunc("POST "+base+"/uploads/{uid}/commit", a.uploadCommit)
 	mux.HandleFunc("DELETE "+base+"/uploads/{uid}", a.uploadAbort)
+	mux.HandleFunc("POST "+base+"/extract", a.extractArchive)
+	mux.HandleFunc("GET "+base+"/zip", a.zipFiles)
 }
 
 type filesBody struct {

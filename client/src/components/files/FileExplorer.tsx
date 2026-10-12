@@ -5,7 +5,7 @@ import axios from 'axios';
 import { create } from 'zustand';
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpFromLine, ClipboardCopy, ClipboardPaste, Copy, Download, Eye, FilePlus, FolderInput,
-  FolderPlus, FolderUp, HardDrive, Home, Link2, Lock, Pencil, RefreshCw, Scissors, Search, Trash2, Upload, X,
+  FolderPlus, FolderUp, HardDrive, Home, Link2, Lock, PackageOpen, Pencil, RefreshCw, Scissors, Search, Trash2, Upload, X,
 } from 'lucide-react';
 import type { FileEntry, FileListing, FileOpResult } from '@oblimint/shared';
 import { filesApi, writeFileContent } from '@/api/files.api';
@@ -20,7 +20,7 @@ import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { FileEditorModal } from './FileEditorModal';
 import { FilePreviewModal } from './FilePreviewModal';
 import {
-  FileIcon, baseName, joinPath, looksText, modeString, normalizeTyped, parentPath, previewKind, readDrop, readPicked, splitPath, validEntryName,
+  FileIcon, archiveBase, baseName, isArchive, joinPath, looksText, modeString, normalizeTyped, parentPath, previewKind, readDrop, readPicked, splitPath, validEntryName,
   type DroppedTree,
 } from './fileFormat';
 
@@ -327,10 +327,47 @@ export function FileExplorer({ accountId, path, onPathChange, className }: {
     await load();
   };
 
+  /** One file: as is; several entries or a folder: one zip. */
   const download = () => {
-    const files = selectedEntries.filter((e) => e.kind === 'file');
-    if (selectedEntries.some((e) => e.kind === 'dir')) toast(t('files.noFolderDownload') || 'Folders cannot be downloaded yet: only the selected files are.', { icon: 'ℹ️' });
-    files.slice(0, 20).forEach((e, i) => setTimeout(() => void filesApi.download(accountId, joinPath(path, e.name)), i * 400));
+    const items = selectedEntries.filter((e) => e.kind === 'file' || e.kind === 'dir');
+    if (!items.length) return;
+    if (items.length === 1 && items[0].kind === 'file') { void filesApi.download(accountId, joinPath(path, items[0].name)); return; }
+    void filesApi.downloadZip(accountId, path, items.map((e) => e.name));
+  };
+
+  const extract = async (e: FileEntry, intoFolder: boolean) => {
+    let to = path;
+    if (intoFolder) {
+      const name = await prompt({ title: t('files.actions.extractTo') || 'Extract into a folder', defaultValue: archiveBase(e.name), required: true, plain: true, maxLength: 255 });
+      if (name === null) return;
+      if (!validEntryName(name.trim())) { toast.error(t('files.errors.invalidName') || 'Invalid name'); return; }
+      to = joinPath(path, name.trim());
+      try { await filesApi.mkdir(accountId, to); } catch (err) { if (apiError(err).code !== 'fileExists') { toast.error(apiError(err).message); return; } }
+    }
+    // Existing files are kept first; when some were, the user may replace them in a second pass.
+    const run = async (overwrite: boolean) => {
+      const id = toast.loading(t('files.extracting') || 'Extracting…');
+      try {
+        const r = await filesApi.extract(accountId, joinPath(path, e.name), to, overwrite);
+        toast.success(t('files.extracted', { files: r.files, size: formatBytes(r.bytes), skipped: r.skipped, defaultValue: '{{files}} file(s) extracted ({{size}}), {{skipped}} skipped' }));
+        if (r.conflicts.length) toast.error(t('files.extractConflicts', { count: r.conflicts.length, first: r.conflicts[0], defaultValue: '{{count}} entr(y/ies) blocked by a link or a file in the way (e.g. {{first}})' }));
+        return r;
+      } catch (err) {
+        toast.error(apiError(err).message);
+        return null;
+      } finally { toast.dismiss(id); }
+    };
+    const first = await run(false);
+    await load(true);
+    if (first && first.skipped - first.conflicts.length > 0 && await confirm({
+      title: t('files.extractTitle') || 'Extract',
+      message: t('files.extractOverwrite', { count: first.skipped - first.conflicts.length, defaultValue: '{{count}} file(s) of the archive already existed and were kept (or were links / special entries, always skipped). Replace the existing files with those of the archive?' }),
+      confirmLabel: t('files.transfers.overwrite') || 'Overwrite',
+      danger: true,
+    })) {
+      await run(true);
+      await load(true);
+    }
   };
 
   const putClipboard = (mode: 'copy' | 'cut') => {
@@ -478,7 +515,11 @@ export function FileExplorer({ accountId, path, onPathChange, className }: {
     return [
       { key: 'open', label: one?.kind === 'dir' ? (t('files.actions.open') || 'Open') : one && previewKind(one.name) ? (t('files.actions.preview') || 'Preview') : (t('files.actions.edit') || 'Edit'),
         icon: one && previewKind(one.name) ? <Eye size={15} /> : <FolderInput size={15} />, shortcut: 'Enter', onClick: () => one && openEntry(one), disabled: !one || one.kind === 'symlink' || one.kind === 'other' },
-      { key: 'download', label: t('files.actions.download') || 'Download', icon: <Download size={15} />, onClick: download, disabled: !selectedEntries.some((e) => e.kind === 'file') },
+      { key: 'download', label: selectedEntries.length > 1 || one?.kind === 'dir' ? (t('files.actions.downloadZip') || 'Download (zip)') : (t('files.actions.download') || 'Download'), icon: <Download size={15} />, onClick: download, disabled: !selectedEntries.some((e) => e.kind === 'file' || e.kind === 'dir') },
+      ...(one && one.kind === 'file' && isArchive(one.name) ? [
+        { key: 'extract', label: t('files.actions.extractHere') || 'Extract here', icon: <PackageOpen size={15} />, onClick: () => void extract(one, false), disabled: !writable },
+        { key: 'extractTo', label: t('files.actions.extractTo') || 'Extract into a folder', icon: <FolderInput size={15} />, onClick: () => void extract(one, true), disabled: !writable },
+      ] : []),
       { key: 'copy', label: t('files.actions.copy') || 'Copy', icon: <Copy size={15} />, shortcut: 'Ctrl+C', onClick: () => putClipboard('copy'), separator: true },
       { key: 'cut', label: t('files.actions.cut') || 'Cut', icon: <Scissors size={15} />, shortcut: 'Ctrl+X', onClick: () => putClipboard('cut'), disabled: !writable },
       { key: 'paste', label: t('files.actions.pasteInto') || 'Paste into', icon: <ClipboardPaste size={15} />, onClick: () => one && void (async () => { await moveOrCopyInto(joinPath(path, one.name)); })(), disabled: !one || one.kind !== 'dir' || clipboard.accountId !== accountId || !clipboard.paths.length },
@@ -584,7 +625,7 @@ export function FileExplorer({ accountId, path, onPathChange, className }: {
         <IconButton size="sm" label={t('files.actions.newFile') || 'New file'} icon={<FilePlus className="h-4 w-4" />} onClick={() => void newFile()} disabled={!writable} />
         <IconButton size="sm" label={t('files.actions.upload') || 'Upload files'} icon={<Upload className="h-4 w-4" />} onClick={() => fileInput.current?.click()} disabled={!writable} />
         <IconButton size="sm" label={t('files.actions.uploadFolder') || 'Upload a folder'} icon={<FolderUp className="h-4 w-4" />} onClick={() => folderInput.current?.click()} disabled={!writable} />
-        <IconButton size="sm" label={t('files.actions.download') || 'Download'} icon={<Download className="h-4 w-4" />} onClick={download} disabled={!selectedEntries.some((e) => e.kind === 'file')} />
+        <IconButton size="sm" label={t('files.actions.download') || 'Download'} icon={<Download className="h-4 w-4" />} onClick={download} disabled={!selectedEntries.some((e) => e.kind === 'file' || e.kind === 'dir')} />
         <IconButton size="sm" label={`${t('files.actions.rename') || 'Rename'} (F2)`} icon={<Pencil className="h-4 w-4" />} onClick={() => void rename()} disabled={selectedEntries.length !== 1 || !writable} />
         <IconButton size="sm" label={`${t('files.actions.copy') || 'Copy'} (Ctrl+C)`} icon={<Copy className="h-4 w-4" />} onClick={() => putClipboard('copy')} disabled={!selectedEntries.length} />
         <IconButton size="sm" label={`${t('files.actions.cut') || 'Cut'} (Ctrl+X)`} icon={<Scissors className="h-4 w-4" />} onClick={() => putClipboard('cut')} disabled={!selectedEntries.length || !writable} />

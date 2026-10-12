@@ -92,3 +92,14 @@ export interface FileUploadStatus {
   count: number;
   chunkSize: number;
 }
+
+/** Result of extracting an archive (zip, tar, tar.gz) into a folder. */
+export interface FileExtractResult {
+  files: number;
+  dirs: number;
+  bytes: number;
+  /** Links / special entries skipped, existing files kept (no overwrite). */
+  skipped: number;
+  /** Entries blocked by a link or a file in the way (first 100). */
+  conflicts: string[];
+}

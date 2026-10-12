@@ -228,7 +228,7 @@ func (m *fileManager) List(ctx context.Context, accountID int64, segs []string) 
 		if err != nil {
 			continue // removed meanwhile
 		}
-		if isUploadTemp(name) {
+		if isUploadTemp(name) || strings.HasPrefix(name, extractTmpPrefix) {
 			if fi.Mode().IsRegular() && now.Sub(fi.ModTime()) > uploadStaleAfter {
 				_ = dir.Remove(name)
 			}

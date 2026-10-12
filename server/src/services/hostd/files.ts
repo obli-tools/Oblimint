@@ -28,6 +28,14 @@ export interface HostdFileListing {
   truncated: boolean;
 }
 
+export interface HostdExtractResult {
+  files: number;
+  dirs: number;
+  bytes: number;
+  skipped: number;
+  conflicts: string[];
+}
+
 export interface HostdFileTarget {
   nodeId: number;
   accountId: number;
@@ -92,6 +100,31 @@ async function openContent(t: HostdFileTarget, relPath: string, range?: string):
   });
 }
 
+/** Streams a zip of the entries `names` of the directory `dir`. */
+async function openZip(t: HostdFileTarget, dir: string, names: string[]): Promise<HostdFileStream> {
+  const socketPath = await hostdSocketFor(t.nodeId);
+  const q = new URLSearchParams({ path: dir });
+  for (const n of names) q.append('name', n);
+  return new Promise((resolve, reject) => {
+    const req = http.request({ socketPath, method: 'GET', path: `${accountPath(t, '/zip')}?${q}`, headers: { Host: 'hostd' } }, (res) => {
+      const status = res.statusCode ?? 0;
+      if (status >= 400) {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => { if (chunks.length < 64) chunks.push(c); });
+        res.on('end', () => {
+          let json: { error?: unknown; code?: unknown } | undefined;
+          try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* not JSON */ }
+          reject(new HostdError(status, `hostd GET zip: ${typeof json?.error === 'string' ? json.error : `HTTP ${status}`}`, typeof json?.code === 'string' ? json.code : undefined));
+        });
+        return;
+      }
+      resolve({ status, headers: res.headers, body: res });
+    });
+    req.on('error', (err: NodeJS.ErrnoException) => reject(new HostdError(503, `hostd unreachable: ${err.code ?? err.message}`, 'hostdUnavailable')));
+    req.end();
+  });
+}
+
 /** Sends one chunk (exactly `length` bytes of `body`) at `offset` of the upload's temporary file. */
 async function uploadChunk(t: HostdFileTarget, o: HostdFileOwner, relPath: string, uploadId: string, offset: number, length: number, body: Readable): Promise<void> {
   const socketPath = await hostdSocketFor(t.nodeId);
@@ -132,6 +165,11 @@ export const hostdFiles = {
     call<HostdFileListing>(t, 'GET', `${accountPath(t)}?path=${encodeURIComponent(relPath)}`, undefined, TIMEOUT_MS, MAX_LISTING_BYTES),
 
   openContent,
+
+  openZip,
+
+  extract: (t: HostdFileTarget, o: HostdFileOwner, archive: string, to: string, overwrite: boolean) =>
+    call<HostdExtractResult>(t, 'POST', accountPath(t, '/extract'), { ...o, path: archive, to, overwrite }, TREE_TIMEOUT_MS),
 
   mkdir: (t: HostdFileTarget, o: HostdFileOwner, relPath: string) =>
     call(t, 'POST', accountPath(t, '/mkdir'), { ...o, path: relPath }).then((): void => undefined),

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type { Readable } from 'stream';
 import type {
-  FileEntry, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadRequest, FileUploadSession, FileUploadStatus,
+  FileExtractResult, FileEntry, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadRequest, FileUploadSession, FileUploadStatus,
 } from '@oblimint/shared';
 import { FILE_TEXT_MAX_BYTES } from '@oblimint/shared';
 import { db } from '../../db';
@@ -270,6 +270,31 @@ async function moveOrCopy(a: AccountRow, kind: 'move' | 'copy', items: Array<{ f
   return res;
 }
 
+/** Extracts an archive of the account into a folder (default: the archive's folder). */
+async function extract(a: AccountRow, rawArchive: unknown, rawTo: unknown, overwrite: boolean): Promise<FileExtractResult> {
+  const archive = splitVirtual(rawArchive);
+  if (archive.length < 3) throw invalidPath();
+  const to = rawTo === undefined || rawTo === null ? archive.slice(0, -1) : splitVirtual(rawTo);
+  if (to.length < 2) throw new AppError(403, 'Archives cannot be extracted here', 'fileForbidden');
+  await assertWritable(a);
+  let res: FileExtractResult;
+  try {
+    res = await deps.hostd.extract(target(a), owner(a), rel(archive), rel(to), overwrite);
+  } catch (err) { throw fileError(err); }
+  await notifyStaging(a, [to]);
+  return res;
+}
+
+/** Zip of entries of one folder (streamed). */
+async function zip(a: AccountRow, rawDir: unknown, names: string[]): Promise<HostdFileStream> {
+  const dir = splitVirtual(rawDir);
+  if (!dir.length) throw invalidPath();
+  if (!names.length || names.length > MAX_BATCH || names.some((n) => !validName(n))) throw invalidPath();
+  try {
+    return await deps.hostd.openZip(target(a), rel(dir), names);
+  } catch (err) { throw fileError(err); }
+}
+
 // ── Chunked uploads ──────────────────────────────────────────────────────────
 
 interface UploadSession {
@@ -417,7 +442,7 @@ function uploadInfo(id: string): { path: string; size: number } | null {
 }
 
 export const filesService = {
-  list, open, readText, mkdir, remove,
+  list, open, readText, mkdir, remove, extract, zip,
   move: (a: AccountRow, items: Array<{ from: unknown; to: unknown }>, overwrite: boolean) => moveOrCopy(a, 'move', items, overwrite),
   copy: (a: AccountRow, items: Array<{ from: unknown; to: unknown }>) => moveOrCopy(a, 'copy', items, false),
   uploadStart, uploadStatus, uploadChunk, uploadAbort, uploadInfo,

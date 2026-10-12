@@ -37,6 +37,11 @@ const ARCHIVE = new Set(['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar', 'z
 const CODE = new Set(['php', 'phtml', 'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'css', 'scss', 'less', 'html', 'htm', 'xml', 'vue', 'py', 'rb', 'sh', 'go', 'twig', 'tpl', 'blade']);
 const TEXT = new Set(['txt', 'md', 'markdown', 'log', 'ini', 'conf', 'cfg', 'env', 'yml', 'yaml', 'toml', 'csv', 'htaccess', 'lock', 'sql', 'json', 'gitignore', 'editorconfig', 'map']);
 
+/** Archives the server can extract. */
+export const isArchive = (name: string) => /.(zip|tar|tar.gz|tgz)$/i.test(name);
+/** "site.tar.gz" → "site" */
+export const archiveBase = (name: string) => name.replace(/.(zip|tar|tar.gz|tgz)$/i, '') || name;
+
 /** Inline preview (image / video / audio / pdf) — SVG never inline (script). */
 export function previewKind(name: string): 'image' | 'video' | 'audio' | 'pdf' | null {
   const e = extOf(name);

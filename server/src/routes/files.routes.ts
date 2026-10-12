@@ -17,6 +17,8 @@ import { AppError } from '../middleware/errorHandler';
 //   POST   /:id/files/delete  {paths}           → FileOpResult[]
 //   POST   /:id/files/move    {items, overwrite}→ FileOpResult[]
 //   POST   /:id/files/copy    {items}           → FileOpResult[]
+//   POST   /:id/files/extract {path, to?, overwrite} → FileExtractResult (zip, tar, tar.gz)
+//   GET    /:id/files/zip?path=<dir>&name=a&name=b   → application/zip (folders recursively, links skipped)
 //   POST   /:id/files/uploads FileUploadRequest → FileUploadSession
 //   GET    /:id/files/uploads/:uid              → FileUploadStatus (resume)
 //   PUT    /:id/files/uploads/:uid/:index       raw chunk (application/octet-stream) → FileUploadChunkResult
@@ -32,6 +34,7 @@ const moveSchema = z.object({
   items: z.array(z.object({ from: pathField, to: pathField }).strict()).min(1).max(MAX_BATCH),
   overwrite: z.boolean().optional(),
 }).strict();
+const extractSchema = z.object({ path: pathField, to: pathField.optional(), overwrite: z.boolean().optional() }).strict();
 const uploadSchema = z.object({
   path: pathField,
   size: z.number().int().min(0),
@@ -155,6 +158,34 @@ router.post('/:id/files/copy', async (req, res, next) => {
     const done = items.filter((_, i) => data[i]?.ok).map((i) => `${i.from} → ${i.to}`);
     if (done.length) await audit(req, row, 'files.copy', { items: sample(done) });
     res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/files/extract', async (req, res, next) => {
+  try {
+    const { row } = await account(req);
+    const { path, to, overwrite } = parseBody(extractSchema, req.body);
+    const data = await filesService.extract(row, path, to, overwrite === true);
+    await audit(req, row, 'files.extract', { path, to: to ?? null, overwrite: overwrite === true, files: data.files, bytes: data.bytes });
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/files/zip', async (req: Request, res: Response, next) => {
+  try {
+    const { row } = await account(req);
+    const raw = req.query.name;
+    const names = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]).map(String);
+    const stream = await filesService.zip(row, req.query.path, names);
+    const base = names.length === 1 ? names[0] : (String(req.query.path ?? '').split('/').filter(Boolean).pop() || 'files');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', contentDisposition('attachment', `${base}.zip`));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
+    req.on('close', () => stream.body.destroy());
+    stream.body.on('error', () => res.destroy());
+    stream.body.on('aborted', () => res.destroy());
+    stream.body.pipe(res);
   } catch (err) { next(err); }
 });
 

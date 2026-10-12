@@ -26,6 +26,8 @@ function fakeHostd(): typeof hostdFiles {
         entries: [{ name: 'site', kind: 'dir', size: 0, mtime: 1, mode: 0o750, uid: 10007 }, { name: 'f.txt', kind: 'file', size: 3, mtime: 42, mode: 0o644, uid: 10007 }] };
     },
     openContent: async () => { throw new Error('unused'); },
+    openZip: async () => { throw new Error('unused'); },
+    extract: async (_t, _o, archive, to, overwrite) => { calls.push(['extract', archive, to, overwrite]); return { files: 2, dirs: 1, bytes: 10, skipped: 0, conflicts: [] }; },
     mkdir: rec('mkdir'),
     remove: rec('remove'),
     move: rec('move'),
@@ -145,6 +147,16 @@ test('move / copy: batch results, first two levels refused, both ends notified',
   assert.deepEqual(calls[0], ['move', 'staging/site/a', 'staging/site/b', false]);
   await filesService.copy(account, [{ from: '/staging/site/a', to: '/data/site/uploads/a' }]);
   assert.deepEqual(calls.at(-1), ['copy', 'staging/site/a', 'data/site/uploads/a']);
+});
+
+test('extract: into the archive folder by default, refused on the first level and over quota', async () => {
+  const r = await filesService.extract(account, '/staging/site/wp.zip', undefined, false);
+  assert.equal(r.files, 2);
+  assert.deepEqual(calls.at(-1), ['extract', 'staging/site/wp.zip', 'staging/site', false]);
+  assert.deepEqual(notified, [31]);
+  await assert.rejects(filesService.extract(account, '/staging/site/wp.zip', '/staging', false), (e: AppError) => e.code === 'fileForbidden');
+  blocked = true;
+  await assert.rejects(filesService.extract(account, '/staging/site/wp.zip', undefined, false), (e: AppError) => e.code === 'uploadsBlocked');
 });
 
 test('abandoned sessions are aborted by the sweeper', async () => {
