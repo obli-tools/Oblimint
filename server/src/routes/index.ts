@@ -36,6 +36,7 @@ import dnsRoutes from './dns.routes';                          // dns
 import systemDnsRoutes from './systemDns.routes';              // dns
 import domainOwnershipRoutes from './domainOwnership.routes';  // edge-ownership
 import databasesRoutes from './databases.routes';              // databases
+import dbExplorerRoutes from './dbExplorer.routes';            // integrated database explorer
 import { accountAccessRoutes, accessRoutes, systemFirewallRoutes } from './firewall.routes'; // hostd-firewall
 import ipProbeRoutes from './ipProbe.routes';                  // hostd-firewall (public)
 import usageRoutes from './usage.routes';                      // usage
@@ -137,6 +138,7 @@ tenantRouter.use('/sites', cronRoutes);                 // /:id/cron…
 tenantRouter.use('/sites', logsRoutes);                 // /:id/logs…
 tenantRouter.use('/dns', dnsRoutes);
 tenantRouter.use('/databases', databasesRoutes);
+tenantRouter.use('/databases', dbExplorerRoutes);          // integrated database explorer
 tenantRouter.use('/usage', usageRoutes);
 tenantRouter.use('/notifications', notificationsRoutes);
 // P3 updates / windows. Shared /sites prefix: no catch-all in any of these routers.

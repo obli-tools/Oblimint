@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { Database, Download, ExternalLink, Plus, Trash2, Upload } from 'lucide-react';
+import { Database, Download, ExternalLink, Plus, Table2, Trash2, Upload } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import type { DbDatabase, DbInstanceDetail } from '@oblimint/shared';
 import { databasesApi } from '@/api/databases.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
@@ -148,6 +149,7 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
   onOpenAdmin?: (databaseId: number) => void;
 }) {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const confirm = useConfirm();
   const [creating, setCreating] = useState(false);
   const [job, setJob] = useState<{ db: DbDatabase; file: File; pct: number; phase: 'upload' | 'import' | 'done' | 'error'; error: string | null } | null>(null);
@@ -242,6 +244,7 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
     <ActionMenu
       triggerSize="sm"
       items={[
+        { key: 'explore', icon: <Table2 className="h-4 w-4" />, label: t('dbx.open') || 'Explore (tables, data, SQL)', onClick: () => navigate(`/databases/${instance.id}/explorer/${d.id}`), hidden: !manage, disabled: !running },
         { key: 'admin', icon: <ExternalLink className="h-4 w-4" />, label: instance.adminUi === 'phpmyadmin' ? (t('databases.admin.openPma') || 'Open in phpMyAdmin') : (t('databases.admin.openAdminer') || 'Open in Adminer'), onClick: () => onOpenAdmin?.(d.id), hidden: !manage || !onOpenAdmin || !instance.adminUiAvailable || !running },
         { key: 'dump', icon: <Download className="h-4 w-4" />, label: t('databases.db.dump') || 'Download a dump', onClick: () => { void dump(d); }, hidden: !manage, disabled: !running || dumping !== null },
         { key: 'restore', icon: <Upload className="h-4 w-4" />, label: t('databases.restore.title') || 'Restore a dump', onClick: () => pickRestore(d), hidden: !manage, disabled: !running },
@@ -280,7 +283,7 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
           renderCard={(d) => (
             <div className="flex items-center gap-2 rounded-lg bg-bg-primary p-2.5">
               <div className="min-w-0 flex-1">
-                <div className="truncate font-mono text-sm text-text-primary">{d.name}</div>
+                <div className="truncate font-mono text-sm text-text-primary">{manage && running ? <Link to={`/databases/${instance.id}/explorer/${d.id}`} className="hover:text-accent">{d.name}</Link> : d.name}</div>
                 <div className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-text-muted">
                   <span>{formatBytes(t, d.sizeBytes)}</span>
                   {d.charset && <span className="font-mono">{d.charset}</span>}
@@ -291,7 +294,9 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
             </div>
           )}
           columns={[
-            { id: 'name', header: t('databases.name') || 'Name', tdClassName: 'font-mono text-text-primary', sort: (d) => d.name, cell: (d) => d.name },
+            { id: 'name', header: t('databases.name') || 'Name', tdClassName: 'font-mono text-text-primary', sort: (d) => d.name, cell: (d) => (manage && running
+              ? <Link to={`/databases/${instance.id}/explorer/${d.id}`} className="hover:text-accent hover:underline" title={t('dbx.open') || 'Explore (tables, data, SQL)'}>{d.name}</Link>
+              : d.name) },
             { id: 'charset', header: t('databases.db.charset') || 'Character set', tdClassName: 'font-mono text-xs text-text-secondary', sort: (d) => d.charset ?? '', cell: (d) => d.charset ?? '—' },
             { id: 'collation', header: t('databases.db.collation') || 'Collation', tdClassName: 'font-mono text-xs text-text-secondary', sort: (d) => d.collation ?? '', cell: (d) => d.collation ?? '—' },
             { id: 'size', header: t('databases.col.size') || 'Size', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs tabular-nums', sort: (d) => d.sizeBytes ?? null, cell: (d) => formatBytes(t, d.sizeBytes) },

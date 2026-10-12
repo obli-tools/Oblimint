@@ -21,3 +21,5 @@ export * from './migration';
 export * from './platformUpdates';
 // Web file explorer
 export * from './files';
+// Integrated database explorer
+export * from './dbExplorer';

@@ -1,0 +1,67 @@
+{
+  "dbx": {
+    "open": "Explorer (tables, données, SQL)",
+    "refresh": "Actualiser",
+    "exportCsv": "Exporter en CSV",
+    "prev": "Page précédente",
+    "next": "Page suivante",
+    "sessionUser": "session {{user}}",
+    "errors": {
+      "noKey": "Cette ligne ne peut pas être identifiée (clé primaire)"
+    },
+    "tabs": {
+      "data": "Données",
+      "structure": "Structure"
+    },
+    "tables": {
+      "filter": "Tables",
+      "console": "Console SQL",
+      "empty": "Aucune table dans cette base pour l'instant.",
+      "count": "{{count}} table(s)"
+    },
+    "data": {
+      "unchanged": "Aucune ligne modifiée (valeur identique, ou ligne modifiée ailleurs).",
+      "deleteTitle": "Supprimer des lignes",
+      "deleteConfirm": "Supprimer {{count}} ligne(s) de {{table}} ? C'est définitif.",
+      "deleted": "{{count}} ligne(s) supprimée(s)",
+      "filter": "Filtrer",
+      "insert": "Insérer",
+      "insertTitle": "Nouvelle ligne dans {{table}}",
+      "inserted": "Ligne insérée",
+      "deleteSelected": "Supprimer les lignes sélectionnées",
+      "viewReadOnly": "Vue : lecture seule",
+      "noPk": "Pas de clé primaire : lecture seule ici (passez par le SQL)",
+      "value": "valeur",
+      "addFilter": "Ajouter",
+      "noMatch": "Aucune ligne ne correspond aux filtres.",
+      "empty": "Cette table est vide.",
+      "modeValue": "Valeur",
+      "modeDefault": "Défaut"
+    },
+    "structure": {
+      "columns": "Colonnes",
+      "name": "Nom",
+      "type": "Type",
+      "default": "Défaut",
+      "extra": "Extra",
+      "comment": "Commentaire",
+      "indexes": "Index",
+      "kind": "Nature",
+      "foreignKeys": "Clés étrangères",
+      "ddl": "Instruction CREATE"
+    },
+    "console": {
+      "run": "Exécuter",
+      "limits": "{{rows}} lignes max par résultat, {{seconds}} s par requête",
+      "history": "Historique",
+      "rows": "{{count}} ligne(s)",
+      "affected": "{{count}} ligne(s) affectée(s)",
+      "truncated": "Seules les {{rows}} premières lignes sont affichées (ajoutez un LIMIT).",
+      "noRows": "Aucune ligne.",
+      "stopped": "Exécution arrêtée à la première erreur : les requêtes suivantes n'ont pas été lancées.",
+      "dangerTitle": "Requêtes destructrices",
+      "dangerMessage": "Ces requêtes suppriment des données ou de la structure. Les exécuter ?",
+      "noWhere": "sans WHERE : toutes les lignes"
+    }
+  }
+}

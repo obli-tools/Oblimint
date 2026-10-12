@@ -193,7 +193,7 @@ async function instanceRow(id: number): Promise<DbInstanceRow | null> {
 }
 
 /** One instance visible to the actor with `need` (404 invisible / 403 without the need). */
-async function loadInstance(actor: HostingActor, id: number, need: HostingNeed): Promise<DbInstanceRow> {
+export async function loadInstance(actor: HostingActor, id: number, need: HostingNeed): Promise<DbInstanceRow> {
   if (!Number.isInteger(id) || id <= 0) throw notFound('Database instance');
   const row = await instanceRow(id);
   if (!row || !actorSees(actor, { tenantId: row.tenant_id, accountId: row.account_id })) throw notFound('Database instance');
@@ -206,7 +206,7 @@ export async function assertInstanceAccess(actor: HostingActor, id: number, need
   await loadInstance(actor, id, need);
 }
 
-async function loadDatabaseRow(instance: DbInstanceRow, dbId: number): Promise<DbDatabaseRow> {
+export async function loadDatabaseRow(instance: DbInstanceRow, dbId: number): Promise<DbDatabaseRow> {
   if (!Number.isInteger(dbId) || dbId <= 0) throw notFound('Database');
   const row = await db('db_databases').where({ id: dbId, instance_id: instance.id }).first() as DbDatabaseRow | undefined;
   if (!row) throw notFound('Database');

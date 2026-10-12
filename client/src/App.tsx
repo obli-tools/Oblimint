@@ -17,6 +17,7 @@ import { NodesPage } from '@/pages/NodesPage';
 import { AuditLogPage } from '@/pages/AuditLogPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { FilesPage } from '@/pages/files/FilesPage';
+import { DbExplorerPage } from '@/pages/databases/DbExplorerPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { SetupWizardPage } from '@/pages/SetupWizardPage';
 // P1 — hosting core (docs/P1-PLAN.md §UI)
@@ -97,6 +98,7 @@ function NormalRoutes() {
           <Route path="/dns/zones/:id" element={<DnsZonePage />} />
           <Route path="/databases" element={<DatabasesPage />} />
           <Route path="/databases/:id" element={<DbInstancePage />} />
+          <Route path="/databases/:id/explorer/:dbId" element={<DbExplorerPage />} />
           <Route path="/usage" element={<UsagePage />} />
           {/* P3: maintenance overview (reviews, windows, updates, quarantine) + window review */}
           <Route path="/maintenance" element={<MaintenancePage />} />

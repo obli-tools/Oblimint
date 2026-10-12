@@ -1,0 +1,67 @@
+{
+  "dbx": {
+    "open": "Explore (tables, data, SQL)",
+    "refresh": "Refresh",
+    "exportCsv": "Export as CSV",
+    "prev": "Previous page",
+    "next": "Next page",
+    "sessionUser": "session {{user}}",
+    "errors": {
+      "noKey": "This row cannot be identified (primary key)"
+    },
+    "tabs": {
+      "data": "Data",
+      "structure": "Structure"
+    },
+    "tables": {
+      "filter": "Tables",
+      "console": "SQL console",
+      "empty": "No table in this database yet.",
+      "count": "{{count}} table(s)"
+    },
+    "data": {
+      "unchanged": "No row changed (the value may be identical, or the row was modified elsewhere).",
+      "deleteTitle": "Delete rows",
+      "deleteConfirm": "Delete {{count}} row(s) from {{table}}? This cannot be undone.",
+      "deleted": "{{count}} row(s) deleted",
+      "filter": "Filter",
+      "insert": "Insert",
+      "insertTitle": "New row in {{table}}",
+      "inserted": "Row inserted",
+      "deleteSelected": "Delete the selected rows",
+      "viewReadOnly": "View: read-only",
+      "noPk": "No primary key: read-only here (use SQL)",
+      "value": "value",
+      "addFilter": "Add",
+      "noMatch": "No row matches the filters.",
+      "empty": "This table is empty.",
+      "modeValue": "Value",
+      "modeDefault": "Default"
+    },
+    "structure": {
+      "columns": "Columns",
+      "name": "Name",
+      "type": "Type",
+      "default": "Default",
+      "extra": "Extra",
+      "comment": "Comment",
+      "indexes": "Indexes",
+      "kind": "Kind",
+      "foreignKeys": "Foreign keys",
+      "ddl": "CREATE statement"
+    },
+    "console": {
+      "run": "Run",
+      "limits": "{{rows}} rows max per result, {{seconds}} s per statement",
+      "history": "History",
+      "rows": "{{count}} row(s)",
+      "affected": "{{count}} row(s) affected",
+      "truncated": "Only the first {{rows}} rows are shown (add a LIMIT).",
+      "noRows": "No rows.",
+      "stopped": "Execution stopped at the first error: the following statements were not run.",
+      "dangerTitle": "Destructive statements",
+      "dangerMessage": "These statements delete data or structure. Run them?",
+      "noWhere": "no WHERE: every row"
+    }
+  }
+}
