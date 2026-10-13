@@ -12,7 +12,7 @@ import { appConfigService } from '../appConfig.service';
 import { parseImageRef } from '../apps/compose/image';
 import { remoteDigest, RegistryCheckError } from '../apps/registryClient';
 import { auditService } from '../audit.service';
-import { inspectContainer, pullImage, startContainer, stopContainer } from '../docker/dockerOps';
+import { inspectContainer, isNotFound, pullImage, startContainer, stopContainer } from '../docker/dockerOps';
 import { engineFor, localNodeId } from '../docker/engine';
 import { LABELS } from '../hosting/naming';
 import { nextWindowOpening, windowIsOpen } from '../monitoring/schedule';
@@ -315,7 +315,10 @@ async function swapContainers(docker: Docker, targets: Array<{ name: string; run
     throw err;
   }
   for (const k of kept) {
-    try { await docker.getContainer(k.id).remove({ force: true }); } catch (e) { log(`${k.name}${PREV_SUFFIX} : suppression impossible (${errText(e)})`); }
+    try { await docker.getContainer(k.id).remove({ force: true }); } catch (e) {
+      // Already gone: the account reconcile removed the stray container itself. Nothing to clean.
+      if (!isNotFound(e)) log(`${k.name}${PREV_SUFFIX} : suppression impossible (${errText(e)})`);
+    }
   }
 }
 
