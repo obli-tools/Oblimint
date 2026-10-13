@@ -185,5 +185,6 @@ test('hostd errors map to explorer codes without leaking the hostd request line'
   assert.equal(e.code, 'fileForbidden');
   assert.equal(e.message, 'data/site is not writable by the account');
   assert.equal(fileError(new HostdError(507, 'x', 'quotaExceeded')).code, 'quotaExceeded');
+  assert.equal(fileError(new HostdError(404, 'hostd GET /v1/accounts/3/files: no route GET /v1/accounts/3/files', 'notFound')).code, 'hostdOutdated');
   assert.equal(fileError(new HostdError(503, 'hostd unreachable', 'hostdUnavailable')).code, 'backendUnavailable');
 });

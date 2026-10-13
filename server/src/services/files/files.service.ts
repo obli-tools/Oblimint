@@ -113,6 +113,10 @@ export function fileError(err: unknown): AppError {
   if (err instanceof AppError) return err;
   if (err instanceof HostdError) {
     const msg = err.message.replace(/^hostd [A-Z]+ [^:]*: /, '');
+    // hostd older than the panel: the file routes do not exist there yet (never "file not found").
+    if (err.code === 'notFound' && /^no route /.test(msg)) {
+      return new AppError(503, 'The host daemon (hostd) is older than the panel: apply the platform update of hostd (Nodes > Updates)', 'hostdOutdated');
+    }
     switch (err.code) {
       case 'invalid': return new AppError(400, msg, 'invalidPath');
       case 'notFound': return new AppError(404, msg, 'fileNotFound');
