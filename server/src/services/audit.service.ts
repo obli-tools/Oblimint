@@ -48,6 +48,21 @@ function resourceNameSelect() {
 `);
 }
 
+/** API key of a /api/v1 or /mcp request (set by apiKeyAuth). */
+function apiKeyOf(req: Request): { id: number; name: string; creatorId: number } | undefined {
+  return (req as Request & { apiKey?: { id: number; name: string; creatorId: number } }).apiKey;
+}
+
+function requestUserId(req: Request): number | undefined {
+  return req.session?.userId ?? apiKeyOf(req)?.creatorId;
+}
+
+function withApiKey(req: Request, details: AuditLogEntry['details']): AuditLogEntry['details'] {
+  const k = apiKeyOf(req);
+  if (!k) return details;
+  return { ...(details ?? {}), apiKey: { id: k.id, name: k.name } };
+}
+
 export const auditService = {
   /** Never throws — logging must not break the audited request. */
   async log(entry: AuditLogEntry): Promise<void> {
@@ -64,7 +79,7 @@ export const auditService = {
     } catch { /* swallowed */ }
   },
 
-  /** tenantId / userId / IP from the request (req.tenantId, else the session's tenant). */
+  /** tenantId / userId / IP from the request (req.tenantId, else the session's tenant). An API key request is filed under its creator, with the key. */
   async logReq(
     req: Request,
     action: string,
@@ -72,13 +87,7 @@ export const auditService = {
   ): Promise<void> {
     const tenantId = ((req as any).tenantId as number | undefined) ?? req.session?.currentTenantId;
     if (!tenantId) return;
-    await this.log({
-      tenantId,
-      userId: req.session?.userId,
-      action,
-      ipAddress: resolveClientIp(req) || undefined,
-      ...extras,
-    });
+    await this.log({ tenantId, userId: requestUserId(req), action, ipAddress: resolveClientIp(req) || undefined, ...extras, details: withApiKey(req, extras.details) });
   },
 
   /** As logReq, filed in another tenant's log. */
@@ -88,7 +97,7 @@ export const auditService = {
     action: string,
     extras: Partial<Omit<AuditLogEntry, 'action' | 'tenantId' | 'userId' | 'ipAddress'>> = {},
   ): Promise<void> {
-    await this.log({ tenantId, userId: req.session?.userId, action, ipAddress: resolveClientIp(req) || undefined, ...extras });
+    await this.log({ tenantId, userId: requestUserId(req), action, ipAddress: resolveClientIp(req) || undefined, ...extras, details: withApiKey(req, extras.details) });
   },
 
   async list(params: {

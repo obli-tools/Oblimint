@@ -62,7 +62,10 @@ function baseApp(): express.Express {
   app.use(cors({ origin: config.clientOrigin, credentials: true }));
   // CSRF: state-changing requests only from the panel's origin, JSON bodies only.
   app.use(originGuard);
-  app.use(express.json({ limit: '1mb' }));
+  // MCP (/mcp): a tool call may carry a file of up to 8 MiB (base64: ≈ 11 MiB).
+  const json = express.json({ limit: '1mb' });
+  const mcpJson = express.json({ limit: '12mb' });
+  app.use((req, res, next) => (req.path === '/mcp' ? mcpJson : json)(req, res, next));
   return app;
 }
 
@@ -84,7 +87,7 @@ function serveClient(app: express.Express): void {
     },
   }));
   app.get('*', (req, res, next) => {
-    if (/^\/(api|auth|socket\.io|health)(\/|$)/.test(req.path)) return next();
+    if (/^\/(api|auth|socket\.io|health|mcp)(\/|$)/.test(req.path)) return next();
     res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(indexHtml);
   });
@@ -151,6 +154,10 @@ export function createApp(): express.Express {
   app.use(twoFactorPolicyGuard);
   // P2 (hostd-firewall): sessions that passed 2FA refresh their auto-2fa grants. Never blocks.
   app.use(accessGrantTouch);
+
+  // MCP server of the API access keys (Bearer obk_…, no session): services/apiKeys/mcp.ts.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  app.use('/mcp', require('./services/apiKeys/mcp').mcpRouter);
 
   // Obligate SSO browser redirects (NOT under /api), before /api.
   // eslint-disable-next-line @typescript-eslint/no-var-requires

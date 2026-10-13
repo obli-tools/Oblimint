@@ -1,0 +1,81 @@
+{
+  "apiKeys": {
+    "tab": "Clés d'accès",
+    "title": "Clés d'accès",
+    "create": "Nouvelle clé",
+    "createTitle": "Nouvelle clé d'accès",
+    "editTitle": "Clé {{name}}",
+    "intro": "Donnez à un script, une CI ou un agent IA (Claude…) un accès à ce compte seulement, limité aux sites et aux droits que vous choisissez. Une clé ne dépasse jamais vos propres droits et cesse de fonctionner si vous les perdez.",
+    "empty": "Aucune clé d'accès pour l'instant.",
+    "loadFailed": "Les clés n'ont pas pu être chargées",
+    "saveFailed": "La clé n'a pas pu être enregistrée",
+    "deleteFailed": "La clé n'a pas pu être révoquée",
+    "deleteTitle": "Révoquer la clé",
+    "deleteConfirm": "Révoquer « {{name}} » ? Tout script ou agent qui l'utilise perd l'accès immédiatement.",
+    "deleted": "Clé révoquée",
+    "revoke": "Révoquer",
+    "expired": "expirée",
+    "readOnly": "lecture seule",
+    "inactiveScope": "Inactif : le créateur ne détient plus ce droit",
+    "inactiveHint": "Certains droits sont inactifs : le créateur de la clé ne les détient plus.",
+    "allSites": "Tous les sites du compte",
+    "selectedSites": "Seulement les sites ci-dessous (+ ceux qu'elle crée)",
+    "sitesPrefix": "Sites :",
+    "noSiteYet": "Aucun site pour l'instant (seulement ceux qu'elle créera)",
+    "noSites": "Aucun site pour l'instant.",
+    "createdBy": "par {{name}}",
+    "createdByKey": "créé par la clé",
+    "lastUsed": "dernière utilisation",
+    "expires": "expire",
+    "never": "jamais",
+    "name": "Nom",
+    "rights": "Droits",
+    "neverHint": "Jamais accordé à une clé : supprimer un site, les domaines, les autres comptes, les utilisateurs.",
+    "sites": "Sites",
+    "expiry": "Expiration",
+    "keepExpiry": "Inchangée",
+    "days": "{{count}} jours",
+    "oneYear": "1 an",
+    "allowedIps": "Adresses autorisées (facultatif)",
+    "createdTitle": "Clé « {{name}} » créée",
+    "savedIt": "Je l'ai enregistrée",
+    "shownOnce": "Cette clé n'est affichée qu'une fois : copiez-la en lieu sûr. Elle ne pourra plus être affichée (révoquez-la et créez-en une autre si elle est perdue).",
+    "theKey": "Clé",
+    "claudeCode": "Claude Code (MCP)",
+    "docHint": "API : /api/v1 (sites, fichiers, publication, releases, logs). MCP : les mêmes outils pour un agent IA. Chaque action est inscrite au journal d'audit avec le nom de la clé.",
+    "scopes": {
+      "files": {
+        "read": {
+          "label": "Lire les fichiers",
+          "hint": "Lister et lire les fichiers de ses sites (code et données)."
+        },
+        "write": {
+          "label": "Écrire les fichiers",
+          "hint": "Créer, remplacer, déplacer, supprimer, extraire des archives dans ses sites."
+        }
+      },
+      "releases": {
+        "publish": {
+          "label": "Publier",
+          "hint": "Publier le code en nouvelle release (en ligne) et revenir en arrière."
+        }
+      },
+      "sites": {
+        "manage": {
+          "label": "Réglages des sites",
+          "hint": "Modifier les réglages de ses sites (moteur, docroot…)."
+        },
+        "create": {
+          "label": "Créer des sites",
+          "hint": "Créer des sites dans le compte : ils rejoignent la clé automatiquement."
+        }
+      },
+      "logs": {
+        "read": {
+          "label": "Lire les logs",
+          "hint": "Logs d'accès, d'erreurs et applicatifs de ses sites."
+        }
+      }
+    }
+  }
+}

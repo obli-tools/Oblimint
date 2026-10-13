@@ -1,0 +1,81 @@
+{
+  "apiKeys": {
+    "tab": "Access keys",
+    "title": "Access keys",
+    "create": "New key",
+    "createTitle": "New access key",
+    "editTitle": "Key {{name}}",
+    "intro": "Give a script, a CI or an AI agent (Claude…) access to this account only, limited to the sites and rights you choose. A key never exceeds your own rights and stops working if you lose them.",
+    "empty": "No access key yet.",
+    "loadFailed": "The keys could not be loaded",
+    "saveFailed": "The key could not be saved",
+    "deleteFailed": "The key could not be revoked",
+    "deleteTitle": "Revoke the key",
+    "deleteConfirm": "Revoke \"{{name}}\"? Every script or agent using it loses access at once.",
+    "deleted": "Key revoked",
+    "revoke": "Revoke",
+    "expired": "expired",
+    "readOnly": "read-only",
+    "inactiveScope": "Inactive: the creator no longer holds this right",
+    "inactiveHint": "Some rights are inactive: the key creator no longer holds them.",
+    "allSites": "Every site of the account",
+    "selectedSites": "Only the sites below (+ the ones it creates)",
+    "sitesPrefix": "Sites:",
+    "noSiteYet": "No site yet (only the ones it will create)",
+    "noSites": "No site yet.",
+    "createdBy": "by {{name}}",
+    "createdByKey": "created by the key",
+    "lastUsed": "last used",
+    "expires": "expires",
+    "never": "never",
+    "name": "Name",
+    "rights": "Rights",
+    "neverHint": "Never granted to a key: deleting a site, domains, other accounts, users.",
+    "sites": "Sites",
+    "expiry": "Expiry",
+    "keepExpiry": "Unchanged",
+    "days": "{{count}} days",
+    "oneYear": "1 year",
+    "allowedIps": "Allowed addresses (optional)",
+    "createdTitle": "Key \"{{name}}\" created",
+    "savedIt": "I saved it",
+    "shownOnce": "This key is shown only now: copy it somewhere safe. It cannot be displayed again (revoke it and create another one if lost).",
+    "theKey": "Key",
+    "claudeCode": "Claude Code (MCP)",
+    "docHint": "API: /api/v1 (sites, files, publish, releases, logs). MCP: the same tools for an AI agent. Every action is logged in the audit log with the key name.",
+    "scopes": {
+      "files": {
+        "read": {
+          "label": "Read files",
+          "hint": "List and read the files of its sites (code and data)."
+        },
+        "write": {
+          "label": "Write files",
+          "hint": "Create, replace, move, delete, extract archives in its sites."
+        }
+      },
+      "releases": {
+        "publish": {
+          "label": "Publish",
+          "hint": "Publish the code as a new release (live) and roll back."
+        }
+      },
+      "sites": {
+        "manage": {
+          "label": "Site settings",
+          "hint": "Change the settings of its sites (runtime, docroot…)."
+        },
+        "create": {
+          "label": "Create sites",
+          "hint": "Create sites in the account: they join the key automatically."
+        }
+      },
+      "logs": {
+        "read": {
+          "label": "Read logs",
+          "hint": "Access / error / application logs of its sites."
+        }
+      }
+    }
+  }
+}

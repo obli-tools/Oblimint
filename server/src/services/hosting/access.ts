@@ -162,9 +162,20 @@ export function resolveActor(req: Request): Promise<HostingActor> {
   return p;
 }
 
+/**
+ * Sets the actor of a request authenticated otherwise than by a session (API
+ * key, /api/v1): resolveActor(req) then returns it.
+ */
+export function setRequestActor(req: Request, actor: HostingActor): void {
+  actorCache.set(req, Promise.resolve(actor));
+}
+
 async function buildActor(req: Request): Promise<HostingActor> {
-  const userId = Number(req.session?.userId);
-  const tenantId = Number(req.tenantId);
+  return actorForUser(Number(req.session?.userId), Number(req.tenantId));
+}
+
+/** The actor of a user in a tenant (sessions; the creator of an API key, re-evaluated at each use). */
+export async function actorForUser(userId: number, tenantId: number): Promise<HostingActor> {
   if (!Number.isInteger(userId) || userId <= 0) throw new AppError(401, 'Authentication required');
   if (!Number.isInteger(tenantId) || tenantId <= 0) throw new AppError(400, 'No tenant selected');
   const user = await db('users').where({ id: userId }).first('kind', 'role', 'is_active') as

@@ -44,6 +44,8 @@ export const apiLimiter = rateLimit({
   skip: (req) =>
     !!req.session?.userId ||
     req.path === '/health' ||
+    // API keys: their own limiters (services/apiKeys/middleware.ts).
+    req.path.startsWith('/api/v1/') || req.path === '/mcp' ||
     req.path === '/api/auth/me' ||
     // Setup wizard: its own limiter (setup.routes.ts), progress polled every 1.5 s.
     req.path.startsWith('/api/setup/') ||

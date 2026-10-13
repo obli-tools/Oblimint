@@ -100,6 +100,9 @@ export const RAW_UPLOAD_PATHS: readonly RegExp[] = [
   /^\/api\/accounts\/\d+\/files\/uploads\/[0-9a-f]{32}\/\d+$/,
   // …and a whole small file in one request.
   /^\/api\/accounts\/\d+\/files\/put$/,
+  // API keys (/api/v1): a small file, a chunk of a bigger one.
+  /^\/api\/v1\/sites\/\d+\/files\/content$/,
+  /^\/api\/v1\/uploads\/[0-9a-f]{32}\/\d+$/,
 ];
 const RAW_UPLOAD_TYPES = [
   'application/octet-stream', 'application/sql', 'application/gzip', 'application/x-gzip',

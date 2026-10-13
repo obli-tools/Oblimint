@@ -23,3 +23,5 @@ export * from './platformUpdates';
 export * from './files';
 // Integrated database explorer
 export * from './dbExplorer';
+// API access keys (/api/v1, MCP)
+export * from './apiKeys';

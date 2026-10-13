@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  AlertTriangle, ArrowLeft, BarChart3, ChevronRight, Database, FolderOpen, Gauge, Globe, HardDrive, Layers, LayoutGrid, Pause, Play, Plus,
+  AlertTriangle, ArrowLeft, BarChart3, ChevronRight, Database, FolderOpen, KeyRound, Gauge, Globe, HardDrive, Layers, LayoutGrid, Pause, Play, Plus,
   RefreshCw, Server, ShieldCheck, Trash2, Users,
 } from 'lucide-react';
 import type { Domain, HostingAccount, Plan, Site, SiteStatus } from '@oblimint/shared';
@@ -16,6 +16,7 @@ import { useHostingMe } from '@/store/hostingStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
+import { AccountApiKeysTab } from '@/components/hosting/AccountApiKeysTab';
 import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu';
 import { IconButton } from '@/components/common/IconButton';
 import { Button } from '@/components/common/Button';
@@ -41,8 +42,8 @@ import {
   hostingErrorMessage, isStepUpHandled, labelCls, payloadNumber, selectCls, toastHostingError, useHostingEvents,
 } from '@/components/hosting/hostingUi';
 
-type Tab = 'overview' | 'sites' | 'domains' | 'databases' | 'usage' | 'security' | 'users' | 'files';
-const TABS: Tab[] = ['overview', 'sites', 'domains', 'databases', 'usage', 'security', 'users', 'files'];
+type Tab = 'overview' | 'sites' | 'domains' | 'databases' | 'usage' | 'security' | 'users' | 'files' | 'keys';
+const TABS: Tab[] = ['overview', 'sites', 'domains', 'databases', 'usage', 'security', 'users', 'files', 'keys'];
 
 export function AccountDetailPage() {
   const { t } = useTranslation();
@@ -63,7 +64,8 @@ export function AccountDetailPage() {
   const isStaff = me?.kind === 'staff';
   const manage = isStaff && can('accounts.manage', accountId);
   const rawTab = params.get('tab') as Tab | null;
-  const tab: Tab = rawTab && TABS.includes(rawTab) && (rawTab !== 'users' || manage) ? rawTab : 'overview';
+  const manageKeys = can('sites.manage', accountId);
+  const tab: Tab = rawTab && TABS.includes(rawTab) && (rawTab !== 'users' || manage) && (rawTab !== 'keys' || manageKeys) ? rawTab : 'overview';
   const setTab = (next: Tab) => {
     const p = new URLSearchParams(params);
     if (next === 'overview') p.delete('tab'); else p.set('tab', next);
@@ -167,6 +169,7 @@ export function AccountDetailPage() {
     { id: 'security', label: t('security.tab.title') || 'Security', icon: <ShieldCheck size={14} /> },
     { id: 'users', label: t('accounts.tabs.users') || 'Users', icon: <Users size={14} />, hidden: !manage },
     { id: 'files', label: t('accounts.tabs.files') || 'File access', icon: <FolderOpen size={14} /> },
+    { id: 'keys', label: t('apiKeys.tab') || 'Access keys', icon: <KeyRound size={14} />, hidden: !manageKeys },
   ];
 
   return (
@@ -212,6 +215,7 @@ export function AccountDetailPage() {
       {tab === 'security' && <AccountSecurityTab accountId={account.id} />}
       {tab === 'users' && manage && <AccountUsersTab accountId={account.id} tenantId={account.tenantId} />}
       {tab === 'files' && <FileAccessPanel accountId={account.id} />}
+      {tab === 'keys' && manageKeys && <AccountApiKeysTab accountId={account.id} />}
 
       <ChangePlanModal
         open={planModal}

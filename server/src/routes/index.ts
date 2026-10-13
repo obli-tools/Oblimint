@@ -26,6 +26,8 @@ import releasesRoutes from './releases.routes';          // releases
 import runtimeRoutes from './runtime.routes';            // orchestration
 import fileServerRoutes from './filesrv.routes';         // orchestration
 import filesRoutes from './files.routes';                // web file explorer
+import v1Routes from './v1.routes';                      // API access keys (/api/v1)
+import apiKeysRoutes from './apiKeys.routes';            // API access keys (management)
 import infraRoutes from './infra.routes';                // orchestration
 import platformUpdatesRoutes from './platformUpdates.routes';  // platform updates (Nodes > Updates)
 import edgeRoutes from './edge.routes';                  // edge
@@ -99,6 +101,7 @@ for (const migrationRouter of [migrationSourcesRoutes, migrationDiscoveryRoutes,
   router.use('/system/migration', requireAuth, requirePlatformAdminOnMaster, migrationRouter); // P5
 }
 router.use('/site-api', siteApiRoutes);            // P3 windows: Bearer site token (no session)
+router.use('/v1', v1Routes);                        // API access keys: Bearer obk_ (no session)
 router.use('/public', publicStatusRoutes);         // P4b monitoring-automation: public status pages (no session)
 router.use('/system', systemRoutes);               // platform admin, no tenant required
 
@@ -125,6 +128,7 @@ tenantRouter.use('/plans', plansRoutes);
 tenantRouter.use('/accounts', accountsRoutes);
 tenantRouter.use('/accounts', fileServerRoutes);
 tenantRouter.use('/accounts', filesRoutes);              // web file explorer
+tenantRouter.use('/accounts', apiKeysRoutes);            // API access keys
 tenantRouter.use('/sites', sitesRoutes);
 tenantRouter.use('/sites', releasesRoutes);
 tenantRouter.use('/sites', runtimeRoutes);
