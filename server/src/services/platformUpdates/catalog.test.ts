@@ -152,3 +152,11 @@ test('policy + maintenance window: automatic updates off by default, only inside
   assert.equal(checkDue(def, new Date(inside.getTime() - def.checkIntervalMin * 60_000).toISOString(), inside), true);
   assert.equal(checkDue({ ...def, autoCheck: false }, null, inside), false);
 });
+
+test('needsConfigImage: an image id instead of a reference (tag moved to a newer pull)', async () => {
+  const { needsConfigImage } = await import('./catalog');
+  assert.equal(needsConfigImage('sha256:4f9c2a1b7d3e8f0a1b2c3d4e5f60718293a4b5c6d7e8f9012345678901234567'), true);
+  assert.equal(needsConfigImage('4f9c2a1b7d3e'), true);
+  assert.equal(needsConfigImage('meejay/oblimint-hostd:latest'), false);
+  assert.equal(needsConfigImage('redis:7'), false);
+});

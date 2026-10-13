@@ -52,6 +52,16 @@ export function groupOf(kind: PlatformComponentKind): PlatformImageGroup {
   return kind === 'site-base' ? 'sites' : kind === 'tools' ? 'tools' : 'platform';
 }
 
+/**
+ * docker ps shows the IMAGE ID instead of the reference when the tag moved to
+ * another image since the container was created (a newer image was pulled but
+ * the container still runs the old one): its reference must then be read from
+ * Config.Image, or the very containers that need an update would be ignored.
+ */
+export function needsConfigImage(image: string): boolean {
+  return /^sha256:[0-9a-f]{12,64}$/.test(image) || /^[0-9a-f]{12,64}$/.test(image);
+}
+
 /** Tag of a reference (null = none / digest only). */
 export function tagOf(ref: string): string | null {
   return parseImageRef(ref)?.tag ?? null;

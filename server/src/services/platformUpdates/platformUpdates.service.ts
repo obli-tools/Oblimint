@@ -18,7 +18,7 @@ import { LABELS } from '../hosting/naming';
 import { nextWindowOpening, windowIsOpen } from '../monitoring/schedule';
 import { errText, selfContainerRef, withTimeout } from '../setup/docker';
 import {
-  autoRunImages, autoUpdateAllowed, buildImageList, checkDue, normalizePolicy, planRun,
+  autoRunImages, autoUpdateAllowed, buildImageList, checkDue, needsConfigImage, normalizePolicy, planRun,
   type LocalImage, type ObservedContainer, type RememberedImage, type UpdateStep,
 } from './catalog';
 import {
@@ -165,6 +165,12 @@ async function observe(nodeId: number): Promise<Observation> {
   if (panelInfo) {
     const own = containers.find((c) => c.name === panelName);
     if (own) own.image = panelInfo.Config.Image;
+  }
+  // A component whose tag moved to a newer image shows its image id in docker ps: its reference comes from Config.Image.
+  for (const c of containers) {
+    if (!c.role || c.name === panelName || !needsConfigImage(c.image)) continue;
+    const info = await inspectContainer(docker, c.name).catch(() => null);
+    if (info?.Config?.Image) c.image = info.Config.Image;
   }
   // Tools images present locally (ephemeral containers: followed by image).
   const extraRefs: Array<{ ref: string; kind: PlatformComponentKind }> = [];
@@ -388,7 +394,12 @@ async function executeRun(nodeId: number, run: PlatformUpdateRun, steps: UpdateS
         const localIds = new Map<string, string | null>();
         for (const ref of step.images) localIds.set(ref, (await localImage(docker, ref))?.id ?? null);
         for (const c of list) {
-          const id = localIds.get(c.Image);
+          // Tag moved to the pulled image: docker ps shows the old image id, the reference is in Config.Image.
+          let ref = c.Image;
+          if (needsConfigImage(ref) && c.Labels?.[LABELS.role]) {
+            ref = (await inspectContainer(docker, (c.Names?.[0] ?? '').replace(/^\//, '')).catch(() => null))?.Config?.Image ?? ref;
+          }
+          const id = localIds.get(ref);
           const account = Number(c.Labels?.[LABELS.account]);
           if (!id || c.ImageID === id || !Number.isInteger(account) || account <= 0) continue;
           const role = c.Labels?.[LABELS.role];
