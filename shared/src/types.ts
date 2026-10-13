@@ -187,6 +187,41 @@ export interface DashboardSummary {
   nodes: number;
 }
 
+/** GET /api/dashboard/overview — health and activity, scoped to the caller like the summary. */
+export interface DashboardOverview {
+  sites: {
+    total: number;
+    byStatus: { active: number; stopped: number; error: number; provisioning: number };
+    /** Sites in error (first 8). */
+    problems: Array<{ id: number; name: string; primaryDomain: string | null; statusMessage: string | null }>;
+  };
+  /** Waiting for someone (counts). */
+  pending: {
+    approvals: number;
+    windowsToReview: number;
+    quarantined: number;
+    /** Releases failed in the last 24 h. */
+    failedReleases: number;
+    domainsUnverified: number;
+  };
+  /** Latest publications (8). */
+  releases: Array<{
+    id: number; siteId: number; siteName: string; number: number; status: string; trigger: string;
+    message: string | null; createdAt: string; publishedAt: string | null;
+  }>;
+  certificates: {
+    /** Valid certificates ending within 14 days. */
+    expiring: Array<{ name: string; notAfter: string }>;
+    failed: Array<{ name: string; error: string | null }>;
+  };
+  uptime: {
+    up: number; down: number; paused: number; pending: number;
+    downList: Array<{ id: number; name: string; lastError: string | null; lastCheckedAt: string | null }>;
+  };
+  /** Staff only: latest audit events of the workspace (god view: every workspace). */
+  activity: Array<{ id: number; action: string; username: string | null; resourceType: string | null; resourceName: string | null; createdAt: string; tenantName: string | null }>;
+}
+
 // ─── AUTH / PERMISSIONS (ported from Obliance, same shapes) ──────────────────
 
 export interface LoginRequest {

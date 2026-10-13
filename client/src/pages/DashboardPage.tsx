@@ -14,6 +14,7 @@ import { AccountStatusBadge, DiskBar, hostingErrorMessage, useHostingEvents } fr
 import { usageApi } from '@/api/usage.api';
 import { HeroCard, HeroFeatured, MiniStat } from '@/components/usage/HeroCards';
 import { HostResources, useHostMetrics } from '@/components/usage/HostResources';
+import { DashboardOverviewPanel } from '@/components/dashboard/DashboardOverviewPanel';
 import { fillMonthDays, isoMonth, quotaColor, quotaPct } from '@/components/usage/usageFormat';
 import { dayLabel, useByteFormat } from '@/components/usage/usageUi';
 
@@ -152,6 +153,9 @@ function StaffDashboard() {
       {/* Server resources (platform admin): CPU, memory, data disk of the node. */}
       {isAdmin && isMaster && <HostResources metrics={host} />}
 
+      {/* Health and activity: what needs attention, sites, publications, monitoring, audit (admins). */}
+      <DashboardOverviewPanel tenantKey={currentTenantId} showActivity={isAdmin} />
+
       {/* Mini-stats row — platform figures (admins). */}
       {isAdmin && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -266,6 +270,8 @@ function ClientDashboard() {
           <HeroCard label={t('clientSpace.domains') || 'Domains'} value={domains} color="text-text-primary" />
         </Link>
       </div>
+
+      {accounts.length > 0 && <DashboardOverviewPanel tenantKey={currentTenantId} showActivity={false} />}
 
       {accounts.length === 0 && !error ? (
         <div className="flex flex-col items-center gap-2 rounded-xl bg-bg-secondary py-12 text-text-muted">

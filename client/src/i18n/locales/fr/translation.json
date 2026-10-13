@@ -108,7 +108,43 @@
     "sites": "Sites",
     "title": "Tableau de bord",
     "users": "Utilisateurs",
-    "workspaces": "Workspaces"
+    "workspaces": "Workspaces",
+    "overview": {
+      "attention": "À surveiller",
+      "allGood": "Tout va bien : rien ne vous attend.",
+      "sitesInError": "site(s) en erreur",
+      "monitorsDown": "supervision(s) en panne",
+      "certsFailed": "certificat(s) en échec",
+      "failedReleases": "publication(s) en échec (24 h)",
+      "approvals": "release(s) à approuver",
+      "windows": "fenêtre(s) à valider",
+      "quarantine": "fichier(s) en quarantaine",
+      "certsExpiring": "certificat(s) expirant sous 14 j",
+      "domainsUnverified": "domaine(s) non vérifié(s)",
+      "sites": "Sites",
+      "seeAll": "Tout voir",
+      "noSite": "Aucun site pour l'instant.",
+      "active": "actifs",
+      "provisioning": "en création",
+      "stopped": "arrêtés",
+      "error": "en erreur",
+      "releases": "Dernières publications",
+      "noRelease": "Aucune publication pour l'instant.",
+      "monitoring": "Supervision & certificats",
+      "noMonitor": "Aucune supervision configurée.",
+      "expiresOn": "expire le {{date}}",
+      "activity": "Activité récente",
+      "noActivity": "Aucune activité récente.",
+      "releaseStatus": {
+        "ready": "en ligne",
+        "awaiting_approval": "à approuver",
+        "failed": "échec",
+        "rejected": "refusée",
+        "publishing": "publication",
+        "scanning": "analyse",
+        "queued": "en attente"
+      }
+    }
   },
   "fanOut": {
     "tenantFallback": "Workspace {{id}}"

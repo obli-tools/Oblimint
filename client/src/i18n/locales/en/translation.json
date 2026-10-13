@@ -108,7 +108,43 @@
     "sites": "Sites",
     "title": "Dashboard",
     "users": "Users",
-    "workspaces": "Workspaces"
+    "workspaces": "Workspaces",
+    "overview": {
+      "attention": "Needs attention",
+      "allGood": "Everything is fine: nothing waits for you.",
+      "sitesInError": "site(s) in error",
+      "monitorsDown": "monitor(s) down",
+      "certsFailed": "certificate(s) failed",
+      "failedReleases": "failed publication(s) (24 h)",
+      "approvals": "release(s) to approve",
+      "windows": "window(s) to review",
+      "quarantine": "file(s) in quarantine",
+      "certsExpiring": "certificate(s) expiring (14 d)",
+      "domainsUnverified": "unverified domain(s)",
+      "sites": "Sites",
+      "seeAll": "See all",
+      "noSite": "No site yet.",
+      "active": "active",
+      "provisioning": "provisioning",
+      "stopped": "stopped",
+      "error": "error",
+      "releases": "Latest publications",
+      "noRelease": "No publication yet.",
+      "monitoring": "Monitoring & certificates",
+      "noMonitor": "No monitor configured.",
+      "expiresOn": "expires {{date}}",
+      "activity": "Recent activity",
+      "noActivity": "No recent activity.",
+      "releaseStatus": {
+        "ready": "live",
+        "awaiting_approval": "to approve",
+        "failed": "failed",
+        "rejected": "rejected",
+        "publishing": "publishing",
+        "scanning": "scanning",
+        "queued": "queued"
+      }
+    }
   },
   "fanOut": {
     "tenantFallback": "Workspace {{id}}"
