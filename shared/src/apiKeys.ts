@@ -21,9 +21,11 @@ export type ApiKeyScope =
   | 'releases.publish'
   | 'sites.manage'
   | 'sites.create'
-  | 'logs.read';
+  | 'logs.read'
+  /** Attach to its sites subdomains of a domain already in the account (never a new root domain); remove the ones it created. */
+  | 'domains.subdomain';
 
-export const API_KEY_SCOPES: readonly ApiKeyScope[] = ['files.read', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'logs.read'];
+export const API_KEY_SCOPES: readonly ApiKeyScope[] = ['files.read', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'domains.subdomain', 'logs.read'];
 
 export type ApiKeySiteScope = 'all' | 'selected';
 
@@ -89,4 +91,23 @@ export interface ApiV1Site {
   currentRelease: number | null;
   /** Created through this key. */
   createdByKey: boolean;
+}
+
+/** A domain of the account a key can create subdomains under. */
+export interface ApiV1ParentDomain {
+  name: string;
+  /** Ownership verified: its subdomains are verified too (certificate issued at once). */
+  verified: boolean;
+  /** DNS zone hosted by the panel (the subdomain's records are added to it). */
+  hostedZone: boolean;
+}
+
+/** A subdomain attached through a key. */
+export interface ApiV1Subdomain {
+  id: number;
+  name: string;
+  siteId: number;
+  verified: boolean;
+  /** https://<name>/ once the certificate is issued. */
+  url: string;
 }

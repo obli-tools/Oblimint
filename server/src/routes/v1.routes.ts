@@ -31,6 +31,10 @@ import { siteCreateSchema } from '../validators/hosting.schema';
 //   GET    /sites/:id/releases?limit=&offset=           → { items: Release[]; total }
 //   POST   /sites/:id/releases/:rid/rollback            → { rolledBack: true }         releases.publish
 //   GET    /sites/:id/logs?source=access|error|app&q=&limit= → LogQueryResult          logs.read
+//   GET    /domains                                     → ApiV1ParentDomain[] (parents allowed)   domains.subdomain
+//   GET    /subdomains                                  → ApiV1Subdomain[] (created by the key)   domains.subdomain
+//   POST   /sites/:id/subdomains {name}                 → ApiV1Subdomain (201)                    domains.subdomain
+//   DELETE /subdomains/:name                            → { deleted: true } (its own only)       domains.subdomain
 
 const router = Router();
 router.use(apiKeyAuthLimiter, apiKeyAuth, apiKeyLimiter);
@@ -149,6 +153,17 @@ router.get('/sites/:id/logs', h(async (req, res) => {
     limit: q.limit ? Number(q.limit) : null, since: typeof q.since === 'string' ? q.since : null,
     until: typeof q.until === 'string' ? q.until : null, status: typeof q.status === 'string' ? q.status : null,
   }));
+}));
+
+router.get('/domains', h(async (req, res) => ok(res, await keyApi.parentDomains(ctxOf(req)))));
+router.get('/subdomains', h(async (req, res) => ok(res, await keyApi.subdomains(ctxOf(req)))));
+router.post('/sites/:id/subdomains', h(async (req, res) => {
+  const b = parseBody(z.object({ name: z.string().min(4).max(253) }).strict(), req.body);
+  ok(res, await keyApi.addSubdomain(ctxOf(req), req, siteId(req), b.name), 201);
+}));
+router.delete('/subdomains/:name', h(async (req, res) => {
+  await keyApi.removeSubdomain(ctxOf(req), req, String(req.params.name));
+  ok(res, { deleted: true });
 }));
 
 router.use((_req, res) => { res.status(404).json({ success: false, error: 'Not found', code: 'notFound' }); });

@@ -25,6 +25,7 @@ const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'releases.publish': ['Publish', 'Publish the code as a new release (live) and roll back.'],
   'sites.manage': ['Site settings', 'Change the settings of its sites (runtime, docroot…).'],
   'sites.create': ['Create sites', 'Create sites in the account: they join the key automatically.'],
+  'domains.subdomain': ['Subdomains', 'Attach to its sites subdomains of a domain already in the account (never a new domain), remove the ones it created.'],
   'logs.read': ['Read logs', 'Access / error / application logs of its sites.'],
 };
 
@@ -221,7 +222,7 @@ function KeyModal({ accountId, sites, initial, onClose, onSaved }: {
               </label>
             ))}
           </div>
-          <p className="mt-1.5 text-[11px] text-text-muted">{t('apiKeys.neverHint') || 'Never granted to a key: deleting a site, domains, other accounts, users.'}</p>
+          <p className="mt-1.5 text-[11px] text-text-muted">{t('apiKeys.neverHint') || 'Never granted to a key: deleting a site, adding a root domain, other accounts, users.'}</p>
         </div>
         <div>
           <label className={labelCls}>{t('apiKeys.sites') || 'Sites'}</label>

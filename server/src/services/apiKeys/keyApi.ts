@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import type { Readable } from 'stream';
 import type {
-  ApiV1Me, ApiV1Site, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
+  ApiV1Me, ApiV1ParentDomain, ApiV1Site, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
   SiteCreate, StagingStatus,
 } from '@oblimint/shared';
 import { db } from '../../db';
@@ -11,6 +11,7 @@ import { filesService, joinVirtual, splitVirtual } from '../files/files.service'
 import type { HostdFileStream } from '../hostd/files';
 import { loadAccount, loadSite } from '../hosting/access';
 import type { AccountRow, SiteRow } from '../hosting/rows';
+import { domainsService } from '../hosting/domains.service';
 import { sitesService } from '../hosting/sites.service';
 import { releaseForActor } from '../hosting/statusMessage';
 import { assertSource, logsService } from '../logs/logs.service';
@@ -27,6 +28,9 @@ import { apiKeysService, keyAllowsSite, requireScope, type ApiKeyContext } from 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type SiteArea = 'staging' | 'data';
+
+/** "Blog.Example.com." → "blog.example.com" */
+const normalizeName = (raw: unknown) => String(raw ?? '').trim().toLowerCase().replace(/\.$/, '');
 
 async function accountRow(ctx: ApiKeyContext): Promise<AccountRow> {
   return loadAccount(ctx.actor, ctx.accountId, 'read');
@@ -210,6 +214,63 @@ export const keyApi = {
     await loadSite(ctx.actor, site.id, 'releases.publish');
     await releaseService.rollback(site.id, releaseId, ctx.creatorId);
     await auditService.logReqAs(req, site.tenant_id, 'release.rollback', { resourceType: 'release', resourcePath: String(releaseId), details: { siteId: site.id } });
+  },
+
+  // ── subdomains (scope domains.subdomain) ──
+  /** Domains of the account a subdomain can be created under. */
+  async parentDomains(ctx: ApiKeyContext): Promise<ApiV1ParentDomain[]> {
+    requireScope(ctx, 'domains.subdomain');
+    const rows = await db('domains as d')
+      .leftJoin('dns_zones as z', function joinZone() { this.on('z.domain_id', '=', 'd.id').andOn('z.account_id', '=', 'd.account_id'); })
+      .where('d.account_id', ctx.accountId)
+      .select('d.name', 'd.verification_status', 'z.kind as zone_kind')
+      .orderBy('d.name') as Array<{ name: string; verification_status: string | null; zone_kind: string | null }>;
+    return rows.map((r) => ({ name: r.name, verified: r.verification_status === 'verified', hostedZone: r.zone_kind === 'hosted' }));
+  },
+
+  /** Subdomains this key created. */
+  async subdomains(ctx: ApiKeyContext): Promise<ApiV1Subdomain[]> {
+    requireScope(ctx, 'domains.subdomain');
+    const rows = await db('api_key_domains as k').join('domains as d', 'd.id', 'k.domain_id')
+      .leftJoin('site_routes as r', function joinRoute() { this.on('r.domain_id', '=', 'd.id').andOnVal('r.path_prefix', '=', '/'); })
+      .where({ 'k.key_id': ctx.id, 'd.account_id': ctx.accountId })
+      .select('d.id', 'd.name', 'd.verification_status', 'r.site_id') as Array<{ id: number; name: string; verification_status: string | null; site_id: number | null }>;
+    return rows.map((r) => ({ id: r.id, name: r.name, siteId: r.site_id ?? 0, verified: r.verification_status === 'verified', url: `https://${r.name}/` }));
+  },
+
+  /**
+   * Attaches a SUBDOMAIN of a domain already in the account to one of the
+   * key's sites: never a new root domain (its DNS zone could not be set up
+   * from here). The records go into the parent's hosted zone; a verified
+   * parent makes it verified (certificate issued at once).
+   */
+  async addSubdomain(ctx: ApiKeyContext, req: Request, siteId: number, rawName: string): Promise<ApiV1Subdomain> {
+    requireScope(ctx, 'domains.subdomain');
+    const site = await keySite(ctx, siteId);
+    const name = normalizeName(rawName);
+    if (!/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(name)) {
+      throw new AppError(400, 'Invalid domain name', 'invalidDomain');
+    }
+    const parents = await db('domains').where({ account_id: ctx.accountId }).pluck('name') as string[];
+    const parent = parents.filter((p) => name.endsWith(`.${p}`)).sort((a, b) => b.length - a.length)[0];
+    if (!parent) {
+      throw new AppError(400, `Only a subdomain of a domain of the account can be attached (${parents.join(', ') || 'no domain yet'}): add new domains from the panel`, 'notASubdomain', { parents });
+    }
+    const domain = await domainsService.create(req, ctx.actor, {
+      accountId: ctx.accountId, name, kind: 'subdomain', siteId: site.id, tlsMode: 'letsencrypt', forceHttps: true, includeWww: false,
+    } as Parameters<typeof domainsService.create>[2]);
+    await db('api_key_domains').insert({ key_id: ctx.id, domain_id: domain.id, account_id: ctx.accountId }).onConflict(['key_id', 'domain_id']).ignore();
+    return { id: domain.id, name: domain.name, siteId: site.id, verified: domain.verification?.status === 'verified', url: `https://${domain.name}/` };
+  },
+
+  /** Removes a subdomain THIS key created (by name). */
+  async removeSubdomain(ctx: ApiKeyContext, req: Request, rawName: string): Promise<void> {
+    requireScope(ctx, 'domains.subdomain');
+    const name = normalizeName(rawName);
+    const row = await db('api_key_domains as k').join('domains as d', 'd.id', 'k.domain_id')
+      .where({ 'k.key_id': ctx.id, 'd.account_id': ctx.accountId, 'd.name': name }).first('d.id') as { id: number } | undefined;
+    if (!row) throw new AppError(404, 'Subdomain not found among the ones this key created', 'notFound');
+    await domainsService.remove(req, ctx.actor, row.id);
   },
 
   // ── logs ──

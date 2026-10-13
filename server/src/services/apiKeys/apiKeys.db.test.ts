@@ -200,6 +200,40 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   assert.equal(await apiKeysService.verify(created.key, '203.0.113.7'), null, 'creator removed: the key dies');
   await db('account_users').insert({ user_id: owner, account_id: acme, capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish']) });
 
+  // ── subdomains (scope domains.subdomain) ──
+  const parentName = `ex-${suffix}.test`;
+  const [pd] = await db('domains').insert({
+    tenant_id: tA, account_id: acme, name: parentName, kind: 'primary', include_www: false, tls_mode: 'none', force_https: false, wildcard: false,
+    verification_status: 'verified', verification_method: 'txt', verified_at: db.fn.now(),
+  }).returning('id');
+  const [fd] = await db('domains').insert({
+    tenant_id: tA, account_id: acme, name: `manual.${parentName}`, kind: 'subdomain', include_www: false, tls_mode: 'none', force_https: false, wildcard: false,
+    verification_status: 'verified', verification_method: 'inherited', verified_at: db.fn.now(),
+  }).returning('id');
+  void pd; void fd;
+  const owner3 = await actorForUser(owner, tA);
+  await db('account_users').where({ user_id: owner, account_id: acme }).update({ capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish', 'domains.manage']) });
+  const k3 = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'subs', scopes: ['domains.subdomain'], siteScope: 'selected', siteIds: [s1] });
+  void owner3;
+  const c3 = (await apiKeysService.verify(k3.key, '203.0.113.7'))!;
+  assert.deepEqual((await keyApi.parentDomains(c3)).find((d) => d.name === parentName)?.verified, true);
+  const sub = await keyApi.addSubdomain(c3, fakeReq(), s1, `Blog.${parentName}.`);
+  assert.equal(sub.name, `blog.${parentName}`);
+  assert.equal(sub.verified, true, 'inherited from the verified parent');
+  const route = await db('site_routes').where({ domain_id: sub.id }).first('site_id', 'path_prefix');
+  assert.deepEqual([route.site_id, route.path_prefix], [s1, '/']);
+  assert.equal((await db('domains').where({ id: sub.id }).first('kind')).kind, 'subdomain');
+  await assert.rejects(keyApi.addSubdomain(c3, fakeReq(), s1, `root-${suffix}.test`), (e: { code: string }) => e.code === 'notASubdomain');
+  await assert.rejects(keyApi.addSubdomain(c3, fakeReq(), s2, `x.${parentName}`), (e: { statusCode: number }) => e.statusCode === 404, 'site outside the key');
+  await assert.rejects(keyApi.addSubdomain(c3, fakeReq(), s1, `blog.${parentName}`), (e: { statusCode: number }) => e.statusCode === 409, 'already exists');
+  assert.deepEqual((await keyApi.subdomains(c3)).map((d) => d.name), [`blog.${parentName}`]);
+  await assert.rejects(keyApi.removeSubdomain(c3, fakeReq(), `manual.${parentName}`), (e: { statusCode: number }) => e.statusCode === 404, 'not created by the key');
+  await assert.rejects(keyApi.removeSubdomain(c3, fakeReq(), parentName), (e: { statusCode: number }) => e.statusCode === 404);
+  await keyApi.removeSubdomain(c3, fakeReq(), `blog.${parentName}`);
+  assert.equal(await db('domains').where({ id: sub.id }).first('id'), undefined);
+  const keyNoSub = (await apiKeysService.verify(created.key, '203.0.113.7'));
+  if (keyNoSub) await assert.rejects(keyApi.addSubdomain(keyNoSub, fakeReq(), s1, `y.${parentName}`), (e: { code: string }) => e.code === 'keyScope');
+
   // ── allowed addresses, expiry, revocation ──
   const ownerAgain = await actorForUser(owner, tA);
   const k2 = await apiKeysService.create(fakeReq(), ownerAgain, acme, { name: 'ci', scopes: ['files.read'], siteScope: 'all', allowedIps: ['198.51.100.0/24'] });

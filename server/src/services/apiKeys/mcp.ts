@@ -179,6 +179,32 @@ const TOOLS: ToolDef[] = [
     run: async (ctx, req, a) => { await keyApi.rollback(ctx, req, a.site_id, a.release_id); return { rolledBack: true }; },
   },
   {
+    name: 'list_parent_domains', title: 'Domains for subdomains', readOnly: true,
+    description: 'Domains of the account under which add_subdomain can create a subdomain (scope domains.subdomain). A verified parent gives an immediately verified subdomain (HTTPS certificate issued automatically).',
+    inputSchema: obj({}, []), args: z.object({}).passthrough(),
+    run: (ctx) => keyApi.parentDomains(ctx),
+  },
+  {
+    name: 'list_subdomains', title: 'My subdomains', readOnly: true,
+    description: 'Subdomains this key created, with the site they serve.',
+    inputSchema: obj({}, []), args: z.object({}).passthrough(),
+    run: (ctx) => keyApi.subdomains(ctx),
+  },
+  {
+    name: 'add_subdomain', title: 'Attach a subdomain',
+    description: 'Creates a subdomain of a domain ALREADY in the account (e.g. "blog.example.com" under "example.com") and routes it to one of the sites of the key (scope domains.subdomain). Its DNS records go into the parent zone; HTTPS follows automatically. A new root domain cannot be added here (ask a human to add it in the panel).',
+    inputSchema: obj({ site_id: siteId, name: { type: 'string', description: 'Full name, e.g. "blog.example.com".' } }, ['site_id', 'name']),
+    args: z.object({ site_id: zSite, name: z.string().min(4).max(253) }),
+    run: (ctx, req, a) => keyApi.addSubdomain(ctx, req, a.site_id, a.name),
+  },
+  {
+    name: 'remove_subdomain', title: 'Remove a subdomain', destructive: true,
+    description: 'Removes a subdomain THIS key created (list_subdomains). Other domains are never touched.',
+    inputSchema: obj({ name: { type: 'string', description: 'Full name of the subdomain.' } }, ['name']),
+    args: z.object({ name: z.string().min(4).max(253) }),
+    run: async (ctx, req, a) => { await keyApi.removeSubdomain(ctx, req, a.name); return { deleted: true }; },
+  },
+  {
     name: 'read_logs', title: 'Read logs', readOnly: true,
     description: 'Recent log lines of the site (scope logs.read): access, error (web server / PHP) or app.',
     inputSchema: obj({ site_id: siteId, source: { type: 'string', enum: ['access', 'error', 'app'] }, query: { type: 'string', description: 'Text filter.' }, limit: { type: 'integer', minimum: 1, maximum: 2000 } }, ['site_id']),

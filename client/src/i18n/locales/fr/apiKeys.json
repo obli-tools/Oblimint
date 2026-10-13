@@ -30,7 +30,7 @@
     "never": "jamais",
     "name": "Nom",
     "rights": "Droits",
-    "neverHint": "Jamais accordé à une clé : supprimer un site, les domaines, les autres comptes, les utilisateurs.",
+    "neverHint": "Jamais accordé à une clé : supprimer un site, ajouter un domaine racine, les autres comptes, les utilisateurs.",
     "sites": "Sites",
     "expiry": "Expiration",
     "keepExpiry": "Inchangée",
@@ -68,6 +68,12 @@
         "create": {
           "label": "Créer des sites",
           "hint": "Créer des sites dans le compte : ils rejoignent la clé automatiquement."
+        }
+      },
+      "domains": {
+        "subdomain": {
+          "label": "Sous-domaines",
+          "hint": "Rattacher à ses sites des sous-domaines d'un domaine déjà présent sur le compte (jamais un nouveau domaine), retirer ceux qu'elle a créés."
         }
       },
       "logs": {

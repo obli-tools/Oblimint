@@ -30,7 +30,7 @@
     "never": "never",
     "name": "Name",
     "rights": "Rights",
-    "neverHint": "Never granted to a key: deleting a site, domains, other accounts, users.",
+    "neverHint": "Never granted to a key: deleting a site, adding a root domain, other accounts, users.",
     "sites": "Sites",
     "expiry": "Expiry",
     "keepExpiry": "Unchanged",
@@ -68,6 +68,12 @@
         "create": {
           "label": "Create sites",
           "hint": "Create sites in the account: they join the key automatically."
+        }
+      },
+      "domains": {
+        "subdomain": {
+          "label": "Subdomains",
+          "hint": "Attach to its sites subdomains of a domain already in the account (never a new domain), remove the ones it created."
         }
       },
       "logs": {
