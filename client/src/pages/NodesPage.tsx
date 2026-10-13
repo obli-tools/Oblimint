@@ -16,6 +16,7 @@ import { TableScroll } from '@/components/common/TableScroll';
 import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { InfraCards } from '@/components/hosting/InfraCards';
+import { HostResources, useHostMetrics } from '@/components/usage/HostResources';
 
 /**
  * Hosting nodes (P0: the seeded local node only) + the platform infrastructure
@@ -27,6 +28,7 @@ export function NodesPage() {
   const [loading, setLoading] = useState(true);
   // Platform updates: platform administrator on the master tenant only.
   const masterAdmin = useIsMasterTenant();
+  const host = useHostMetrics(masterAdmin);
   const [params, setParams] = useSearchParams();
   const tab = masterAdmin && params.get('tab') === 'updates' ? 'updates' : 'infra';
   const [summary, setSummary] = useState<PlatformUpdatesSummary | null>(null);
@@ -144,6 +146,11 @@ export function NodesPage() {
             </tbody>
           </table>
         </TableScroll>
+      )}
+
+      {/* Resources of the local node (the only one in this version). */}
+      {masterAdmin && !loading && nodes.some((x) => x.isLocal) && (
+        <HostResources metrics={host} />
       )}
 
       {masterAdmin && (

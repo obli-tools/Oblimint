@@ -130,3 +130,29 @@ export interface PlatformUpdatesEvent {
   line?: string;
   runId?: string | null;
 }
+
+// ── Host resources (Dashboard / Nodes: CPU, RAM, disk of the node) ─────────
+
+export interface HostResourcePoint {
+  /** ms since the epoch */
+  t: number;
+  cpuPct: number;
+  memUsedBytes: number;
+}
+
+/** GET /api/system/host-metrics — the local node as the host sees it. */
+export interface HostMetrics {
+  sampledAt: string;
+  uptimeSeconds: number;
+  cpu: {
+    /** Average over every core (0–100), over the last sampling interval. */
+    percent: number;
+    cores: number;
+    load: [number, number, number];
+  };
+  memory: { totalBytes: number; usedBytes: number; availableBytes: number };
+  /** Filesystem holding the platform data (sites, databases, mail). */
+  disk: { path: string; totalBytes: number; usedBytes: number; availableBytes: number } | null;
+  /** Last hour, one point per sampling interval. */
+  history: HostResourcePoint[];
+}

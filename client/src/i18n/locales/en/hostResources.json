@@ -1,0 +1,10 @@
+{
+  "hostResources": {
+    "cpu": "Processor",
+    "cpuSub": "{{cores}} cores · load {{load}}",
+    "memory": "Memory",
+    "ofTotal": "{{pct}} % of {{total}}",
+    "disk": "Data disk",
+    "diskSub": "{{pct}} % of {{total}} · {{free}} free"
+  }
+}

@@ -13,6 +13,7 @@ import { PageContainer } from '@/components/common/PageContainer';
 import { AccountStatusBadge, DiskBar, hostingErrorMessage, useHostingEvents } from '@/components/hosting/hostingUi';
 import { usageApi } from '@/api/usage.api';
 import { HeroCard, HeroFeatured, MiniStat } from '@/components/usage/HeroCards';
+import { HostResources, useHostMetrics } from '@/components/usage/HostResources';
 import { fillMonthDays, isoMonth, quotaColor, quotaPct } from '@/components/usage/usageFormat';
 import { dayLabel, useByteFormat } from '@/components/usage/usageUi';
 
@@ -32,6 +33,7 @@ function StaffDashboard() {
   const { t } = useTranslation();
   const isAdmin = useAuthStore((s) => s.user?.role === 'admin');
   const isMaster = useIsMasterTenant();
+  const host = useHostMetrics(isAdmin && isMaster);
   const currentTenantId = useTenantStore((s) => s.currentTenantId);
   const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY);
   const [isLoading, setIsLoading] = useState(true);
@@ -145,7 +147,10 @@ function StaffDashboard() {
       </div>
 
       {/* Usage row (P2) — traffic of the month, disk, DB instances, open alerts. */}
-      <UsageWidgets dbInstances={databases} tenantKey={currentTenantId} platformView={isAdmin && isMaster} />
+      <UsageWidgets dbInstances={databases} tenantKey={currentTenantId} platformView={isAdmin && isMaster} hostDiskTotal={host?.disk?.totalBytes ?? null} />
+
+      {/* Server resources (platform admin): CPU, memory, data disk of the node. */}
+      {isAdmin && isMaster && <HostResources metrics={host} />}
 
       {/* Mini-stats row — platform figures (admins). */}
       {isAdmin && (
@@ -303,7 +308,7 @@ function ClientDashboard() {
 /** What the widgets show: one workspace (TenantUsage) or, in the god view, the whole platform. */
 type UsageSummary = Pick<TenantUsage, 'month' | 'traffic' | 'envelope'> & { totals: Pick<TenantUsage['totals'], 'trafficBytes' | 'diskUsedBytes' | 'dbInstances'> };
 
-function UsageWidgets({ dbInstances, tenantKey, platformView }: { dbInstances: number; tenantKey: number | null; platformView: boolean }) {
+function UsageWidgets({ dbInstances, tenantKey, platformView, hostDiskTotal }: { dbInstances: number; tenantKey: number | null; platformView: boolean; hostDiskTotal: number | null }) {
   const { t } = useTranslation();
   const bytes = useByteFormat();
   const [usage, setUsage] = useState<UsageSummary | null>(null);
@@ -325,7 +330,8 @@ function UsageWidgets({ dbInstances, tenantKey, platformView }: { dbInstances: n
 
   const month = usage?.month ?? isoMonth();
   const days = usage ? fillMonthDays(month, usage.traffic, (p) => p.bytesOut) : [];
-  const diskEnvelope = usage?.envelope.diskMb != null ? usage.envelope.diskMb * MIB : null;
+  // God view: the sites' disk against the whole data disk of the node.
+  const diskEnvelope = usage?.envelope.diskMb != null ? usage.envelope.diskMb * MIB : platformView ? hostDiskTotal : null;
   const diskPct = usage ? quotaPct(usage.totals.diskUsedBytes, diskEnvelope) : null;
   const trafficEnvelope = usage?.envelope.trafficMbPerMonth != null ? usage.envelope.trafficMbPerMonth * MIB : null;
   const trafficPct = usage ? quotaPct(usage.totals.trafficBytes, trafficEnvelope) : null;

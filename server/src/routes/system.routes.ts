@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { requireRole } from '../middleware/rbac';
 import { db } from '../db';
 import { clientVersion, serverVersion } from '../utils/version';
+import { hostMetrics } from '../services/hostMetrics';
 
 // GET /api/system — About section (platform admin). Raw JSON, no envelope:
 // same shape as Obliance (the client module reads it with fetch). agentVersion
@@ -37,6 +38,14 @@ router.get('/', requireAuth, requireRole('admin'), async (_req, res) => {
     },
     environment: { isDocker: existsSync('/.dockerenv'), platform: os.platform(), dbStatus },
   });
+});
+
+// GET /api/system/host-metrics — CPU / RAM / disk of the local node (platform admin): HostMetrics.
+router.get('/host-metrics', requireAuth, requireRole('admin'), async (_req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, data: await hostMetrics() });
+  } catch (err) { next(err); }
 });
 
 export default router;
