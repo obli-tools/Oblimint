@@ -23,7 +23,9 @@ export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
   // certificate keys, automation secrets (SSH keys, SFTP passwords), Obliguard token cache.
   | 'apps' | 'proxy-auth' | 'proxy-cert' | 'automation'
   // P5: credentials of the CWP migration sources (SSH password / private key + passphrase).
-  | 'migration-source';
+  | 'migration-source'
+  // Environment variables of the sites (values sealed at rest).
+  | 'site-env';
 
 export class SecretBoxError extends Error {
   constructor(message: string) {

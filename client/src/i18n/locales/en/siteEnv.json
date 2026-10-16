@@ -1,0 +1,27 @@
+{
+  "siteEnv": {
+    "tab": "Variables",
+    "title": "Environment variables",
+    "add": "Add",
+    "import": "Import a .env",
+    "intro": "Given to the site at start-up: getenv('NAME') or $_SERVER['NAME'] in PHP, also in the cron jobs. The right place for API keys and passwords: never in the code, never in the public folder. Saving restarts the site (a few seconds).",
+    "empty": "No variable yet.",
+    "secret": "Secret",
+    "value": "value",
+    "keepSecret": "•••••• (unchanged)",
+    "nameRequired": "Name required",
+    "nameInvalid": "Letters, digits and _ (not starting with a digit)",
+    "nameReserved": "Reserved by the platform",
+    "nameDuplicate": "Duplicate name",
+    "valueRequired": "A secret needs a value",
+    "importTitle": "Import a .env",
+    "importHint": "Paste KEY=VALUE lines: existing names are replaced, the others added.",
+    "importEmpty": "No KEY=VALUE line found",
+    "imported": "{{count}} variable(s) imported: review, then save",
+    "saved": "Saved: the site restarts with the new variables",
+    "unchanged": "Nothing changed",
+    "loadFailed": "The variables could not be loaded",
+    "saveFailed": "The variables could not be saved",
+    "noRight": "Managing the variables needs the site settings right."
+  }
+}

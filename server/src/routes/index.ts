@@ -27,6 +27,7 @@ import runtimeRoutes from './runtime.routes';            // orchestration
 import fileServerRoutes from './filesrv.routes';         // orchestration
 import filesRoutes from './files.routes';                // web file explorer
 import v1Routes from './v1.routes';                      // API access keys (/api/v1)
+import siteEnvRoutes from './siteEnv.routes';            // site environment variables
 import apiKeysRoutes from './apiKeys.routes';            // API access keys (management)
 import infraRoutes from './infra.routes';                // orchestration
 import platformUpdatesRoutes from './platformUpdates.routes';  // platform updates (Nodes > Updates)
@@ -132,6 +133,7 @@ tenantRouter.use('/accounts', apiKeysRoutes);            // API access keys
 tenantRouter.use('/sites', sitesRoutes);
 tenantRouter.use('/sites', releasesRoutes);
 tenantRouter.use('/sites', runtimeRoutes);
+tenantRouter.use('/sites', siteEnvRoutes);              // /:id/env
 tenantRouter.use('/domains', domainOwnershipRoutes);  // P2: BEFORE domainsRoutes (/claims vs /:id)
 tenantRouter.use('/domains', domainsRoutes);
 tenantRouter.use('/domains', certificatesRoutes);

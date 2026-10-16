@@ -27,6 +27,8 @@ import { TENANT_SECCOMP_OPT } from './seccomp';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SiteContainerInput {
+  /** Environment variables of the site (siteEnv.service): docker Env, read by PHP-FPM (clear_env = no). */
+  env?: Array<[string, string]>;
   siteId: number;
   accountId: number;
   uid: number;
@@ -223,7 +225,10 @@ export function siteContainerSpec(input: SiteContainerInput): Docker.ContainerCr
     name,
     Image: siteImage(input.base),
     User: `${input.uid}:${input.gid}`,
-    Env: [`OBLIMINT_SITE_CONFIG=${CONTAINER_PATHS.siteConfigDir}/${runtimeConfigFile(input.role, input.runtimeId)}`],
+    Env: [
+      `OBLIMINT_SITE_CONFIG=${CONTAINER_PATHS.siteConfigDir}/${runtimeConfigFile(input.role, input.runtimeId)}`,
+      ...(input.env ?? []).map(([k, v]) => `${k}=${v}`),
+    ],
     Labels: labels,
     HostConfig: hostConfig,
     NetworkingConfig: { EndpointsConfig: { [net]: { Aliases: [name] } } },

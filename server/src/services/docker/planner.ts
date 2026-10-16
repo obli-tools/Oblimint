@@ -46,6 +46,8 @@ export interface PlanSite {
   runtimes: Array<{ id: number; base: SiteBaseId }>;
   /** site_data_paths.path (relative). */
   dataPaths: string[];
+  /** Environment variables of the site (name, value), sorted by name. */
+  env?: Array<[string, string]>;
 }
 
 export interface ActualContainer {
@@ -172,6 +174,7 @@ export function desiredContainers(input: PlannerInput, notes: string[] = []): De
         releasesDir: layout.releases(account.id, site.id),
         dataDir: layout.siteData(account.id, site.slug),
         runtimeConfigFile: `${layout.runtime(account.id, site.id)}/${runtimeConfigFile(role, runtimeId)}`,
+        env: site.env,
         // P2: database sockets of the account (dirs created by hostd ensureAccount).
         dbSockets: {
           root: layout.dbSockets(account.id),

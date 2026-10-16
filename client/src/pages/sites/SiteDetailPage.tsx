@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  ArrowLeft, CalendarClock, Cpu, Database, DoorOpen, Eye, FolderOpen, Globe, History, LayoutDashboard, Play, RefreshCw, Rocket, Route,
+  ArrowLeft, CalendarClock, Cpu, Database, DoorOpen, Eye, FolderOpen, KeyRound, Globe, History, LayoutDashboard, Play, RefreshCw, Rocket, Route,
   ScrollText, Square, Trash2, ExternalLink, Wrench,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -28,12 +28,13 @@ import { SiteRuntimeTab } from '@/components/sites/tabs/SiteRuntimeTab';
 import { SiteRoutesTab } from '@/components/sites/tabs/SiteRoutesTab';
 import { SiteDataPathsTab } from '@/components/sites/tabs/SiteDataPathsTab';
 import { SiteFilesTab } from '@/components/sites/tabs/SiteFilesTab';
+import { SiteEnvTab } from '@/components/sites/tabs/SiteEnvTab';
 import { SiteCronTab } from '@/components/cron/SiteCronTab';
 import { SiteLogsTab } from '@/components/logs/SiteLogsTab';
 import { SiteMaintenanceTab } from '@/components/maintenance/SiteMaintenanceTab';
 
-type Tab = 'overview' | 'releases' | 'runtime' | 'routes' | 'data' | 'files' | 'cron' | 'logs' | 'maintenance';
-const TAB_IDS: readonly Tab[] = ['overview', 'releases', 'runtime', 'routes', 'data', 'files', 'cron', 'logs', 'maintenance'];
+type Tab = 'overview' | 'releases' | 'runtime' | 'routes' | 'data' | 'env' | 'files' | 'cron' | 'logs' | 'maintenance';
+const TAB_IDS: readonly Tab[] = ['overview', 'releases', 'runtime', 'routes', 'data', 'env', 'files', 'cron', 'logs', 'maintenance'];
 
 function isTab(v: string | null): v is Tab {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
@@ -195,6 +196,7 @@ export function SiteDetailPage() {
     { id: 'runtime', label: t('sites.tabs.runtime') || 'Runtime', icon: <Cpu size={16} /> },
     { id: 'routes', label: t('sites.tabs.routes') || 'Routes & domains', icon: <Route size={16} /> },
     { id: 'data', label: t('sites.tabs.data') || 'Data paths', icon: <Database size={16} /> },
+    { id: 'env', label: t('siteEnv.tab') || 'Variables', icon: <KeyRound size={16} /> },
     { id: 'files', label: t('sites.tabs.files') || 'File access', icon: <FolderOpen size={16} /> },
     { id: 'cron', label: t('cron.tab.title') || 'Cron', icon: <CalendarClock size={16} /> },
     { id: 'logs', label: t('logs.tab.title') || 'Logs', icon: <ScrollText size={16} /> },
@@ -316,6 +318,7 @@ export function SiteDetailPage() {
       )}
       {tab === 'routes' && <SiteRoutesTab {...tabProps} />}
       {tab === 'data' && <SiteDataPathsTab {...tabProps} />}
+      {tab === 'env' && <SiteEnvTab {...tabProps} />}
       {tab === 'files' && <SiteFilesTab {...tabProps} />}
       {tab === 'cron' && <SiteCronTab site={site} />}
       {tab === 'logs' && <SiteLogsTab site={site} />}

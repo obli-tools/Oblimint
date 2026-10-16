@@ -267,8 +267,8 @@ func TestPHPFPMPool(t *testing.T) {
 		"listen = /run/php-fpm.sock",
 		"pid = /run/oblimint/php-fpm.pid",
 		"request_terminate_timeout = 150s",
-		// P2: libpq finds the default PostgreSQL instance socket (clear_env drops the container env).
-		"clear_env = yes",
+		// The site environment variables reach PHP; libpq still finds the default PostgreSQL socket.
+		"clear_env = no",
 		"env[PGHOST] = /run/postgresql",
 	)
 	if strings.Contains(pool, "\nuser =") || strings.Contains(pool, "\ngroup =") {

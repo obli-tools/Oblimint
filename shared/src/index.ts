@@ -25,3 +25,5 @@ export * from './files';
 export * from './dbExplorer';
 // API access keys (/api/v1, MCP)
 export * from './apiKeys';
+// Site environment variables
+export * from './siteEnv';

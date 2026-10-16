@@ -1,3 +1,4 @@
+import { siteEnvFor } from '../hosting/siteEnv.service';
 import type Docker from 'dockerode';
 import type { HostingAccount, PlanLimits, QuotaMode, SiteStatus } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
@@ -91,6 +92,8 @@ export interface SiteState {
   runtimes: SiteRuntimeRow[];
   dataPaths: DataPathRow[];
   routes: Array<{ path_prefix: string; runtime_id: number | null }>;
+  /** Environment variables (decrypted), sorted by name. */
+  env?: Array<[string, string]>;
 }
 
 export interface AccountState {
@@ -121,13 +124,14 @@ export async function loadAccountState(accountId: number): Promise<AccountState 
   if (!row) return null;
   const sites = (await db('sites').where({ account_id: accountId }).orderBy('id') as SiteRow[]).filter((s) => !isDestroyed(s.id));
   const ids = sites.map((s) => s.id);
-  const [runtimes, dataPaths, routes] = ids.length
+  const [runtimes, dataPaths, routes, env] = ids.length
     ? await Promise.all([
       db('site_runtimes').whereIn('site_id', ids).orderBy('id') as Promise<SiteRuntimeRow[]>,
       db('site_data_paths').whereIn('site_id', ids).orderBy('path') as Promise<DataPathRow[]>,
       db('site_routes').whereIn('site_id', ids).select('site_id', 'path_prefix', 'runtime_id') as Promise<Array<{ site_id: number; path_prefix: string; runtime_id: number | null }>>,
+      siteEnvFor(ids),
     ])
-    : [[], [], []];
+    : [[], [], [], new Map<number, Array<[string, string]>>()];
   return {
     account: { ...row, limits: planLimits(row.plan_limits) },
     sites: sites.map((site) => ({
@@ -135,6 +139,7 @@ export async function loadAccountState(accountId: number): Promise<AccountState 
       runtimes: runtimes.filter((r) => r.site_id === site.id),
       dataPaths: dataPaths.filter((d) => d.site_id === site.id),
       routes: routes.filter((r) => r.site_id === site.id).map((r) => ({ path_prefix: r.path_prefix, runtime_id: r.runtime_id })),
+      env: env.get(site.id) ?? [],
     })),
   };
 }
@@ -148,6 +153,7 @@ function toPlanSite(s: SiteState): PlanSite {
     previewBase: s.site.preview_base,
     runtimes: s.runtimes.map((r) => ({ id: r.id, base: r.base })),
     dataPaths: s.dataPaths.map((d) => d.path),
+    env: s.env,
   };
 }
 

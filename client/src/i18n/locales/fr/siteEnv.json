@@ -1,0 +1,27 @@
+{
+  "siteEnv": {
+    "tab": "Variables",
+    "title": "Variables d'environnement",
+    "add": "Ajouter",
+    "import": "Importer un .env",
+    "intro": "Transmises au site au démarrage : getenv('NOM') ou $_SERVER['NOM'] en PHP, aussi dans les tâches cron. C'est la place des clés d'API et des mots de passe : jamais dans le code, jamais dans le dossier public. Enregistrer redémarre le site (quelques secondes).",
+    "empty": "Aucune variable pour l'instant.",
+    "secret": "Secret",
+    "value": "valeur",
+    "keepSecret": "•••••• (inchangé)",
+    "nameRequired": "Nom requis",
+    "nameInvalid": "Lettres, chiffres et _ (pas de chiffre en premier)",
+    "nameReserved": "Réservé par la plateforme",
+    "nameDuplicate": "Nom en double",
+    "valueRequired": "Un secret a besoin d'une valeur",
+    "importTitle": "Importer un .env",
+    "importHint": "Collez des lignes CLÉ=VALEUR : les noms existants sont remplacés, les autres ajoutés.",
+    "importEmpty": "Aucune ligne CLÉ=VALEUR trouvée",
+    "imported": "{{count}} variable(s) importée(s) : vérifiez, puis enregistrez",
+    "saved": "Enregistré : le site redémarre avec les nouvelles variables",
+    "unchanged": "Rien n'a changé",
+    "loadFailed": "Les variables n'ont pas pu être chargées",
+    "saveFailed": "Les variables n'ont pas pu être enregistrées",
+    "noRight": "Gérer les variables demande le droit de réglage des sites."
+  }
+}
