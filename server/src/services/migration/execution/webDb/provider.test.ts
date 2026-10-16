@@ -96,7 +96,11 @@ class World {
   accounts = new Map<number, AccountState & { polls: number }>();
   domains = new Map<number, { accountId: number; name: string; verified: boolean }>();
   routes: Array<{ domainId: number; pathPrefix: string; siteId: number; runtimeId: number | null }> = [];
-  sites = new Map<number, { accountId: number; slug: string; status: 'active' | 'provisioning' }>();
+  sites = new Map<number, { accountId: number; slug: string; status: 'active' | 'provisioning'; docroot: string }>();
+  /** Top-level entries of each site's staging (pruneStaging). */
+  staging = new Map<number, string[]>();
+  /** setDocroot refused (data path clash). */
+  docrootRefused = false;
   dataPaths: Array<{ siteId: number; path: string; policy: 'persistent' | 'typed' | 'ephemeral' }> = [];
   instances = new Map<number, { accountId: number; name: string; polls: number }>();
   databases = new Map<number, { instanceId: number; name: string; tables: number }>();
@@ -200,8 +204,8 @@ class World {
         async addRoute(_req, _actor, domainId, r) { w.calls.push(`route.add:${w.domains.get(domainId)!.name}${r.pathPrefix}`); w.routes.push({ domainId, ...r }); },
       },
       sites: {
-        async create(_req, _actor, body) { w.calls.push(`site.create:${body.slug}`); const id = w.id(); w.sites.set(id, { accountId: body.accountId, slug: body.slug, status: 'active' }); return { id, slug: body.slug }; },
-        async get(id) { const s = w.sites.get(id); return s ? { id, accountId: s.accountId, slug: s.slug, status: s.status, statusMessage: null } : null; },
+        async create(_req, _actor, body) { w.calls.push(`site.create:${body.slug}`); const id = w.id(); w.sites.set(id, { accountId: body.accountId, slug: body.slug, status: 'active', docroot: body.docroot }); return { id, slug: body.slug }; },
+        async get(id) { const s = w.sites.get(id); return s ? { id, accountId: s.accountId, slug: s.slug, status: s.status, statusMessage: null, docroot: s.docroot } : null; },
         async findBySlug(accountId, slug) { for (const [id, s] of w.sites) if (s.accountId === accountId && s.slug === slug) return { id, accountId, slug, status: s.status, statusMessage: null }; return null; },
         async dataPaths(siteId) { return w.dataPaths.filter((p) => p.siteId === siteId).map(({ path: p, policy }) => ({ path: p, policy })); },
         async addDataPath(_req, _actor, siteId, body) {
@@ -211,6 +215,17 @@ class World {
         async addRuntime(_req, _actor, siteId, base) { w.calls.push(`runtime.add:${base}`); const id = w.id(); w.runtimes.push({ id, siteId, base }); return { id }; },
         async runtimes(siteId) { return w.runtimes.filter((r) => r.siteId === siteId).map(({ id, base }) => ({ id, base })); },
         async ensureTree() { /* hostd */ },
+        async setDocroot(_req, _actor, siteId, docroot) {
+          if (w.docrootRefused) throw new AppError(400, 'Clash', 'docrootInDataPath');
+          w.calls.push(`site.docroot:${docroot}`); w.sites.get(siteId)!.docroot = docroot;
+        },
+        async pruneStaging(_account, site, keep) {
+          const all = w.staging.get(site.id) ?? [];
+          const removed = all.filter((n) => !keep.includes(n));
+          w.staging.set(site.id, all.filter((n) => keep.includes(n)));
+          w.calls.push(`staging.prune:${removed.join(',')}`);
+          return removed;
+        },
       },
       releases: {
         async publish(siteId, opts) {
@@ -697,7 +712,7 @@ test('siteCreate: an unmapped same-slug site the migration did not create is nev
   await drive(world, inp, ['plan', 'account', 'domains']);
   const accountId = world.map.get('3|account|acct1')!.targetId;
   // The client created "example-tld" (published) before the run reached the site step.
-  world.sites.set(777, { accountId, slug: 'example-tld', status: 'active' });
+  world.sites.set(777, { accountId, slug: 'example-tld', status: 'active', docroot: '' });
   await assert.rejects(drive(world, inp, ['site:example.tld:create']), (err: unknown) => err instanceof StepError && err.code === 'siteSlugTaken');
   assert.ok(!world.map.has('3|site|example.tld'));
 });
@@ -785,4 +800,58 @@ test('a spool write error (ENOSPC / EACCES / EISDIR) fails the step cleanly, nev
   };
   await assert.rejects(drive(world, inp, ['db:acct1_wp']), (err: unknown) => err instanceof StepError && err.code === 'spoolWriteFailed');
   assert.equal(world.imports.length, 0);
+});
+
+test('copy root moved since the previous run (entries outside the docroot attached): docroot updated, staging re-laid out', async () => {
+  const world = new World();
+  const flat = accountPlan();
+  await drive(world, input('initial', flat));
+  const siteId = [...world.sites.keys()][0];
+  assert.equal(world.sites.get(siteId)!.docroot, '');
+  // The previous copy: the docroot content at the staging root.
+  world.staging.set(siteId, ['index.php', 'lib.php', 'big.msi', '.htaccess']);
+  const moved = accountPlan({
+    sites: [{ ...flat.sites[0], sourceRoot: '/home/acct1', docroot: 'public_html', copyPaths: ['public_html', 'config.php'] }],
+  });
+  const r = await drive(world, input('resync', moved, { parts: ['files'], runId: 2 }));
+  assert.equal(world.sites.get(siteId)!.docroot, 'public_html');
+  assert.ok(world.calls.includes('staging.prune:.htaccess,big.msi,index.php,lib.php') || world.calls.some((c) => c.startsWith('staging.prune:') && c.includes('big.msi')));
+  assert.deepEqual(world.staging.get(siteId), []);
+  const files = r.rsync.find((x) => x.preset === 'site-files')!;
+  assert.equal(files.deleteExtraneous, true, 'the copy is mirrored once re-laid out');
+  const out = [...r.outcomes.values()].find((o) => (o.result as { relayout?: boolean }).relayout)!;
+  assert.ok(out.warnings!.some((w) => w.code === 'siteDocrootUpdated') && out.warnings!.some((w) => w.code === 'siteStagingRelayout'));
+  // Next run, same layout: nothing moved, no mirror unless asked.
+  world.staging.set(siteId, ['public_html', 'config.php', 'added-by-client.txt']);
+  const again = await drive(world, input('resync', moved, { parts: ['files'], runId: 3 }));
+  assert.equal(again.rsync.find((x) => x.preset === 'site-files')!.deleteExtraneous, false);
+  assert.deepEqual(world.staging.get(siteId), ['public_html', 'config.php', 'added-by-client.txt']);
+});
+
+test('a docroot the client changed on the target is kept by a resync (siteDocrootKept)', async () => {
+  const world = new World();
+  const flat = accountPlan();
+  await drive(world, input('initial', flat));
+  const siteId = [...world.sites.keys()][0];
+  world.sites.get(siteId)!.docroot = 'web';
+  const moved = accountPlan({ sites: [{ ...flat.sites[0], sourceRoot: '/home/acct1', docroot: 'public_html', copyPaths: ['public_html', 'config.php'] }] });
+  world.staging.set(siteId, ['web']);
+  const r = await drive(world, input('resync', moved, { parts: ['files'], runId: 2 }));
+  assert.equal(world.sites.get(siteId)!.docroot, 'web');
+  assert.ok(!world.calls.some((c) => c.startsWith('site.docroot:')));
+  assert.ok([...r.outcomes.values()].some((o) => o.warnings?.some((w) => w.code === 'siteDocrootKept')));
+});
+
+test('a docroot refused by the target site is a warning, the copy layout still re-laid out next time', async () => {
+  const world = new World();
+  const flat = accountPlan();
+  await drive(world, input('initial', flat));
+  const siteId = [...world.sites.keys()][0];
+  world.docrootRefused = true;
+  const moved = accountPlan({ sites: [{ ...flat.sites[0], sourceRoot: '/home/acct1', docroot: 'public_html', copyPaths: ['public_html', 'config.php'] }] });
+  const r = await drive(world, input('resync', moved, { parts: ['files'], runId: 2 }));
+  assert.equal(world.sites.get(siteId)!.docroot, '');
+  assert.ok([...r.outcomes.values()].some((o) => o.status === 'warning' && o.warnings?.some((w) => w.code === 'siteDocrootRejected')));
+  // The layout recorded by the first initial run differs: the staging is still re-laid out.
+  assert.equal(r.rsync.find((x) => x.preset === 'site-files')!.deleteExtraneous, true);
 });

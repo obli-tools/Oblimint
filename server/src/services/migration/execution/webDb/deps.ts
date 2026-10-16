@@ -48,6 +48,8 @@ export interface SiteState {
   createdAt?: string;
   /** Release currently served (null = never published). */
   currentReleaseId?: number | null;
+  /** Document root, relative to the release root ('' = the root). */
+  docroot?: string;
 }
 
 export interface ReleaseState {
@@ -125,6 +127,10 @@ export interface WebDbDeps {
     runtimes(siteId: number): Promise<Array<{ id: number; base: string }>>;
     /** hostd: staging/<slug>, data/<slug> (+ the given data paths) owned by the account uid:gid. Idempotent. */
     ensureTree(account: AccountState, site: SiteState, dataPaths: string[]): Promise<void>;
+    /** sites.update { docroot } (data path clash = AppError 400). */
+    setDocroot(req: Request, actor: HostingActor, siteId: number, docroot: string): Promise<void>;
+    /** Removes the top-level entries of staging/<slug> whose name is not in `keep` (links removed, never followed); returns their names. */
+    pruneStaging(account: AccountState, site: SiteState, keep: string[]): Promise<string[]>;
   };
   releases: {
     publish(siteId: number, opts: { userId: number | null; message: string }): Promise<ReleaseState>;
@@ -213,6 +219,7 @@ function siteState(r: Record<string, unknown> | undefined): SiteState | null {
     id: Number(r.id), accountId: Number(r.account_id), slug: String(r.slug), status: r.status as SiteState['status'], statusMessage: (r.status_message as string | null) ?? null,
     ...(created ? { createdAt: created } : {}),
     ...('current_release_id' in r ? { currentReleaseId: r.current_release_id === null ? null : Number(r.current_release_id) } : {}),
+    ...(typeof r.docroot === 'string' ? { docroot: r.docroot } : {}),
   };
 }
 
@@ -317,10 +324,10 @@ const realDeps: WebDbDeps = {
       return { id: s.id, slug: s.slug };
     },
     async get(siteId) {
-      return siteState(await (await mod.db())('sites').where({ id: siteId }).first('id', 'account_id', 'slug', 'status', 'status_message', 'created_at', 'current_release_id'));
+      return siteState(await (await mod.db())('sites').where({ id: siteId }).first('id', 'account_id', 'slug', 'status', 'status_message', 'created_at', 'current_release_id', 'docroot'));
     },
     async findBySlug(accountId, slug) {
-      return siteState(await (await mod.db())('sites').where({ account_id: accountId, slug }).first('id', 'account_id', 'slug', 'status', 'status_message', 'created_at', 'current_release_id'));
+      return siteState(await (await mod.db())('sites').where({ account_id: accountId, slug }).first('id', 'account_id', 'slug', 'status', 'status_message', 'created_at', 'current_release_id', 'docroot'));
     },
     async dataPaths(siteId) {
       return await (await mod.db())('site_data_paths').where({ site_id: siteId }).select('path', 'policy') as Array<{ path: string; policy: DataPathPolicy }>;
@@ -344,6 +351,24 @@ const realDeps: WebDbDeps = {
       const spec = { accountId: account.id, siteId: site.id, slug: site.slug, uid: account.uid, gid: account.gid };
       await client.ensureSite(spec);
       if (dataPaths.length) await client.ensureDataPaths(spec, dataPaths);
+    },
+    async setDocroot(req, actor, siteId, docroot) {
+      const { sitesService } = await import('../../../hosting/sites.service');
+      await sitesService.update(req, actor, siteId, { docroot });
+    },
+    async pruneStaging(account, site, keep) {
+      const dir = localPaths.siteStaging(account.id, site.slug);
+      const st = await fs.promises.lstat(dir).catch(() => null);
+      if (!st || !st.isDirectory()) return [];
+      const kept = new Set(keep);
+      const removed: string[] = [];
+      for (const name of (await fs.promises.readdir(dir)).sort()) {
+        if (kept.has(name)) continue;
+        // rm never follows a link (the link itself goes).
+        await fs.promises.rm(`${dir}/${name}`, { recursive: true, force: true });
+        removed.push(name);
+      }
+      return removed;
     },
   },
   releases: {

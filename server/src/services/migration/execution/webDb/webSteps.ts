@@ -222,7 +222,7 @@ export async function siteCreateStep(ctx: MigrationStepContext, site: PlannedSit
       if (!state) throw new StepError(`Le site ${site.name} a disparu juste après sa création`, 'siteMissing');
     }
     siteId = state.id;
-    await env.put('site', site.key, state.id, { name: site.name, slug: state.slug });
+    await env.put('site', site.key, state.id, { name: site.name, slug: state.slug, docroot: state.docroot ?? site.docroot });
   }
 
   // Data paths of the plan (profile + discovery), added when missing.
@@ -397,6 +397,35 @@ export function siteExcludes(site: PlannedSite, declared?: ReadonlySet<string>):
   return { excludes, rejected };
 }
 
+/**
+ * Docroot of the plan on a site of an earlier run: the plan can move the copy root (entries outside the docroot
+ * attached since: ~/app/config.php next to ~/app/www → copy of ~/app, docroot 'www'). Kept as is,
+ * the release root would be served (the PHP looks for ../config.php above it). A docroot changed on the target
+ * since (not the one the migration set) is the client's choice: kept. True = changed (the staging is re-laid out).
+ */
+async function reconcileDocroot(env: StepEnv, ctx: MigrationStepContext, site: PlannedSite, state: SiteState, meta: Record<string, unknown>): Promise<boolean> {
+  if (state.docroot === undefined || state.docroot === site.docroot) return false;
+  const migrationDocroot = typeof meta.docroot === 'string' ? meta.docroot : state.docroot;
+  const scope = { kind: 'site' as const, key: site.key };
+  if (state.docroot !== migrationDocroot) {
+    env.warn('siteDocrootKept', scope, { current: state.docroot || '/', planned: site.docroot || '/' }, 'info');
+    return false;
+  }
+  try {
+    await env.deps.sites.setDocroot(ctx.req, ctx.actor, state.id, site.docroot);
+  } catch (err) {
+    if (!(err instanceof AppError) || err.statusCode >= 500) throw err;
+    env.warn('siteDocrootRejected', scope, { from: state.docroot || '/', to: site.docroot || '/', reason: err.code ?? 'refused' });
+    return false;
+  }
+  env.warn('siteDocrootUpdated', scope, { from: state.docroot || '/', to: site.docroot || '/' }, 'info');
+  // Recorded at once: a failure of the copy below re-lays the staging out on the next run.
+  await env.put('site', site.key, state.id, { ...meta, name: site.name, slug: state.slug, docroot: site.docroot, relayout: true });
+  meta.docroot = site.docroot;
+  meta.relayout = true;
+  return true;
+}
+
 export async function siteFilesStep(ctx: MigrationStepContext, site: PlannedSite): Promise<MigrationStepOutcome> {
   const env = new StepEnv(ctx);
   const acc = await env.account();
@@ -406,8 +435,22 @@ export async function siteFilesStep(ctx: MigrationStepContext, site: PlannedSite
   for (const r of rejected) env.warn('rsyncExcludeRejected', { kind: 'site', key: site.key }, { pattern: r.slice(0, 200) });
   // Selective copy (entries outside the docroot attached): only the application root + those entries.
   const selective = selectiveFilters(site.copyPaths ?? []);
+  // Layout of the copy (source root + copied paths) vs the previous one: when it moved, the staging still holds
+  // the old one (the docroot content at the root, next to the new tree) — a whole duplicate, published as code.
+  // The staging is then re-laid out: top-level entries outside the new copy removed (an rsync --delete does not
+  // touch what the selective filters exclude), and the copy mirrored.
+  const layout = JSON.stringify({ root: site.sourceRoot.replace(/\/+$/, ''), paths: site.copyPaths ?? [] });
+  const meta: Record<string, unknown> = { ...((await env.deps.objectMap.get(env.sourceId, 'site', site.key))?.meta ?? {}) };
+  const moved = await reconcileDocroot(env, ctx, site, state, meta);
+  const relayout = moved || meta.relayout === true || (typeof meta.layout === 'string' && meta.layout !== layout);
+  let pruned: string[] = [];
+  if (relayout) {
+    const tops = [...new Set((site.copyPaths ?? []).map((p) => p.split('/').filter(Boolean)[0]).filter((p): p is string => !!p))];
+    if (tops.length) pruned = await env.deps.sites.pruneStaging(acc, state, tops);
+    env.warn('siteStagingRelayout', { kind: 'site', key: site.key }, { removed: pruned.length, sample: pruned.slice(0, 5).join(', ') }, 'info');
+  }
   const session = await ctx.session();
-  const mirror = ctx.run.mirrorDeletes && !env.initial;
+  const mirror = relayout || (ctx.run.mirrorDeletes && !env.initial);
   const res = await session.rsyncPull({
     remotePath: site.sourceRoot.replace(/\/+$/, ''),
     localPath: localPaths.siteStaging(acc.id, state.slug),
@@ -424,7 +467,14 @@ export async function siteFilesStep(ctx: MigrationStepContext, site: PlannedSite
     env.warn('rsyncUnsafeLinks', { kind: 'site', key: site.key }, { count: res.unsafeLinks.length, sample: res.unsafeLinks.slice(0, 5).join(', ') });
   }
   if (res.partial) env.warn('rsyncPartial', { kind: 'site', key: site.key }, {});
-  return env.outcome({ siteId: state.id, files: res.files, bytes: res.bytes, deleted: res.deleted, unsafeLinks: res.unsafeLinks.length, partial: res.partial, mirror });
+  const { relayout: _done, ...rest } = meta;
+  // The docroot the migration stands by (a site of an earlier version: the current one), told apart from a client's later change.
+  const docroot = typeof rest.docroot === 'string' ? rest.docroot : state.docroot ?? site.docroot;
+  await env.put('site', site.key, state.id, { ...rest, name: site.name, slug: state.slug, docroot, layout });
+  return env.outcome({
+    siteId: state.id, files: res.files, bytes: res.bytes, deleted: res.deleted + pruned.length, unsafeLinks: res.unsafeLinks.length, partial: res.partial, mirror,
+    ...(relayout ? { relayout: true } : {}),
+  });
 }
 
 export async function sitePublishStep(ctx: MigrationStepContext, site: PlannedSite): Promise<MigrationStepOutcome> {

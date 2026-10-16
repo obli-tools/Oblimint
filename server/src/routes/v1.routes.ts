@@ -5,7 +5,7 @@ import { parseBody } from '../services/docker/parseBody';
 import { keyApi, type SiteArea } from '../services/apiKeys/keyApi';
 import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from '../services/apiKeys/middleware';
 import type { ApiKeyContext } from '../services/apiKeys/apiKeys.service';
-import { siteCreateSchema } from '../validators/hosting.schema';
+import { siteCreateSchema, siteUpdateSchema } from '../validators/hosting.schema';
 
 // /api/v1 — API of the access keys (shared/src/apiKeys.ts), `Authorization: Bearer obk_…`.
 // One account; the key's sites only (others: 404); its scopes (missing: 403 keyScope).
@@ -15,6 +15,7 @@ import { siteCreateSchema } from '../validators/hosting.schema';
 //   GET    /sites                                       → ApiV1Site[]
 //   POST   /sites                SiteCreate − accountId → ApiV1Site (201)              sites.create
 //   GET    /sites/:id                                   → ApiV1Site
+//   PATCH  /sites/:id   {name?, docroot?, publishMode?, publishDebounceSec?, healthcheckPath?, php?} → ApiV1Site  sites.manage
 //   GET    /sites/:id/files?path=&area=                 → FileListing                  files.read
 //   GET    /sites/:id/files/text?path=&area=            → FileText (≤ 2 MiB)           files.read
 //   GET    /sites/:id/files/content?path=&area=         → the file (Range)             files.read
@@ -50,6 +51,8 @@ const relPath = z.string().max(4096);
 const qPath = (req: Request) => relPath.parse(typeof req.query.path === 'string' ? req.query.path : '/');
 
 const createSchema = siteCreateSchema.omit({ accountId: true });
+// The platform-only settings (custom nginx, base path, profile) stay in the panel.
+const updateSchema = siteUpdateSchema.pick({ name: true, docroot: true, publishMode: true, publishDebounceSec: true, healthcheckPath: true, php: true });
 const pathBody = z.object({ path: relPath.min(1), area: area.optional() }).strict();
 const pathsBody = z.object({ paths: z.array(relPath.min(1)).min(1).max(1000), area: area.optional() }).strict();
 const itemsBody = z.object({
@@ -69,6 +72,7 @@ router.get('/me', h(async (req, res) => ok(res, await keyApi.me(ctxOf(req)))));
 router.get('/sites', h(async (req, res) => ok(res, await keyApi.listSites(ctxOf(req)))));
 router.post('/sites', h(async (req, res) => ok(res, await keyApi.createSite(ctxOf(req), req, parseBody(createSchema, req.body)), 201)));
 router.get('/sites/:id', h(async (req, res) => ok(res, await keyApi.getSite(ctxOf(req), siteId(req)))));
+router.patch('/sites/:id', h(async (req, res) => ok(res, await keyApi.updateSite(ctxOf(req), req, siteId(req), parseBody(updateSchema, req.body)))));
 
 router.get('/sites/:id/files', h(async (req, res) => ok(res, await keyApi.listFiles(ctxOf(req), siteId(req), areaOf(req.query.area), qPath(req)))));
 router.get('/sites/:id/files/text', h(async (req, res) => ok(res, await keyApi.readText(ctxOf(req), siteId(req), areaOf(req.query.area), qPath(req)))));

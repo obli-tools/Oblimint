@@ -1,3 +1,5 @@
+import type { SiteUpdate } from './hosting';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // API access keys of a hosting account (« Clés d'accès »): a script, a CI or an
 // AI agent (Claude through the panel's MCP server) acts on ONE account through
@@ -92,6 +94,9 @@ export interface ApiV1Site {
   /** Created through this key. */
   createdByKey: boolean;
 }
+
+/** PATCH /api/v1/sites/:id (scope sites.manage): the platform-only settings (custom nginx, base path, profile) stay in the panel. */
+export type ApiV1SiteUpdate = Pick<SiteUpdate, 'name' | 'docroot' | 'publishMode' | 'publishDebounceSec' | 'healthcheckPath' | 'php'>;
 
 /** A domain of the account a key can create subdomains under. */
 export interface ApiV1ParentDomain {

@@ -125,6 +125,10 @@
       "runtimePrefixInvalid": "Invalid path prefix of a secondary runtime: ignored.",
       "secretRedacted": "Values looking like secrets were removed from the inventory.",
       "siteProvisionError": "The target site ended in error while being provisioned.",
+      "siteDocrootUpdated": "The web root of the site changed since the previous run (entries outside the docroot now copied with it): updated on the target site.",
+      "siteDocrootKept": "The web root of the target site was changed since the migration: kept, the plan's one is not applied.",
+      "siteDocrootRejected": "The new web root of the site was refused by the target site (data path conflict): fix it in the site settings.",
+      "siteStagingRelayout": "The copy layout of the site changed: the staging area was re-laid out (leftovers of the previous copy removed, copy mirrored).",
       "siteSlugTaken": "The site name is already used in the account.",
       "siteStagingEmpty": "Nothing to publish: the staging area of the site is empty.",
       "stepSkipped": {

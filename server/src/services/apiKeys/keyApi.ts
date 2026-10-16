@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import type { Readable } from 'stream';
 import type {
-  ApiV1Me, ApiV1ParentDomain, ApiV1Site, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
+  ApiV1Me, ApiV1ParentDomain, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
   SiteCreate, StagingStatus,
 } from '@oblimint/shared';
 import { db } from '../../db';
@@ -115,6 +115,15 @@ export const keyApi = {
     await apiKeysService.recordCreatedSite(ctx, site.id);
     const self = { ...ctx, siteIds: new Set([...ctx.siteIds, site.id]) };
     const [v] = await siteViews(self, [site.id]);
+    return v;
+  },
+
+  /** Settings of a site (name, docroot, publication…): the panel's own checks (sites.update). */
+  async updateSite(ctx: ApiKeyContext, req: Request, siteId: number, body: ApiV1SiteUpdate): Promise<ApiV1Site> {
+    requireScope(ctx, 'sites.manage');
+    const site = await keySite(ctx, siteId);
+    await sitesService.update(req, ctx.actor, site.id, body);
+    const [v] = await siteViews(ctx, [site.id]);
     return v;
   },
 
