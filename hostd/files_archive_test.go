@@ -143,3 +143,69 @@ func TestFilesZipStream(t *testing.T) {
 		t.Fatal("link followed / stored")
 	}
 }
+
+func TestFilesTarRoundTrip(t *testing.T) {
+	m, acct, o := filesFixture(t)
+	site := filepath.Join(acct, "staging/site")
+	os.MkdirAll(filepath.Join(site, "css"), 0o755)
+	os.WriteFile(filepath.Join(site, "index.php"), []byte("<?php echo 1;"), 0o644)
+	os.WriteFile(filepath.Join(site, "css/a.css"), []byte("body{}"), 0o644)
+	os.Symlink("/etc/passwd", filepath.Join(site, "evil"))
+	os.WriteFile(filepath.Join(acct, "data/site/uploads/photo.jpg"), []byte("jpg"), 0o644)
+	filepath.Walk(acct, func(p string, _ os.FileInfo, _ error) error { return nil })
+	var buf bytes.Buffer
+	if err := m.WriteTar(context.Background(), 1, [][]string{segs(t, "staging"), segs(t, "data")}, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]byte{}
+	tr := tar.NewReader(bytes.NewReader(buf.Bytes()))
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		names[h.Name] = h.Typeflag
+	}
+	if names["staging/site/index.php"] != tar.TypeReg || names["staging/site/evil"] != tar.TypeSymlink || names["data/site/uploads/photo.jpg"] != tar.TypeReg {
+		t.Fatalf("tar entries: %v", names)
+	}
+	// Relative tar of staging/site (the backup form), restored into the same folder.
+	var site2 bytes.Buffer
+	if err := m.WriteTar(context.Background(), 1, [][]string{segs(t, "staging/site")}, true, &site2); err != nil {
+		t.Fatal(err)
+	}
+	rel := map[string]bool{}
+	tr = tar.NewReader(bytes.NewReader(site2.Bytes()))
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		rel[h.Name] = true
+	}
+	if !rel["index.php"] || !rel["css/a.css"] || !rel["css/"] || len(rel) != 4 {
+		t.Fatalf("relative tar entries: %v", rel)
+	}
+	if err := m.WriteTar(context.Background(), 1, [][]string{segs(t, "staging"), segs(t, "data")}, true, io.Discard); err == nil {
+		t.Fatal("relative tar of two roots accepted")
+	}
+	os.WriteFile(filepath.Join(site, "stale.txt"), []byte("x"), 0o644)
+	res, err := m.Untar(context.Background(), 1, segs(t, "staging/site"), o, false, true, bytes.NewReader(site2.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Files != 2 {
+		t.Fatalf("result %+v", res)
+	}
+	if _, err := os.Lstat(filepath.Join(site, "stale.txt")); err == nil {
+		t.Fatal("clear did not empty the folder")
+	}
+	if _, err := os.Lstat(filepath.Join(site, "evil")); err == nil {
+		t.Fatal("link restored")
+	}
+	b, _ := os.ReadFile(filepath.Join(site, "css/a.css"))
+	fi, _ := os.Lstat(filepath.Join(site, "css/a.css"))
+	if string(b) != "body{}" || ownerOf(fi) != o {
+		t.Fatalf("content/owner %q %v", b, ownerOf(fi))
+	}
+}

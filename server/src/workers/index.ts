@@ -38,6 +38,9 @@ export async function startWorkers(): Promise<void> {
   // Platform updates (Nodes > Updates): registry checks, automatic updates in the window, self-update results.
   const { platformUpdatesWorker } = await import('../services/platformUpdates/platformUpdates.service');
   starters.push(['platform-updates', () => platformUpdatesWorker.start()]);
+  // External backups (daily run at the configured hour, retention).
+  const { backupService } = await import('../services/backups/backup.service');
+  starters.push(['backups', () => backupService.start()]);
   // P2 workers (docs/P2-PLAN.md §Workers): same contract (start returns at once, never throws).
   const p2 = await p2Workers();
   for (const [name, w] of p2) starters.push([name, () => w.start()]);
@@ -178,6 +181,7 @@ export async function stopWorkers(): Promise<void> {
     import('../services/edge/certificate.service').then((m) => m.certificateService),
     import('../services/hosting/usage.service').then((m) => m.usageService),
     import('../services/platformUpdates/platformUpdates.service').then((m) => m.platformUpdatesWorker),
+    import('../services/backups/backup.service').then((m) => m.backupService),
   ]);
   for (const m of mods) { try { m.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p2Workers()) { try { w.stop(); } catch { /* exiting */ } }

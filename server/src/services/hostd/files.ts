@@ -160,6 +160,62 @@ async function uploadChunk(t: HostdFileTarget, o: HostdFileOwner, relPath: strin
   });
 }
 
+function rejectHostd(res: http.IncomingMessage, what: string, reject: (e: Error) => void): void {
+  const status = res.statusCode ?? 0;
+  const chunks: Buffer[] = [];
+  res.on('data', (c: Buffer) => { if (chunks.length < 64) chunks.push(c); });
+  res.on('end', () => {
+    let json: { error?: unknown; code?: unknown } | undefined;
+    try { json = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* not JSON */ }
+    reject(new HostdError(status, `hostd ${what}: ${typeof json?.error === 'string' ? json.error : `HTTP ${status}`}`, typeof json?.code === 'string' ? json.code : undefined));
+  });
+  res.on('error', () => reject(new HostdError(503, `hostd ${what}: connection lost`, 'hostdUnavailable')));
+}
+
+/** Streams a tar of whole trees of the account (backups): links stored as links, never followed; relative = names relative to the single root. */
+async function openTar(t: HostdFileTarget, roots: string[], relative = false): Promise<HostdFileStream> {
+  const socketPath = await hostdSocketFor(t.nodeId);
+  const q = new URLSearchParams();
+  for (const r of roots) q.append('path', r);
+  if (relative) q.set('relative', '1');
+  return new Promise((resolve, reject) => {
+    const req = http.request({ socketPath, method: 'GET', path: `${accountPath(t, '/tar')}?${q}`, headers: { Host: 'hostd' } }, (res) => {
+      if ((res.statusCode ?? 0) >= 400) return rejectHostd(res, 'GET tar', reject);
+      resolve({ status: res.statusCode ?? 0, headers: res.headers, body: res });
+    });
+    req.on('error', (err: NodeJS.ErrnoException) => reject(new HostdError(503, `hostd unreachable: ${err.code ?? err.message}`, 'hostdUnavailable')));
+    req.end();
+  });
+}
+
+/** Restores a tar stream (names relative to `to`) into the directory `to`; clear empties it first. */
+async function untar(t: HostdFileTarget, o: HostdFileOwner, to: string, body: Readable, opts: { overwrite?: boolean; clear?: boolean } = {}): Promise<HostdExtractResult> {
+  const socketPath = await hostdSocketFor(t.nodeId);
+  const q = new URLSearchParams({ path: to, uid: String(o.uid), gid: String(o.gid), overwrite: opts.overwrite ? '1' : '0', clear: opts.clear ? '1' : '0' });
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (err: Error | null, v?: HostdExtractResult) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err); else resolve(v!);
+    };
+    const req = http.request({
+      socketPath, method: 'PUT', path: `${accountPath(t, '/untar')}?${q}`,
+      headers: { Host: 'hostd', 'Content-Type': 'application/x-tar' },
+    }, (res) => {
+      if ((res.statusCode ?? 0) >= 400) return rejectHostd(res, 'PUT untar', (e) => done(e));
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => {
+        try { done(null, JSON.parse(Buffer.concat(chunks).toString('utf8')) as HostdExtractResult); } catch { done(new HostdError(502, 'hostd PUT untar: bad reply', 'hostdUnavailable')); }
+      });
+    });
+    req.on('error', (err: NodeJS.ErrnoException) => done(new HostdError(503, `hostd unreachable: ${err.code ?? err.message}`, 'hostdUnavailable')));
+    body.on('error', (err) => { req.destroy(); done(err); });
+    body.pipe(req);
+  });
+}
+
 export const hostdFiles = {
   list: (t: HostdFileTarget, relPath: string) =>
     call<HostdFileListing>(t, 'GET', `${accountPath(t)}?path=${encodeURIComponent(relPath)}`, undefined, TIMEOUT_MS, MAX_LISTING_BYTES),
@@ -167,6 +223,10 @@ export const hostdFiles = {
   openContent,
 
   openZip,
+
+  openTar,
+
+  untar,
 
   extract: (t: HostdFileTarget, o: HostdFileOwner, archive: string, to: string, overwrite: boolean) =>
     call<HostdExtractResult>(t, 'POST', accountPath(t, '/extract'), { ...o, path: archive, to, overwrite }, TREE_TIMEOUT_MS),

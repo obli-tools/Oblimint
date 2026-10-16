@@ -27,3 +27,4 @@ export * from './dbExplorer';
 export * from './apiKeys';
 // Site environment variables
 export * from './siteEnv';
+export * from './backups';

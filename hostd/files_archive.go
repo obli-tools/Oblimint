@@ -115,6 +115,42 @@ func (m *fileManager) Extract(ctx context.Context, accountID int64, segs, to []s
 	return res, diskError(err)
 }
 
+// tarWalker iterates over the entries of a tar (gz: gzip-compressed) stream.
+func tarWalker(src io.Reader, gz bool) func(func(archiveEntry) error) error {
+	return func(fn func(archiveEntry) error) error {
+		r := src
+		if gz {
+			z, err := gzip.NewReader(src)
+			if err != nil {
+				return badRequest("not a valid gzip archive: %v", err)
+			}
+			defer z.Close()
+			r = z
+		}
+		tr := tar.NewReader(r)
+		for {
+			h, err := tr.Next()
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			if err != nil {
+				return badRequest("invalid tar archive: %v", err)
+			}
+			switch h.Typeflag {
+			case tar.TypeDir:
+				err = fn(archiveEntry{name: h.Name, isDir: true, open: func() (io.ReadCloser, error) { return nil, nil }})
+			case tar.TypeReg:
+				err = fn(archiveEntry{name: h.Name, open: func() (io.ReadCloser, error) { return io.NopCloser(tr), nil }})
+			default:
+				err = fn(archiveEntry{name: h.Name}) // links, devices…: skipped
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
 // archiveWalker returns the iteration over the entries of a zip / tar(.gz).
 func archiveWalker(name string, f *os.File, size int64) (func(func(archiveEntry) error) error, error) {
 	lower := strings.ToLower(name)
@@ -141,38 +177,10 @@ func archiveWalker(name string, f *os.File, size int64) (func(func(archiveEntry)
 			return nil
 		}, nil
 	case strings.HasSuffix(lower, ".tar"), strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
-		return func(fn func(archiveEntry) error) error {
-			var r io.Reader = f
-			if !strings.HasSuffix(lower, ".tar") {
-				gz, err := gzip.NewReader(f)
-				if err != nil {
-					return badRequest("not a valid gzip archive: %v", err)
-				}
-				defer gz.Close()
-				r = gz
-			}
-			tr := tar.NewReader(r)
-			for {
-				h, err := tr.Next()
-				if errors.Is(err, io.EOF) {
-					return nil
-				}
-				if err != nil {
-					return badRequest("invalid tar archive: %v", err)
-				}
-				switch h.Typeflag {
-				case tar.TypeDir:
-					err = fn(archiveEntry{name: h.Name, isDir: true, open: func() (io.ReadCloser, error) { return nil, nil }})
-				case tar.TypeReg:
-					err = fn(archiveEntry{name: h.Name, open: func() (io.ReadCloser, error) { return io.NopCloser(tr), nil }})
-				default:
-					err = fn(archiveEntry{name: h.Name}) // links, devices…: skipped
-				}
-				if err != nil {
-					return err
-				}
-			}
-		}, nil
+		if strings.HasSuffix(lower, ".tar") {
+			return tarWalker(f, false), nil
+		}
+		return tarWalker(f, true), nil
 	default:
 		return nil, badRequest("unsupported archive type (zip, tar, tar.gz, tgz)")
 	}

@@ -27,6 +27,8 @@ function fakeHostd(): typeof hostdFiles {
     },
     openContent: async () => { throw new Error('unused'); },
     openZip: async () => { throw new Error('unused'); },
+    openTar: async () => { throw new Error('unused'); },
+    untar: async () => { throw new Error('unused'); },
     extract: async (_t, _o, archive, to, overwrite) => { calls.push(['extract', archive, to, overwrite]); return { files: 2, dirs: 1, bytes: 10, skipped: 0, conflicts: [] }; },
     mkdir: rec('mkdir'),
     remove: rec('remove'),

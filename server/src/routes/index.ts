@@ -28,6 +28,7 @@ import fileServerRoutes from './filesrv.routes';         // orchestration
 import filesRoutes from './files.routes';                // web file explorer
 import v1Routes from './v1.routes';                      // API access keys (/api/v1)
 import siteEnvRoutes from './siteEnv.routes';            // site environment variables
+import { accountBackupsRouter, systemBackupsRouter } from './backups.routes'; // external backups
 import apiKeysRoutes from './apiKeys.routes';            // API access keys (management)
 import infraRoutes from './infra.routes';                // orchestration
 import platformUpdatesRoutes from './platformUpdates.routes';  // platform updates (Nodes > Updates)
@@ -93,6 +94,7 @@ router.use('/system/edge', requireAuth, requireRole('admin'), edgeRoutes);   // 
 router.use('/system/edge', requireAuth, requireRole('admin'), systemEdgeUnitsRoutes); // P4b edge-robustness (units, applies, rollback)
 router.use('/system/network', requireAuth, requireRole('admin'), systemNetworkRoutes); // P4b segmentation
 router.use('/system/hosting-settings', requireAuth, requireRole('admin'), hostingSettingsRoutes); // P2 architect
+router.use('/system/backups', requireAuth, requireRole('admin'), systemBackupsRouter);  // external backups
 router.use('/system/dns', requireAuth, requireRole('admin'), systemDnsRoutes);           // P2 dns
 router.use('/system/firewall', requireAuth, requireRole('admin'), systemFirewallRoutes); // P2 hostd-firewall
 router.use('/system/scanner', requireAuth, requireRole('admin'), scannerRoutes);         // P3 scanners
@@ -130,6 +132,7 @@ tenantRouter.use('/accounts', accountsRoutes);
 tenantRouter.use('/accounts', fileServerRoutes);
 tenantRouter.use('/accounts', filesRoutes);              // web file explorer
 tenantRouter.use('/accounts', apiKeysRoutes);            // API access keys
+tenantRouter.use('/accounts', accountBackupsRouter);      // /:id/backups…
 tenantRouter.use('/sites', sitesRoutes);
 tenantRouter.use('/sites', releasesRoutes);
 tenantRouter.use('/sites', runtimeRoutes);

@@ -21,6 +21,7 @@ import { MaintenanceSettingsSections } from '@/components/maintenance/Maintenanc
 import { MailSettingsSections } from '@/components/mail/MailSettingsSections';
 import { AppsSettingsSections } from '@/components/settings/AppsSettingsSections';
 import { ProxySettingsSections } from '@/components/settings/ProxySettingsSections';
+import { BackupSettingsSections } from '@/components/settings/BackupSettingsSections';
 import { useHostingMe } from '@/store/hostingStore';
 import { cn } from '@/utils/cn';
 
@@ -285,6 +286,9 @@ export function SettingsPage() {
       {/* ── P4b: applications, monitoring, network segmentation (ui-apps) — edge and bans (ui-proxy) ── */}
       {admin && <AppsSettingsSections />}
       {admin && <ProxySettingsSections />}
+
+      {/* ── External backups (destinations, passphrase, schedule, runs) ── */}
+      {admin && <BackupSettingsSections />}
 
       {/* ── P2: notification channels of the workspace ── */}
       {canNotify && <NotificationChannelsSection />}

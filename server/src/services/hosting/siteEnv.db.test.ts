@@ -48,7 +48,7 @@ test('site environment variables', { timeout: 300_000 }, async (t: TestContext) 
   const nodeId = node?.id ?? Number((await db('nodes').insert({ name: `n-${suffix}`, is_local: true }).returning('id'))[0].id);
   const [plan] = await db('plans').insert({ tenant_id: tA, name: `p-${suffix}`, limits: JSON.stringify({}) }).returning('id');
   const [acct] = await db('hosting_accounts').insert({
-    tenant_id: tA, node_id: nodeId, plan_id: Number(plan.id ?? plan), username: `e${suffix}`.slice(0, 30), uid: 21000, gid: 21000, status: 'active', filesrv_mode: 'off',
+    tenant_id: tA, node_id: nodeId, plan_id: Number(plan.id ?? plan), username: `e${suffix}`.slice(0, 30), uid: 50000 + (Date.now() % 10000), gid: 50000 + (Date.now() % 10000), status: 'active', filesrv_mode: 'off',
   }).returning('id');
   const accountId = Number(acct.id ?? acct);
   const [s] = await db('sites').insert({

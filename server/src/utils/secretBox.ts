@@ -25,7 +25,9 @@ export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
   // P5: credentials of the CWP migration sources (SSH password / private key + passphrase).
   | 'migration-source'
   // Environment variables of the sites (values sealed at rest).
-  | 'site-env';
+  | 'site-env'
+  // Backups: destination credentials and the platform backup passphrase.
+  | 'backup';
 
 export class SecretBoxError extends Error {
   constructor(message: string) {

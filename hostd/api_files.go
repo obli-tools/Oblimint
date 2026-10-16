@@ -23,6 +23,8 @@ func registerFiles(mux *http.ServeMux, a *api) {
 	mux.HandleFunc("DELETE "+base+"/uploads/{uid}", a.uploadAbort)
 	mux.HandleFunc("POST "+base+"/extract", a.extractArchive)
 	mux.HandleFunc("GET "+base+"/zip", a.zipFiles)
+	mux.HandleFunc("GET "+base+"/tar", a.tarFiles)
+	mux.HandleFunc("PUT "+base+"/untar", a.untarFiles)
 }
 
 type filesBody struct {
