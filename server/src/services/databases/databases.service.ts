@@ -1,4 +1,4 @@
-import { pipeline } from 'stream';
+import { pipeline, type Readable } from 'stream';
 import zlib from 'zlib';
 import type Docker from 'dockerode';
 import type { Request, Response } from 'express';
@@ -878,10 +878,12 @@ export const databaseService = {
    * thus neither leave its database (CREATE DATABASE / USER, GRANT, files)
    * nor run a shell in the instance container.
    */
-  async restore(req: Request, actor: HostingActor, id: number, dbId: number): Promise<{ restored: true }> {
+  /** `source`: the SQL from elsewhere than the request body (a file of a site, API keys). */
+  async restore(req: Request, actor: HostingActor, id: number, dbId: number, source?: { stream: Readable; contentType: string }): Promise<{ restored: true }> {
     const row = await loadInstance(actor, id, 'databases.manage');
     const target = await loadDatabaseRow(row, dbId);
-    assertRestoreContentType(req.headers['content-type']);
+    const contentType = source ? source.contentType : req.headers['content-type'];
+    assertRestoreContentType(contentType);
     await assertRunning(row);
     const docker = await dockerOf(row);
     const family = dbFamilyOf(row.engine);
@@ -915,9 +917,9 @@ export const databaseService = {
         const detail = err instanceof SqlError ? err.output : errText(err);
         throw new AppError(502, `Restore user: ${detail.slice(0, 1000)}`, 'backendUnavailable');
       }
-      const source = restoreSqlStream(req, req.headers['content-type']);
+      const sqlIn = restoreSqlStream(source?.stream ?? req, contentType);
       const stdin = createRestoreRewriter(family, family === 'postgresql' ? { restrictKey: psqlRestrictKey() } : {});
-      pipeline(source, stdin, (err) => { if (err && !streamError) streamError = err; });
+      pipeline(sqlIn, stdin, (err) => { if (err && !streamError) streamError = err; });
       const env = [passwordEnv(family, password)];
       // PostgreSQL: the dump runs as the database owner role (objects belong to it, shared by the 'all' users).
       if (family === 'postgresql') env.push(`PGOPTIONS=${pgRestoreOptions(target.id)}`);

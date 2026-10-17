@@ -2,7 +2,7 @@ import type { Request } from 'express';
 import type { Readable } from 'stream';
 import type {
   ApiV1Me, ApiV1ParentDomain, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
-  SiteCreate, StagingStatus, ApiGuideLang,
+  SiteCreate, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
 } from '@oblimint/shared';
 import { apiKeyGuide } from '@oblimint/shared';
 import { db } from '../../db';
@@ -16,6 +16,8 @@ import { domainsService } from '../hosting/domains.service';
 import { sitesService } from '../hosting/sites.service';
 import { releaseForActor } from '../hosting/statusMessage';
 import { appConfigService } from '../appConfig.service';
+import { cronService } from '../cron/cron.service';
+import type { DataPathInputBody, DataPathUpdateBody } from '../../validators/hosting.schema';
 import { assertSource, logsService } from '../logs/logs.service';
 import { releaseService } from '../releases/release.service';
 import { apiKeysService, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
@@ -44,6 +46,49 @@ export async function keySite(ctx: ApiKeyContext, siteId: number): Promise<SiteR
   const site = await loadSite(ctx.actor, siteId, 'read');
   if (site.account_id !== ctx.accountId) throw new AppError(404, 'Site not found', 'notFound');
   return site;
+}
+
+interface RouteDomain { id: number; name: string; manageable: boolean; routes: ApiV1Route[] }
+
+/**
+ * Domains of the account with their path routes. A key manages the routes of
+ * a domain only when every route of it leads to one of its sites (a key on
+ * every site: any domain of the account) — it never takes a path of a domain
+ * serving a site it cannot see.
+ */
+async function routeDomains(ctx: ApiKeyContext): Promise<RouteDomain[]> {
+  const doms = await db('domains').where({ account_id: ctx.accountId }).select('id', 'name').orderBy('name') as Array<{ id: number; name: string }>;
+  if (!doms.length) return [];
+  const rows = await db('site_routes').whereIn('domain_id', doms.map((d) => d.id)).select('id', 'domain_id', 'path_prefix', 'site_id', 'runtime_id').orderBy('path_prefix') as
+    Array<{ id: number; domain_id: number; path_prefix: string; site_id: number; runtime_id: number | null }>;
+  return doms.map((d) => {
+    const mine = rows.filter((r) => r.domain_id === d.id);
+    const manageable = ctx.siteScope === 'all' || (mine.length > 0 && mine.every((r) => keyAllowsSite(ctx, r.site_id)));
+    return {
+      id: d.id, name: d.name, manageable,
+      // A route to a site the key cannot see is shown without its site.
+      routes: mine.map((r) => (keyAllowsSite(ctx, r.site_id)
+        ? { id: r.id, domain: d.name, pathPrefix: r.path_prefix, siteId: r.site_id, runtimeId: r.runtime_id }
+        : { id: r.id, domain: d.name, pathPrefix: r.path_prefix, siteId: 0, runtimeId: null })),
+    };
+  });
+}
+
+async function manageableDomain(ctx: ApiKeyContext, name: string): Promise<RouteDomain> {
+  const d = (await routeDomains(ctx)).find((x) => x.name === String(name).trim().toLowerCase().replace(/\.$/, ''));
+  if (!d) throw new AppError(404, 'Domain not found', 'notFound');
+  if (!d.manageable) throw new AppError(403, 'This domain also serves sites outside this key: its routes are managed in the panel', 'keyDomainNotManageable');
+  return d;
+}
+
+async function keyRoute(ctx: ApiKeyContext, routeId: number): Promise<{ domain: RouteDomain; route: ApiV1Route }> {
+  for (const d of await routeDomains(ctx)) {
+    const route = d.routes.find((r) => r.id === routeId);
+    if (!route) continue;
+    if (!d.manageable) throw new AppError(403, 'This domain also serves sites outside this key: its routes are managed in the panel', 'keyDomainNotManageable');
+    return { domain: d, route };
+  }
+  throw new AppError(404, 'Route not found', 'notFound');
 }
 
 /** Virtual explorer path of `rel` inside the site's area. */
@@ -288,6 +333,124 @@ export const keyApi = {
       .where({ 'k.key_id': ctx.id, 'd.account_id': ctx.accountId, 'd.name': name }).first('d.id') as { id: number } | undefined;
     if (!row) throw new AppError(404, 'Subdomain not found among the ones this key created', 'notFound');
     await domainsService.remove(req, ctx.actor, row.id);
+  },
+
+  // ── path routes of the domains (routes.manage) ──
+  async routes(ctx: ApiKeyContext): Promise<ApiV1RouteDomain[]> {
+    requireScope(ctx, 'routes.manage');
+    const doms = await routeDomains(ctx);
+    return doms.map((d) => ({ domain: d.name, manageable: d.manageable, routes: d.routes }));
+  },
+
+  async addRoute(ctx: ApiKeyContext, req: Request, domainName: string, pathPrefix: string, siteId: number, runtimeId: number | null = null): Promise<ApiV1Route> {
+    requireScope(ctx, 'routes.manage');
+    const d = await manageableDomain(ctx, domainName);
+    await keySite(ctx, siteId);
+    const r = await domainsService.addRoute(req, ctx.actor, d.id, { pathPrefix, siteId, runtimeId } as Parameters<typeof domainsService.addRoute>[3]);
+    return { id: r.id, domain: d.name, pathPrefix: r.pathPrefix, siteId: r.siteId, runtimeId: r.runtimeId };
+  },
+
+  /** runtimeId: undefined keeps it when the site does not change, null = the site's main runtime. */
+  async updateRoute(ctx: ApiKeyContext, req: Request, routeId: number, body: { pathPrefix?: string; siteId?: number; runtimeId?: number | null }): Promise<ApiV1Route> {
+    requireScope(ctx, 'routes.manage');
+    const { domain, route } = await keyRoute(ctx, routeId);
+    const siteId = body.siteId ?? route.siteId;
+    await keySite(ctx, siteId);
+    const runtimeId = body.runtimeId !== undefined ? body.runtimeId : (siteId === route.siteId ? route.runtimeId : null);
+    const r = await domainsService.updateRoute(req, ctx.actor, domain.id, route.id, { pathPrefix: body.pathPrefix ?? route.pathPrefix, siteId, runtimeId } as Parameters<typeof domainsService.updateRoute>[4]);
+    return { id: r.id, domain: domain.name, pathPrefix: r.pathPrefix, siteId: r.siteId, runtimeId: r.runtimeId };
+  },
+
+  // ── secondary runtimes (sites.manage): another container / engine serving path prefixes of the same code ──
+  async runtimes(ctx: ApiKeyContext, siteId: number): Promise<SiteRuntime[]> {
+    const site = await keySite(ctx, siteId);
+    return sitesService.listRuntimes(ctx.actor, site.id);
+  },
+
+  async addRuntime(ctx: ApiKeyContext, req: Request, siteId: number, base: SiteBaseId): Promise<SiteRuntime> {
+    requireScope(ctx, 'sites.manage');
+    const site = await keySite(ctx, siteId);
+    return sitesService.addRuntime(req, ctx.actor, site.id, base);
+  },
+
+  async deleteRuntime(ctx: ApiKeyContext, req: Request, siteId: number, runtimeId: number): Promise<void> {
+    requireScope(ctx, 'sites.manage');
+    const site = await keySite(ctx, siteId);
+    await sitesService.deleteRuntime(req, ctx.actor, site.id, runtimeId);
+  },
+
+  async deleteRoute(ctx: ApiKeyContext, req: Request, routeId: number): Promise<void> {
+    requireScope(ctx, 'routes.manage');
+    const { domain, route } = await keyRoute(ctx, routeId);
+    await domainsService.deleteRoute(req, ctx.actor, domain.id, route.id);
+  },
+
+  // ── data paths (folders of the code the site writes to, kept in its data area) ──
+  async dataPaths(ctx: ApiKeyContext, siteId: number): Promise<SiteDataPath[]> {
+    const site = await keySite(ctx, siteId);
+    return sitesService.listDataPaths(ctx.actor, site.id);
+  },
+
+  async addDataPath(ctx: ApiKeyContext, req: Request, siteId: number, body: DataPathInputBody): Promise<SiteDataPath> {
+    requireScope(ctx, 'sites.manage');
+    const site = await keySite(ctx, siteId);
+    return sitesService.addDataPath(req, ctx.actor, site.id, body);
+  },
+
+  async updateDataPath(ctx: ApiKeyContext, req: Request, siteId: number, pathId: number, body: DataPathUpdateBody): Promise<SiteDataPath> {
+    requireScope(ctx, 'sites.manage');
+    const site = await keySite(ctx, siteId);
+    return sitesService.updateDataPath(req, ctx.actor, site.id, pathId, body);
+  },
+
+  async deleteDataPath(ctx: ApiKeyContext, req: Request, siteId: number, pathId: number): Promise<void> {
+    requireScope(ctx, 'sites.manage');
+    const site = await keySite(ctx, siteId);
+    await sitesService.deleteDataPath(req, ctx.actor, site.id, pathId);
+  },
+
+  // ── cron ──
+  async cronJobs(ctx: ApiKeyContext, siteId: number): Promise<CronJob[]> {
+    requireScope(ctx, 'cron.manage');
+    const site = await keySite(ctx, siteId);
+    return cronService.list(ctx.actor, site.id);
+  },
+
+  async createCronJob(ctx: ApiKeyContext, req: Request, siteId: number, body: CronJobInput): Promise<CronJob> {
+    requireScope(ctx, 'cron.manage');
+    const site = await keySite(ctx, siteId);
+    return cronService.create(req, ctx.actor, site.id, body);
+  },
+
+  async updateCronJob(ctx: ApiKeyContext, req: Request, siteId: number, jobId: number, body: Partial<CronJobInput>): Promise<CronJob> {
+    requireScope(ctx, 'cron.manage');
+    const site = await keySite(ctx, siteId);
+    return cronService.update(req, ctx.actor, site.id, jobId, body);
+  },
+
+  async deleteCronJob(ctx: ApiKeyContext, req: Request, siteId: number, jobId: number): Promise<void> {
+    requireScope(ctx, 'cron.manage');
+    const site = await keySite(ctx, siteId);
+    await cronService.remove(req, ctx.actor, site.id, jobId);
+  },
+
+  async runCronJob(ctx: ApiKeyContext, req: Request, siteId: number, jobId: number): Promise<CronRun> {
+    requireScope(ctx, 'cron.manage');
+    const site = await keySite(ctx, siteId);
+    return cronService.runNow(req, ctx.actor, site.id, jobId);
+  },
+
+  async cronRuns(ctx: ApiKeyContext, siteId: number, jobId: number, limit: number, offset: number): Promise<{ items: CronRun[]; total: number }> {
+    requireScope(ctx, 'cron.manage');
+    const site = await keySite(ctx, siteId);
+    return cronService.runs(ctx.actor, site.id, jobId, { limit, offset });
+  },
+
+  /** One run with its output. */
+  async cronRun(ctx: ApiKeyContext, siteId: number, runId: number): Promise<CronRunDetail> {
+    requireScope(ctx, 'cron.manage');
+    const site = await keySite(ctx, siteId);
+    return cronService.run(ctx.actor, site.id, runId);
   },
 
   // ── logs ──

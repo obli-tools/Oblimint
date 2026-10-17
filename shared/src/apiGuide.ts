@@ -58,7 +58,7 @@ Oblimint is **immutable-code** hosting: the live code is **never changed in plac
 |---|---|---|
 | **staging** (\`area: "staging"\`, default) | The source code of the site, the one you write | No, until it is published |
 | **release** | Frozen snapshot of staging, created by a **publish** | Yes: the "current" release is served, **read-only** |
-| **data** (\`area: "data"\`) | Files the site writes itself (uploads, cache, sessions) | Yes, immediately, but **PHP never runs there** |
+| **data** (\`area: "data"\`) | Files the site writes itself (uploads, cache, sessions), in its **data paths** | Yes, immediately, but **PHP never runs there** |
 
 Consequences:
 
@@ -68,7 +68,7 @@ Consequences:
    - \`manual\`: nothing goes live until you call **\`publish\`**.
    - \`approval\`: publishing waits for a **human's approval** in the panel. Tell them.
 3. **There is no staging preview**: what is not published cannot be visited. To test before the real site goes live, use a development site (see §5).
-4. A PHP file put in \`data\` will **never** run: code goes to \`staging\`.
+4. **The site can only write in its data paths**: folders of the code (e.g. \`uploads\`, \`wp-content/uploads\`, \`cache\`) declared on the site, which point to the \`data\` area. The code writes to its usual path, unchanged; everywhere else writing is refused. A profile (\`app_profile\`) declares its application's ones; declare the others with \`add_data_path\` (\`sites.manage\`) **before** going live. Policies: \`persistent\` (kept: uploads), \`typed\` (kept, only some extensions, content checked: images…), \`ephemeral\` (emptied on each publish: cache, sessions). A PHP file put in \`data\` will **never** run: code goes to \`staging\`.
 5. Paths are **relative to the site area**: \`/index.php\`, \`/wp-content/themes/x/style.css\`. You cannot leave the site (\`..\` is refused).
 6. **Document root (\`docroot\`)**: the staging subfolder the web server serves (e.g. \`public\` for Laravel, empty = root). Everything **outside** the document root (e.g. \`/config/secrets.php\` when the root is \`public\`) is published with the code but **never served**: sensitive configuration files belong there.
 7. **Symbolic links** are shown but never followed nor created.
@@ -82,12 +82,21 @@ Consequences:
 | \`files.read\` | List and read files (staging and data), see unpublished changes |
 | \`files.write\` | Write, create folders, move, copy, delete, extract archives, upload large files |
 | \`releases.publish\` | Publish staging (go live) and roll back |
-| \`sites.manage\` | Change site settings: name, document root, publish mode, auto-publish delay, health-check path, PHP settings |
+| \`sites.manage\` | Change site settings: name, document root, publish mode, auto-publish delay, health-check path, PHP settings, **environment variables**, **data paths**, **secondary runtimes** |
 | \`sites.create\` | Create sites in the account (they join the key automatically) |
+| \`cron.manage\` | Scheduled tasks of its sites: create, change, run, read the output |
+| \`databases.manage\` | Databases: the account's database servers (create one within the plan), databases and users, SQL import / export |
+| \`routes.manage\` | Domain routes: choose which site (or runtime) serves a path, e.g. \`example.com/uploads/\` |
 | \`domains.subdomain\` | Attach to the sites **subdomains** of a domain **already in** the account, remove the ones the key created |
 | \`logs.read\` | Read access, error (web server / PHP) and application logs |
 
-Never possible with a key: deleting a site, adding a **new root domain**, managing databases, FTP / mail accounts, users, or touching another account.
+**Databases**: a key valid for every site sees every database of the account; a key limited to some sites sees only the databases and users **it created**. A key deletes only what it created, and never stops nor deletes a database server.
+
+**Routes**: a key changes only the routes of a domain whose routes **all** lead to its sites (a key valid for every site: every domain of the account), and only towards its sites.
+
+Never possible with a key: deleting a site, adding a **new root domain**, deleting a database it did not create or a database server, managing FTP / mail accounts or users, or touching another account. Ask the human for those.
+
+Oblimint runs **no permanent process** (bot, websocket, queue worker listening all the time): only the website and its cron tasks, one hour at most each. Such a program must be hosted elsewhere, or rewritten as short tasks run by cron (e.g. every minute, resuming where it stopped).
 
 A key never has more rights than the human who created it: if they lose a right, so does the key. A site outside the key's scope answers **"not found"** (as if it did not exist). A missing right answers **\`keyScope\`**. Do not work around it: ask the human to widen the key.
 
@@ -100,7 +109,7 @@ A key never has more rights than the human who created it: if they lose a right,
 | \`whoami\` | The key, its rights, the account | — |
 | \`get_guide\` | This guide (\`lang\`: \`en\` or \`fr\`) | — |
 | \`list_sites\` / \`get_site\` | Sites of the key (id, slug, domains, status, document root, publish mode, live release) | — |
-| \`create_site\` | Create a site: \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`publish_mode?\` | \`sites.create\` |
+| \`create_site\` | Create a site: \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (URL prefix it expects, e.g. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Change a site: \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
 | \`list_files\` | List a folder (\`path\`, \`area\`) | \`files.read\` |
 | \`read_file\` | Read a text file (≤ 2 MB) | \`files.read\` |
@@ -116,6 +125,19 @@ A key never has more rights than the human who created it: if they lose a right,
 | \`list_parent_domains\` | Account domains a subdomain can be created under | \`domains.subdomain\` |
 | \`add_subdomain\` | Create \`xxx.existing-domain.tld\` and route it to a site | \`domains.subdomain\` |
 | \`list_subdomains\` / \`remove_subdomain\` | Subdomains of the key (only the ones it created can be removed) | \`domains.subdomain\` |
+| \`get_env\` / \`set_env\` | Environment variables of the site (read by PHP with \`getenv()\`); \`set\` adds / replaces, \`remove\` deletes, the others stay; secrets write-only; the site restarts | \`sites.manage\` |
+| \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Folders the site may write to (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
+| \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Secondary runtimes: another container (possibly another engine) serving some paths of the **same** code and data | \`sites.manage\` |
+| \`list_routes\` | Account domains and their routes (\`manageable\`: the key may change them) | \`routes.manage\` |
+| \`add_route\` / \`update_route\` / \`remove_route\` | Route \`https://domain/prefix/…\` to a site, or a runtime of a site (\`runtime_id\`) | \`routes.manage\` |
+| \`list_cron_jobs\` / \`create_cron_job\` / \`update_cron_job\` / \`delete_cron_job\` | Scheduled tasks: \`name\`, \`schedule\` (crontab, UTC), \`command\` (e.g. \`php bin/sync.php\`, run in the live release), \`timeout_sec\` (≤ 3600), \`enabled\` | \`cron.manage\` |
+| \`run_cron_job\` / \`list_cron_runs\` / \`get_cron_run\` | Run now, history, full output of one run | \`cron.manage\` |
+| \`list_databases\` / \`database_catalog\` | Database servers, their databases and users (the ones the key reaches), connection; plan engines and limits | \`databases.manage\` |
+| \`create_database_instance\` | Create a database server (\`name\`, \`engine\`, \`version\`): a few minutes before \`running\` | \`databases.manage\` |
+| \`create_database\` / \`delete_database\` | Create an empty database; delete one the key created (\`confirm_name\`) | \`databases.manage\` |
+| \`create_database_user\` | User + rights (\`grants\`); with \`env_site_id\` the credentials go straight into the site's variables and the password is never returned | \`databases.manage\` |
+| \`set_database_user_grants\` / \`reset_database_user_password\` / \`delete_database_user\` | Rights, new password (same \`env_site_id\` option), deletion (if created by the key) | \`databases.manage\` |
+| \`import_sql\` | Run a \`.sql\` / \`.sql.gz\` dump (uploaded first as a file of a site) into a database | \`databases.manage\` + \`files.read\` |
 | \`read_logs\` | \`error\` (default), \`access\` or \`app\` logs; \`query\` filter, \`limit\` (≤ 2000) | \`logs.read\` |
 
 **Bases (\`base\`)**: \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supported), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (plain HTML/JS/CSS).
@@ -171,12 +193,35 @@ Simpler, but nothing is visible before going live: you test after publishing, wi
 4. \`list_parent_domains\` → pick a **verified** domain, then \`add_subdomain\`: \`{ "site_id": 12, "name": "landing.example.com" }\`.
 5. DNS and the HTTPS certificate follow automatically. Test \`https://landing.example.com/\`.
 
+### An application's database
+
+1. \`list_databases\`: with no server of the right engine, \`database_catalog\` then \`create_database_instance\` (wait for \`status: "running"\`).
+2. \`create_database\`: \`{ "instance_id": 3, "name": "app" }\`.
+3. \`create_database_user\` with \`grants: [{ "database_id": 7, "level": "all" }]\` and **\`env_site_id\`**: the site receives \`DB_HOST\`, \`DB_SOCKET\`, \`DB_NAME\`, \`DB_USER\`, \`DB_PASSWORD\` (secret) and restarts. The password never goes through you.
+4. In the code: \`getenv('DB_HOST')\`, etc. MySQL / MariaDB: \`DB_HOST\` is \`localhost\` (the site goes through the \`DB_SOCKET\` socket; with PDO, use \`unix_socket=\` + \`DB_SOCKET\` when the server is not the default one). PostgreSQL: \`DB_HOST\` is the socket directory.
+5. Existing data: upload the dump (a \`.sql\` or \`.sql.gz\` file, e.g. in the \`data\` area), \`import_sql\`, then delete the file.
+
+### Scheduled task
+
+- \`create_cron_job\`: \`{ "site_id": 12, "name": "sync", "schedule": "*/5 * * * *", "command": "php bin/sync.php" }\`. The command runs in the **live release**: publish first. \`run_cron_job\` to test, then \`list_cron_runs\` / \`get_cron_run\` for the output.
+- A script meant to run continuously (bot…) must be adapted: one short run per cron task, resuming its state (a file in a data path, or the database).
+
+### Serving a path from another container (e.g. \`/uploads/\`)
+
+Two cases, depending on **who owns the files**:
+
+- **The files belong to the site** (uploads written by the application) → **secondary runtime**. Same code, same data paths, another container: \`add_runtime\` \`{ "site_id": 12, "base": "nginx-static" }\`, then \`add_route\` \`{ "domain": "example.com", "path_prefix": "/uploads/", "site_id": 12, "runtime_id": 5 }\`. The application keeps writing to \`uploads\` (a data path), the static container serves them, and PHP never runs for those requests.
+- **It is another application** (its own code, its own publishing) → **second site** without a domain of its own: \`create_site\` with \`base_path: "/uploads/"\` (the prefix the application expects), upload its code, publish, then \`add_route\` \`{ "domain": "example.com", "path_prefix": "/uploads/", "site_id": 13 }\`. A site cannot write into another site's files.
+
+The longest route wins: \`/uploads/\` comes before \`/\`. Removing the route gives the path back to the main site.
+
 ### PHP apps and large batches of files
 
 - Many or heavy files: **build an archive** (\`.zip\` or \`.tar.gz\`), upload it (REST, see §6), then **\`extract_archive\`** in staging. Delete the archive afterwards (\`delete_paths\`) so it is not published.
 - No command is run for you (\`composer install\`, \`npm run build\`…): upload the result (e.g. \`vendor/\`, built files).
+- An app that writes to disk: declare its folders with \`add_data_path\` **before** going live.
 - Laravel: \`create_site\` with \`app_profile: "laravel"\` (document root \`public\`).
-- Secrets (API keys, passwords): **never** in the document root. Put them outside the served folder, or ask the human to declare them in the site's environment variables (Variables tab of the panel).
+- Secrets (API keys, passwords): **never** in the code. Put them in the site's environment variables (\`set_env\` with \`secret: true\`) and read them with \`getenv()\`.
 
 ---
 
@@ -191,6 +236,27 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
 | PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |
+| GET · PATCH | \`/sites/:id/env\` | PATCH: \`{ set?: [{ name, value?, secret? }], remove?: [name] }\` (the others stay) | \`sites.manage\` |
+| GET · POST | \`/sites/:id/data-paths\` | POST: \`{ path, policy, allowedExtensions? }\` | \`sites.manage\` (GET: —) |
+| PUT · DELETE | \`/sites/:id/data-paths/:pathId\` | PUT: \`{ policy?, allowedExtensions? }\` | \`sites.manage\` |
+| GET · POST | \`/sites/:id/runtimes\` | POST: \`{ base }\` | \`sites.manage\` (GET: —) |
+| DELETE | \`/sites/:id/runtimes/:runtimeId\` | | \`sites.manage\` |
+| GET · POST | \`/sites/:id/cron\` | POST: \`{ name, schedule, command, timeoutSec?, enabled? }\` | \`cron.manage\` |
+| PUT · DELETE | \`/sites/:id/cron/:jobId\` | PUT: same fields, all optional | \`cron.manage\` |
+| POST | \`/sites/:id/cron/:jobId/run\` | run now | \`cron.manage\` |
+| GET | \`/sites/:id/cron/:jobId/runs\` · \`/sites/:id/cron/runs/:runId\` | history · one run with its output | \`cron.manage\` |
+| GET · POST | \`/routes\` | POST: \`{ domain, pathPrefix, siteId, runtimeId? }\` | \`routes.manage\` |
+| PUT · DELETE | \`/routes/:routeId\` | PUT: \`{ pathPrefix?, siteId?, runtimeId? }\` | \`routes.manage\` |
+| GET | \`/databases\` · \`/databases/catalog\` · \`/databases/:instanceId\` | servers, databases, users · engines and limits | \`databases.manage\` |
+| POST | \`/databases\` | \`{ name, engine, version }\` (new server) | \`databases.manage\` |
+| POST | \`/databases/:instanceId/databases\` | \`{ name, charset?, collation? }\` | \`databases.manage\` |
+| DELETE | \`/databases/:instanceId/databases/:dbId\` | \`{ confirm: "<name>" }\` (created by the key) | \`databases.manage\` |
+| GET | \`/databases/:instanceId/databases/:dbId/dump\` | gzip dump | \`databases.manage\` |
+| POST | \`/databases/:instanceId/databases/:dbId/import\` | **raw body** \`application/sql\` or \`application/gzip\`, or JSON \`{ siteId, path, area? }\` (a file of a site) | \`databases.manage\` |
+| POST | \`/databases/:instanceId/users\` | \`{ username, password?, grants?, env?: { siteId, prefix?, databaseId? } }\` | \`databases.manage\` |
+| PUT | \`/databases/:instanceId/users/:userId\` | \`{ grants: [{ databaseId, level: "all" \\| "readonly" }] }\` | \`databases.manage\` |
+| POST | \`/databases/:instanceId/users/:userId/password\` | \`{ password?, env? }\` | \`databases.manage\` |
+| DELETE | \`/databases/:instanceId/users/:userId\` | (created by the key) | \`databases.manage\` |
 | GET | \`/sites/:id/files?path=/dir\` | listing | \`files.read\` |
 | GET | \`/sites/:id/files/text?path=/f\` | text content (≤ 2 MB) | \`files.read\` |
 | GET | \`/sites/:id/files/content?path=/f\` | raw file (Range supported) | \`files.read\` |
@@ -253,6 +319,11 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`slugTaken\` (409) | Slug already used | Pick another one |
 | \`publishInProgress\` / \`noChanges\` (409) | Publish already running / nothing to publish | Wait / check \`staging_changes\` |
 | \`hostdOutdated\` (503) | The server's file service is older than the panel | Tell the human (an update to apply in the panel), then retry |
+| \`keyNotCreator\` (403) | Deleting a database / user the key did not create | Ask the human |
+| \`keyDomainNotManageable\` (403) | The domain also serves sites outside the key | Ask the human, or use a subdomain |
+| \`routeTaken\` (409) · \`runtimeInUse\` (409) | Path already routed · runtime still used by a route | \`list_routes\`; move / remove the route first |
+| \`planLimit\` · \`cronTooFrequent\` (409) | Plan limit (number of databases, cron jobs, minimum interval…) | Stay within the limits, or ask the human |
+| \`instanceNotRunning\` / \`siteNotRunning\` (409) | Database server or site not started | Wait (\`list_databases\`, \`get_site\`), retry |
 
 ---
 
@@ -308,7 +379,7 @@ Oblimint est un hébergement à **code immuable** : le code en ligne n'est **jam
 |---|---|---|
 | **staging** (\`area: "staging"\`, par défaut) | Le code source du site, celui que tu écris | Non, tant qu'il n'est pas publié |
 | **release** | Instantané figé du staging, créé par une **publication** | Oui : la release « courante » est servie, en **lecture seule** |
-| **data** (\`area: "data"\`) | Fichiers écrits par le site lui-même (uploads, cache, sessions) | Oui, immédiatement, mais **PHP n'y est jamais exécuté** |
+| **data** (\`area: "data"\`) | Fichiers écrits par le site lui-même (uploads, cache, sessions), dans ses **chemins de données** | Oui, immédiatement, mais **PHP n'y est jamais exécuté** |
 
 Conséquences :
 
@@ -318,7 +389,7 @@ Conséquences :
    - \`manual\` : rien ne part en ligne tant que tu n'appelles pas **\`publish\`**.
    - \`approval\` : la publication attend la **validation d'un humain** dans le panel. Préviens-le.
 3. **Il n'y a pas d'aperçu du staging** : ce qui n'est pas publié ne peut pas être visité. Pour tester avant la mise en ligne du vrai site, utilise un site de développement (voir §5).
-4. Un fichier PHP posé dans \`data\` ne s'exécutera **jamais** : le code va dans \`staging\`.
+4. **Le site ne peut écrire que dans ses chemins de données** : des dossiers du code (ex. \`uploads\`, \`wp-content/uploads\`, \`cache\`) déclarés sur le site, qui pointent vers la zone \`data\`. Le code écrit à son chemin habituel, sans rien changer ; partout ailleurs l'écriture est refusée. Un profil (\`app_profile\`) déclare ceux de son application ; les autres se déclarent avec \`add_data_path\` (droit \`sites.manage\`) **avant** la mise en ligne. Politiques : \`persistent\` (conservé : uploads), \`typed\` (conservé, seulement certaines extensions, contenu vérifié : images…), \`ephemeral\` (vidé à chaque publication : cache, sessions). Un fichier PHP posé dans \`data\` ne s'exécutera **jamais** : le code va dans \`staging\`.
 5. Les chemins sont **relatifs à la zone du site** : \`/index.php\`, \`/wp-content/themes/x/style.css\`. Impossible de sortir du site (\`..\` est refusé).
 6. **Racine web (\`docroot\`)** : le sous-dossier du staging servi par le serveur web (ex. \`public\` pour Laravel, vide = racine). Tout ce qui est **hors** de la racine web (ex. \`/config/secrets.php\` quand la racine est \`public\`) est publié avec le code mais **jamais servi** : c'est là que vont les fichiers de configuration sensibles.
 7. Les **liens symboliques** sont affichés mais jamais suivis ni créés.
@@ -332,12 +403,21 @@ Conséquences :
 | \`files.read\` | Lister et lire les fichiers (staging et data), voir les changements non publiés |
 | \`files.write\` | Écrire, créer des dossiers, déplacer, copier, supprimer, extraire des archives, envoyer de gros fichiers |
 | \`releases.publish\` | Publier le staging (mise en ligne) et revenir à une release précédente |
-| \`sites.manage\` | Modifier les réglages des sites : nom, racine web, mode de publication, délai de publication auto, chemin de contrôle de santé, réglages PHP |
+| \`sites.manage\` | Modifier les réglages des sites : nom, racine web, mode de publication, délai de publication auto, chemin de contrôle de santé, réglages PHP, **variables d'environnement**, **chemins de données**, **runtimes secondaires** |
 | \`sites.create\` | Créer des sites dans le compte (ils rejoignent automatiquement la clé) |
+| \`cron.manage\` | Tâches planifiées de ses sites : créer, modifier, lancer, lire le résultat |
+| \`databases.manage\` | Bases de données : serveurs de bases du compte (en créer un dans les limites du plan), bases et utilisateurs, import / export SQL |
+| \`routes.manage\` | Routes des domaines : choisir quel site (ou runtime) sert un chemin, ex. \`exemple.com/uploads/\` |
 | \`domains.subdomain\` | Rattacher aux sites des **sous-domaines** d'un domaine **déjà présent** sur le compte, retirer ceux créés par la clé |
 | \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs |
 
-Jamais possible avec une clé : supprimer un site, ajouter un **nouveau domaine racine**, gérer les bases de données, les comptes FTP / mail, les utilisateurs, ou toucher à un autre compte.
+**Bases de données** : une clé valable pour tous les sites voit toutes les bases du compte ; une clé limitée à certains sites ne voit que les bases et utilisateurs **qu'elle a créés**. Une clé ne supprime que ce qu'elle a créé, et n'arrête ni ne supprime jamais un serveur de bases.
+
+**Routes** : une clé ne change que les routes d'un domaine dont **toutes** les routes mènent à ses sites (une clé valable pour tous les sites : tous les domaines du compte), et seulement vers ses sites.
+
+Jamais possible avec une clé : supprimer un site, ajouter un **nouveau domaine racine**, supprimer une base qu'elle n'a pas créée ou un serveur de bases, gérer les comptes FTP / mail ou les utilisateurs, ou toucher à un autre compte. Pour ça, demande à l'humain.
+
+Oblimint ne fait tourner **aucun processus permanent** (bot, websocket, file d'attente qui écoute en continu) : seulement le site web et ses tâches cron, d'une heure au plus chacune. Un tel programme doit être hébergé ailleurs, ou réécrit en tâches courtes lancées par le cron (ex. toutes les minutes, en reprenant là où il s'était arrêté).
 
 Une clé n'a jamais plus de droits que l'humain qui l'a créée : s'il perd un droit, la clé le perd aussi. Un site hors du périmètre répond **« not found »** (comme s'il n'existait pas). Un droit manquant répond **\`keyScope\`**. Ne contourne pas : demande à l'humain d'élargir la clé.
 
@@ -350,7 +430,7 @@ Une clé n'a jamais plus de droits que l'humain qui l'a créée : s'il perd un d
 | \`whoami\` | La clé, ses droits, le compte | — |
 | \`get_guide\` | Ce guide (\`lang\`: \`fr\` ou \`en\`) | — |
 | \`list_sites\` / \`get_site\` | Sites de la clé (id, slug, domaines, statut, racine web, mode de publication, release en ligne) | — |
-| \`create_site\` | Créer un site : \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`publish_mode?\` | \`sites.create\` |
+| \`create_site\` | Créer un site : \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (préfixe d'URL attendu, ex. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Modifier un site : \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
 | \`list_files\` | Lister un dossier (\`path\`, \`area\`) | \`files.read\` |
 | \`read_file\` | Lire un fichier texte (≤ 2 Mo) | \`files.read\` |
@@ -366,6 +446,19 @@ Une clé n'a jamais plus de droits que l'humain qui l'a créée : s'il perd un d
 | \`list_parent_domains\` | Domaines du compte sous lesquels créer un sous-domaine | \`domains.subdomain\` |
 | \`add_subdomain\` | Créer \`xxx.domaine-existant.tld\` et le router vers un site | \`domains.subdomain\` |
 | \`list_subdomains\` / \`remove_subdomain\` | Sous-domaines de la clé (seuls ceux qu'elle a créés peuvent être retirés) | \`domains.subdomain\` |
+| \`get_env\` / \`set_env\` | Variables d'environnement du site (lues par PHP avec \`getenv()\`) ; \`set\` ajoute / remplace, \`remove\` supprime, les autres restent ; secrets en écriture seule ; le site redémarre | \`sites.manage\` |
+| \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Dossiers où le site peut écrire (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
+| \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Runtimes secondaires : un autre conteneur (autre moteur possible) qui sert certains chemins du **même** code et des mêmes données | \`sites.manage\` |
+| \`list_routes\` | Domaines du compte et leurs routes (\`manageable\` : la clé peut les changer) | \`routes.manage\` |
+| \`add_route\` / \`update_route\` / \`remove_route\` | Router \`https://domaine/prefixe/…\` vers un site, ou un runtime d'un site (\`runtime_id\`) | \`routes.manage\` |
+| \`list_cron_jobs\` / \`create_cron_job\` / \`update_cron_job\` / \`delete_cron_job\` | Tâches planifiées : \`name\`, \`schedule\` (crontab en UTC), \`command\` (ex. \`php bin/sync.php\`, lancée dans la release en ligne), \`timeout_sec\` (≤ 3600), \`enabled\` | \`cron.manage\` |
+| \`run_cron_job\` / \`list_cron_runs\` / \`get_cron_run\` | Lancer tout de suite, historique, sortie complète d'une exécution | \`cron.manage\` |
+| \`list_databases\` / \`database_catalog\` | Serveurs de bases, leurs bases et utilisateurs (ceux que la clé atteint), connexion ; moteurs et limites du plan | \`databases.manage\` |
+| \`create_database_instance\` | Créer un serveur de bases (\`name\`, \`engine\`, \`version\`) : quelques minutes avant \`running\` | \`databases.manage\` |
+| \`create_database\` / \`delete_database\` | Créer une base vide ; supprimer une base créée par la clé (\`confirm_name\`) | \`databases.manage\` |
+| \`create_database_user\` | Utilisateur + droits (\`grants\`) ; avec \`env_site_id\`, les identifiants vont directement dans les variables du site et le mot de passe n'est jamais renvoyé | \`databases.manage\` |
+| \`set_database_user_grants\` / \`reset_database_user_password\` / \`delete_database_user\` | Droits, nouveau mot de passe (même option \`env_site_id\`), suppression (si créé par la clé) | \`databases.manage\` |
+| \`import_sql\` | Exécuter un dump \`.sql\` / \`.sql.gz\` (déposé d'abord comme fichier d'un site) dans une base | \`databases.manage\` + \`files.read\` |
 | \`read_logs\` | Journaux \`error\` (par défaut), \`access\` ou \`app\` ; filtre \`query\`, \`limit\` (≤ 2000) | \`logs.read\` |
 
 **Bases (\`base\`)** : \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supporté), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (HTML/JS/CSS pur).
@@ -421,12 +514,35 @@ Plus simple, mais rien n'est visible avant la mise en ligne : on teste après la
 4. \`list_parent_domains\` → choisis un domaine **vérifié**, puis \`add_subdomain\` : \`{ "site_id": 12, "name": "landing.exemple.com" }\`.
 5. Le DNS et le certificat HTTPS suivent automatiquement. Teste \`https://landing.exemple.com/\`.
 
+### Base de données d'une application
+
+1. \`list_databases\` : s'il n'y a aucun serveur du bon moteur, \`database_catalog\` puis \`create_database_instance\` (attends \`status: "running"\`).
+2. \`create_database\` : \`{ "instance_id": 3, "name": "app" }\`.
+3. \`create_database_user\` avec \`grants: [{ "database_id": 7, "level": "all" }]\` et **\`env_site_id\`** : le site reçoit \`DB_HOST\`, \`DB_SOCKET\`, \`DB_NAME\`, \`DB_USER\`, \`DB_PASSWORD\` (secret) et redémarre. Le mot de passe ne passe jamais par toi.
+4. Dans le code : \`getenv('DB_HOST')\`, etc. MySQL / MariaDB : \`DB_HOST\` vaut \`localhost\` (le site passe par le socket \`DB_SOCKET\` ; pour PDO, utilise \`unix_socket=\` + \`DB_SOCKET\` si le serveur n'est pas celui par défaut). PostgreSQL : \`DB_HOST\` est le dossier du socket.
+5. Données existantes : envoie le dump (fichier \`.sql\` ou \`.sql.gz\`, par ex. dans la zone \`data\`), \`import_sql\`, puis supprime le fichier.
+
+### Tâche planifiée
+
+- \`create_cron_job\` : \`{ "site_id": 12, "name": "sync", "schedule": "*/5 * * * *", "command": "php bin/sync.php" }\`. La commande tourne dans la **release en ligne** : publie d'abord. \`run_cron_job\` pour tester, puis \`list_cron_runs\` / \`get_cron_run\` pour la sortie.
+- Un script prévu pour tourner en continu (bot…) doit être adapté : une exécution courte par tâche cron, qui reprend son état (fichier dans un chemin de données, ou base).
+
+### Servir un chemin par un autre conteneur (ex. \`/uploads/\`)
+
+Deux cas, selon **qui possède les fichiers** :
+
+- **Les fichiers appartiennent au site** (uploads écrits par l'application) → **runtime secondaire**. Même code, mêmes chemins de données, autre conteneur : \`add_runtime\` \`{ "site_id": 12, "base": "nginx-static" }\`, puis \`add_route\` \`{ "domain": "exemple.com", "path_prefix": "/uploads/", "site_id": 12, "runtime_id": 5 }\`. L'application continue d'écrire dans \`uploads\` (chemin de données), le conteneur statique les sert, et PHP ne tourne jamais pour ces requêtes.
+- **C'est une autre application** (son propre code, ses propres publications) → **second site** sans domaine à lui : \`create_site\` avec \`base_path: "/uploads/"\` (le préfixe que l'application attend), envoie son code, publie, puis \`add_route\` \`{ "domain": "exemple.com", "path_prefix": "/uploads/", "site_id": 13 }\`. Un site ne peut pas écrire dans les fichiers d'un autre site.
+
+La route la plus longue gagne : \`/uploads/\` passe avant \`/\`. Supprimer la route rend le chemin au site principal.
+
 ### Applications PHP et gros lots de fichiers
 
 - Beaucoup de fichiers ou des fichiers lourds : **construis une archive** (\`.zip\` ou \`.tar.gz\`), envoie-la (REST, voir §6), puis **\`extract_archive\`** dans le staging. Supprime l'archive ensuite (\`delete_paths\`) pour ne pas la publier.
 - Aucune commande n'est lancée pour toi (\`composer install\`, \`npm run build\`…) : envoie le résultat (ex. \`vendor/\`, fichiers compilés).
+- Une application qui écrit sur le disque : déclare ses dossiers avec \`add_data_path\` **avant** la mise en ligne.
 - Laravel : \`create_site\` avec \`app_profile: "laravel"\` (racine web \`public\`).
-- Les secrets (clés d'API, mots de passe) : **jamais** dans la racine web. Mets-les hors du dossier servi, ou demande à l'humain de les déclarer dans les variables d'environnement du site (onglet Variables du panel).
+- Les secrets (clés d'API, mots de passe) : **jamais** dans le code. Mets-les dans les variables d'environnement du site (\`set_env\` avec \`secret: true\`) et lis-les avec \`getenv()\`.
 
 ---
 
@@ -441,6 +557,27 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
 | PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |
+| GET · PATCH | \`/sites/:id/env\` | PATCH : \`{ set?: [{ name, value?, secret? }], remove?: [name] }\` (les autres restent) | \`sites.manage\` |
+| GET · POST | \`/sites/:id/data-paths\` | POST : \`{ path, policy, allowedExtensions? }\` | \`sites.manage\` (GET : —) |
+| PUT · DELETE | \`/sites/:id/data-paths/:pathId\` | PUT : \`{ policy?, allowedExtensions? }\` | \`sites.manage\` |
+| GET · POST | \`/sites/:id/runtimes\` | POST : \`{ base }\` | \`sites.manage\` (GET : —) |
+| DELETE | \`/sites/:id/runtimes/:runtimeId\` | | \`sites.manage\` |
+| GET · POST | \`/sites/:id/cron\` | POST : \`{ name, schedule, command, timeoutSec?, enabled? }\` | \`cron.manage\` |
+| PUT · DELETE | \`/sites/:id/cron/:jobId\` | PUT : mêmes champs, tous facultatifs | \`cron.manage\` |
+| POST | \`/sites/:id/cron/:jobId/run\` | lancer maintenant | \`cron.manage\` |
+| GET | \`/sites/:id/cron/:jobId/runs\` · \`/sites/:id/cron/runs/:runId\` | historique · une exécution avec sa sortie | \`cron.manage\` |
+| GET · POST | \`/routes\` | POST : \`{ domain, pathPrefix, siteId, runtimeId? }\` | \`routes.manage\` |
+| PUT · DELETE | \`/routes/:routeId\` | PUT : \`{ pathPrefix?, siteId?, runtimeId? }\` | \`routes.manage\` |
+| GET | \`/databases\` · \`/databases/catalog\` · \`/databases/:instanceId\` | serveurs, bases, utilisateurs · moteurs et limites | \`databases.manage\` |
+| POST | \`/databases\` | \`{ name, engine, version }\` (nouveau serveur) | \`databases.manage\` |
+| POST | \`/databases/:instanceId/databases\` | \`{ name, charset?, collation? }\` | \`databases.manage\` |
+| DELETE | \`/databases/:instanceId/databases/:dbId\` | \`{ confirm: "<nom>" }\` (créée par la clé) | \`databases.manage\` |
+| GET | \`/databases/:instanceId/databases/:dbId/dump\` | dump gzip | \`databases.manage\` |
+| POST | \`/databases/:instanceId/databases/:dbId/import\` | **corps brut** \`application/sql\` ou \`application/gzip\`, ou JSON \`{ siteId, path, area? }\` (fichier d'un site) | \`databases.manage\` |
+| POST | \`/databases/:instanceId/users\` | \`{ username, password?, grants?, env?: { siteId, prefix?, databaseId? } }\` | \`databases.manage\` |
+| PUT | \`/databases/:instanceId/users/:userId\` | \`{ grants: [{ databaseId, level: "all" \\| "readonly" }] }\` | \`databases.manage\` |
+| POST | \`/databases/:instanceId/users/:userId/password\` | \`{ password?, env? }\` | \`databases.manage\` |
+| DELETE | \`/databases/:instanceId/users/:userId\` | (créé par la clé) | \`databases.manage\` |
 | GET | \`/sites/:id/files?path=/dir\` | liste | \`files.read\` |
 | GET | \`/sites/:id/files/text?path=/f\` | contenu texte (≤ 2 Mo) | \`files.read\` |
 | GET | \`/sites/:id/files/content?path=/f\` | fichier brut (Range supporté) | \`files.read\` |
@@ -503,6 +640,11 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`slugTaken\` (409) | Slug déjà utilisé | En choisir un autre |
 | \`publishInProgress\` / \`noChanges\` (409) | Publication en cours / rien à publier | Attendre / vérifier \`staging_changes\` |
 | \`hostdOutdated\` (503) | Le service de fichiers du serveur est plus ancien que le panel | Prévenir l'humain (mise à jour à appliquer dans le panel), puis réessayer |
+| \`keyNotCreator\` (403) | Suppression d'une base / d'un utilisateur que la clé n'a pas créé | Demander à l'humain |
+| \`keyDomainNotManageable\` (403) | Le domaine sert aussi des sites hors de la clé | Demander à l'humain, ou utiliser un sous-domaine |
+| \`routeTaken\` (409) · \`runtimeInUse\` (409) | Chemin déjà routé · runtime encore utilisé par une route | \`list_routes\` ; déplacer / retirer la route d'abord |
+| \`planLimit\` · \`cronTooFrequent\` (409) | Limite du plan (nombre de bases, de crons, intervalle minimal…) | Rester dans les limites, ou demander à l'humain |
+| \`instanceNotRunning\` / \`siteNotRunning\` (409) | Serveur de bases ou site pas démarré | Attendre (\`list_databases\`, \`get_site\`), réessayer |
 
 ---
 

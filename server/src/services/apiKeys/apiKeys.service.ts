@@ -55,6 +55,9 @@ export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed> = {
   'sites.create': 'sites.manage',
   'logs.read': 'read',
   'domains.subdomain': 'domains.manage',
+  'cron.manage': 'sites.manage',
+  'databases.manage': 'databases.manage',
+  'routes.manage': 'domains.manage',
 };
 
 /** Client capability each scope gives the key's actor. */
@@ -66,6 +69,9 @@ const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
   'sites.create': 'sites.manage',
   'logs.read': null,
   'domains.subdomain': 'domains.manage',
+  'cron.manage': 'sites.manage',
+  'databases.manage': 'databases.manage',
+  'routes.manage': 'domains.manage',
 };
 
 const KEY_RE = /^obk_([1-9]\d{0,9})_([A-Za-z0-9_-]{43})$/;

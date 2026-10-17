@@ -1,13 +1,15 @@
 import { Router, type Request, type Response } from 'express';
 import { Readable } from 'stream';
 import { z, type ZodTypeAny } from 'zod';
-import { APP_PROFILES, SITE_BASE_IDS } from '@oblimint/shared';
+import { APP_PROFILES, CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, SITE_BASE_IDS, SITE_ENV_MAX_VALUE } from '@oblimint/shared';
 import { serverVersion } from '../../utils/version';
 import { AppError } from '../../middleware/errorHandler';
 import { keyApi, type SiteArea } from './keyApi';
 import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from './middleware';
 import type { ApiKeyContext } from './apiKeys.service';
-import { siteUpdateSchema } from '../../validators/hosting.schema';
+import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, siteUpdateSchema } from '../../validators/hosting.schema';
+import { keyDatabases } from './keyDatabases';
+import { keyEnv } from './keyEnv';
 import { parseBody } from '../docker/parseBody';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,6 +48,40 @@ const zArea = z.enum(['staging', 'data']).optional();
 const zPath = z.string().max(4096);
 const publishMode = { type: 'string', enum: ['auto', 'manual', 'approval'], description: 'auto: every staging change goes live a few seconds later; manual: only on publish; approval: a human approves in the panel.' };
 const zPublishMode = z.enum(['auto', 'manual', 'approval']);
+/** "/uploads" or "uploads" → "/uploads/", checked like the panel routes. */
+const routePrefixOf = (v: string) => {
+  const inner = v.trim().replace(/^\/+|\/+$/g, '');
+  return parseBody(z.object({ p: routeInputSchema.shape.pathPrefix }), { p: inner ? `/${inner}/` : '/' }).p;
+};
+const instanceId = { type: 'integer', description: 'Database instance (server) id (see list_databases).' };
+const zId = z.number().int().positive();
+const grantsSchema = {
+  type: 'array', description: 'Rights on databases of the same instance.',
+  items: obj({ database_id: { type: 'integer' }, level: { type: 'string', enum: ['all', 'readonly'] } }, ['database_id', 'level']),
+};
+const zGrants = z.array(z.object({ database_id: zId, level: z.enum(['all', 'readonly']) })).max(500);
+const toGrants = (g: Array<{ database_id: number; level: 'all' | 'readonly' }> | undefined) => g?.map((x) => ({ databaseId: x.database_id, level: x.level }));
+const envProps = {
+  env_site_id: { type: 'integer', description: 'Write the credentials into this site\'s environment variables (password as a secret) instead of returning the password (needs sites.manage; the site restarts).' },
+  env_prefix: { type: 'string', description: 'Variable prefix (default DB_): DB_HOST, DB_SOCKET, DB_NAME, DB_USER, DB_PASSWORD.' },
+  env_database_id: { type: 'integer', description: 'Database put in <prefix>NAME (default: the first granted).' },
+};
+const zEnv = { env_site_id: zId.optional(), env_prefix: z.string().min(1).max(32).optional(), env_database_id: zId.optional() };
+const toEnv = (a: { env_site_id?: number; env_prefix?: string; env_database_id?: number }) => (a.env_site_id
+  ? { siteId: a.env_site_id, ...(a.env_prefix ? { prefix: a.env_prefix } : {}), ...(a.env_database_id ? { databaseId: a.env_database_id } : {}) }
+  : undefined);
+const cronProps = {
+  name: { type: 'string', description: 'Label (unique on the site).' },
+  schedule: { type: 'string', description: '5-field crontab expression in UTC (e.g. "*/5 * * * *"), or @hourly / @daily / @weekly / @monthly; the plan sets a minimum interval.' },
+  command: { type: 'string', description: 'Shell command (sh -c) run in the site container, in the live release folder, as the account user (e.g. "php bin/sync.php").' },
+  timeout_sec: { type: 'integer', minimum: 10, maximum: CRON_MAX_TIMEOUT_SEC, description: 'Killed after (default 300).' },
+  enabled: { type: 'boolean' },
+};
+const zCron = { name: z.string().min(1).max(100), schedule: z.string().min(1).max(100), command: z.string().min(1).max(100_000), timeout_sec: z.number().int().min(10).max(CRON_MAX_TIMEOUT_SEC).optional(), enabled: z.boolean().optional() };
+const toCron = (a: { name?: string; schedule?: string; command?: string; timeout_sec?: number; enabled?: boolean }) => ({
+  ...(a.name !== undefined ? { name: a.name } : {}), ...(a.schedule !== undefined ? { schedule: a.schedule } : {}), ...(a.command !== undefined ? { command: a.command } : {}),
+  ...(a.timeout_sec !== undefined ? { timeoutSec: a.timeout_sec } : {}), ...(a.enabled !== undefined ? { enabled: a.enabled } : {}),
+});
 const siteUpdateArgs = siteUpdateSchema.pick({ name: true, docroot: true, publishMode: true, publishDebounceSec: true, healthcheckPath: true, php: true });
 
 const TOOLS: ToolDef[] = [
@@ -83,12 +119,13 @@ const TOOLS: ToolDef[] = [
       base: { type: 'string', enum: [...SITE_BASE_IDS], description: 'Runtime: apache-php8.x (.htaccess), nginx-php8.x, nginx-static.' },
       app_profile: { type: 'string', enum: APP_PROFILES.map((p) => p.id), description: 'Optional application profile (docroot, data paths).' },
       docroot: relPath('Optional document root inside the code (e.g. "public").'),
+      base_path: { type: 'string', description: 'URL prefix the application expects when another domain path is routed to it (e.g. "/uploads/"); default "/".' },
       publish_mode: publishMode,
     }, ['name', 'slug', 'base']),
-    args: z.object({ name: z.string(), slug: z.string(), base: z.string(), app_profile: z.string().optional(), docroot: z.string().optional(), publish_mode: zPublishMode.optional() }),
+    args: z.object({ name: z.string(), slug: z.string(), base: z.string(), app_profile: z.string().optional(), docroot: z.string().optional(), base_path: z.string().optional(), publish_mode: zPublishMode.optional() }),
     run: (ctx, req, a) => keyApi.createSite(ctx, req, {
       name: a.name, slug: a.slug, base: a.base, ...(a.app_profile ? { appProfile: a.app_profile } : {}), ...(a.docroot !== undefined ? { docroot: a.docroot } : {}),
-      ...(a.publish_mode ? { publishMode: a.publish_mode } : {}),
+      ...(a.publish_mode ? { publishMode: a.publish_mode } : {}), ...(a.base_path ? { basePath: routePrefixOf(a.base_path) } : {}),
     } as never),
   },
   {
@@ -245,6 +282,246 @@ const TOOLS: ToolDef[] = [
     args: z.object({ name: z.string().min(4).max(253) }),
     run: async (ctx, req, a) => { await keyApi.removeSubdomain(ctx, req, a.name); return { deleted: true }; },
   },
+  // ── path routes (routes.manage), secondary runtimes (sites.manage) ──
+  {
+    name: 'list_routes', title: 'Domains and routes', readOnly: true,
+    description: 'Domains of the account with their path routes (which site — and which runtime of it — serves https://domain/prefix/…; longest prefix wins). manageable: the key may change that domain\'s routes (scope routes.manage).',
+    inputSchema: obj({}, []), args: z.object({}).passthrough(),
+    run: (ctx) => keyApi.routes(ctx),
+  },
+  {
+    name: 'add_route', title: 'Route a path',
+    description: 'Sends https://<domain><path_prefix>… to a site of the key (scope routes.manage), e.g. example.com/uploads/ to another site, or to a secondary runtime of the same site (runtime_id). A site served under a prefix usually expects it: create it with base_path, or use a runtime of the site that owns the files.',
+    inputSchema: obj({
+      domain: { type: 'string', description: 'A domain of list_routes with manageable: true.' },
+      path_prefix: { type: 'string', description: 'e.g. "/uploads/" ("/" = the whole domain).' },
+      site_id: siteId,
+      runtime_id: { type: 'integer', description: 'Secondary runtime of that site (list_runtimes); omitted = its main one.' },
+    }, ['domain', 'path_prefix', 'site_id']),
+    args: z.object({ domain: z.string().min(1).max(253), path_prefix: z.string().min(1).max(255), site_id: zSite, runtime_id: zId.optional() }),
+    run: (ctx, req, a) => keyApi.addRoute(ctx, req, a.domain, routePrefixOf(a.path_prefix), a.site_id, a.runtime_id ?? null),
+  },
+  {
+    name: 'update_route', title: 'Change a route',
+    description: 'Changes the prefix, the site or the runtime of a route (scope routes.manage). runtime_id: null = the site\'s main runtime.',
+    inputSchema: obj({ route_id: { type: 'integer' }, path_prefix: { type: 'string' }, site_id: siteId, runtime_id: { type: ['integer', 'null'] } }, ['route_id']),
+    args: z.object({ route_id: zId, path_prefix: z.string().min(1).max(255).optional(), site_id: zSite.optional(), runtime_id: zId.nullable().optional() }),
+    run: (ctx, req, a) => keyApi.updateRoute(ctx, req, a.route_id, {
+      ...(a.path_prefix ? { pathPrefix: routePrefixOf(a.path_prefix) } : {}), ...(a.site_id ? { siteId: a.site_id } : {}), ...(a.runtime_id !== undefined ? { runtimeId: a.runtime_id } : {}),
+    }),
+  },
+  {
+    name: 'remove_route', title: 'Remove a route', destructive: true,
+    description: 'Removes a path route (scope routes.manage): that path falls back to the next shorter prefix of the domain.',
+    inputSchema: obj({ route_id: { type: 'integer' } }, ['route_id']),
+    args: z.object({ route_id: zId }),
+    run: async (ctx, req, a) => { await keyApi.deleteRoute(ctx, req, a.route_id); return { deleted: true }; },
+  },
+  {
+    name: 'list_runtimes', title: 'Secondary runtimes', readOnly: true,
+    description: 'Secondary runtimes of a site: other containers (possibly another engine) serving some path prefixes of the SAME code and data, with the routes they serve.',
+    inputSchema: obj({ site_id: siteId }, ['site_id']), args: z.object({ site_id: zSite }),
+    run: (ctx, _r, a) => keyApi.runtimes(ctx, a.site_id),
+  },
+  {
+    name: 'add_runtime', title: 'Add a secondary runtime',
+    description: 'Adds a container to the site with its own engine (scope sites.manage), e.g. nginx-static to serve /uploads/ apart from the PHP app; then add_route with its runtime_id.',
+    inputSchema: obj({ site_id: siteId, base: { type: 'string', enum: [...SITE_BASE_IDS] } }, ['site_id', 'base']),
+    args: z.object({ site_id: zSite, base: z.enum(SITE_BASE_IDS as unknown as [string, ...string[]]) }),
+    run: (ctx, req, a) => keyApi.addRuntime(ctx, req, a.site_id, a.base as never),
+  },
+  {
+    name: 'remove_runtime', title: 'Remove a secondary runtime', destructive: true,
+    description: 'Removes a secondary runtime (scope sites.manage); its routes must be removed or moved first (runtimeInUse).',
+    inputSchema: obj({ site_id: siteId, runtime_id: { type: 'integer' } }, ['site_id', 'runtime_id']),
+    args: z.object({ site_id: zSite, runtime_id: zId }),
+    run: async (ctx, req, a) => { await keyApi.deleteRuntime(ctx, req, a.site_id, a.runtime_id); return { deleted: true }; },
+  },
+  // ── environment variables, data paths (sites.manage) ──
+  {
+    name: 'get_env', title: 'Environment variables', readOnly: true,
+    description: 'Environment variables of the site (scope sites.manage), read by PHP with getenv(). Secret values are never shown (null).',
+    inputSchema: obj({ site_id: siteId }, ['site_id']), args: z.object({ site_id: zSite }),
+    run: (ctx, _r, a) => keyEnv.list(ctx, a.site_id),
+  },
+  {
+    name: 'set_env', title: 'Set environment variables',
+    description: 'Adds / replaces (set) and removes (remove) environment variables of the site; the others are kept (scope sites.manage). Use secret: true for passwords and API keys (write-only). The site restarts to apply them.',
+    inputSchema: obj({
+      site_id: siteId,
+      set: { type: 'array', items: obj({ name: { type: 'string' }, value: { type: 'string' }, secret: { type: 'boolean' } }, ['name']) },
+      remove: { type: 'array', items: { type: 'string' } },
+    }, ['site_id']),
+    args: z.object({
+      site_id: zSite,
+      set: z.array(z.object({ name: z.string().min(1).max(128), value: z.string().max(SITE_ENV_MAX_VALUE).optional(), secret: z.boolean().optional() })).max(200).optional(),
+      remove: z.array(z.string().min(1).max(128)).max(200).optional(),
+    }),
+    run: (ctx, req, a) => keyEnv.update(ctx, req, a.site_id, a.set ?? [], a.remove ?? []),
+  },
+  {
+    name: 'list_data_paths', title: 'Data paths', readOnly: true,
+    description: 'Folders of the code the site may write to (uploads, cache…): they live in the data area, never in the published code.',
+    inputSchema: obj({ site_id: siteId }, ['site_id']), args: z.object({ site_id: zSite }),
+    run: (ctx, _r, a) => keyApi.dataPaths(ctx, a.site_id),
+  },
+  {
+    name: 'add_data_path', title: 'Add a data path',
+    description: 'Lets the site write in a folder of its code (scope sites.manage). policy: persistent (kept: uploads), typed (kept, only the listed extensions, content checked: images…), ephemeral (emptied on each publish: cache, sessions). PHP never runs there.',
+    inputSchema: obj({
+      site_id: siteId,
+      path: relPath('Folder relative to the code root, e.g. "uploads" or "wp-content/cache".'),
+      policy: { type: 'string', enum: ['persistent', 'typed', 'ephemeral'] },
+      allowed_extensions: { type: 'array', items: { type: 'string' }, description: 'typed only: e.g. ["jpg","png","webp"].' },
+    }, ['site_id', 'path', 'policy']),
+    args: z.object({ site_id: zSite, path: z.string(), policy: z.string(), allowed_extensions: z.array(z.string()).optional() }),
+    run: (ctx, req, a) => keyApi.addDataPath(ctx, req, a.site_id, parseBody(dataPathInputSchema, {
+      path: a.path, policy: a.policy, ...(a.allowed_extensions ? { allowedExtensions: a.allowed_extensions } : {}),
+    })),
+  },
+  {
+    name: 'update_data_path', title: 'Change a data path',
+    description: 'Changes the policy / allowed extensions of a data path (scope sites.manage).',
+    inputSchema: obj({ site_id: siteId, path_id: { type: 'integer' }, policy: { type: 'string', enum: ['persistent', 'typed', 'ephemeral'] }, allowed_extensions: { type: 'array', items: { type: 'string' } } }, ['site_id', 'path_id']),
+    args: z.object({ site_id: zSite, path_id: zId, policy: z.string().optional(), allowed_extensions: z.array(z.string()).nullable().optional() }),
+    run: (ctx, req, a) => keyApi.updateDataPath(ctx, req, a.site_id, a.path_id, parseBody(dataPathUpdateSchema, {
+      ...(a.policy ? { policy: a.policy } : {}), ...(a.allowed_extensions !== undefined ? { allowedExtensions: a.allowed_extensions } : {}),
+    })),
+  },
+  {
+    name: 'remove_data_path', title: 'Remove a data path', destructive: true,
+    description: 'The folder becomes read-only code again (scope sites.manage). The files already written stay in the data area.',
+    inputSchema: obj({ site_id: siteId, path_id: { type: 'integer' } }, ['site_id', 'path_id']),
+    args: z.object({ site_id: zSite, path_id: zId }),
+    run: async (ctx, req, a) => { await keyApi.deleteDataPath(ctx, req, a.site_id, a.path_id); return { deleted: true }; },
+  },
+  // ── cron (cron.manage) ──
+  {
+    name: 'list_cron_jobs', title: 'Cron jobs', readOnly: true,
+    description: 'Scheduled tasks of the site (scope cron.manage): schedule, command, last status, next run.',
+    inputSchema: obj({ site_id: siteId }, ['site_id']), args: z.object({ site_id: zSite }),
+    run: (ctx, _r, a) => keyApi.cronJobs(ctx, a.site_id),
+  },
+  {
+    name: 'create_cron_job', title: 'Create a cron job',
+    description: 'Schedules a command of the site (scope cron.manage). It runs the LIVE release (publish first), at most timeout_sec (≤ 1 hour): no permanent process.',
+    inputSchema: obj({ site_id: siteId, ...cronProps }, ['site_id', 'name', 'schedule', 'command']),
+    args: z.object({ site_id: zSite, ...zCron }),
+    run: (ctx, req, a) => keyApi.createCronJob(ctx, req, a.site_id, toCron(a) as never),
+  },
+  {
+    name: 'update_cron_job', title: 'Change a cron job',
+    description: 'Changes a cron job (scope cron.manage); enabled: false pauses it.',
+    inputSchema: obj({ site_id: siteId, job_id: { type: 'integer' }, ...cronProps }, ['site_id', 'job_id']),
+    args: z.object({ site_id: zSite, job_id: zId, ...Object.fromEntries(Object.entries(zCron).map(([k, v]) => [k, (v as ZodTypeAny).optional()])) }),
+    run: (ctx, req, a) => keyApi.updateCronJob(ctx, req, a.site_id, a.job_id, toCron(a)),
+  },
+  {
+    name: 'delete_cron_job', title: 'Delete a cron job', destructive: true,
+    description: 'Deletes a cron job and its history (scope cron.manage).',
+    inputSchema: obj({ site_id: siteId, job_id: { type: 'integer' } }, ['site_id', 'job_id']),
+    args: z.object({ site_id: zSite, job_id: zId }),
+    run: async (ctx, req, a) => { await keyApi.deleteCronJob(ctx, req, a.site_id, a.job_id); return { deleted: true }; },
+  },
+  {
+    name: 'run_cron_job', title: 'Run a cron job now',
+    description: 'Starts a cron job at once (scope cron.manage); read its result with list_cron_runs / get_cron_run.',
+    inputSchema: obj({ site_id: siteId, job_id: { type: 'integer' } }, ['site_id', 'job_id']),
+    args: z.object({ site_id: zSite, job_id: zId }),
+    run: (ctx, req, a) => keyApi.runCronJob(ctx, req, a.site_id, a.job_id),
+  },
+  {
+    name: 'list_cron_runs', title: 'Cron runs', readOnly: true,
+    description: 'Last runs of a cron job, newest first (status, duration, exit code, output summary).',
+    inputSchema: obj({ site_id: siteId, job_id: { type: 'integer' }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, ['site_id', 'job_id']),
+    args: z.object({ site_id: zSite, job_id: zId, limit: z.number().int().min(1).max(100).optional() }),
+    run: (ctx, _r, a) => keyApi.cronRuns(ctx, a.site_id, a.job_id, a.limit ?? 20, 0),
+  },
+  {
+    name: 'get_cron_run', title: 'Cron run output', readOnly: true,
+    description: 'One run of a cron job with its full output.',
+    inputSchema: obj({ site_id: siteId, run_id: { type: 'integer' } }, ['site_id', 'run_id']),
+    args: z.object({ site_id: zSite, run_id: zId }),
+    run: (ctx, _r, a) => keyApi.cronRun(ctx, a.site_id, a.run_id),
+  },
+  // ── databases (databases.manage) ──
+  {
+    name: 'list_databases', title: 'Databases', readOnly: true,
+    description: 'Database servers (instances) of the account with the databases and users this key reaches, and how the sites connect (scope databases.manage).',
+    inputSchema: obj({}, []), args: z.object({}).passthrough(),
+    run: (ctx) => keyDatabases.list(ctx),
+  },
+  {
+    name: 'database_catalog', title: 'Database engines', readOnly: true,
+    description: 'Engines / versions the plan allows and its database limits.',
+    inputSchema: obj({}, []), args: z.object({}).passthrough(),
+    run: (ctx) => keyDatabases.catalog(ctx),
+  },
+  {
+    name: 'create_database_instance', title: 'Create a database server',
+    description: 'Creates a database server (instance) in the account when there is none for the engine needed (plan limits). It takes a few minutes: status provisioning, then running (list_databases).',
+    inputSchema: obj({
+      name: { type: 'string', description: 'Lower-case letters, digits and -, 1 to 32.' },
+      engine: { type: 'string', enum: [...new Set(DB_ENGINE_VERSIONS.map((v) => v.engine))] },
+      version: { type: 'string', description: 'See database_catalog.' },
+    }, ['name', 'engine', 'version']),
+    args: z.object({ name: z.string().min(1).max(32), engine: z.string(), version: z.string().min(1).max(16) }),
+    run: (ctx, req, a) => keyDatabases.createInstance(ctx, req, a as never),
+  },
+  {
+    name: 'create_database', title: 'Create a database',
+    description: 'Creates an empty database on an instance (scope databases.manage). Then create_database_user with a grant on it.',
+    inputSchema: obj({ instance_id: instanceId, name: { type: 'string', description: 'Letters, digits and _, 1 to 64.' } }, ['instance_id', 'name']),
+    args: z.object({ instance_id: zId, name: z.string().min(1).max(64) }),
+    run: (ctx, req, a) => keyDatabases.createDatabase(ctx, req, a.instance_id, { name: a.name }),
+  },
+  {
+    name: 'delete_database', title: 'Delete a database', destructive: true,
+    description: 'Drops a database this key created, with all its data (confirm_name = its name). Never possible on a database the key did not create.',
+    inputSchema: obj({ instance_id: instanceId, database_id: { type: 'integer' }, confirm_name: { type: 'string' } }, ['instance_id', 'database_id', 'confirm_name']),
+    args: z.object({ instance_id: zId, database_id: zId, confirm_name: z.string().max(128) }),
+    run: async (ctx, req, a) => { await keyDatabases.deleteDatabase(ctx, req, a.instance_id, a.database_id, a.confirm_name); return { deleted: true }; },
+  },
+  {
+    name: 'create_database_user', title: 'Create a database user',
+    description: 'Creates a database user with grants. Prefer env_site_id: the credentials go straight into the site\'s environment variables (DB_HOST, DB_SOCKET, DB_NAME, DB_USER, DB_PASSWORD) and the password is never returned. Otherwise the password is returned ONCE.',
+    inputSchema: obj({
+      instance_id: instanceId,
+      username: { type: 'string', description: 'Letters, digits and _, 1 to 32.' },
+      grants: grantsSchema,
+      ...envProps,
+    }, ['instance_id', 'username']),
+    args: z.object({ instance_id: zId, username: z.string().min(1).max(32), grants: zGrants.optional(), ...zEnv }),
+    run: (ctx, req, a) => keyDatabases.createUser(ctx, req, a.instance_id, { username: a.username, grants: toGrants(a.grants), env: toEnv(a) }),
+  },
+  {
+    name: 'set_database_user_grants', title: 'Database user rights',
+    description: 'Replaces the grants of a database user (on databases this key reaches).',
+    inputSchema: obj({ instance_id: instanceId, user_id: { type: 'integer' }, grants: grantsSchema }, ['instance_id', 'user_id', 'grants']),
+    args: z.object({ instance_id: zId, user_id: zId, grants: zGrants }),
+    run: (ctx, req, a) => keyDatabases.setGrants(ctx, req, a.instance_id, a.user_id, toGrants(a.grants) ?? []),
+  },
+  {
+    name: 'reset_database_user_password', title: 'New database password',
+    description: 'Generates a new password for a database user; with env_site_id it goes straight into the site\'s environment variables (never returned).',
+    inputSchema: obj({ instance_id: instanceId, user_id: { type: 'integer' }, ...envProps }, ['instance_id', 'user_id']),
+    args: z.object({ instance_id: zId, user_id: zId, ...zEnv }),
+    run: (ctx, req, a) => keyDatabases.resetPassword(ctx, req, a.instance_id, a.user_id, { env: toEnv(a) }),
+  },
+  {
+    name: 'delete_database_user', title: 'Delete a database user', destructive: true,
+    description: 'Deletes a database user this key created.',
+    inputSchema: obj({ instance_id: instanceId, user_id: { type: 'integer' } }, ['instance_id', 'user_id']),
+    args: z.object({ instance_id: zId, user_id: zId }),
+    run: async (ctx, req, a) => { await keyDatabases.deleteUser(ctx, req, a.instance_id, a.user_id); return { deleted: true }; },
+  },
+  {
+    name: 'import_sql', title: 'Import an SQL dump',
+    description: 'Runs an SQL dump (.sql or .sql.gz, uploaded first as a file of a site, e.g. in the data area) into a database this key reaches (needs files.read too). Delete the file afterwards.',
+    inputSchema: obj({ instance_id: instanceId, database_id: { type: 'integer' }, site_id: siteId, path: relPath('The dump inside the site area.'), area }, ['instance_id', 'database_id', 'site_id', 'path']),
+    args: z.object({ instance_id: zId, database_id: zId, site_id: zSite, path: zPath, area: zArea }),
+    run: (ctx, req, a) => keyDatabases.importFromSite(ctx, req, a.instance_id, a.database_id, a.site_id, a.area ?? 'staging', a.path),
+  },
   {
     name: 'read_logs', title: 'Read logs', readOnly: true,
     description: 'Recent log lines of the site (scope logs.read): access, error (web server / PHP) or app.',
@@ -274,7 +551,9 @@ const INSTRUCTIONS = [
   'Workflow: write / upload code into staging, check staging_changes, then publish to create a release and put it live.',
   'The live code is read-only: every change goes through staging and publish; rollback restores a previous release.',
   'A site in publish mode "auto" puts every staging change live a few seconds later: on a live site, switch it to "manual" (update_site) before developing.',
-  'Call get_guide for the full guide (rights, tools, how to develop on a live site and roll back).',
+  'Writable folders are declared data paths (add_data_path); secrets and database credentials go to environment variables (set_env, create_database_user with env_site_id), never into the code.',
+  'No permanent process runs: only the website and its cron jobs (one hour at most each).',
+  'Call get_guide for the full guide (rights, tools, databases, cron, routes, how to develop on a live site and roll back).',
 ].join(' ');
 
 type JsonRpcId = string | number | null;

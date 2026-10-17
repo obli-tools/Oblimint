@@ -245,6 +245,84 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   const keyNoSub = (await apiKeysService.verify(created.key, '203.0.113.7'));
   if (keyNoSub) await assert.rejects(keyApi.addSubdomain(keyNoSub, fakeReq(), s1, `y.${parentName}`), (e: { code: string }) => e.code === 'keyScope');
 
+  // ── routes (routes.manage), environment, cron, databases: a key limited to site one ──
+  const { keyEnv } = await import('./keyEnv');
+  const { keyDatabases } = await import('./keyDatabases');
+  await db('account_users').where({ user_id: owner, account_id: acme })
+    .update({ capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish', 'domains.manage', 'databases.manage']) });
+  const k4 = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, {
+    name: 'ops', scopes: ['sites.manage', 'routes.manage', 'cron.manage', 'databases.manage'], siteScope: 'selected', siteIds: [s1],
+  });
+  const c4 = (await apiKeysService.verify(k4.key, '203.0.113.7'))!;
+  const pdId = Number(pd.id ?? pd);
+  await db('site_routes').insert({ account_id: acme, domain_id: pdId, path_prefix: '/', site_id: s1, runtime_id: null });
+  const mixedName = `mixed-${suffix}.test`;
+  const [md] = await db('domains').insert({
+    tenant_id: tA, account_id: acme, name: mixedName, kind: 'addon', include_www: false, tls_mode: 'none', force_https: false, wildcard: false,
+    verification_status: 'verified', verification_method: 'txt', verified_at: db.fn.now(),
+  }).returning('id');
+  await db('site_routes').insert([
+    { account_id: acme, domain_id: Number(md.id ?? md), path_prefix: '/', site_id: s1, runtime_id: null },
+    { account_id: acme, domain_id: Number(md.id ?? md), path_prefix: '/x/', site_id: s2, runtime_id: null },
+  ]);
+  const doms = await keyApi.routes(c4);
+  assert.equal(doms.find((d) => d.domain === parentName)?.manageable, true, 'every route leads to a site of the key');
+  const mixed = doms.find((d) => d.domain === mixedName)!;
+  assert.equal(mixed.manageable, false, 'also serves a site outside the key');
+  assert.equal(mixed.routes.find((r) => r.pathPrefix === '/x/')?.siteId, 0, 'a site outside the key is not named');
+  assert.equal(doms.find((d) => d.domain === `manual.${parentName}`)?.manageable, false, 'a domain serving nothing is not the key\'s');
+  const up = await keyApi.addRoute(c4, fakeReq(), parentName.toUpperCase(), '/uploads/', s1);
+  assert.deepEqual([up.pathPrefix, up.siteId, up.runtimeId], ['/uploads/', s1, null]);
+  await assert.rejects(keyApi.addRoute(c4, fakeReq(), mixedName, '/y/', s1), (e: { code: string }) => e.code === 'keyDomainNotManageable');
+  await assert.rejects(keyApi.addRoute(c4, fakeReq(), parentName, '/z/', s2), (e: { statusCode: number }) => e.statusCode === 404, 'towards a site outside the key');
+  await assert.rejects(keyApi.deleteRoute(c4, fakeReq(), mixed.routes.find((r) => r.pathPrefix === '/x/')!.id), (e: { code: string }) => e.code === 'keyDomainNotManageable');
+  const media = await call('/routes', { method: 'POST', body: JSON.stringify({ domain: parentName, pathPrefix: 'media', siteId: s1 }) }, k4.key);
+  assert.equal(media.status, 201);
+  const mediaRoute = ((await media.json()) as { data: { id: number; pathPrefix: string } }).data;
+  assert.equal(mediaRoute.pathPrefix, '/media/', 'prefix normalized');
+  await keyApi.deleteRoute(c4, fakeReq(), up.id);
+  await keyApi.deleteRoute(c4, fakeReq(), mediaRoute.id);
+  assert.deepEqual((await keyApi.routes(c4)).find((d) => d.domain === parentName)?.routes.map((r) => r.pathPrefix), ['/']);
+  await assert.rejects(keyApi.routes(c3), (e: { code: string }) => e.code === 'keyScope');
+
+  // Environment: a change keeps the other variables, a secret is never read back.
+  await keyEnv.update(c4, fakeReq(), s1, [{ name: 'APP_MODE', value: 'prod' }, { name: 'API_TOKEN', value: 'tok-123', secret: true }]);
+  const env2 = await keyEnv.update(c4, fakeReq(), s1, [{ name: 'APP_MODE', value: 'dev' }]);
+  assert.deepEqual(env2.vars.map((v) => [v.name, v.value]), [['API_TOKEN', null], ['APP_MODE', 'dev']]);
+  await keyEnv.update(c4, fakeReq(), s1, [], ['APP_MODE']);
+  assert.deepEqual((await keyEnv.list(c4, s1)).map((v) => v.name), ['API_TOKEN']);
+  await assert.rejects(keyEnv.list(c4, s2), (e: { statusCode: number }) => e.statusCode === 404);
+  await assert.rejects(keyEnv.list(c3, s1), (e: { code: string }) => e.code === 'keyScope');
+
+  // Cron jobs of its sites only.
+  const job = await keyApi.createCronJob(c4, fakeReq(), s1, { name: 'sync', schedule: '*/10 * * * *', command: 'php bin/sync.php' });
+  assert.deepEqual((await keyApi.cronJobs(c4, s1)).map((j) => j.name), ['sync']);
+  await assert.rejects(keyApi.cronJobs(c4, s2), (e: { statusCode: number }) => e.statusCode === 404);
+  await keyApi.deleteCronJob(c4, fakeReq(), s1, job.id);
+  await assert.rejects(keyApi.cronJobs(c3, s1), (e: { code: string }) => e.code === 'keyScope');
+
+  // Databases: a key limited to some sites reaches only the databases it created; deletes only those.
+  const [inst] = await db('db_instances').insert({
+    tenant_id: tA, account_id: acme, node_id: nodeId, name: `db-${suffix}`.slice(0, 32), engine: 'mariadb', version: '11.4', profile: 'S',
+    status: 'stopped', is_default: true, root_secret: 'x',
+  }).returning('id');
+  const instId = Number(inst.id ?? inst);
+  const [mineDb] = await db('db_databases').insert({ instance_id: instId, account_id: acme, name: 'app_main', charset: 'utf8mb4' }).returning('id');
+  const [theirDb] = await db('db_databases').insert({ instance_id: instId, account_id: acme, name: 'other_site', charset: 'utf8mb4' }).returning('id');
+  const mineDbId = Number(mineDb.id ?? mineDb);
+  const theirDbId = Number(theirDb.id ?? theirDb);
+  await db('api_key_db_objects').insert({ key_id: k4.id, kind: 'database', object_id: mineDbId, account_id: acme });
+  const listedDbs = await keyDatabases.list(c4);
+  assert.deepEqual(listedDbs.find((i) => i.id === instId)?.databases.map((d) => [d.name, d.createdByKey]), [['app_main', true]]);
+  await assert.rejects(keyDatabases.deleteDatabase(c4, fakeReq(), instId, theirDbId, 'other_site'), (e: { statusCode: number }) => e.statusCode === 404, 'not reachable');
+  await assert.rejects(keyDatabases.createUser(c4, fakeReq(), instId, { username: 'spy', grants: [{ databaseId: theirDbId, level: 'all' }] }),
+    (e: { statusCode: number }) => e.statusCode === 404, 'never a grant on a database it does not reach');
+  await assert.rejects(keyDatabases.list(c3), (e: { code: string }) => e.code === 'keyScope');
+  const kAll = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'dball', scopes: ['databases.manage'], siteScope: 'all' });
+  const cAll = (await apiKeysService.verify(kAll.key, '203.0.113.7'))!;
+  assert.deepEqual((await keyDatabases.get(cAll, instId)).databases.map((d) => [d.name, d.createdByKey]), [['app_main', false], ['other_site', false]], 'a key on every site sees them all');
+  await assert.rejects(keyDatabases.deleteDatabase(cAll, fakeReq(), instId, theirDbId, 'other_site'), (e: { code: string }) => e.code === 'keyNotCreator');
+
   // ── allowed addresses, expiry, revocation ──
   const ownerAgain = await actorForUser(owner, tA);
   const k2 = await apiKeysService.create(fakeReq(), ownerAgain, acme, { name: 'ci', scopes: ['files.read'], siteScope: 'all', allowedIps: ['198.51.100.0/24'] });

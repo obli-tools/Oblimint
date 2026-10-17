@@ -26,10 +26,13 @@ const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'files.read': ['Read files', 'List and read the files of its sites (code and data).'],
   'files.write': ['Write files', 'Create, replace, move, delete, extract archives in its sites.'],
   'releases.publish': ['Publish', 'Publish the code as a new release (live) and roll back.'],
-  'sites.manage': ['Site settings', 'Change the settings of its sites (name, docroot, publish mode, PHP…).'],
+  'sites.manage': ['Site settings', 'Change the settings of its sites: name, docroot, publish mode, PHP, environment variables, data paths, secondary runtimes.'],
   'sites.create': ['Create sites', 'Create sites in the account: they join the key automatically.'],
   'domains.subdomain': ['Subdomains', 'Attach to its sites subdomains of a domain already in the account (never a new domain), remove the ones it created.'],
   'logs.read': ['Read logs', 'Access / error / application logs of its sites.'],
+  'cron.manage': ['Cron jobs', 'Schedule commands of its sites (create, change, run, read the output).'],
+  'routes.manage': ['Routes', 'Choose which of its sites (or runtime of a site) serves a path of a domain, e.g. example.com/uploads/; only on domains serving its sites alone.'],
+  'databases.manage': ['Databases', 'Database servers of the account, databases and users (all of them for a key on every site, only its own otherwise); deletes only what it created.'],
 };
 
 const EXPIRY_OPTIONS = [
@@ -232,7 +235,7 @@ function KeyModal({ accountId, sites, initial, onClose, onSaved }: {
               </label>
             ))}
           </div>
-          <p className="mt-1.5 text-[11px] text-text-muted">{t('apiKeys.neverHint') || 'Never granted to a key: deleting a site, adding a root domain, other accounts, users.'}</p>
+          <p className="mt-1.5 text-[11px] text-text-muted">{t('apiKeys.neverHint') || 'Never granted to a key: deleting a site, a database it did not create or a database server, adding a root domain, other accounts, users.'}</p>
         </div>
         <div>
           <label className={labelCls}>{t('apiKeys.sites') || 'Sites'}</label>

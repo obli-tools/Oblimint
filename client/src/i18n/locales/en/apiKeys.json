@@ -30,7 +30,7 @@
     "never": "never",
     "name": "Name",
     "rights": "Rights",
-    "neverHint": "Never granted to a key: deleting a site, adding a root domain, other accounts, users.",
+    "neverHint": "Never granted to a key: deleting a site, a database it did not create or a database server, adding a root domain, other accounts, users.",
     "sites": "Sites",
     "expiry": "Expiry",
     "keepExpiry": "Unchanged",
@@ -63,7 +63,7 @@
       "sites": {
         "manage": {
           "label": "Site settings",
-          "hint": "Change the settings of its sites (name, docroot, publish mode, PHP…)."
+          "hint": "Change the settings of its sites: name, docroot, publish mode, PHP, environment variables, data paths, secondary runtimes."
         },
         "create": {
           "label": "Create sites",
@@ -80,6 +80,24 @@
         "read": {
           "label": "Read logs",
           "hint": "Access / error / application logs of its sites."
+        }
+      },
+      "cron": {
+        "manage": {
+          "label": "Cron jobs",
+          "hint": "Schedule commands of its sites (create, change, run, read the output)."
+        }
+      },
+      "databases": {
+        "manage": {
+          "label": "Databases",
+          "hint": "Database servers of the account, databases and users (all of them for a key on every site, only its own otherwise); deletes only what it created."
+        }
+      },
+      "routes": {
+        "manage": {
+          "label": "Routes",
+          "hint": "Choose which of its sites (or runtime of a site) serves a path of a domain, e.g. example.com/uploads/; only on domains serving its sites alone."
         }
       }
     },

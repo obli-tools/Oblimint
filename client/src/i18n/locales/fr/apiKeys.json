@@ -30,7 +30,7 @@
     "never": "jamais",
     "name": "Nom",
     "rights": "Droits",
-    "neverHint": "Jamais accordé à une clé : supprimer un site, ajouter un domaine racine, les autres comptes, les utilisateurs.",
+    "neverHint": "Jamais accordé à une clé : supprimer un site, une base qu'elle n'a pas créée ou un serveur de bases, ajouter un domaine racine, toucher à un autre compte ou aux utilisateurs.",
     "sites": "Sites",
     "expiry": "Expiration",
     "keepExpiry": "Inchangée",
@@ -63,7 +63,7 @@
       "sites": {
         "manage": {
           "label": "Réglages des sites",
-          "hint": "Modifier les réglages de ses sites (nom, racine web, mode de publication, PHP…)."
+          "hint": "Modifier les réglages de ses sites : nom, racine web, mode de publication, PHP, variables d'environnement, chemins de données, runtimes secondaires."
         },
         "create": {
           "label": "Créer des sites",
@@ -80,6 +80,24 @@
         "read": {
           "label": "Lire les logs",
           "hint": "Logs d'accès, d'erreurs et applicatifs de ses sites."
+        }
+      },
+      "cron": {
+        "manage": {
+          "label": "Tâches cron",
+          "hint": "Planifier des commandes de ses sites (créer, modifier, lancer, lire le résultat)."
+        }
+      },
+      "databases": {
+        "manage": {
+          "label": "Bases de données",
+          "hint": "Serveurs de bases du compte, bases et utilisateurs (tous pour une clé sur tous les sites, sinon seulement les siens) ; ne supprime que ce qu'elle a créé."
+        }
+      },
+      "routes": {
+        "manage": {
+          "label": "Routes",
+          "hint": "Choisir lequel de ses sites (ou runtime d'un site) sert un chemin d'un domaine, ex. exemple.com/uploads/ ; seulement sur les domaines qui ne servent que ses sites."
         }
       }
     },

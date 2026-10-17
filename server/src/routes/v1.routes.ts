@@ -5,7 +5,11 @@ import { parseBody } from '../services/docker/parseBody';
 import { keyApi, type SiteArea } from '../services/apiKeys/keyApi';
 import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from '../services/apiKeys/middleware';
 import type { ApiKeyContext } from '../services/apiKeys/apiKeys.service';
-import { siteCreateSchema, siteUpdateSchema } from '../validators/hosting.schema';
+import { CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, SITE_ENV_MAX_VALUE, SITE_ENV_MAX_VARS } from '@oblimint/shared';
+import { keyDatabases } from '../services/apiKeys/keyDatabases';
+import { keyEnv } from '../services/apiKeys/keyEnv';
+import type { SiteBaseId } from '@oblimint/shared';
+import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInputSchema, siteCreateSchema, siteUpdateSchema } from '../validators/hosting.schema';
 
 // /api/v1 — API of the access keys (shared/src/apiKeys.ts), `Authorization: Bearer obk_…`.
 // One account; the key's sites only (others: 404); its scopes (missing: 403 keyScope).
@@ -33,6 +37,38 @@ import { siteCreateSchema, siteUpdateSchema } from '../validators/hosting.schema
 //   GET    /sites/:id/releases?limit=&offset=           → { items: Release[]; total }
 //   POST   /sites/:id/releases/:rid/rollback            → { rolledBack: true }         releases.publish
 //   GET    /sites/:id/logs?source=access|error|app&q=&limit=&since=&until=&status= → LogQueryResult  logs.read
+//   GET    /sites/:id/env                               → SiteEnvVar[] (secrets: value null)        sites.manage
+//   PATCH  /sites/:id/env  {set?: [{name, value?, secret?}], remove?: [name]} → {vars, changed} (others kept; restarts the site) sites.manage
+//   GET    /sites/:id/data-paths                        → SiteDataPath[]
+//   POST   /sites/:id/data-paths  SiteDataPathInput     → SiteDataPath (201)                        sites.manage
+//   PUT    /sites/:id/data-paths/:pid {policy?, allowedExtensions?} → SiteDataPath                sites.manage
+//   DELETE /sites/:id/data-paths/:pid                   → { deleted: true }                        sites.manage
+//   GET    /sites/:id/cron                              → CronJob[]                                 cron.manage
+//   POST   /sites/:id/cron        CronJobInput          → CronJob (201)                             cron.manage
+//   PUT    /sites/:id/cron/:jobId Partial<CronJobInput> → CronJob                                   cron.manage
+//   DELETE /sites/:id/cron/:jobId                       → { deleted: true }                        cron.manage
+//   POST   /sites/:id/cron/:jobId/run                   → CronRun (202)                             cron.manage
+//   GET    /sites/:id/cron/:jobId/runs?limit=&offset=   → { items: CronRun[]; total }              cron.manage
+//   GET    /sites/:id/cron/runs/:runId                  → CronRunDetail (output)                    cron.manage
+//   GET    /databases/catalog                           → DbCatalog (engines, plan limits)          databases.manage
+//   GET    /databases                                   → ApiV1DbInstance[]                         databases.manage
+//   POST   /databases             {name, engine, version} → DbInstance (201, provisioning)          databases.manage
+//   GET    /databases/:iid                              → ApiV1DbInstance                           databases.manage
+//   POST   /databases/:iid/databases {name, charset?, collation?} → ApiV1Database (201)           databases.manage
+//   DELETE /databases/:iid/databases/:dbId {confirm: name} → { deleted: true } (its own only)      databases.manage
+//   GET    /databases/:iid/databases/:dbId/dump         → application/gzip                          databases.manage
+//   POST   /databases/:iid/databases/:dbId/import       raw SQL (plain / gzip), or JSON {siteId, path, area?} → { restored: true } databases.manage
+//   POST   /databases/:iid/users  {username, password?, grants?, env?} → ApiV1DbCredentials (201) databases.manage (+ sites.manage for env)
+//   PUT    /databases/:iid/users/:uid {grants}          → ApiV1DbUser                               databases.manage
+//   POST   /databases/:iid/users/:uid/password {password?, env?} → ApiV1DbCredentials             databases.manage
+//   DELETE /databases/:iid/users/:uid                   → { deleted: true } (its own only)         databases.manage
+//   GET    /routes                                      → ApiV1RouteDomain[] (domains, their path routes) routes.manage
+//   POST   /routes   {domain, pathPrefix, siteId, runtimeId?} → ApiV1Route (201)                 routes.manage
+//   PUT    /routes/:rid {pathPrefix?, siteId?, runtimeId?} → ApiV1Route                         routes.manage
+//   GET    /sites/:id/runtimes                          → SiteRuntime[]
+//   POST   /sites/:id/runtimes {base}                   → SiteRuntime (201)                         sites.manage
+//   DELETE /sites/:id/runtimes/:rtid                    → { deleted: true } (409 runtimeInUse)    sites.manage
+//   DELETE /routes/:rid                                 → { deleted: true }                        routes.manage
 //   GET    /domains                                     → ApiV1ParentDomain[] (parents allowed)   domains.subdomain
 //   GET    /subdomains                                  → ApiV1Subdomain[] (created by the key)   domains.subdomain
 //   POST   /sites/:id/subdomains {name}                 → ApiV1Subdomain (201)                    domains.subdomain
@@ -172,6 +208,134 @@ router.post('/sites/:id/subdomains', h(async (req, res) => {
 }));
 router.delete('/subdomains/:name', h(async (req, res) => {
   await keyApi.removeSubdomain(ctxOf(req), req, String(req.params.name));
+  ok(res, { deleted: true });
+}));
+
+// ── path routes ──
+const prefix = z.string().min(1).max(255);
+/** "/uploads" or "uploads" → "/uploads/", checked like the panel routes. */
+const routePrefix = (v: string) => {
+  const inner = v.trim().replace(/^\/+|\/+$/g, '');
+  return parseBody(z.object({ p: routeInputSchema.shape.pathPrefix }), { p: inner ? `/${inner}/` : '/' }).p;
+};
+router.get('/routes', h(async (req, res) => ok(res, await keyApi.routes(ctxOf(req)))));
+router.post('/routes', h(async (req, res) => {
+  const b = parseBody(z.object({ domain: z.string().min(1).max(253), pathPrefix: prefix, siteId: z.number().int().positive(), runtimeId: z.number().int().positive().nullable().optional() }).strict(), req.body);
+  ok(res, await keyApi.addRoute(ctxOf(req), req, b.domain, routePrefix(b.pathPrefix), b.siteId, b.runtimeId ?? null), 201);
+}));
+router.put('/routes/:rid', h(async (req, res) => {
+  const b = parseBody(z.object({ pathPrefix: prefix.optional(), siteId: z.number().int().positive().optional(), runtimeId: z.number().int().positive().nullable().optional() }).strict(), req.body);
+  ok(res, await keyApi.updateRoute(ctxOf(req), req, Number(req.params.rid), {
+    ...(b.pathPrefix ? { pathPrefix: routePrefix(b.pathPrefix) } : {}), ...(b.siteId ? { siteId: b.siteId } : {}), ...(b.runtimeId !== undefined ? { runtimeId: b.runtimeId } : {}),
+  }));
+}));
+router.get('/sites/:id/runtimes', h(async (req, res) => ok(res, await keyApi.runtimes(ctxOf(req), siteId(req)))));
+router.post('/sites/:id/runtimes', h(async (req, res) => {
+  const b = parseBody(runtimeInputSchema, req.body);
+  ok(res, await keyApi.addRuntime(ctxOf(req), req, siteId(req), b.base as SiteBaseId), 201);
+}));
+router.delete('/sites/:id/runtimes/:rtid', h(async (req, res) => {
+  await keyApi.deleteRuntime(ctxOf(req), req, siteId(req), Number(req.params.rtid));
+  ok(res, { deleted: true });
+}));
+router.delete('/routes/:rid', h(async (req, res) => {
+  await keyApi.deleteRoute(ctxOf(req), req, Number(req.params.rid));
+  ok(res, { deleted: true });
+}));
+
+// ── environment variables, data paths ──
+const envBody = z.object({
+  set: z.array(z.object({ name: z.string().min(1).max(128), value: z.string().max(SITE_ENV_MAX_VALUE).nullable().optional(), secret: z.boolean().optional() }).strict()).max(SITE_ENV_MAX_VARS).optional(),
+  remove: z.array(z.string().min(1).max(128)).max(SITE_ENV_MAX_VARS).optional(),
+}).strict();
+router.get('/sites/:id/env', h(async (req, res) => { res.setHeader('Cache-Control', 'no-store'); ok(res, await keyEnv.list(ctxOf(req), siteId(req))); }));
+router.patch('/sites/:id/env', h(async (req, res) => {
+  const b = parseBody(envBody, req.body);
+  res.setHeader('Cache-Control', 'no-store');
+  ok(res, await keyEnv.update(ctxOf(req), req, siteId(req), b.set ?? [], b.remove ?? []));
+}));
+router.get('/sites/:id/data-paths', h(async (req, res) => ok(res, await keyApi.dataPaths(ctxOf(req), siteId(req)))));
+router.post('/sites/:id/data-paths', h(async (req, res) => ok(res, await keyApi.addDataPath(ctxOf(req), req, siteId(req), parseBody(dataPathInputSchema, req.body)), 201)));
+router.put('/sites/:id/data-paths/:pid', h(async (req, res) => ok(res, await keyApi.updateDataPath(ctxOf(req), req, siteId(req), Number(req.params.pid), parseBody(dataPathUpdateSchema, req.body)))));
+router.delete('/sites/:id/data-paths/:pid', h(async (req, res) => {
+  await keyApi.deleteDataPath(ctxOf(req), req, siteId(req), Number(req.params.pid));
+  ok(res, { deleted: true });
+}));
+
+// ── cron ──
+const cronFields = {
+  name: z.string().min(1).max(100),
+  schedule: z.string().min(1).max(100),
+  command: z.string().min(1).max(100_000),
+  timeoutSec: z.number().int().min(10).max(CRON_MAX_TIMEOUT_SEC).optional(),
+  enabled: z.boolean().optional(),
+};
+const cronCreate = z.object(cronFields).strict();
+const cronUpdate = z.object(cronFields).partial().strict();
+router.get('/sites/:id/cron', h(async (req, res) => ok(res, await keyApi.cronJobs(ctxOf(req), siteId(req)))));
+router.post('/sites/:id/cron', h(async (req, res) => ok(res, await keyApi.createCronJob(ctxOf(req), req, siteId(req), parseBody(cronCreate, req.body)), 201)));
+// Before /sites/:id/cron/:jobId/* ("runs" is not a job id).
+router.get('/sites/:id/cron/runs/:runId', h(async (req, res) => ok(res, await keyApi.cronRun(ctxOf(req), siteId(req), Number(req.params.runId)))));
+router.put('/sites/:id/cron/:jobId', h(async (req, res) => ok(res, await keyApi.updateCronJob(ctxOf(req), req, siteId(req), Number(req.params.jobId), parseBody(cronUpdate, req.body)))));
+router.delete('/sites/:id/cron/:jobId', h(async (req, res) => {
+  await keyApi.deleteCronJob(ctxOf(req), req, siteId(req), Number(req.params.jobId));
+  ok(res, { deleted: true });
+}));
+router.post('/sites/:id/cron/:jobId/run', h(async (req, res) => ok(res, await keyApi.runCronJob(ctxOf(req), req, siteId(req), Number(req.params.jobId)), 202)));
+router.get('/sites/:id/cron/:jobId/runs', h(async (req, res) => {
+  const q = z.object({ limit: z.coerce.number().int().min(1).max(100).default(20), offset: z.coerce.number().int().min(0).default(0) }).parse(req.query);
+  ok(res, await keyApi.cronRuns(ctxOf(req), siteId(req), Number(req.params.jobId), q.limit, q.offset));
+}));
+
+// ── databases ──
+const engines = [...new Set(DB_ENGINE_VERSIONS.map((v) => v.engine))] as [string, ...string[]];
+const grants = z.array(z.object({ databaseId: z.number().int().positive(), level: z.enum(['all', 'readonly']) }).strict()).max(500);
+const envTarget = z.object({ siteId: z.number().int().positive(), prefix: z.string().min(1).max(32).optional(), databaseId: z.number().int().positive().optional() }).strict();
+const iid = (req: Request) => Number(req.params.iid);
+router.get('/databases/catalog', h(async (req, res) => ok(res, await keyDatabases.catalog(ctxOf(req)))));
+router.get('/databases', h(async (req, res) => ok(res, await keyDatabases.list(ctxOf(req)))));
+router.post('/databases', h(async (req, res) => {
+  const b = parseBody(z.object({ name: z.string().min(1).max(32), engine: z.enum(engines), version: z.string().min(1).max(16) }).strict(), req.body);
+  ok(res, await keyDatabases.createInstance(ctxOf(req), req, b as Parameters<typeof keyDatabases.createInstance>[2]), 201);
+}));
+router.get('/databases/:iid', h(async (req, res) => ok(res, await keyDatabases.get(ctxOf(req), iid(req)))));
+router.post('/databases/:iid/databases', h(async (req, res) => {
+  const b = parseBody(z.object({ name: z.string().min(1).max(64), charset: z.string().max(32).nullable().optional(), collation: z.string().max(64).nullable().optional() }).strict(), req.body);
+  ok(res, await keyDatabases.createDatabase(ctxOf(req), req, iid(req), b), 201);
+}));
+router.delete('/databases/:iid/databases/:dbId', h(async (req, res) => {
+  const b = parseBody(z.object({ confirm: z.string().max(128) }).strict(), req.body ?? {});
+  await keyDatabases.deleteDatabase(ctxOf(req), req, iid(req), Number(req.params.dbId), b.confirm);
+  ok(res, { deleted: true });
+}));
+router.get('/databases/:iid/databases/:dbId/dump', h(async (req, res) => {
+  await keyDatabases.dump(ctxOf(req), req, res, iid(req), Number(req.params.dbId));
+}));
+router.post('/databases/:iid/databases/:dbId/import', h(async (req, res) => {
+  const ctx = ctxOf(req);
+  const dbId = Number(req.params.dbId);
+  if (req.is('application/json')) {
+    // An SQL file already in one of the key's sites (uploaded with the file routes).
+    const b = parseBody(z.object({ siteId: z.number().int().positive(), path: relPath.min(1), area: area.optional() }).strict(), req.body);
+    ok(res, await keyDatabases.importFromSite(ctx, req, iid(req), dbId, b.siteId, b.area ?? 'staging', b.path));
+    return;
+  }
+  ok(res, await keyDatabases.importSql(ctx, req, iid(req), dbId));
+}));
+router.post('/databases/:iid/users', h(async (req, res) => {
+  const b = parseBody(z.object({ username: z.string().min(1).max(32), password: z.string().max(128).nullable().optional(), grants: grants.optional(), env: envTarget.optional() }).strict(), req.body);
+  ok(res, await keyDatabases.createUser(ctxOf(req), req, iid(req), b), 201);
+}));
+router.put('/databases/:iid/users/:uid', h(async (req, res) => {
+  const b = parseBody(z.object({ grants }).strict(), req.body);
+  ok(res, await keyDatabases.setGrants(ctxOf(req), req, iid(req), Number(req.params.uid), b.grants));
+}));
+router.post('/databases/:iid/users/:uid/password', h(async (req, res) => {
+  const b = parseBody(z.object({ password: z.string().max(128).nullable().optional(), env: envTarget.optional() }).strict(), req.body ?? {});
+  ok(res, await keyDatabases.resetPassword(ctxOf(req), req, iid(req), Number(req.params.uid), b));
+}));
+router.delete('/databases/:iid/users/:uid', h(async (req, res) => {
+  await keyDatabases.deleteUser(ctxOf(req), req, iid(req), Number(req.params.uid));
   ok(res, { deleted: true });
 }));
 

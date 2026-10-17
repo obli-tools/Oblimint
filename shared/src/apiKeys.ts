@@ -1,3 +1,4 @@
+import type { DbConnectionInfo, DbDatabase, DbEngine, DbFamily, DbInstanceStatus, DbUser } from './databases';
 import type { SiteUpdate } from './hosting';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,9 +26,24 @@ export type ApiKeyScope =
   | 'sites.create'
   | 'logs.read'
   /** Attach to its sites subdomains of a domain already in the account (never a new root domain); remove the ones it created. */
-  | 'domains.subdomain';
+  | 'domains.subdomain'
+  /** Cron jobs of its sites (create, change, delete, run, read the runs). */
+  | 'cron.manage'
+  /**
+   * Databases: the account's instances (create one within the plan), databases
+   * and users — every one of the account for a key on every site, only the ones
+   * it created for a key limited to some sites; it deletes only what it created.
+   */
+  | 'databases.manage'
+  /**
+   * Path routes of the account's domains (which site serves exampl.com/uploads/…):
+   * on a domain whose routes all lead to sites of the key, towards a site of the key.
+   */
+  | 'routes.manage';
 
-export const API_KEY_SCOPES: readonly ApiKeyScope[] = ['files.read', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'domains.subdomain', 'logs.read'];
+export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
+  'files.read', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain', 'logs.read',
+];
 
 export type ApiKeySiteScope = 'all' | 'selected';
 
@@ -115,4 +131,72 @@ export interface ApiV1Subdomain {
   verified: boolean;
   /** https://<name>/ once the certificate is issued. */
   url: string;
+}
+
+/** A database as the key API shows it. */
+export interface ApiV1Database extends DbDatabase {
+  /** Created through this key (it may delete it). */
+  createdByKey: boolean;
+}
+
+/** A database user as the key API shows it (its password is never shown again). */
+export interface ApiV1DbUser extends DbUser {
+  createdByKey: boolean;
+}
+
+/** GET /api/v1/databases: a database server of the account, with the databases and users the key reaches. */
+export interface ApiV1DbInstance {
+  id: number;
+  name: string;
+  engine: DbEngine;
+  version: string;
+  family: DbFamily;
+  status: DbInstanceStatus;
+  /** Account default of its family: the sites reach it as localhost (MySQL family) / the default socket. */
+  isDefault: boolean;
+  connection: DbConnectionInfo;
+  databases: ApiV1Database[];
+  users: ApiV1DbUser[];
+}
+
+/**
+ * Optional on a database user creation / password reset: the credentials go
+ * straight into the environment variables of a site of the key (password as a
+ * secret) and never back to the caller (needs sites.manage; the site restarts).
+ */
+export interface ApiV1DbEnvTarget {
+  siteId: number;
+  /** Name prefix (default "DB_"): DB_HOST, DB_SOCKET, DB_NAME, DB_USER, DB_PASSWORD. */
+  prefix?: string;
+  /** Database put in <prefix>NAME (default: the first database granted). */
+  databaseId?: number;
+}
+
+/** Answer of a database user creation / password reset. */
+export interface ApiV1DbCredentials {
+  user: ApiV1DbUser;
+  /** null when the credentials went into a site's environment (env). */
+  password: string | null;
+  /** Variables written in the site's environment. */
+  env?: { siteId: number; names: string[] };
+}
+
+/** A path route of a domain: requests for https://<domain><pathPrefix>… go to the site (longest prefix wins). */
+export interface ApiV1Route {
+  id: number;
+  domain: string;
+  /** '/' or '/uploads/' (leading and trailing slash). */
+  pathPrefix: string;
+  /** 0: a site outside the key. */
+  siteId: number;
+  /** Secondary runtime of the site serving it (another container / engine, same code); null = its main one. */
+  runtimeId: number | null;
+}
+
+/** GET /api/v1/routes: a domain of the account and its routes. */
+export interface ApiV1RouteDomain {
+  domain: string;
+  /** The key may add / change / remove routes on it (all its routes lead to sites of the key). */
+  manageable: boolean;
+  routes: ApiV1Route[];
 }
