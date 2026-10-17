@@ -63,7 +63,7 @@
       "sites": {
         "manage": {
           "label": "Site settings",
-          "hint": "Change the settings of its sites (runtime, docroot…)."
+          "hint": "Change the settings of its sites (name, docroot, publish mode, PHP…)."
         },
         "create": {
           "label": "Create sites",
@@ -82,6 +82,12 @@
           "hint": "Access / error / application logs of its sites."
         }
       }
-    }
+    },
+    "guide": "API & AI agent guide",
+    "guideTitle": "API & AI agent guide",
+    "guideIntro": "Give this file to your AI agent (e.g. \"read this guide, then work on my site\"): it explains how to connect with a key, develop in staging, publish at the end and roll back. Agents connected through MCP can also read it with the get_guide tool.",
+    "guideDownload": "Download (.md)",
+    "guideDownloadFailed": "The download failed",
+    "guideHint": "Read the guide, or download it to give it to your agent"
   }
 }

@@ -7,6 +7,8 @@ import { AppError } from '../../middleware/errorHandler';
 import { keyApi, type SiteArea } from './keyApi';
 import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from './middleware';
 import type { ApiKeyContext } from './apiKeys.service';
+import { siteUpdateSchema } from '../../validators/hosting.schema';
+import { parseBody } from '../docker/parseBody';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MCP server of the panel (Model Context Protocol, Streamable HTTP transport,
@@ -42,6 +44,9 @@ const obj = (properties: Record<string, unknown>, required: string[]) => ({ type
 const zSite = z.number().int().positive();
 const zArea = z.enum(['staging', 'data']).optional();
 const zPath = z.string().max(4096);
+const publishMode = { type: 'string', enum: ['auto', 'manual', 'approval'], description: 'auto: every staging change goes live a few seconds later; manual: only on publish; approval: a human approves in the panel.' };
+const zPublishMode = z.enum(['auto', 'manual', 'approval']);
+const siteUpdateArgs = siteUpdateSchema.pick({ name: true, docroot: true, publishMode: true, publishDebounceSec: true, healthcheckPath: true, php: true });
 
 const TOOLS: ToolDef[] = [
   {
@@ -49,6 +54,13 @@ const TOOLS: ToolDef[] = [
     description: 'The API key in use: its scopes, its site scope and the hosting account it works on.',
     inputSchema: obj({}, []), args: z.object({}).passthrough(),
     run: (ctx) => keyApi.me(ctx),
+  },
+  {
+    name: 'get_guide', title: 'Guide', readOnly: true,
+    description: 'The guide of this API (Markdown): how Oblimint works (staging, releases, publish modes), rights, every tool, how to develop on a live site and roll back. Read it before a first change.',
+    inputSchema: obj({ lang: { type: 'string', enum: ['en', 'fr'], description: 'Language (default en).' } }, []),
+    args: z.object({ lang: z.enum(['en', 'fr']).optional() }),
+    run: (_ctx, req, a) => keyApi.guide(req, a.lang ?? 'en'),
   },
   {
     name: 'list_sites', title: 'List sites', readOnly: true,
@@ -71,11 +83,40 @@ const TOOLS: ToolDef[] = [
       base: { type: 'string', enum: [...SITE_BASE_IDS], description: 'Runtime: apache-php8.x (.htaccess), nginx-php8.x, nginx-static.' },
       app_profile: { type: 'string', enum: APP_PROFILES.map((p) => p.id), description: 'Optional application profile (docroot, data paths).' },
       docroot: relPath('Optional document root inside the code (e.g. "public").'),
+      publish_mode: publishMode,
     }, ['name', 'slug', 'base']),
-    args: z.object({ name: z.string(), slug: z.string(), base: z.string(), app_profile: z.string().optional(), docroot: z.string().optional() }),
+    args: z.object({ name: z.string(), slug: z.string(), base: z.string(), app_profile: z.string().optional(), docroot: z.string().optional(), publish_mode: zPublishMode.optional() }),
     run: (ctx, req, a) => keyApi.createSite(ctx, req, {
       name: a.name, slug: a.slug, base: a.base, ...(a.app_profile ? { appProfile: a.app_profile } : {}), ...(a.docroot !== undefined ? { docroot: a.docroot } : {}),
+      ...(a.publish_mode ? { publishMode: a.publish_mode } : {}),
     } as never),
+  },
+  {
+    name: 'update_site', title: 'Change site settings',
+    description: 'Changes settings of a site (scope sites.manage). Switch publish_mode to "manual" before developing on a live site so nothing goes live until publish; put it back afterwards if the human wants.',
+    inputSchema: obj({
+      site_id: siteId,
+      name: { type: 'string', description: 'Display name.' },
+      docroot: relPath('Document root inside the code ("" = root, e.g. "public"). Files outside it are published but never served.'),
+      publish_mode: publishMode,
+      publish_debounce_sec: { type: 'integer', minimum: 5, maximum: 3600, description: 'auto mode: seconds of quiet after the last write before publishing.' },
+      healthcheck_path: { type: 'string', description: 'Path checked after a publish (e.g. "/").' },
+      php: {
+        type: 'object', additionalProperties: false, description: 'PHP limits, within the account plan.',
+        properties: { memoryLimitMb: { type: 'integer' }, uploadMaxFilesizeMb: { type: 'integer' }, postMaxSizeMb: { type: 'integer' }, maxExecutionTime: { type: 'integer' } },
+      },
+    }, ['site_id']),
+    args: z.object({
+      site_id: zSite, name: z.string().optional(), docroot: z.string().optional(), publish_mode: zPublishMode.optional(),
+      publish_debounce_sec: z.number().int().optional(), healthcheck_path: z.string().optional(),
+      php: z.object({ memoryLimitMb: z.number().int().optional(), uploadMaxFilesizeMb: z.number().int().optional(), postMaxSizeMb: z.number().int().optional(), maxExecutionTime: z.number().int().optional() }).strict().optional(),
+    }),
+    // Same validation as PATCH /api/v1/sites/:id (normalized docroot, debounce bounds…).
+    run: (ctx, req, a) => keyApi.updateSite(ctx, req, a.site_id, parseBody(siteUpdateArgs, {
+      ...(a.name !== undefined ? { name: a.name } : {}), ...(a.docroot !== undefined ? { docroot: a.docroot } : {}),
+      ...(a.publish_mode ? { publishMode: a.publish_mode } : {}), ...(a.publish_debounce_sec !== undefined ? { publishDebounceSec: a.publish_debounce_sec } : {}),
+      ...(a.healthcheck_path !== undefined ? { healthcheckPath: a.healthcheck_path } : {}), ...(a.php ? { php: a.php } : {}),
+    })),
   },
   {
     name: 'list_files', title: 'List a folder', readOnly: true,
@@ -232,6 +273,8 @@ const INSTRUCTIONS = [
   'A site has two file areas: "staging" (its code, never live as is) and "data" (files the site itself writes, live).',
   'Workflow: write / upload code into staging, check staging_changes, then publish to create a release and put it live.',
   'The live code is read-only: every change goes through staging and publish; rollback restores a previous release.',
+  'A site in publish mode "auto" puts every staging change live a few seconds later: on a live site, switch it to "manual" (update_site) before developing.',
+  'Call get_guide for the full guide (rights, tools, how to develop on a live site and roll back).',
 ].join(' ');
 
 type JsonRpcId = string | number | null;

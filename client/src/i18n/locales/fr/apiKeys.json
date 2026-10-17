@@ -63,7 +63,7 @@
       "sites": {
         "manage": {
           "label": "Réglages des sites",
-          "hint": "Modifier les réglages de ses sites (moteur, docroot…)."
+          "hint": "Modifier les réglages de ses sites (nom, racine web, mode de publication, PHP…)."
         },
         "create": {
           "label": "Créer des sites",
@@ -82,6 +82,12 @@
           "hint": "Logs d'accès, d'erreurs et applicatifs de ses sites."
         }
       }
-    }
+    },
+    "guide": "Guide API & agents IA",
+    "guideTitle": "Guide de l'API et des agents IA",
+    "guideIntro": "Donnez ce fichier à votre agent IA (ex. « lis ce guide, puis travaille sur mon site ») : il explique comment se connecter avec une clé, développer dans le staging, publier à la fin et revenir en arrière. Un agent connecté en MCP peut aussi le lire avec l'outil get_guide.",
+    "guideDownload": "Télécharger (.md)",
+    "guideDownloadFailed": "Le téléchargement a échoué",
+    "guideHint": "Lire le guide, ou le télécharger pour le donner à votre agent"
   }
 }

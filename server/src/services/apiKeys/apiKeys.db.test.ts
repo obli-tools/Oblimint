@@ -173,6 +173,17 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   const noScope = (await rpc('tools/call', { name: 'read_logs', arguments: { site_id: s1 } })).body?.result;
   assert.equal(noScope.isError, true);
   assert.match(noScope.content[0].text, /keyScope/);
+  const noManage = (await rpc('tools/call', { name: 'update_site', arguments: { site_id: s1, publish_mode: 'manual' } })).body?.result;
+  assert.equal(noManage.isError, true);
+  assert.match(noManage.content[0].text, /keyScope/);
+  // The guide: MCP and REST, with this panel's address, never a placeholder.
+  const guideCall = (await rpc('tools/call', { name: 'get_guide', arguments: { lang: 'fr' } })).body?.result;
+  assert.match(guideCall.content[0].text, /^# Oblimint — Guide de l'API/);
+  assert.ok(!guideCall.content[0].text.includes('{{PANEL}}'));
+  const guideRes = await call('/guide?lang=en');
+  assert.match(guideRes.headers.get('content-type') ?? '', /text\/markdown/);
+  assert.match(await guideRes.text(), /claude mcp add --transport http oblimint https?:\/\/[^ ]+\/mcp/);
+  assert.equal((await fetch(`${base}/guide`)).status, 401, 'the guide needs a key');
   assert.equal((await rpc('nope', {})).body?.error?.code, -32601);
   const unauth = await fetch(mcpUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"ping"}' });
   assert.equal(unauth.status, 401);

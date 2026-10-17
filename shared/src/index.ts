@@ -28,3 +28,4 @@ export * from './apiKeys';
 // Site environment variables
 export * from './siteEnv';
 export * from './backups';
+export * from './apiGuide';

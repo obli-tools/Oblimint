@@ -12,6 +12,7 @@ import { siteCreateSchema, siteUpdateSchema } from '../validators/hosting.schema
 // File paths are relative to the site's area: ?area=staging (default: the code, published
 // as releases) or ?area=data (the files the site writes).
 //   GET    /me                                          → ApiV1Me
+//   GET    /guide?lang=en|fr                            → this API's guide (text/markdown)
 //   GET    /sites                                       → ApiV1Site[]
 //   POST   /sites                SiteCreate − accountId → ApiV1Site (201)              sites.create
 //   GET    /sites/:id                                   → ApiV1Site
@@ -31,7 +32,7 @@ import { siteCreateSchema, siteUpdateSchema } from '../validators/hosting.schema
 //   POST   /sites/:id/publish   {message?}              → Release (201)                releases.publish
 //   GET    /sites/:id/releases?limit=&offset=           → { items: Release[]; total }
 //   POST   /sites/:id/releases/:rid/rollback            → { rolledBack: true }         releases.publish
-//   GET    /sites/:id/logs?source=access|error|app&q=&limit= → LogQueryResult          logs.read
+//   GET    /sites/:id/logs?source=access|error|app&q=&limit=&since=&until=&status= → LogQueryResult  logs.read
 //   GET    /domains                                     → ApiV1ParentDomain[] (parents allowed)   domains.subdomain
 //   GET    /subdomains                                  → ApiV1Subdomain[] (created by the key)   domains.subdomain
 //   POST   /sites/:id/subdomains {name}                 → ApiV1Subdomain (201)                    domains.subdomain
@@ -69,6 +70,10 @@ const h = (fn: Handler) => (req: Request, res: Response, next: (err?: unknown) =
 const ok = (res: Response, data: unknown, status = 200) => { res.status(status).json({ success: true, data }); };
 
 router.get('/me', h(async (req, res) => ok(res, await keyApi.me(ctxOf(req)))));
+router.get('/guide', h(async (req, res) => {
+  ctxOf(req);
+  res.type('text/markdown; charset=utf-8').send(await keyApi.guide(req, req.query.lang === 'fr' ? 'fr' : 'en'));
+}));
 router.get('/sites', h(async (req, res) => ok(res, await keyApi.listSites(ctxOf(req)))));
 router.post('/sites', h(async (req, res) => ok(res, await keyApi.createSite(ctxOf(req), req, parseBody(createSchema, req.body)), 201)));
 router.get('/sites/:id', h(async (req, res) => ok(res, await keyApi.getSite(ctxOf(req), siteId(req)))));

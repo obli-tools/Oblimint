@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, Bot, Check, Copy, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, BookOpen, Bot, Check, Copy, Download, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
 import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyScope, ApiKeySiteScope, Site } from '@oblimint/shared';
-import { API_KEY_SCOPES } from '@oblimint/shared';
+import { API_KEY_SCOPES, apiKeyGuide, type ApiGuideLang } from '@oblimint/shared';
 import { apiKeysApi } from '@/api/apiKeys.api';
 import { sitesApi } from '@/api/sites.api';
 import { Button } from '@/components/common/Button';
@@ -11,19 +11,22 @@ import { IconButton } from '@/components/common/IconButton';
 import { Modal } from '@/components/common/Modal';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { useConfirm } from '@/components/common/ConfirmDialog';
+import { MarkdownView } from '@/components/common/MarkdownView';
 import { copyText } from '@/utils/clipboard';
+import { saveText } from '@/utils/download';
 import { cn } from '@/utils/cn';
 import { Card, EmptyState, Pill, inputCls, labelCls, toastHostingError } from './hostingUi';
 
 // « Clés d'accès » of an account: keys for scripts, CI and AI agents (API
 // /api/v1, MCP server /mcp). The secret is shown once, with the commands to
-// plug it into Claude Code or curl.
+// plug it into Claude Code or curl. The API / agent guide (shared/src/apiGuide.ts)
+// is readable here and downloadable as .md, to hand to an agent.
 
 const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'files.read': ['Read files', 'List and read the files of its sites (code and data).'],
   'files.write': ['Write files', 'Create, replace, move, delete, extract archives in its sites.'],
   'releases.publish': ['Publish', 'Publish the code as a new release (live) and roll back.'],
-  'sites.manage': ['Site settings', 'Change the settings of its sites (runtime, docroot…).'],
+  'sites.manage': ['Site settings', 'Change the settings of its sites (name, docroot, publish mode, PHP…).'],
   'sites.create': ['Create sites', 'Create sites in the account: they join the key automatically.'],
   'domains.subdomain': ['Subdomains', 'Attach to its sites subdomains of a domain already in the account (never a new domain), remove the ones it created.'],
   'logs.read': ['Read logs', 'Access / error / application logs of its sites.'],
@@ -48,6 +51,7 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
   const [sites, setSites] = useState<Site[]>([]);
   const [editing, setEditing] = useState<ApiKey | 'new' | null>(null);
   const [created, setCreated] = useState<ApiKeyCreated | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -85,7 +89,12 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
       <Card
         icon={<KeyRound size={14} className="text-accent" />}
         title={t('apiKeys.title') || 'Access keys'}
-        actions={<Button size="sm" onClick={() => setEditing('new')}><Plus className="mr-1 h-3.5 w-3.5" />{t('apiKeys.create') || 'New key'}</Button>}
+        actions={(
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setGuideOpen(true)}><BookOpen className="mr-1 h-3.5 w-3.5" />{t('apiKeys.guide') || 'API & AI agent guide'}</Button>
+            <Button size="sm" onClick={() => setEditing('new')}><Plus className="mr-1 h-3.5 w-3.5" />{t('apiKeys.create') || 'New key'}</Button>
+          </div>
+        )}
       >
         <p className="text-xs text-text-muted">
           {t('apiKeys.intro') || 'Give a script, a CI or an AI agent (Claude…) access to this account only, limited to the sites and rights you choose. A key never exceeds your own rights and stops working if you lose them.'}
@@ -153,7 +162,8 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
           onSaved={(k) => { setEditing(null); if ('key' in k) setCreated(k as ApiKeyCreated); void load(); }}
         />
       )}
-      {created && <CreatedModal created={created} onClose={() => setCreated(null)} />}
+      {created && <CreatedModal created={created} onClose={() => setCreated(null)} onGuide={() => setGuideOpen(true)} />}
+      {guideOpen && <GuideModal onClose={() => setGuideOpen(false)} />}
     </div>
   );
 }
@@ -281,7 +291,7 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
   );
 }
 
-function CreatedModal({ created, onClose }: { created: ApiKeyCreated; onClose: () => void }) {
+function CreatedModal({ created, onClose, onGuide }: { created: ApiKeyCreated; onClose: () => void; onGuide: () => void }) {
   const { t } = useTranslation();
   const origin = panelOrigin();
   const mcp = `claude mcp add --transport http oblimint ${origin}/mcp --header "Authorization: Bearer ${created.key}"`;
@@ -301,7 +311,45 @@ function CreatedModal({ created, onClose }: { created: ApiKeyCreated; onClose: (
         <p className="text-[11px] text-text-muted">
           {t('apiKeys.docHint') || 'API: /api/v1 (sites, files, publish, releases, logs). MCP: the same tools for an AI agent. Every action is logged in the audit log with the key name.'}
         </p>
+        <button type="button" onClick={onGuide} className="flex items-center gap-1.5 text-xs text-accent hover:underline">
+          <BookOpen className="h-3.5 w-3.5" />{t('apiKeys.guideHint') || 'Read the guide, or download it to give it to your agent'}
+        </button>
       </div>
+    </Modal>
+  );
+}
+
+function GuideModal({ onClose }: { onClose: () => void }) {
+  const { t, i18n } = useTranslation();
+  const [lang, setLang] = useState<ApiGuideLang>(i18n.language.startsWith('fr') ? 'fr' : 'en');
+  const [copied, setCopied] = useState(false);
+  const md = apiKeyGuide(lang, panelOrigin());
+  const download = async () => {
+    if (!(await saveText(md, `oblimint-api-guide-${lang}.md`, 'text/markdown;charset=utf-8'))) toast.error(t('apiKeys.guideDownloadFailed') || 'The download failed');
+  };
+  return (
+    <Modal open onClose={onClose} size="2xl" icon={<BookOpen className="h-4 w-4 text-accent" />}
+      title={t('apiKeys.guideTitle') || 'API & AI agent guide'}
+      footer={(
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex gap-1">
+            {(['fr', 'en'] as const).map((l) => (
+              <button key={l} type="button" onClick={() => setLang(l)}
+                className={cn('rounded-md px-2 py-1 font-mono text-xs uppercase', lang === l ? 'bg-accent/15 text-accent' : 'text-text-muted hover:text-text-primary')}>{l}</button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => { void copyText(md).then((ok) => { if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); } }); }}>
+              {copied ? <Check className="mr-1 h-3.5 w-3.5 text-status-up" /> : <Copy className="mr-1 h-3.5 w-3.5" />}{t('common.copy') || 'Copy'}
+            </Button>
+            <Button onClick={() => void download()}><Download className="mr-1 h-3.5 w-3.5" />{t('apiKeys.guideDownload') || 'Download (.md)'}</Button>
+          </div>
+        </div>
+      )}>
+      <p className="mb-4 rounded-lg bg-accent/5 p-2.5 text-xs text-text-secondary">
+        {t('apiKeys.guideIntro') || 'Give this file to your AI agent (e.g. "read this guide, then work on my site"): it explains how to connect with a key, develop in staging, publish at the end and roll back. Agents connected through MCP can also read it with the get_guide tool.'}
+      </p>
+      <MarkdownView source={md} />
     </Modal>
   );
 }

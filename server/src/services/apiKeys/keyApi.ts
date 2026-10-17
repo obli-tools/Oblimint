@@ -2,8 +2,9 @@ import type { Request } from 'express';
 import type { Readable } from 'stream';
 import type {
   ApiV1Me, ApiV1ParentDomain, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
-  SiteCreate, StagingStatus,
+  SiteCreate, StagingStatus, ApiGuideLang,
 } from '@oblimint/shared';
+import { apiKeyGuide } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { auditService } from '../audit.service';
@@ -14,6 +15,7 @@ import type { AccountRow, SiteRow } from '../hosting/rows';
 import { domainsService } from '../hosting/domains.service';
 import { sitesService } from '../hosting/sites.service';
 import { releaseForActor } from '../hosting/statusMessage';
+import { appConfigService } from '../appConfig.service';
 import { assertSource, logsService } from '../logs/logs.service';
 import { releaseService } from '../releases/release.service';
 import { apiKeysService, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
@@ -98,6 +100,12 @@ export const keyApi = {
       key: { id: ctx.id, name: ctx.name, scopes: [...ctx.scopes], siteScope: ctx.siteScope, expiresAt: expires?.expires_at ? new Date(expires.expires_at).toISOString() : null },
       account: { id: a.id, username: a.username, primaryDomain: a.primary_domain },
     };
+  },
+
+  /** The API / agent guide (shared/src/apiGuide.ts), with this panel's address in the commands. */
+  async guide(req: Request, lang: ApiGuideLang): Promise<string> {
+    const host = (await appConfigService.get('panel_hostname'))?.trim();
+    return apiKeyGuide(lang, host ? `https://${host}` : `${req.protocol}://${req.get('host') ?? 'localhost'}`);
   },
 
   listSites: (ctx: ApiKeyContext) => siteViews(ctx, null),
