@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -151,6 +152,9 @@ type templateData struct {
 
 	Placeholder bool
 	PHP         bool
+	// LegacyPHP: the image runs PHP 5 (PHP_VERSION of the official image):
+	// php-fpm 5 refuses the pool directives added since (decorate_workers_output, 7.3).
+	LegacyPHP bool
 
 	Docroot       string
 	BasePath      string
@@ -276,6 +280,7 @@ func Render(cfg *SiteConfig, opt Options) (*Output, error) {
 		ReleasesRoot:    releasesRoot,
 		Placeholder:     out.Placeholder,
 		PHP:             opt.PHPFPM,
+		LegacyPHP:       strings.HasPrefix(os.Getenv("PHP_VERSION"), "5."),
 		Docroot:         cfg.Docroot,
 		BasePath:        cfg.BasePath,
 		BasePathAlias:   strings.TrimSuffix(cfg.BasePath, "/"),

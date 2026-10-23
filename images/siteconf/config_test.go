@@ -54,7 +54,7 @@ func TestValidationTable(t *testing.T) {
 		{"site id 0", "siteId", 0},
 		{"negative account", "accountId", -1},
 		{"role", "role", "secondary-3"},
-		{"base", "base", "apache-php5.6"},
+		{"base", "base", "apache-php5.5"},
 		{"base case", "base", "Apache-php8.3"},
 		{"docroot relative", "docroot", "srv/releases/current"},
 		{"docroot other release", "docroot", "/srv/releases/12"},

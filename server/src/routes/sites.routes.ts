@@ -3,6 +3,7 @@ import { validate } from '../middleware/validate';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { sitesService } from '../services/hosting/sites.service';
+import { sitesPhpRuntime } from '../services/docker/phpRuntime';
 import {
   applyProfileSchema, dataPathInputSchema, dataPathUpdateSchema, runtimeInputSchema, siteCreateSchema, siteUpdateSchema,
   type DataPathInputBody, type DataPathUpdateBody, type SiteCreateBody, type SiteUpdateBody,
@@ -12,6 +13,7 @@ import {
 // NO catch-all middleware here: /api/sites/:id/releases*, /staging* (module
 // releases) and /runtime* (module orchestration) are mounted after this router.
 //   GET    /                       ?accountId=&search= → Site[]
+//   GET    /php-runtime            → SitePhpRuntime[] (exact PHP version of the visible sites' containers)
 //   POST   /                       SiteCreate → Site (sites.manage on the account)
 //   GET    /:id                    → Site
 //   PUT    /:id                    SiteUpdate → Site (sites.manage)
@@ -47,6 +49,13 @@ router.get('/', async (req, res, next) => {
       search: typeof req.query.search === 'string' ? req.query.search.slice(0, 200) : undefined,
     });
     res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.get('/php-runtime', async (req, res, next) => {
+  try {
+    const sites = await sitesService.list(await resolveActor(req), {});
+    res.json({ success: true, data: await sitesPhpRuntime(sites) });
   } catch (err) { next(err); }
 });
 

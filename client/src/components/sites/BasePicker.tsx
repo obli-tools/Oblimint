@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Check } from 'lucide-react';
 import { SITE_BASES, type SiteBaseDef, type SiteBaseId } from '@oblimint/shared';
 import { cn } from '@/utils/cn';
-import { Pill, UnmaintainedBadge } from './SiteBadges';
+import { PhpBranchBadges, Pill } from './SiteBadges';
 
 type Group = 'apache' | 'nginx' | 'static';
 
@@ -71,7 +71,7 @@ export function BasePicker({ value, onSelect, markers, isDisabled, compact = fal
                     <span className="font-mono text-[10px] text-text-muted">{b.id}</span>
                     <span className="flex flex-wrap gap-1">
                       {b.htaccess && <Pill tone="muted" className="text-[10px]">.htaccess</Pill>}
-                      {b.unmaintained && <UnmaintainedBadge compact />}
+                      {b.php && <PhpBranchBadges branch={b.php} compact />}
                       {markers?.(b.id)}
                     </span>
                   </button>

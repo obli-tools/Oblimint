@@ -162,7 +162,8 @@
       "limits": "Limites",
       "role": "Rôle",
       "startedAt": "Démarré",
-      "state": "État"
+      "state": "État",
+      "php": "PHP"
     },
     "groups": {
       "apacheHint": "Prend en compte les fichiers .htaccess : le choix habituel pour WordPress, PrestaShop, Joomla.",
@@ -235,8 +236,18 @@
       "phpDowngrade": "Version de PHP plus ancienne que l'actuelle : l'application peut utiliser des fonctions qui n'existent pas.",
       "phpMajorChange": "Changement de version majeure de PHP : vérifiez la compatibilité de l'application et de ses extensions (prévisualisation conseillée).",
       "staticBaseWithPhp": "La base statique n'exécute jamais de PHP, or la release contient des fichiers PHP.",
-      "unmaintainedRuntime": "Cette branche de PHP ne reçoit plus de correctifs de sécurité."
-    }
+      "unmaintainedRuntime": "Cette branche de PHP ne reçoit plus de correctifs de sécurité.",
+      "vulnerableRuntime": "Cette version de PHP a une faille critique connue qui ne sera jamais corrigée (PHPocalypse) : choisissez une version plus récente."
+    },
+    "vulnerable": "Version faillée — {{name}}",
+    "vulnerableShort": "FAILLÉE",
+    "vulnerableBranchHint": "PHP {{version}} est touché par {{name}} ({{cves}}) et ne recevra aucun correctif : passez le site sur une version de PHP plus récente.",
+    "vulnerableFixableHint": "PHP {{version}} est touché par {{name}}, corrigé en {{fixed}} : le conteneur doit être recréé sur l'image mise à jour (Nœuds > Mises à jour, images des sites, redéploiement des sites).",
+    "vulnerableVersion": "PHP {{version}} — faillée ({{name}})",
+    "eolSoon": "Fin de vie le {{date}}",
+    "eolSoonShort": "Fin de vie proche",
+    "eolSoonHint": "Cette branche de PHP ne recevra plus de correctifs de sécurité à partir du {{date}} : prévoyez le passage à une version plus récente.",
+    "phpRunning": "Version de PHP exécutée dans le conteneur"
   },
   "siteRoutes": {
     "add": "Ajouter",
@@ -439,6 +450,15 @@
       "runtime": "Runtime"
     },
     "title": "Sites",
-    "count": "{{count}} site(s)"
+    "count": "{{count}} site(s)",
+    "phpAlert": {
+      "title_one": "{{count}} conteneur exécute une version de PHP faillée",
+      "title_other": "{{count}} conteneurs exécutent une version de PHP faillée",
+      "fixable": "image corrigée disponible : le conteneur doit être recréé",
+      "unfixable": "aucun correctif sur cette branche de PHP : changez la version de PHP du site",
+      "adminHint": "Les images corrigées s'appliquent depuis Nœuds > Mises à jour (images des sites, avec le redéploiement des sites).",
+      "openUpdates": "Ouvrir les mises à jour",
+      "clientHint": "L'hébergeur applique les images corrigées : les conteneurs sont recréés lors de la prochaine mise à jour de la plateforme."
+    }
   }
 }

@@ -17,9 +17,10 @@
  *
  * Fails CLOSED: a script whose real path cannot be determined is refused too.
  * Defines no global symbol (everything stays inside the closure).
- * Compatible with PHP 7.4 → 8.x.
+ * Compatible with PHP 5.6 and 7.4 → 8.x (call_user_func: an immediately
+ * invoked closure is a PHP 7 syntax).
  */
-(static function () {
+call_user_func(static function () {
     $script = isset($_SERVER['SCRIPT_FILENAME']) ? (string) $_SERVER['SCRIPT_FILENAME'] : '';
     // Apache mod_proxy_fcgi may pass "proxy:fcgi://localhost/srv/…" (php-fpm
     // normally strips it already): keep only the path.
@@ -47,4 +48,4 @@
         fwrite(STDERR, "oblimint guard: refusing to run a script outside the release\n");
     }
     exit(PHP_SAPI === 'cli' ? 1 : 0);
-})();
+});

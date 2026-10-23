@@ -102,6 +102,7 @@
       "phpDefaultAssumed": "Version PHP par défaut du serveur supposée (illisible).",
       "phpHtaccessOverride": "Un .htaccess force une autre version PHP dans un sous-dossier : runtime secondaire proposé.",
       "phpIni": "php.ini / .user.ini personnalisé : vérifiez les réglages sur la cible.",
+      "phpLegacy": "PHP {{version}} tourne sur la base PHP 5.6, gardée pour le code ancien le temps de le porter vers PHP 8 : elle ne reçoit aucun correctif de sécurité (PHPocalypse). mysql_* est disponible.",
       "phpNoBase": "PHP 5.x n’a pas de base : le site tourne en PHP 7.4. Les fonctions mysql_* n’existent plus ; testez-le via l’URL d’aperçu avant la bascule.",
       "phpUnmaintained": "Runtime PHP non maintenu (plus de correctifs de sécurité).",
       "phpUpgrade": "Version PHP relevée vers la base disponible la plus proche : testez le site.",

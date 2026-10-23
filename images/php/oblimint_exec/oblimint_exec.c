@@ -32,8 +32,10 @@
  * calling it, but a script only gets into the (per-container) cache after it
  * was compiled through it, and the decision depends only on the real path.
  *
- * Compatible with PHP 7.4 → 8.4 (zend_file_handle.filename and
- * zend_resolve_path() switched to zend_string in 8.1).
+ * Compatible with PHP 5.6 and 7.4 → 8.4 (zend_file_handle.filename and
+ * zend_resolve_path() switched to zend_string in 8.1; PHP 5 has char * names,
+ * TSRMLS arguments and no zend_string). The PHP 5.6 base only exists to run
+ * legacy code while it is ported: the same rule applies to it.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -52,7 +54,31 @@
 #include "ext/standard/info.h"
 #include "zend_compile.h"
 
-#define PHP_OBLIMINT_EXEC_VERSION "1.0.1"
+#define PHP_OBLIMINT_EXEC_VERSION "1.1.0"
+
+/* PHP 5: names are char *, TSRMLS arguments, no ZEND_COLD. PHP 7+: zend_string. */
+#if PHP_VERSION_ID < 70000
+# define OE_TSRMLS_DC TSRMLS_DC
+# define OE_TSRMLS_CC TSRMLS_CC
+# define OE_OPENED(fh) ((fh)->opened_path)
+# define OE_OPNAME(op) ((op)->filename)
+#else
+# define OE_TSRMLS_DC
+# define OE_TSRMLS_CC
+# define OE_OPENED(fh) ZSTR_VAL((fh)->opened_path)
+# define OE_OPNAME(op) ZSTR_VAL((op)->filename)
+#endif
+#if PHP_VERSION_ID >= 80100
+# define OE_FNAME(fh) ZSTR_VAL((fh)->filename)
+#else
+# define OE_FNAME(fh) ((fh)->filename)
+#endif
+#ifndef ZEND_COLD
+# define ZEND_COLD
+#endif
+#ifndef ZEND_NORETURN
+# define ZEND_NORETURN
+#endif
 
 #ifndef PATH_MAX
 # define PATH_MAX 4096
@@ -64,13 +90,21 @@ ZEND_END_MODULE_GLOBALS(oblimint_exec)
 
 ZEND_DECLARE_MODULE_GLOBALS(oblimint_exec)
 
-#define OEG(v) ZEND_MODULE_GLOBALS_ACCESSOR(oblimint_exec, v)
+#if PHP_VERSION_ID < 70000
+# ifdef ZTS
+#  define OEG(v) TSRMG(oblimint_exec_globals_id, zend_oblimint_exec_globals *, v)
+# else
+#  define OEG(v) (oblimint_exec_globals.v)
+# endif
+#else
+# define OEG(v) ZEND_MODULE_GLOBALS_ACCESSOR(oblimint_exec, v)
+#endif
 
-#if defined(ZTS) && defined(COMPILE_DL_OBLIMINT_EXEC)
+#if PHP_VERSION_ID >= 70000 && defined(ZTS) && defined(COMPILE_DL_OBLIMINT_EXEC)
 ZEND_TSRMLS_CACHE_DEFINE()
 #endif
 
-static zend_op_array *(*oe_orig_compile_file)(zend_file_handle *file_handle, int type) = NULL;
+static zend_op_array *(*oe_orig_compile_file)(zend_file_handle *file_handle, int type OE_TSRMLS_DC) = NULL;
 
 PHP_INI_BEGIN()
 	STD_PHP_INI_ENTRY("oblimint.exec_dirs", "", PHP_INI_SYSTEM, OnUpdateString,
@@ -152,39 +186,43 @@ static int oe_allowed(const char *name, const char *dirs)
  * the opened path when the handle is already open, else zend_resolve_path()
  * (include_path, then the including script's directory), which is exactly
  * what php_stream_open_for_zend() uses for USE_PATH. */
-static int oe_precheck(zend_file_handle *fh, const char *dirs)
+static int oe_precheck(zend_file_handle *fh, const char *dirs OE_TSRMLS_DC)
 {
 	const char *name;
-	zend_string *resolved;
 	int allowed;
+#if PHP_VERSION_ID < 70000
+	char *resolved;
+#else
+	zend_string *resolved;
+#endif
 
 	if (fh->opened_path != NULL) {
-		return oe_allowed(ZSTR_VAL(fh->opened_path), dirs);
+		return oe_allowed(OE_OPENED(fh), dirs);
 	}
-#if PHP_VERSION_ID >= 80100
 	if (fh->filename == NULL) {
 		return -1;
 	}
-	name = ZSTR_VAL(fh->filename);
-#else
-	if (fh->filename == NULL) {
-		return -1;
-	}
-	name = fh->filename;
-#endif
+	name = OE_FNAME(fh);
 	if (strstr(name, "://") != NULL || strncasecmp(name, "data:", 5) == 0) {
 		return oe_allowed(name, dirs);
 	}
 #if PHP_VERSION_ID >= 80100
 	resolved = zend_resolve_path(fh->filename);
-#else
+#elif PHP_VERSION_ID >= 70000
 	resolved = zend_resolve_path(name, strlen(name));
+#else
+	resolved = zend_resolve_path(name, (int) strlen(name) OE_TSRMLS_CC);
 #endif
 	if (resolved == NULL) {
 		return -1;
 	}
+#if PHP_VERSION_ID < 70000
+	allowed = oe_allowed(resolved, dirs);
+	efree(resolved);
+#else
 	allowed = oe_allowed(ZSTR_VAL(resolved), dirs);
 	zend_string_release(resolved);
+#endif
 	return allowed;
 }
 
@@ -197,18 +235,14 @@ static int oe_precheck(zend_file_handle *fh, const char *dirs)
  * which oe_precheck() then judges like any phar:// path, still BEFORE
  * compilation. Opening reads the archive manifest, never runs its code.
  * The compiled file name is the same opened path (post-check safety net). */
-static void oe_open_phar_alias(zend_file_handle *fh)
+static void oe_open_phar_alias(zend_file_handle *fh OE_TSRMLS_DC)
 {
 	const char *name;
 
 	if (fh->opened_path != NULL || fh->type != ZEND_HANDLE_FILENAME || fh->filename == NULL) {
 		return;
 	}
-#if PHP_VERSION_ID >= 80100
-	name = ZSTR_VAL(fh->filename);
-#else
-	name = fh->filename;
-#endif
+	name = OE_FNAME(fh);
 	if (strncasecmp(name, "phar://", 7) != 0 || name[7] == '/' || name[7] == '\0') {
 		return;
 	}
@@ -217,47 +251,56 @@ static void oe_open_phar_alias(zend_file_handle *fh)
 #if PHP_VERSION_ID >= 80100
 	(void) zend_stream_open(fh);
 #else
-	(void) zend_stream_open(name, fh);
+	(void) zend_stream_open(name, fh OE_TSRMLS_CC);
 #endif
 }
 
 static ZEND_COLD ZEND_NORETURN void oe_refuse(const char *name)
 {
+#if PHP_VERSION_ID < 70000
+	/* E_COMPILE_ERROR is fatal: zend_error() bails out, it never returns. */
+	zend_error(E_COMPILE_ERROR,
+		"oblimint: refusing to execute %s: PHP code only runs from the release "
+		"(data paths and /tmp are never executable)", name);
+	abort(); /* unreachable */
+#else
 	zend_error_noreturn(E_COMPILE_ERROR,
 		"oblimint: refusing to execute %s: PHP code only runs from the release "
 		"(data paths and /tmp are never executable)", name);
+#endif
 }
 
-static zend_op_array *oe_compile_file(zend_file_handle *file_handle, int type)
+static zend_op_array *oe_compile_file(zend_file_handle *file_handle, int type OE_TSRMLS_DC)
 {
 	const char *dirs = OEG(exec_dirs);
 	zend_op_array *op_array;
 
 	if (dirs == NULL || dirs[0] == '\0') {
-		return oe_orig_compile_file(file_handle, type);
+		return oe_orig_compile_file(file_handle, type OE_TSRMLS_CC);
 	}
 
-	oe_open_phar_alias(file_handle);
-	if (oe_precheck(file_handle, dirs) == 0) {
+	oe_open_phar_alias(file_handle OE_TSRMLS_CC);
+	if (oe_precheck(file_handle, dirs OE_TSRMLS_CC) == 0) {
 		char shown[PATH_MAX];
-#if PHP_VERSION_ID >= 80100
-		const char *name = file_handle->opened_path != NULL ? ZSTR_VAL(file_handle->opened_path)
-			: (file_handle->filename != NULL ? ZSTR_VAL(file_handle->filename) : "(unnamed)");
-#else
-		const char *name = file_handle->opened_path != NULL ? ZSTR_VAL(file_handle->opened_path)
-			: (file_handle->filename != NULL ? file_handle->filename : "(unnamed)");
-#endif
+		const char *name = file_handle->opened_path != NULL ? OE_OPENED(file_handle)
+			: (file_handle->filename != NULL ? OE_FNAME(file_handle) : "(unnamed)");
+
 		snprintf(shown, sizeof(shown), "%s", name);
 		oe_refuse(shown);
 	}
 
-	op_array = oe_orig_compile_file(file_handle, type);
-	if (op_array != NULL && (op_array->filename == NULL || !oe_allowed(ZSTR_VAL(op_array->filename), dirs))) {
+	op_array = oe_orig_compile_file(file_handle, type OE_TSRMLS_CC);
+	if (op_array != NULL && (op_array->filename == NULL || !oe_allowed(OE_OPNAME(op_array), dirs))) {
 		char shown[PATH_MAX];
 
-		snprintf(shown, sizeof(shown), "%s", op_array->filename != NULL ? ZSTR_VAL(op_array->filename) : "(unnamed)");
+		snprintf(shown, sizeof(shown), "%s", op_array->filename != NULL ? OE_OPNAME(op_array) : "(unnamed)");
+#if PHP_VERSION_ID < 70000
+		destroy_op_array(op_array OE_TSRMLS_CC);
+		efree(op_array);
+#else
 		destroy_op_array(op_array);
 		efree_size(op_array, sizeof(zend_op_array));
+#endif
 		oe_refuse(shown);
 	}
 	return op_array;
@@ -265,7 +308,7 @@ static zend_op_array *oe_compile_file(zend_file_handle *file_handle, int type)
 
 static PHP_GINIT_FUNCTION(oblimint_exec)
 {
-#if defined(ZTS) && defined(COMPILE_DL_OBLIMINT_EXEC)
+#if PHP_VERSION_ID >= 70000 && defined(ZTS) && defined(COMPILE_DL_OBLIMINT_EXEC)
 	ZEND_TSRMLS_CACHE_UPDATE();
 #endif
 	oblimint_exec_globals->exec_dirs = NULL;

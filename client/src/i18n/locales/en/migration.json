@@ -102,6 +102,7 @@
       "phpDefaultAssumed": "Default PHP version of the server assumed (not readable).",
       "phpHtaccessOverride": "A .htaccess forces another PHP version in a sub-directory: secondary runtime proposed.",
       "phpIni": "Custom php.ini / .user.ini: check the settings on the target.",
+      "phpLegacy": "PHP {{version}} runs on the PHP 5.6 base, kept for legacy code while it is ported to PHP 8: it gets no security fix (PHPocalypse). mysql_* is available.",
       "phpNoBase": "PHP 5.x has no base: the site runs on PHP 7.4. mysql_* functions are gone; test it through the preview URL before the switch.",
       "phpUnmaintained": "Unmaintained PHP runtime (no more security fixes).",
       "phpUpgrade": "PHP version raised to the nearest available base: test the site.",

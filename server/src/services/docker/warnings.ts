@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { RuntimeWarning, SiteBaseId } from '@oblimint/shared';
-import { siteBaseDef } from '@oblimint/shared';
+import { phpAdvisoriesUnfixedOnBranch, siteBaseDef } from '@oblimint/shared';
 
 // Warnings shown before a base switch (ARCHITECTURE §3.1): pure decision +
 // a bounded, symlink-safe scan of the current release (R1: lstat only, never
@@ -85,6 +85,10 @@ export function switchWarnings(input: SwitchWarningInput): RuntimeWarning[] {
   const out: RuntimeWarning[] = [];
   if (input.release?.hasHtaccess && !tgt.htaccess) {
     out.push({ code: 'htaccessIgnored', message: `The current release contains .htaccess files: ${tgt.id} (nginx) ignores them. Convert the rewrite rules into the custom nginx rules of the site.` });
+  }
+  const unfixed = tgt.php ? phpAdvisoriesUnfixedOnBranch(tgt.php) : [];
+  if (unfixed.length) {
+    out.push({ code: 'vulnerableRuntime', message: `PHP ${tgt.php} is affected by ${unfixed.map((a) => a.name).join(', ')} and gets no fix: choose a newer PHP version.` });
   }
   if (tgt.unmaintained) {
     out.push({ code: 'unmaintainedRuntime', message: `PHP ${tgt.php} no longer receives security updates.` });

@@ -85,6 +85,7 @@ const (
 
 // siteBases mirrors SITE_BASES (shared/src/hosting.ts): base id → engine.
 var siteBases = map[string]Engine{
+	"apache-php5.6": EngineApache,
 	"apache-php7.4": EngineApache,
 	"apache-php8.1": EngineApache,
 	"apache-php8.2": EngineApache,

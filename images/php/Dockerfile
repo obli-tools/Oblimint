@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # ─────────────────────────────────────────────────────────────────────────────
 # Oblimint PHP site bases: meejay/oblimint-<engine>-php<version>
-#   apache-php7.4 … apache-php8.4 (Apache + php-fpm, .htaccess honoured)
+#   apache-php5.6, apache-php7.4 … apache-php8.4 (Apache + php-fpm, .htaccess honoured)
+#   (5.6: legacy code only, while it is ported — no security fix exists)
 #   nginx-php8.1  … nginx-php8.4  (nginx + php-fpm)
 #
 # Build context: the images/ directory (see images/build.sh):
@@ -33,8 +34,8 @@ RUN go vet ./... \
 FROM ${IPE_IMAGE} AS ipe
 
 # ── Site base ────────────────────────────────────────────────────────────────
-# php:7.4-fpm-alpine still exists (Alpine 3.16, EOL — the panel flags the
-# 7.4 / 8.1 bases as "unmaintained runtime").
+# php:7.4-fpm-alpine (Alpine 3.16) and php:5.6-fpm-alpine (Alpine 3.8) still
+# exist, both EOL: the panel flags those bases (unmaintained, vulnerable).
 FROM php:${PHP_VERSION}-fpm-alpine
 ARG PHP_VERSION
 ARG ENGINE=apache
@@ -51,7 +52,8 @@ COPY --from=ipe /usr/bin/install-php-extensions /usr/local/bin/install-php-exten
 # Web server (Alpine packages: Apache 2.4 + mod_proxy_fcgi, or nginx), tini
 # (PID 1, signal forwarding, zombie reaping), msmtp (PHP mail() → site relay, P4),
 # then the PHP extensions the supported CMSs need (WordPress, PrestaShop,
-# Joomla, Drupal, Laravel). xml, mbstring, curl are built into the official
+# Joomla, Drupal, Laravel); PHP 5 also gets the old mysql_* extension (removed
+# in PHP 7) that legacy code uses. xml, mbstring, curl are built into the official
 # image; gd gets jpeg / webp / freetype from the installer. The default
 # php-fpm pools are removed (the rendered pool is loaded with php-fpm -y).
 RUN set -eux; \
@@ -61,7 +63,8 @@ RUN set -eux; \
         *) echo "ENGINE must be apache or nginx (got '$ENGINE')" >&2; exit 1 ;; \
     esac; \
     apk add --no-cache $web tini msmtp ca-certificates; \
-    install-php-extensions gd intl mysqli pdo_mysql pdo_pgsql zip opcache exif bcmath soap; \
+    legacy=""; case "$PHP_VERSION" in 5.*) legacy="mysql" ;; esac; \
+    install-php-extensions gd intl mysqli pdo_mysql pdo_pgsql zip opcache exif bcmath soap $legacy; \
     rm -f /usr/local/bin/install-php-extensions; \
     rm -f /usr/local/etc/php-fpm.d/*.conf; \
     rm -rf /var/cache/apk/* /tmp/*

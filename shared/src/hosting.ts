@@ -15,6 +15,7 @@ import type { OverQuotaAction, OverQuotaState } from './usage';
 // ─── SITE BASES (ARCHITECTURE §3.1) ──────────────────────────────────────────
 
 export type SiteBaseId =
+  | 'apache-php5.6'
   | 'apache-php7.4'
   | 'apache-php8.1'
   | 'apache-php8.2'
@@ -59,6 +60,8 @@ export const SITE_BASES: readonly SiteBaseDef[] = [
   base('apache-php8.2', 'apache', '8.2', false),
   base('apache-php8.1', 'apache', '8.1', true),
   base('apache-php7.4', 'apache', '7.4', true),
+  // Legacy code only, while it is ported to PHP 8 (no security fix exists, PHPocalypse).
+  base('apache-php5.6', 'apache', '5.6', true),
   base('nginx-php8.4', 'nginx', '8.4', false),
   base('nginx-php8.3', 'nginx', '8.3', false),
   base('nginx-php8.2', 'nginx', '8.2', false),
@@ -926,9 +929,11 @@ export interface RuntimeContainerStatus {
   health: string | null;
   memoryLimitMb: number | null;
   cpuLimit: number | null;
+  /** Exact PHP version of the image the container was created from (PHP_VERSION); null: static or unknown. */
+  phpVersion: string | null;
 }
 
-export type RuntimeWarningCode = 'htaccessIgnored' | 'unmaintainedRuntime' | 'phpDowngrade' | 'phpMajorChange' | 'staticBaseWithPhp' | 'imageMissing';
+export type RuntimeWarningCode = 'htaccessIgnored' | 'unmaintainedRuntime' | 'vulnerableRuntime' | 'phpDowngrade' | 'phpMajorChange' | 'staticBaseWithPhp' | 'imageMissing';
 
 export interface RuntimeWarning {
   code: RuntimeWarningCode;

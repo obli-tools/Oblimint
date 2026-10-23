@@ -22,7 +22,7 @@ test('apache → nginx with .htaccess in the release warns', () => {
 
 test('unmaintained target, downgrade and major change', () => {
   const w = switchWarnings({ current: 'apache-php8.3', target: 'apache-php7.4', release: none, imagePresent: true, imageRef: 'x' });
-  assert.deepEqual(codes(w), ['phpDowngrade', 'phpMajorChange', 'unmaintainedRuntime']);
+  assert.deepEqual(codes(w), ['phpDowngrade', 'phpMajorChange', 'unmaintainedRuntime', 'vulnerableRuntime']);
   assert.deepEqual(codes(switchWarnings({ current: 'apache-php8.4', target: 'nginx-php8.2', release: none, imagePresent: true, imageRef: 'x' })), ['phpDowngrade']);
   assert.deepEqual(codes(switchWarnings({ current: 'apache-php7.4', target: 'apache-php8.3', release: none, imagePresent: true, imageRef: 'x' })), ['phpMajorChange']);
 });

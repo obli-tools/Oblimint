@@ -39,7 +39,7 @@ test('site slugs, docroots, base paths, healthchecks', () => {
   assert.equal(siteCreateSchema.safeParse(site).success, true);
   for (const slug of ['-blog', 'Blog', 'a'.repeat(41), 'b_log', '']) assert.equal(siteCreateSchema.safeParse({ ...site, slug }).success, false, slug);
   assert.equal(siteCreateSchema.safeParse({ ...site, slug: '0' }).success, true);
-  assert.equal(siteCreateSchema.safeParse({ ...site, base: 'apache-php5.6' }).success, false);
+  assert.equal(siteCreateSchema.safeParse({ ...site, base: 'apache-php5.5' }).success, false);
   const parsed = siteCreateSchema.parse({ ...site, docroot: '/public/', basePath: 'blog' });
   assert.equal(parsed.docroot, 'public');
   assert.equal(parsed.basePath, '/blog/');
@@ -130,7 +130,7 @@ test('plan limits: strict ranges', () => {
   assert.equal(planLimitsSchema.safeParse(DEFAULT_PLAN_LIMITS).success, true);
   const bad: Array<Record<string, unknown>> = [
     { cpuCores: 0.05 }, { cpuCores: 65 }, { memoryMb: 63 }, { memoryMb: 65537 }, { pidsLimit: 31 }, { pidsLimit: 5000 },
-    { diskMb: -1 }, { maxSites: 1.5 }, { allowedBases: [] }, { allowedBases: ['apache-php5.6'] }, { unknownKey: 1 },
+    { diskMb: -1 }, { maxSites: 1.5 }, { allowedBases: [] }, { allowedBases: ['apache-php5.5'] }, { unknownKey: 1 },
   ];
   for (const b of bad) assert.equal(planLimitsSchema.safeParse({ ...DEFAULT_PLAN_LIMITS, ...b }).success, false, JSON.stringify(b));
   const parsed = planLimitsSchema.parse({ ...DEFAULT_PLAN_LIMITS, allowedBases: ['nginx-static', 'nginx-static'], diskMb: null });

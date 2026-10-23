@@ -44,9 +44,9 @@ test('reference: sites grouped by docroot, nested / laravel / bases / secondary 
   assert.ok(main.excludes.includes('error_log'));
 
   const blog = a.sites.find((s) => s.key === 'blog.example.tld')!;
-  assert.equal(blog.base, 'apache-php7.4');
-  assert.ok(codes(a.warnings, 'phpNoBase', 'blog.example.tld').length === 1);
-  assert.equal(codes(a.warnings, 'phpNoBase')[0].severity, 'warning');
+  assert.equal(blog.base, 'apache-php5.6');
+  assert.ok(codes(a.warnings, 'phpLegacy', 'blog.example.tld').length === 1);
+  assert.equal(codes(a.warnings, 'phpLegacy')[0].severity, 'warning');
   assert.equal(codes(a.warnings, 'docrootNested', 'blog.example.tld')[0].params?.parent, 'example.tld');
 
   const shop = a.sites.find((s) => s.key === 'shop.tld')!;
@@ -72,8 +72,8 @@ test('selectBase table: every PHP version + static + choice + nginx with htacces
   const table: Array<[string | null, string, string | null]> = [
     ['8.4', 'apache-php8.4', null], ['8.3', 'apache-php8.3', null], ['8.2', 'apache-php8.2', null],
     ['8.1', 'apache-php8.1', 'phpUnmaintained'], ['8.0', 'apache-php8.1', 'phpUpgrade'], ['7.4', 'apache-php7.4', 'phpUnmaintained'],
-    ['7.3', 'apache-php7.4', 'phpUpgrade'], ['7.0', 'apache-php7.4', 'phpUpgrade'], ['5.6', 'apache-php7.4', 'phpNoBase'],
-    ['5.3', 'apache-php7.4', 'phpNoBase'], ['73', 'apache-php7.4', 'phpUpgrade'], [null, 'apache-php8.3', null],
+    ['7.3', 'apache-php7.4', 'phpUpgrade'], ['7.0', 'apache-php7.4', 'phpUpgrade'], ['5.6', 'apache-php5.6', 'phpLegacy'],
+    ['5.3', 'apache-php5.6', 'phpLegacy'], ['73', 'apache-php7.4', 'phpUpgrade'], [null, 'apache-php8.3', null],
   ];
   for (const [v, base, code] of table) {
     assert.deepEqual(mapPhpVersion(v), { base, code }, `version ${v}`);

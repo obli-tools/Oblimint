@@ -1,7 +1,7 @@
 import apiClient from './client';
 import type {
   ApiResponse, AppProfileId, Site, SiteCreate, SiteDataPath, SiteDataPathInput, SiteRoute, SiteRuntime,
-  SiteRuntimeInput, SiteUpdate,
+  SitePhpRuntime, SiteRuntimeInput, SiteUpdate,
 } from '@oblimint/shared';
 
 // /api/sites (+ /data-paths, /runtimes, /routes) — docs/P1-PLAN.md §API.
@@ -9,6 +9,12 @@ import type {
 export const sitesApi = {
   async list(params: { accountId?: number; search?: string } = {}): Promise<Site[]> {
     const res = await apiClient.get<ApiResponse<Site[]>>('/sites', { params });
+    return res.data.data ?? [];
+  },
+
+  /** Exact PHP version of the containers of the visible sites (advisories). */
+  async phpRuntime(): Promise<SitePhpRuntime[]> {
+    const res = await apiClient.get<ApiResponse<SitePhpRuntime[]>>('/sites/php-runtime');
     return res.data.data ?? [];
   },
 

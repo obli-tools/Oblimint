@@ -2,7 +2,8 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ArrowRightLeft, FileDiff, FileMinus, FilePen, FilePlus, Loader2 } from 'lucide-react';
 import {
-  siteBaseDef, type DataPathPolicy, type DiffFileStatus, type PublishMode, type ReleaseStatus, type ScanVerdict, type SiteBaseId,
+  PHP_ADVISORIES, PHP_BRANCH_EOL, phpAdvisoriesForVersion, phpAdvisoriesUnfixedOnBranch, phpBranchOf, phpEolState, siteBaseDef,
+  type DataPathPolicy, type DiffFileStatus, type PublishMode, type ReleaseStatus, type ScanVerdict, type SiteBaseId,
   type SiteStatus,
 } from '@oblimint/shared';
 import { cn } from '@/utils/cn';
@@ -69,11 +70,68 @@ export function useBaseLabel(): (base: SiteBaseId) => string {
 export function UnmaintainedBadge({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
   return (
-    <Pill tone="red" title={t('runtime.unmaintainedHint') || 'This PHP branch no longer receives security fixes.'}>
+    <Pill tone="amber" title={t('runtime.unmaintainedHint') || 'This PHP branch no longer receives security fixes.'}>
       <AlertTriangle className="h-3 w-3" />
       {compact ? (t('runtime.unmaintainedShort') || 'EOL') : (t('runtime.unmaintained') || 'Unmaintained runtime')}
     </Pill>
   );
+}
+
+/** Big red « /!\ » chip: a known critical flaw (PHPocalypse…) affects this PHP version. */
+export function VulnerableBadge({ label, title }: { label: string; title?: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-red-500 bg-red-600 px-2 py-0.5 text-xs font-bold text-white shadow-sm"
+      title={title}
+    >
+      <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.75} />
+      {label}
+    </span>
+  );
+}
+
+/** A PHP BRANCH ('8.1'): red when a flaw has no fix on it, amber when out of (or close to the end of) security support. */
+export function PhpBranchBadges({ branch, compact = false, showEol = true }: { branch: string; compact?: boolean; showEol?: boolean }) {
+  const { t, i18n } = useTranslation();
+  const unfixed = phpAdvisoriesUnfixedOnBranch(branch);
+  const eol = phpEolState(branch);
+  const names = unfixed.map((a) => a.name).join(', ');
+  const eolDate = PHP_BRANCH_EOL[branch] ? new Date(`${PHP_BRANCH_EOL[branch]}T12:00:00Z`).toLocaleDateString(i18n.language) : '';
+  return (
+    <>
+      {unfixed.length > 0 && (
+        <VulnerableBadge
+          label={compact ? (t('runtime.vulnerableShort') || 'Vulnerable') : t('runtime.vulnerable', { name: names, defaultValue: 'Vulnerable version — {{name}}' })}
+          title={t('runtime.vulnerableBranchHint', { version: branch, name: names, cves: unfixed.flatMap((a) => a.cves).join(', '), defaultValue: 'PHP {{version}} is affected by {{name}} ({{cves}}) and will get no fix: move the site to a newer PHP version.' })}
+        />
+      )}
+      {showEol && eol === 'eol' && <UnmaintainedBadge compact={compact} />}
+      {showEol && eol === 'soon' && (
+        <Pill tone="amber" title={t('runtime.eolSoonHint', { date: eolDate, defaultValue: 'This PHP branch stops receiving security fixes on {{date}}: plan a move to a newer version.' })}>
+          <AlertTriangle className="h-3 w-3" />
+          {compact ? (t('runtime.eolSoonShort') || 'EOL soon') : t('runtime.eolSoon', { date: eolDate, defaultValue: 'End of life {{date}}' })}
+        </Pill>
+      )}
+    </>
+  );
+}
+
+/**
+ * EXACT PHP version of a running container ('8.2.34'): red « /!\ » when an
+ * advisory affects it, with what fixes it (recreate the container on the
+ * updated image, or change of PHP branch).
+ */
+export function PhpVersionBadge({ version, compact = false }: { version: string; compact?: boolean }) {
+  const { t } = useTranslation();
+  const hits = phpAdvisoriesForVersion(version);
+  if (!hits.length) return <Pill tone="muted" className="font-mono" title={t('runtime.phpRunning') || 'PHP version running in the container'}>PHP {version}</Pill>;
+  const branch = phpBranchOf(version);
+  const fixes = hits.map((a) => a.fixed[branch]).filter(Boolean) as string[];
+  const names = hits.map((a) => a.name).join(', ');
+  const title = fixes.length === hits.length
+    ? t('runtime.vulnerableFixableHint', { version, fixed: fixes.join(', '), name: names, defaultValue: 'PHP {{version}} is affected by {{name}}, fixed in {{fixed}}: the container must be recreated on the updated image (Nodes > Updates, site images, redeploy the sites).' })
+    : t('runtime.vulnerableBranchHint', { version: branch, name: names, cves: hits.flatMap((a) => a.cves).join(', '), defaultValue: 'PHP {{version}} is affected by {{name}} ({{cves}}) and will get no fix: move the site to a newer PHP version.' });
+  return <VulnerableBadge label={compact ? `PHP ${version}` : t('runtime.vulnerableVersion', { version, name: names, defaultValue: 'PHP {{version}} — vulnerable ({{name}})' })} title={title} />;
 }
 
 export function BaseBadge({ base, showUnmaintained = true, compact = false }: { base: SiteBaseId; showUnmaintained?: boolean; compact?: boolean }) {
@@ -82,10 +140,12 @@ export function BaseBadge({ base, showUnmaintained = true, compact = false }: { 
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
       <Pill tone="muted" className="font-mono text-text-secondary" title={base}>{label(base)}</Pill>
-      {showUnmaintained && def.unmaintained && <UnmaintainedBadge compact={compact} />}
+      {def.php && <PhpBranchBadges branch={def.php} compact={compact} showEol={showUnmaintained} />}
     </span>
   );
 }
+
+export const PHP_ADVISORY_NAMES = PHP_ADVISORIES.map((a) => a.name).join(', ');
 
 // ── Publish mode ─────────────────────────────────────────────────────────────
 

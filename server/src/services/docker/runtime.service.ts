@@ -13,6 +13,7 @@ import { previewHostFor } from '../platformSettings';
 import { localPaths } from '../hosting/paths';
 import { errText } from '../setup/docker';
 import { scheduleEdgeSync } from './backends';
+import { phpVersionOfEnv } from './phpRuntime';
 import { containerState, ensureImage, imageExists, inspectContainer, isUnreachable, restartContainer } from './dockerOps';
 import { engineFor } from './engine';
 import { reconcileService, type ReconcileReport } from './reconcile.service';
@@ -119,6 +120,7 @@ function mapInspect(
     health: info?.State?.Health?.Status ?? null,
     memoryLimitMb: memory ? Math.round(memory / 1048576) : null,
     cpuLimit: cpus ? cpus / 1e9 : null,
+    phpVersion: phpVersionOfEnv(info?.Config?.Env),
   };
 }
 

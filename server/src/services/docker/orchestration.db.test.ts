@@ -177,7 +177,7 @@ test('orchestration routes + reconcile on PostgreSQL (PGlite)', { timeout: 300_0
   // ── check / switch / preview / promote ─────────────────────────────────────
   r = await call('POST', `/sites/${siteId}/runtime/check`, asReader, { base: 'apache-php7.4' });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body.data.warnings.map((w: { code: string }) => w.code).sort(), ['imageMissing', 'phpDowngrade', 'phpMajorChange', 'unmaintainedRuntime']);
+  assert.deepEqual(r.body.data.warnings.map((w: { code: string }) => w.code).sort(), ['imageMissing', 'phpDowngrade', 'phpMajorChange', 'unmaintainedRuntime', 'vulnerableRuntime']);
 
   r = await call('POST', `/sites/${siteId}/runtime/switch`, asManager, { base: 'apache-php8.4', mode: 'direct' });
   assert.equal(r.status, 409);

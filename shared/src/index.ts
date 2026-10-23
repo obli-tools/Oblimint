@@ -29,3 +29,5 @@ export * from './apiKeys';
 export * from './siteEnv';
 export * from './backups';
 export * from './apiGuide';
+// PHP advisories and end of life (exact version of the running containers)
+export * from './phpSecurity';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Layers, AlertTriangle, Mail, Boxes } from 'lucide-react';
+import { Layers, Mail, Boxes } from 'lucide-react';
 import type { DbEngine, DbTuningProfile, OverQuotaAction, Plan, PlanInput, PlanLimits, SiteBaseId, SiteEngine } from '@oblimint/shared';
 import { DB_ENGINE_VERSIONS, DB_PROFILE_MEMORY_MB, DEFAULT_PLAN_LIMITS, SITE_BASES } from '@oblimint/shared';
 import { plansApi } from '@/api/plans.api';
@@ -9,7 +9,8 @@ import { Modal } from '@/components/common/Modal';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { cn } from '@/utils/cn';
-import { inputCls, labelCls, sectionTitleCls, Pill, hostingErrorMessage, isStepUpHandled } from './hostingUi';
+import { inputCls, labelCls, sectionTitleCls, hostingErrorMessage, isStepUpHandled } from './hostingUi';
+import { PhpBranchBadges } from '@/components/sites/SiteBadges';
 import { limitToField, parseLimitField } from './hostingFormat';
 
 // P2 non-numeric / non-nullable limits are edited separately (module ui-ops).
@@ -325,11 +326,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
                       <label key={b.id} className="flex cursor-pointer items-center gap-2 text-sm text-text-primary coarse:min-h-10">
                         <input type="checkbox" checked={bases.has(b.id)} onChange={() => toggleBase(b.id)} className="accent-accent" />
                         <span className="font-mono text-[13px]">{b.id}</span>
-                        {b.unmaintained && (
-                          <Pill tone="amber" title={t('plans.form.unmaintainedHint') || 'This PHP branch no longer receives security fixes.'}>
-                            <AlertTriangle size={10} />{t('hostingCommon.unmaintained') || 'unmaintained runtime'}
-                          </Pill>
-                        )}
+                        {b.php && <PhpBranchBadges branch={b.php} compact />}
                       </label>
                     ))}
                   </div>

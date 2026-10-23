@@ -12,13 +12,23 @@
  * the scheme is https and the default port 443 (%{SERVER_PORT}, self
  * referential URLs). The flag is set for each request: the requests of a
  * keep-alive connection are handled one after the other.
+ *
+ * Apache >= 2.4.49 asks the ssl_conn_is_ssl hook (http_ssl.h); older Apache
+ * (the Alpine 3.8 of the PHP 5.6 base) asks the ssl_is_https optional
+ * function that mod_ssl would register (mod_ssl is never loaded here).
  */
 #include "httpd.h"
 #include "http_config.h"
 #include "http_protocol.h"
 #include "http_request.h"
-#include "http_ssl.h"
+#if defined(__has_include)
+# if __has_include("http_ssl.h")
+#  include "http_ssl.h"
+#  define OBLIMINT_SSL_HOOK 1
+# endif
+#endif
 #include "apr_network_io.h"
+#include "apr_optional.h"
 #include "apr_strings.h"
 
 module AP_MODULE_DECLARE_DATA oblimint_https_module;
@@ -65,11 +75,21 @@ static int post_read_request(request_rec *r)
     return DECLINED;
 }
 
+#ifdef OBLIMINT_SSL_HOOK
 static int conn_is_ssl(conn_rec *c)
 {
     conn_state *s = ap_get_module_config(c->conn_config, &oblimint_https_module);
     return s && s->https ? OK : DECLINED;
 }
+#else
+APR_DECLARE_OPTIONAL_FN(int, ssl_is_https, (conn_rec *));
+
+static int ssl_is_https(conn_rec *c)
+{
+    conn_state *s = ap_get_module_config(c->conn_config, &oblimint_https_module);
+    return s && s->https;
+}
+#endif
 
 static const char *http_scheme(const request_rec *r)
 {
@@ -84,7 +104,11 @@ static apr_port_t default_port(const request_rec *r)
 static void register_hooks(apr_pool_t *p)
 {
     ap_hook_post_read_request(post_read_request, NULL, NULL, APR_HOOK_REALLY_FIRST);
+#ifdef OBLIMINT_SSL_HOOK
     ap_hook_ssl_conn_is_ssl(conn_is_ssl, NULL, NULL, APR_HOOK_MIDDLE);
+#else
+    APR_REGISTER_OPTIONAL_FN(ssl_is_https);
+#endif
     ap_hook_http_scheme(http_scheme, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_default_port(default_port, NULL, NULL, APR_HOOK_MIDDLE);
 }

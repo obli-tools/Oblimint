@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { AlertTriangle, ArrowRightLeft, Check, Eye, Layers, Loader2, Plus, RefreshCw, RotateCw, Square, Trash2, ExternalLink } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
-  HostingSocketEvents, SITE_BASES, isSiteBaseId, siteBaseDef,
+  HostingSocketEvents, SITE_BASES, isSiteBaseId, phpAdvisoriesUnfixedOnBranch, siteBaseDef,
   type ContainerState, type HostingChangedPayload, type RuntimeRole, type RuntimeSwitchCheck, type RuntimeWarningCode, type SiteBaseId, type SiteRuntime,
   type SiteRuntimeStatus,
 } from '@oblimint/shared';
@@ -19,7 +19,7 @@ import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { BasePicker } from '../BasePicker';
 import { isBaseAllowed } from '../allowedBases';
-import { BaseBadge, Pill, useBaseLabel, type Tone } from '../SiteBadges';
+import { BaseBadge, PhpVersionBadge, Pill, useBaseLabel, type Tone } from '../SiteBadges';
 import { formatDateTime } from '../siteForm';
 import { isNotImplemented, siteErrorMessage, toastSiteError } from '../siteErrors';
 import { useHostingEvent } from '../useHostingEvent';
@@ -249,6 +249,7 @@ function ContainersTable({ status }: { status: SiteRuntimeStatus }) {
         },
         { id: 'container', header: t('runtime.fields.container') || 'Container', tdClassName: 'font-mono text-xs text-text-secondary', sort: (c) => c.name, cell: (c) => c.name },
         { id: 'base', header: t('runtime.fields.base') || 'Base', sort: (c) => c.base, cell: (c) => <BaseBadge base={c.base} compact /> },
+        { id: 'php', header: t('runtime.fields.php') || 'PHP', sort: (c) => c.phpVersion ?? '', cell: (c) => (c.phpVersion ? <PhpVersionBadge version={c.phpVersion} /> : <span className="text-text-muted">—</span>) },
         { id: 'state', header: t('runtime.fields.state') || 'State', sort: (c) => c.state, cell: (c) => <Pill tone={STATE_TONE[c.state]}>{stateLabel(c.state)}</Pill> },
         { id: 'started', header: t('runtime.fields.startedAt') || 'Started', tdClassName: 'whitespace-nowrap font-mono text-xs text-text-muted', sort: (c) => c.startedAt ?? '', cell: (c) => formatDateTime(c.startedAt, i18n.language) },
         {
@@ -292,6 +293,7 @@ function SwitchModal({ siteId, from, to, previewRunning, onClose, onDone }: {
   const warningText = (code: RuntimeWarningCode, fallback: string) => ({
     htaccessIgnored: t('runtime.warnings.htaccessIgnored') || fallback,
     unmaintainedRuntime: t('runtime.warnings.unmaintainedRuntime') || fallback,
+    vulnerableRuntime: t('runtime.warnings.vulnerableRuntime') || fallback,
     phpDowngrade: t('runtime.warnings.phpDowngrade') || fallback,
     phpMajorChange: t('runtime.warnings.phpMajorChange') || fallback,
     staticBaseWithPhp: t('runtime.warnings.staticBaseWithPhp') || fallback,
@@ -477,7 +479,7 @@ function SecondaryRuntimes({ site, canManage, allowedBases }: { site: SiteTabPro
           <select value={newBase} onChange={(e) => setNewBase(e.target.value as SiteBaseId | '')} className={`${fieldCls} sm:w-64`} aria-label={t('runtime.fields.base') || 'Base'}>
             <option value="">{t('runtime.secondary.pickBase') || 'Choose a base…'}</option>
             {SITE_BASES.filter((b) => b.id !== site.base).map((b) => (
-              <option key={b.id} value={b.id} disabled={!isBaseAllowed(allowedBases, b.id)}>{baseLabel(b.id)}{b.unmaintained ? ` — ${t('runtime.unmaintained') || 'Unmaintained runtime'}` : ''}{isBaseAllowed(allowedBases, b.id) ? '' : ` (${t('runtime.notInPlan') || 'not in plan'})`}</option>
+              <option key={b.id} value={b.id} disabled={!isBaseAllowed(allowedBases, b.id)}>{baseLabel(b.id)}{b.php && phpAdvisoriesUnfixedOnBranch(b.php).length ? ` — /!\\ ${t('runtime.vulnerableShort') || 'Vulnerable'}` : b.unmaintained ? ` — ${t('runtime.unmaintained') || 'Unmaintained runtime'}` : ''}{isBaseAllowed(allowedBases, b.id) ? '' : ` (${t('runtime.notInPlan') || 'not in plan'})`}</option>
             ))}
           </select>
           <Button size="sm" variant="secondary" onClick={() => void add()} loading={adding} disabled={!newBase || !isBaseAllowed(allowedBases, newBase)}>

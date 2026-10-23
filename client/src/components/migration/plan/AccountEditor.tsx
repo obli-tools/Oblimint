@@ -2,13 +2,14 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus, Trash2 } from 'lucide-react';
 import {
-  APP_PROFILES, SITE_BASES,
+  APP_PROFILES, SITE_BASES, phpAdvisoriesUnfixedOnBranch,
   type AppProfileId, type CwpAccount, type CwpDomain, type CwpInventory, type MigrationAccountChoice, type MigrationAccountPlan,
   type MigrationDomainChoice, type MigrationTargetCatalog, type PlannedSite, type SiteBaseId,
 } from '@oblimint/shared';
 import { IconButton } from '@/components/common/IconButton';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { Pill, inputCls, labelCls, selectCls } from '@/components/hosting/hostingUi';
+import { PhpBranchBadges } from '@/components/sites/SiteBadges';
 import { cn } from '@/utils/cn';
 import { formatBytes, warningsFor } from '../migrationFormat';
 import { FollowUpList, InventoryStatus, WarningList, checkboxCls, useByteUnits, type InventoryLoad } from '../migrationUi';
@@ -46,9 +47,9 @@ export function BaseSelect({ value, onChange, allowed, detected, id }: { value: 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <select id={id} className={cn(smallSelect, 'w-auto min-w-[10rem]')} value={value} onChange={(e) => onChange(e.target.value as SiteBaseId)}>
-        {list.map((b) => <option key={b.id} value={b.id}>{b.id}{b.unmaintained ? ` — ${t('migration.editor.unmaintainedShort') || 'unmaintained'}` : ''}</option>)}
+        {list.map((b) => <option key={b.id} value={b.id}>{b.id}{b.php && phpAdvisoriesUnfixedOnBranch(b.php).length ? ` — /!\\ ${t('runtime.vulnerableShort') || 'Vulnerable'}` : b.unmaintained ? ` — ${t('migration.editor.unmaintainedShort') || 'unmaintained'}` : ''}</option>)}
       </select>
-      {def?.unmaintained && <Pill tone="amber">{t('migration.editor.unmaintained') || 'unmaintained runtime'}</Pill>}
+      {def?.php && <PhpBranchBadges branch={def.php} />}
       {detected !== undefined && <span className="font-mono text-[11px] text-text-muted">{t('migration.editor.detectedPhp', { version: detected ?? '—', defaultValue: 'source: PHP {{version}}' })}</span>}
     </div>
   );

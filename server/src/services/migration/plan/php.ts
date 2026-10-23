@@ -9,7 +9,8 @@ import { siteBaseDef, type CwpPhpInfo, type MigrationSeverity, type SiteBaseId }
 //   8.0             → apache-php8.1 + phpUpgrade
 //   7.4             → apache-php7.4 + phpUnmaintained
 //   7.0 – 7.3       → apache-php7.4 + phpUpgrade
-//   5.x (D-PHP56)   → apache-php7.4 + phpNoBase (no 5.6 image)
+//   5.x (D-PHP56)   → apache-php5.6 + phpLegacy (legacy base: no security fix,
+//                     the code is to be ported to PHP 8)
 //   none / static   → apache-php8.3
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -45,7 +46,7 @@ export function normalizePhpVersion(v: string | null | undefined): string | null
 }
 
 /** Mapping of a PHP version to its Apache base (pure table D-PHP). */
-export function mapPhpVersion(version: string | null): { base: SiteBaseId; code: 'phpUnmaintained' | 'phpUpgrade' | 'phpNoBase' | null } {
+export function mapPhpVersion(version: string | null): { base: SiteBaseId; code: 'phpUnmaintained' | 'phpUpgrade' | 'phpLegacy' | null } {
   const v = normalizePhpVersion(version);
   if (!v) return { base: 'apache-php8.3', code: null };
   const [major, minor] = v.split('.').map(Number);
@@ -55,7 +56,7 @@ export function mapPhpVersion(version: string | null): { base: SiteBaseId; code:
   if (major === 8) return { base: 'apache-php8.1', code: 'phpUpgrade' };
   if (major === 7 && minor >= 4) return { base: 'apache-php7.4', code: 'phpUnmaintained' };
   if (major === 7) return { base: 'apache-php7.4', code: 'phpUpgrade' };
-  return { base: 'apache-php7.4', code: 'phpNoBase' };
+  return { base: 'apache-php5.6', code: 'phpLegacy' };
 }
 
 export function selectBase(php: CwpPhpInfo | null, opts: SelectBaseOptions = {}): SelectedBase {
@@ -69,7 +70,7 @@ export function selectBase(php: CwpPhpInfo | null, opts: SelectBaseOptions = {})
     base = mapped.base;
     if (mapped.code === 'phpUnmaintained') warnings.push({ severity: 'info', code: 'phpUnmaintained', params: { version: source, base } });
     else if (mapped.code === 'phpUpgrade') warnings.push({ severity: 'warning', code: 'phpUpgrade', params: { version: source, base } });
-    else if (mapped.code === 'phpNoBase') warnings.push({ severity: 'warning', code: 'phpNoBase', params: { version: source, base } });
+    else if (mapped.code === 'phpLegacy') warnings.push({ severity: 'warning', code: 'phpLegacy', params: { version: source, base } });
   }
   const def = siteBaseDef(base);
   if (opts.choice && def.unmaintained) warnings.push({ severity: 'info', code: 'phpUnmaintained', params: { version: source, base } });

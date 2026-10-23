@@ -4,7 +4,7 @@
 #
 #   images/build.sh [--push] [--no-pull] [name…]
 #
-#   name: apache-php7.4 … apache-php8.4, nginx-php8.1 … nginx-php8.4,
+#   name: apache-php5.6, apache-php7.4 … apache-php8.4, nginx-php8.1 … nginx-php8.4,
 #         nginx-static, edge, filesrv, hostd, pdns, phpmyadmin, adminer (P2),
 #         scanner, tools-php7.4 … tools-php8.4 (P3),
 #         mail-postfix, mail-rspamd, mail-stalwart, mail-relay,
@@ -32,7 +32,9 @@ DOCKER=${DOCKER:-docker}
 PUSH=0
 PULL="--pull"
 
-APACHE_PHP="7.4 8.1 8.2 8.3 8.4"
+APACHE_PHP="5.6 7.4 8.1 8.2 8.3 8.4"
+# Tools images (WP-CLI, Composer): not for the legacy 5.6 base.
+TOOLS_PHP="7.4 8.1 8.2 8.3 8.4"
 NGINX_PHP="8.1 8.2 8.3 8.4"
 
 usage() {
@@ -57,7 +59,7 @@ sites="$sites nginx-static"
 infra="edge filesrv hostd pdns phpmyadmin adminer scanner"
 # P3: adapter tools images (WP-CLI, Composer, drush launcher), one per PHP branch of the site bases.
 tools=""
-for v in $APACHE_PHP; do tools="$tools tools-php$v"; done
+for v in $TOOLS_PHP; do tools="$tools tools-php$v"; done
 # P4: mail service (engines, site relay, webmail).
 mail="mail-postfix mail-rspamd mail-stalwart mail-relay webmail-roundcube webmail-snappymail"
 

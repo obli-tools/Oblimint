@@ -140,7 +140,7 @@ A key never has more rights than the human who created it: if they lose a right,
 | \`import_sql\` | Run a \`.sql\` / \`.sql.gz\` dump (uploaded first as a file of a site) into a database | \`databases.manage\` + \`files.read\` |
 | \`read_logs\` | \`error\` (default), \`access\` or \`app\` logs; \`query\` filter, \`limit\` (≤ 2000) | \`logs.read\` |
 
-**Bases (\`base\`)**: \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supported), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (plain HTML/JS/CSS).
+**Bases (\`base\`)**: \`apache-php5.6\` (legacy code being ported only: no security fix), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supported), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (plain HTML/JS/CSS).
 **Profiles (\`app_profile\`)**: \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (document root \`public\`), \`generic-php\`, \`static\`. A profile sets the document root and declares the data folders (e.g. \`wp-content/uploads\`).
 **PHP settings (\`php\`)**: \`{ memoryLimitMb, uploadMaxFilesizeMb, postMaxSizeMb, maxExecutionTime }\`, within the limits of the account's plan.
 
@@ -461,7 +461,7 @@ Une clé n'a jamais plus de droits que l'humain qui l'a créée : s'il perd un d
 | \`import_sql\` | Exécuter un dump \`.sql\` / \`.sql.gz\` (déposé d'abord comme fichier d'un site) dans une base | \`databases.manage\` + \`files.read\` |
 | \`read_logs\` | Journaux \`error\` (par défaut), \`access\` ou \`app\` ; filtre \`query\`, \`limit\` (≤ 2000) | \`logs.read\` |
 
-**Bases (\`base\`)** : \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supporté), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (HTML/JS/CSS pur).
+**Bases (\`base\`)** : \`apache-php5.6\` (code ancien en cours de portage uniquement : aucun correctif de sécurité), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supporté), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (HTML/JS/CSS pur).
 **Profils (\`app_profile\`)** : \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (racine web \`public\`), \`generic-php\`, \`static\`. Un profil règle la racine web et déclare les dossiers de données (ex. \`wp-content/uploads\`).
 **Réglages PHP (\`php\`)** : \`{ memoryLimitMb, uploadMaxFilesizeMb, postMaxSizeMb, maxExecutionTime }\`, dans les limites du plan du compte.
 

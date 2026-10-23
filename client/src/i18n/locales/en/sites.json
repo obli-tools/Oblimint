@@ -162,7 +162,8 @@
       "limits": "Limits",
       "role": "Role",
       "startedAt": "Started",
-      "state": "State"
+      "state": "State",
+      "php": "PHP"
     },
     "groups": {
       "apacheHint": "Honours .htaccess files: the usual choice for WordPress, PrestaShop, Joomla.",
@@ -235,8 +236,18 @@
       "phpDowngrade": "Older PHP version than the current one: the application may use features it lacks.",
       "phpMajorChange": "Major PHP version change: check the compatibility of the application and its extensions (a preview is recommended).",
       "staticBaseWithPhp": "The static base never executes PHP, but the release contains PHP files.",
-      "unmaintainedRuntime": "This PHP branch no longer receives security fixes."
-    }
+      "unmaintainedRuntime": "This PHP branch no longer receives security fixes.",
+      "vulnerableRuntime": "This PHP version has a known critical flaw that will never be fixed (PHPocalypse): choose a newer version."
+    },
+    "vulnerable": "Vulnerable version — {{name}}",
+    "vulnerableShort": "VULNERABLE",
+    "vulnerableBranchHint": "PHP {{version}} is affected by {{name}} ({{cves}}) and will get no fix: move the site to a newer PHP version.",
+    "vulnerableFixableHint": "PHP {{version}} is affected by {{name}}, fixed in {{fixed}}: the container must be recreated on the updated image (Nodes > Updates, site images, redeploy the sites).",
+    "vulnerableVersion": "PHP {{version}} — vulnerable ({{name}})",
+    "eolSoon": "End of life {{date}}",
+    "eolSoonShort": "EOL soon",
+    "eolSoonHint": "This PHP branch stops receiving security fixes on {{date}}: plan a move to a newer version.",
+    "phpRunning": "PHP version running in the container"
   },
   "siteRoutes": {
     "add": "Add",
@@ -439,6 +450,15 @@
       "runtime": "Runtime"
     },
     "title": "Sites",
-    "count": "{{count}} site(s)"
+    "count": "{{count}} site(s)",
+    "phpAlert": {
+      "title_one": "{{count}} container runs a vulnerable PHP version",
+      "title_other": "{{count}} containers run a vulnerable PHP version",
+      "fixable": "patched image available: the container must be recreated",
+      "unfixable": "no fix on this PHP branch: change the PHP version of the site",
+      "adminHint": "The patched images are applied from Nodes > Updates (site images, with the redeployment of the sites).",
+      "openUpdates": "Open the updates",
+      "clientHint": "The host applies the patched images: the containers are recreated during the next platform update."
+    }
   }
 }

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ChevronRight, ExternalLink, Globe, Plus, RefreshCw, Search } from 'lucide-react';
-import { HostingSocketEvents, appProfileDef, type HostingAccount, type HostingChangedPayload, type Site } from '@oblimint/shared';
+import { AlertTriangle, ChevronRight, ExternalLink, Globe, Plus, RefreshCw, Search } from 'lucide-react';
+import { HostingSocketEvents, appProfileDef, type HostingAccount, type HostingChangedPayload, type Site, type SitePhpRuntime } from '@oblimint/shared';
 import { sitesApi } from '@/api/sites.api';
 import { accountsApi } from '@/api/accounts.api';
 import { useHostingMe } from '@/store/hostingStore';
@@ -11,7 +11,8 @@ import { PageContainer } from '@/components/common/PageContainer';
 import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { groupRowsByAccount } from '@/components/common/accountGroups';
 import { CreateSiteModal } from '@/components/sites/CreateSiteModal';
-import { BaseBadge, SiteStatusBadge, usePublishModeLabel } from '@/components/sites/SiteBadges';
+import { BaseBadge, PhpVersionBadge, SiteStatusBadge, usePublishModeLabel } from '@/components/sites/SiteBadges';
+import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { useHostingEvent } from '@/components/sites/useHostingEvent';
 import { siteErrorMessage } from '@/components/sites/siteErrors';
 import { fieldCls } from '@/components/sites/styles';
@@ -33,6 +34,9 @@ export function SitesPage() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [createAccountId, setCreateAccountId] = useState<number | null>(null);
+  // Exact PHP version of every site container: the ones a PHP advisory (PHPocalypse…) affects.
+  const [phpRuntime, setPhpRuntime] = useState<SitePhpRuntime[]>([]);
+  const masterAdmin = useIsMasterTenant();
 
   // Contract with ui-hosting: /sites?create=1&accountId=<id> opens the create
   // modal with the account preselected; the params are cleared afterwards.
@@ -79,12 +83,18 @@ export function SitesPage() {
 
   useEffect(() => { void fetchSites(); }, [fetchSites]);
 
+  const fetchPhpRuntime = useCallback(() => {
+    sitesApi.phpRuntime().then(setPhpRuntime).catch(() => setPhpRuntime([]));
+  }, []);
+  useEffect(() => { fetchPhpRuntime(); }, [fetchPhpRuntime]);
+
   useEffect(() => {
     accountsApi.list().then(setAccounts).catch(() => setAccounts([]));
   }, []);
 
   useHostingEvent<HostingChangedPayload>(HostingSocketEvents.HOSTING_CHANGED, (p) => {
     if (p.entity === 'site' || p.entity === 'account' || p.entity === 'domain') void fetchSites(true);
+    if (p.entity === 'site') fetchPhpRuntime();
   });
   useHostingEvent<{ siteId: number }>(HostingSocketEvents.RELEASE_UPDATED, (p) => {
     if (sites.some((s) => s.id === p.siteId)) void fetchSites(true);
@@ -93,6 +103,22 @@ export function SitesPage() {
   const canCreate = mayCreate;
   const accountName = useMemo(() => new Map(accounts.map((a) => [a.id, a.username])), [accounts]);
   const accountDir = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const vulnerable = useMemo(() => phpRuntime.filter((r) => r.version && r.advisories.length > 0), [phpRuntime]);
+  const vulnerableBySite = useMemo(() => {
+    const m = new Map<number, SitePhpRuntime>();
+    for (const r of vulnerable) if (!m.has(r.siteId) || r.role === 'site') m.set(r.siteId, r);
+    return m;
+  }, [vulnerable]);
+  const siteName = useMemo(() => new Map(sites.map((s) => [s.id, s.name])), [sites]);
+  const baseCell = (x: Site) => {
+    const hit = vulnerableBySite.get(x.id);
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1">
+        <BaseBadge base={x.base} compact />
+        {hit?.version && <PhpVersionBadge version={hit.version} compact />}
+      </span>
+    );
+  };
 
   return (
     <PageContainer className="flex flex-col gap-5">
@@ -148,6 +174,36 @@ export function SitesPage() {
         <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{loadError}</div>
       )}
 
+      {vulnerable.length > 0 && (
+        <div className="rounded-lg border-2 border-red-500 bg-red-500/10 px-4 py-3 text-sm">
+          <div className="flex items-center gap-2 font-bold text-red-400">
+            <AlertTriangle className="h-5 w-5 shrink-0" strokeWidth={2.75} />
+            {t('sites.phpAlert.title', { count: vulnerable.length, defaultValue: '{{count}} container(s) run a vulnerable PHP version' })}
+          </div>
+          <ul className="mt-2 space-y-1">
+            {vulnerable.map((r) => (
+              <li key={r.container} className="flex flex-wrap items-center gap-2">
+                <PhpVersionBadge version={r.version!} compact />
+                <Link to={`/sites/${r.siteId}?tab=runtime`} className="font-medium text-text-primary hover:text-accent">{siteName.get(r.siteId) ?? `#${r.siteId}`}</Link>
+                <span className="font-mono text-[11px] text-text-muted">{r.container}</span>
+                <span className="text-xs text-text-secondary">
+                  {r.fixable
+                    ? (t('sites.phpAlert.fixable') || 'fixed image available: recreate the container')
+                    : (t('sites.phpAlert.unfixable') || 'no fix on this PHP branch: change the PHP version of the site')}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {vulnerable.some((r) => r.fixable) && (
+            <p className="mt-2 text-xs text-text-secondary">
+              {masterAdmin
+                ? <>{t('sites.phpAlert.adminHint') || 'The patched images are recreated from Nodes > Updates (site images, with the redeployment of the sites).'} <Link to="/manage/nodes?tab=updates" className="font-medium text-accent hover:underline">{t('sites.phpAlert.openUpdates') || 'Open the updates'}</Link></>
+                : (t('sites.phpAlert.clientHint') || 'The host applies the patched images: the containers are recreated during the next platform update.')}
+            </p>
+          )}
+        </div>
+      )}
+
       {loading && sites.length === 0 ? (
         <p className="text-sm text-text-muted">{t('common.loading') || 'Loading...'}</p>
       ) : sites.length === 0 && !loadError ? (
@@ -183,7 +239,7 @@ export function SitesPage() {
               <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">{x.slug}</div>
               {x.statusMessage && x.status === 'error' && <div className="mt-1 line-clamp-2 text-[11px] text-red-400/90">{x.statusMessage}</div>}
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
-                <BaseBadge base={x.base} compact />
+                {baseCell(x)}
                 <span>{t('sites.fields.release') || 'Release'}: <span className="font-mono text-text-primary">{x.currentReleaseNumber != null ? `#${x.currentReleaseNumber}` : '—'}</span></span>
                 <span>{publishModeLabel(x.publishMode)}</span>
                 {x.primaryDomain && <span className="truncate font-mono text-text-secondary">{x.primaryDomain}</span>}
@@ -200,7 +256,7 @@ export function SitesPage() {
                 </>
               ),
             },
-            { id: 'base', header: t('sites.fields.base') || 'Base', sort: (x) => x.base, cell: (x) => <BaseBadge base={x.base} compact /> },
+            { id: 'base', header: t('sites.fields.base') || 'Base', sort: (x) => x.base, cell: baseCell },
             {
               id: 'app', header: t('sites.fields.appProfile') || 'Application', tdClassName: 'text-text-secondary',
               sort: (x) => x.appProfile ?? '',
