@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { AlertTriangle, BookOpen, Bot, Check, Copy, Download, KeyRound, Pencil, Plug, Plus, RefreshCw, Trash2, Unplug } from 'lucide-react';
-import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, Site } from '@oblimint/shared';
+import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyDomainScope, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, Domain, Site } from '@oblimint/shared';
 import { API_KEY_SCOPES, apiKeyGuide, type ApiGuideLang } from '@oblimint/shared';
 import { apiKeysApi } from '@/api/apiKeys.api';
 import { sitesApi } from '@/api/sites.api';
+import { domainsApi } from '@/api/domains.api';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { Modal } from '@/components/common/Modal';
@@ -55,6 +56,7 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
   const confirm = useConfirm();
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
+  const [domains, setDomains] = useState<Domain[]>([]);
   const [editing, setEditing] = useState<ApiKey | ApiKeyKind | null>(null);
   const [created, setCreated] = useState<ApiKeyCreated | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -64,6 +66,8 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
       const [k, s] = await Promise.all([apiKeysApi.list(accountId), sitesApi.list({ accountId })]);
       setKeys(k);
       setSites(s);
+      // Domains of the account (to give to a key): none listed without the right to see them.
+      setDomains(await domainsApi.list({ accountId }).catch(() => []));
     } catch (err) {
       toastHostingError(t, err, t('apiKeys.loadFailed') || 'The keys could not be loaded');
       setKeys([]);
@@ -74,6 +78,7 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
 
   const scopeLabel = (s: ApiKeyScope) => t(`apiKeys.scopes.${s}.label`) || SCOPE_FALLBACK[s][0];
   const siteName = (id: number) => { const s = sites.find((x) => x.id === id); return s ? (s.primaryDomain || s.name) : `#${id}`; };
+  const domainName = (id: number) => domains.find((d) => d.id === id)?.name ?? `#${id}`;
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(i18n.language, { dateStyle: 'short', timeStyle: 'short' }) : '—');
 
   const remove = async (k: ApiKey) => {
@@ -170,6 +175,13 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
                               ? <>{t('apiKeys.sitesPrefix') || 'Sites:'} {k.siteIds.map((id) => <span key={id} className="mr-1.5 font-mono">{siteName(id)}{k.createdSiteIds.includes(id) ? '*' : ''}</span>)}</>
                               : (t('apiKeys.noSiteYet') || 'No site yet (only the ones it will create)')}
                         </div>
+                        {(k.domainScope === 'all' || k.domainIds.length > 0) && (
+                          <div className="mt-1 text-xs text-text-secondary">
+                            {k.domainScope === 'all'
+                              ? (t('apiKeys.allDomains') || 'Every domain of the account')
+                              : <>{t('apiKeys.domainsPrefix') || 'Domains:'} {k.domainIds.map((id) => <span key={id} className="mr-1.5 font-mono">{domainName(id)}</span>)}</>}
+                          </div>
+                        )}
                         {k.inactiveScopes.length > 0 && (
                           <p className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-400">
                             <AlertTriangle className="h-3 w-3" />{t('apiKeys.inactiveHint') || 'Some rights are inactive: the key creator no longer holds them.'}
@@ -217,6 +229,7 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
         <KeyModal
           accountId={accountId}
           sites={sites}
+          domains={domains}
           kind={typeof editing === 'string' ? editing : editing.kind}
           initial={typeof editing === 'string' ? null : editing}
           onClose={() => setEditing(null)}
@@ -229,9 +242,10 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
   );
 }
 
-function KeyModal({ accountId, sites, kind, initial, onClose, onSaved }: {
+function KeyModal({ accountId, sites, domains, kind, initial, onClose, onSaved }: {
   accountId: number;
   sites: Site[];
+  domains: Domain[];
   kind: ApiKeyKind;
   initial: ApiKey | null;
   onClose: () => void;
@@ -242,6 +256,8 @@ function KeyModal({ accountId, sites, kind, initial, onClose, onSaved }: {
   const [scopes, setScopes] = useState<Set<ApiKeyScope>>(new Set(initial?.scopes ?? ['files.read', 'files.write', 'releases.publish', 'logs.read']));
   const [siteScope, setSiteScope] = useState<ApiKeySiteScope>(initial?.siteScope ?? 'selected');
   const [siteIds, setSiteIds] = useState<Set<number>>(new Set(initial?.siteIds ?? []));
+  const [domainScope, setDomainScope] = useState<ApiKeyDomainScope>(initial?.domainScope ?? 'selected');
+  const [domainIds, setDomainIds] = useState<Set<number>>(new Set(initial?.domainIds ?? []));
   const [expiry, setExpiry] = useState<string>(initial ? 'keep' : '90');
   const [ips, setIps] = useState((initial?.allowedIps ?? []).join('\n'));
   const [busy, setBusy] = useState(false);
@@ -255,6 +271,10 @@ function KeyModal({ accountId, sites, kind, initial, onClose, onSaved }: {
       scopes: API_KEY_SCOPES.filter((s) => scopes.has(s)),
       siteScope,
       siteIds: siteScope === 'selected' ? [...siteIds] : [],
+      // Domains only when changed: an edit by someone without the domain right keeps the grants in place.
+      ...(!initial || domainScope !== initial.domainScope
+        || [...domainIds].sort().join() !== [...initial.domainIds].sort().join()
+        ? { domainScope, domainIds: domainScope === 'selected' ? [...domainIds] : [] } : {}),
       allowedIps: kind === 'connector' ? (initial?.allowedIps ?? []) : ips.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
     };
     if (expiry !== 'keep') body.expiresAt = days ? new Date(Date.now() + days * 86_400_000).toISOString() : null;
@@ -320,6 +340,29 @@ function KeyModal({ accountId, sites, kind, initial, onClose, onSaved }: {
                   {initial?.createdSiteIds.includes(s.id) && <Pill tone="blue">{t('apiKeys.createdByKey') || 'created by the key'}</Pill>}
                 </label>
               ))}
+            </div>
+          )}
+        </div>
+        <div>
+          <label className={labelCls}>{t('apiKeys.domains') || 'Domains'}</label>
+          <p className="mb-2 text-[11px] text-text-muted">{t('apiKeys.domainsHint') || 'With the Routes right, the key may decide which of its sites serves these domains (or a path of them) — even a domain that serves nothing yet. Without a domain here, it only routes the domains that already serve its sites. Giving domains needs the domain management right.'}</p>
+          <div className="flex flex-wrap gap-3 text-sm">
+            <label className="flex items-center gap-1.5"><input type="radio" checked={domainScope === 'selected'} onChange={() => setDomainScope('selected')} className="accent-[rgb(var(--c-accent))]" />{t('apiKeys.selectedDomains') || 'Only the domains below'}</label>
+            <label className="flex items-center gap-1.5"><input type="radio" checked={domainScope === 'all'} onChange={() => setDomainScope('all')} className="accent-[rgb(var(--c-accent))]" />{t('apiKeys.allDomains') || 'Every domain of the account'}</label>
+          </div>
+          {domainScope === 'selected' && (
+            <div className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-lg bg-bg-tertiary/40 p-2">
+              {!domains.length && <p className="text-xs text-text-muted">{t('apiKeys.noDomains') || 'No domain in this account.'}</p>}
+              {domains.map((d) => {
+                const own = initial?.createdDomainIds.includes(d.id) ?? false;
+                return (
+                  <label key={d.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={own || domainIds.has(d.id)} disabled={own} onChange={() => setDomainIds(toggle(domainIds, d.id))} className="accent-[rgb(var(--c-accent))]" />
+                    <span className="font-mono text-text-primary">{d.name}</span>
+                    {own && <Pill tone="blue">{t('apiKeys.createdByKey') || 'created by the key'}</Pill>}
+                  </label>
+                );
+              })}
             </div>
           )}
         </div>

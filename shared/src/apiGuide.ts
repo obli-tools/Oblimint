@@ -90,7 +90,7 @@ Consequences:
 | \`sites.create\` | Create sites in the account (they join the key automatically) |
 | \`cron.manage\` | Scheduled tasks of its sites: create, change, run, read the output |
 | \`databases.manage\` | Databases: the account's database servers (create one within the plan), databases and users, SQL import / export |
-| \`routes.manage\` | Domain routes: choose which site (or runtime) serves a path, e.g. \`example.com/uploads/\` |
+| \`routes.manage\` | Domain routes: choose which site (or runtime) serves a path, e.g. \`example.com/uploads/\`, towards the key's sites; on the domains given to it in the panel (even one serving nothing yet) or serving only its sites |
 | \`domains.subdomain\` | Attach to the sites **subdomains** of a domain **already in** the account, remove the ones the key created |
 | \`logs.read\` | Read access, error (web server / PHP) and application logs |
 
@@ -415,7 +415,7 @@ Conséquences :
 | \`sites.create\` | Créer des sites dans le compte (ils rejoignent automatiquement la clé) |
 | \`cron.manage\` | Tâches planifiées de ses sites : créer, modifier, lancer, lire le résultat |
 | \`databases.manage\` | Bases de données : serveurs de bases du compte (en créer un dans les limites du plan), bases et utilisateurs, import / export SQL |
-| \`routes.manage\` | Routes des domaines : choisir quel site (ou runtime) sert un chemin, ex. \`exemple.com/uploads/\` |
+| \`routes.manage\` | Routes des domaines : choisir quel site (ou runtime) sert un chemin, ex. \`exemple.com/uploads/\`, vers les sites de la clé ; sur les domaines qui lui sont donnés dans le panel (même un domaine qui ne sert encore rien) ou qui ne servent que ses sites |
 | \`domains.subdomain\` | Rattacher aux sites des **sous-domaines** d'un domaine **déjà présent** sur le compte, retirer ceux créés par la clé |
 | \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs |
 

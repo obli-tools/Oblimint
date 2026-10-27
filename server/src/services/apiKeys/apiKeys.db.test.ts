@@ -283,6 +283,33 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   await keyApi.deleteRoute(c4, fakeReq(), up.id);
   await keyApi.deleteRoute(c4, fakeReq(), mediaRoute.id);
   assert.deepEqual((await keyApi.routes(c4)).find((d) => d.domain === parentName)?.routes.map((r) => r.pathPrefix), ['/']);
+
+  // ── domains given to the key: a domain serving nothing becomes routable (towards its sites only) ──
+  const manualName = `manual.${parentName}`;
+  const manualId = Number(((await db('domains').where({ account_id: acme, name: manualName }).first('id')) as { id: number }).id);
+  await apiKeysService.update(fakeReq(), await actorForUser(owner, tA), acme, k4.id, { domainIds: [manualId] });
+  const listedK4 = (await apiKeysService.list(await actorForUser(owner, tA), acme)).find((k) => k.id === k4.id)!;
+  assert.deepEqual([listedK4.domainScope, listedK4.domainIds, listedK4.createdDomainIds], ['selected', [manualId], []]);
+  const c4g = (await apiKeysService.verify(k4.key!, '203.0.113.7'))!;
+  assert.equal((await keyApi.routes(c4g)).find((d) => d.domain === manualName)?.manageable, true, 'given to the key');
+  const given = await keyApi.addRoute(c4g, fakeReq(), manualName, '/', s1);
+  assert.equal(given.siteId, s1);
+  await assert.rejects(keyApi.addRoute(c4g, fakeReq(), manualName, '/b/', s2), (e: { statusCode: number }) => e.statusCode === 404, 'still only towards its sites');
+  await keyApi.deleteRoute(c4g, fakeReq(), given.id);
+  await apiKeysService.update(fakeReq(), await actorForUser(owner, tA), acme, k4.id, { domainScope: 'all', domainIds: [] });
+  const c4all = (await apiKeysService.verify(k4.key!, '203.0.113.7'))!;
+  assert.equal((await keyApi.routes(c4all)).find((d) => d.domain === mixedName)?.manageable, true, 'every domain of the account given');
+  // Without domains.manage: giving domains is refused, and a grant in place stops counting.
+  await db('account_users').where({ user_id: owner, account_id: acme })
+    .update({ capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish', 'databases.manage']) });
+  await assert.rejects(apiKeysService.update(fakeReq(), await actorForUser(owner, tA), acme, k4.id, { domainIds: [manualId] }),
+    (e: { code: string }) => e.code === 'capabilityNotHeld');
+  const c4n = (await apiKeysService.verify(k4.key!, '203.0.113.7'))!;
+  assert.equal(c4n.domainScope, 'selected');
+  assert.equal(c4n.domainIds.has(manualId), false);
+  await db('account_users').where({ user_id: owner, account_id: acme })
+    .update({ capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish', 'domains.manage', 'databases.manage']) });
+  await apiKeysService.update(fakeReq(), await actorForUser(owner, tA), acme, k4.id, { domainScope: 'selected', domainIds: [] });
   await assert.rejects(keyApi.routes(c3), (e: { code: string }) => e.code === 'keyScope');
 
   // Environment: a change keeps the other variables, a secret is never read back.

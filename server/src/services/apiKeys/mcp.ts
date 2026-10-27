@@ -285,7 +285,7 @@ const TOOLS: ToolDef[] = [
   // ── path routes (routes.manage), secondary runtimes (sites.manage) ──
   {
     name: 'list_routes', title: 'Domains and routes', readOnly: true,
-    description: 'Domains of the account with their path routes (which site — and which runtime of it — serves https://domain/prefix/…; longest prefix wins). manageable: the key may change that domain\'s routes (scope routes.manage).',
+    description: 'Domains of the account with their path routes (which site — and which runtime of it — serves https://domain/prefix/…; longest prefix wins). manageable: the key may change that domain\'s routes (scope routes.manage): a domain given to the key in the panel (even one serving nothing yet), or one whose routes all lead to its sites. Routes always lead to the key\'s own sites.',
     inputSchema: obj({}, []), args: z.object({}).passthrough(),
     run: (ctx) => keyApi.routes(ctx),
   },

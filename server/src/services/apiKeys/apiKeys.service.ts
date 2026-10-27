@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type { Request } from 'express';
-import type { ApiKey, ApiKeyConnection, ApiKeyCreate, ApiKeyCreated, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, ApiKeyUpdate, ClientCapability } from '@oblimint/shared';
+import type { ApiKey, ApiKeyConnection, ApiKeyCreate, ApiKeyCreated, ApiKeyDomainScope, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, ApiKeyUpdate, ClientCapability } from '@oblimint/shared';
 import { API_KEY_SCOPES, MAX_API_KEYS_PER_ACCOUNT } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -21,7 +21,10 @@ import { actorCan, actorForUser, loadAccount, type HostingActor, type HostingNee
 //     capabilities of its effective scopes — the services' own checks
 //     (loadSite, loadAccount…) apply to it unchanged;
 //   - the site restriction (siteScope 'selected' + api_key_sites), enforced
-//     by the key API (routes/v1) on top of the services.
+//     by the key API (routes/v1) on top of the services;
+//   - the domains given to it (domainScope + api_key_domains created_by_key
+//     false): with routes.manage, it routes them to its sites. A grant needs
+//     domains.manage, and stops counting when the user no longer holds it.
 // Managing the keys of an account needs sites.manage on it, and creating /
 // widening a key needs every scope's right (no one hands out rights he lacks).
 //
@@ -40,6 +43,9 @@ export interface ApiKeyContext {
   scopes: ReadonlySet<ApiKeyScope>;
   siteScope: ApiKeySiteScope;
   siteIds: ReadonlySet<number>;
+  domainScope: ApiKeyDomainScope;
+  /** Domains given to the key (while its user holds domains.manage) and the subdomains it created. */
+  domainIds: ReadonlySet<number>;
   /** Actor the services check (client-like, this account only). */
   actor: HostingActor;
 }
@@ -108,7 +114,7 @@ function keyMatches(raw: string, storedHash: string): boolean {
 
 interface KeyRow {
   id: number; tenant_id: number; account_id: number; kind: ApiKeyKind; oauth_client_id: string | null; name: string; token_hash: string; prefix: string;
-  scopes: unknown; site_scope: ApiKeySiteScope; allowed_ips: unknown; created_by: number | null;
+  scopes: unknown; site_scope: ApiKeySiteScope; domain_scope?: ApiKeyDomainScope; allowed_ips: unknown; created_by: number | null;
   last_used_at: Date | string | null; last_used_ip: string | null; expires_at: Date | string | null;
   created_at: Date | string; updated_at: Date | string;
   /** joined */ created_by_name?: string | null;
@@ -138,6 +144,11 @@ async function siteRows(keyIds: number[]): Promise<Array<{ key_id: number; site_
   return db('api_key_sites').whereIn('key_id', keyIds).select('key_id', 'site_id', 'created_by_key');
 }
 
+async function domainRows(keyIds: number[]): Promise<Array<{ key_id: number; domain_id: number; created_by_key: boolean }>> {
+  if (!keyIds.length) return [];
+  return db('api_key_domains').whereIn('key_id', keyIds).select('key_id', 'domain_id', 'created_by_key');
+}
+
 /** Live authorizations of connectors: one per family holding an unexpired, unused refresh token. */
 async function connectionRows(keyIds: number[]): Promise<Array<ApiKeyConnection & { key_id: number }>> {
   if (!keyIds.length) return [];
@@ -153,6 +164,7 @@ async function connectionRows(keyIds: number[]): Promise<Array<ApiKeyConnection 
 
 async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
   const sites = await siteRows(rows.map((r) => r.id));
+  const doms = await domainRows(rows.map((r) => r.id));
   const connections = await connectionRows(rows.filter((r) => r.kind === 'connector').map((r) => r.id));
   const out: ApiKey[] = [];
   for (const r of rows) {
@@ -166,10 +178,14 @@ async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
       } catch { /* creator gone: every scope inactive */ }
     }
     const mine = sites.filter((s) => s.key_id === r.id);
+    const myDoms = doms.filter((d) => d.key_id === r.id);
     out.push({
       id: r.id, accountId: r.account_id, kind: r.kind ?? 'key', name: r.name, prefix: r.prefix, scopes, siteScope: r.site_scope,
       siteIds: mine.map((s) => s.site_id).sort((a, b) => a - b),
       createdSiteIds: mine.filter((s) => s.created_by_key).map((s) => s.site_id).sort((a, b) => a - b),
+      domainScope: r.domain_scope ?? 'selected',
+      domainIds: myDoms.filter((d) => !d.created_by_key).map((d) => d.domain_id).sort((a, b) => a - b),
+      createdDomainIds: myDoms.filter((d) => d.created_by_key).map((d) => d.domain_id).sort((a, b) => a - b),
       allowedIps: ipsOf(r.allowed_ips), createdByName: r.created_by_name ?? null, createdAt: iso(r.created_at) as string,
       lastUsedAt: iso(r.last_used_at), lastUsedIp: r.last_used_ip, expiresAt: iso(r.expires_at), inactiveScopes: inactive,
       oauthClientId: r.kind === 'connector' ? r.oauth_client_id : null,
@@ -188,6 +204,8 @@ interface Normalized {
   scopes?: ApiKeyScope[];
   siteScope?: ApiKeySiteScope;
   siteIds?: number[];
+  domainScope?: ApiKeyDomainScope;
+  domainIds?: number[];
   allowedIps?: string[];
   expiresAt?: Date | null;
 }
@@ -218,6 +236,23 @@ async function normalize(actor: HostingActor, account: { id: number; tenant_id: 
       if (found.length !== ids.length) throw new AppError(400, 'A selected site does not belong to the account', 'validation');
     }
     out.siteIds = ids;
+  }
+  if (body.domainScope !== undefined) {
+    if (body.domainScope !== 'all' && body.domainScope !== 'selected') throw new AppError(400, 'domainScope is all or selected', 'validation');
+    out.domainScope = body.domainScope;
+  }
+  if (body.domainIds !== undefined) {
+    const ids = [...new Set(body.domainIds.map(Number))];
+    if (ids.some((n) => !Number.isInteger(n) || n <= 0)) throw new AppError(400, 'Invalid domain id', 'validation');
+    if (ids.length) {
+      const found = await db('domains').where({ account_id: account.id }).whereIn('id', ids).pluck('id') as number[];
+      if (found.length !== ids.length) throw new AppError(400, 'A selected domain does not belong to the account', 'validation');
+    }
+    out.domainIds = ids;
+  }
+  if ((out.domainScope === 'all' || (out.domainIds?.length ?? 0) > 0)
+    && !actorCan(actor, 'domains.manage', { tenantId: account.tenant_id, accountId: account.id })) {
+    throw new AppError(403, 'Giving domains to a key needs the domain management right', 'capabilityNotHeld', { missing: ['domains.manage'] });
   }
   if (body.allowedIps !== undefined) {
     if (body.allowedIps.length > MAX_ALLOWED_IPS) throw new AppError(400, `At most ${MAX_ALLOWED_IPS} addresses`, 'validation');
@@ -260,7 +295,7 @@ export const apiKeysService = {
         tenant_id: account.tenant_id, account_id: account.id, name: n.name, kind,
         oauth_client_id: client?.clientId ?? null, oauth_secret_hash: client?.secretHash ?? null,
         token_hash: hashKey(crypto.randomBytes(32).toString('hex')), prefix: client ? client.clientId.slice(0, 32) : 'obk_',
-        scopes: JSON.stringify(n.scopes ?? []), site_scope: n.siteScope ?? 'selected',
+        scopes: JSON.stringify(n.scopes ?? []), site_scope: n.siteScope ?? 'selected', domain_scope: n.domainScope ?? 'selected',
         allowed_ips: JSON.stringify(n.allowedIps ?? []), created_by: actor.userId, expires_at: n.expiresAt ?? null,
       }).returning('id');
       const id = Number(typeof row === 'object' ? row.id : row);
@@ -268,11 +303,12 @@ export const apiKeysService = {
       const g = client ? null : generateKey(id);
       if (g) await trx('api_keys').where({ id }).update({ token_hash: g.hash, prefix: g.prefix });
       if (n.siteIds?.length) await trx('api_key_sites').insert(n.siteIds.map((s) => ({ key_id: id, account_id: account.id, site_id: s })));
+      if (n.domainIds?.length) await trx('api_key_domains').insert(n.domainIds.map((d) => ({ key_id: id, account_id: account.id, domain_id: d, created_by_key: false })));
       return { id, key: g?.key ?? null, clientSecret: client?.secret ?? null };
     });
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.create', {
       resourceType: 'account', resourcePath: String(account.id),
-      details: { keyId: created.id, kind, name: n.name, scopes: n.scopes, siteScope: n.siteScope, siteIds: n.siteIds ?? [], allowedIps: n.allowedIps ?? [], expiresAt: n.expiresAt?.toISOString() ?? null },
+      details: { keyId: created.id, kind, name: n.name, scopes: n.scopes, siteScope: n.siteScope, siteIds: n.siteIds ?? [], domainScope: n.domainScope ?? 'selected', domainIds: n.domainIds ?? [], allowedIps: n.allowedIps ?? [], expiresAt: n.expiresAt?.toISOString() ?? null },
     });
     const [key] = await toApiKeys(await keyQuery().where('k.id', created.id) as KeyRow[]);
     return { ...key, key: created.key, clientSecret: created.clientSecret };
@@ -317,6 +353,7 @@ export const apiKeysService = {
       }
       if (n.scopes !== undefined) patch.scopes = JSON.stringify(n.scopes);
       if (n.siteScope !== undefined) patch.site_scope = n.siteScope;
+      if (n.domainScope !== undefined) patch.domain_scope = n.domainScope;
       if (n.allowedIps !== undefined) patch.allowed_ips = JSON.stringify(n.allowedIps);
       if (n.expiresAt !== undefined) patch.expires_at = n.expiresAt;
       await trx('api_keys').where({ id: row.id }).update(patch);
@@ -326,6 +363,13 @@ export const apiKeysService = {
         const have = new Set(await trx('api_key_sites').where({ key_id: row.id }).pluck('site_id') as number[]);
         const add = n.siteIds.filter((s) => !have.has(s));
         if (add.length) await trx('api_key_sites').insert(add.map((s) => ({ key_id: row.id, account_id: account.id, site_id: s })));
+      }
+      if (n.domainIds !== undefined) {
+        // The subdomains the key created stay its own; a given domain it created is never downgraded.
+        await trx('api_key_domains').where({ key_id: row.id, created_by_key: false }).whereNotIn('domain_id', n.domainIds).del();
+        const haveDoms = new Set(await trx('api_key_domains').where({ key_id: row.id }).pluck('domain_id') as number[]);
+        const addDoms = n.domainIds.filter((d) => !haveDoms.has(d));
+        if (addDoms.length) await trx('api_key_domains').insert(addDoms.map((d) => ({ key_id: row.id, account_id: account.id, domain_id: d, created_by_key: false })));
       }
     });
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.update', {
@@ -407,6 +451,10 @@ async function contextFor(row: KeyWithAccount, userId: number, ip: string): Prom
   const caps = new Set<ClientCapability>();
   for (const s of scopes) { const c = SCOPE_CAP[s]; if (c) caps.add(c); }
   const sites = await db('api_key_sites').where({ key_id: row.id }).pluck('site_id') as number[];
+  // Domains: the subdomains it created always; the given ones while the user may manage domains.
+  const domainManager = actorCan(user, 'domains.manage', target);
+  const doms = await db('api_key_domains').where({ key_id: row.id }).select('domain_id', 'created_by_key') as Array<{ domain_id: number; created_by_key: boolean }>;
+  const domainIds = doms.filter((d) => d.created_by_key || domainManager).map((d) => Number(d.domain_id));
   if (!row.last_used_at || Date.now() - new Date(row.last_used_at).getTime() > LAST_USED_EVERY_MS || row.last_used_ip !== ip) {
     db('api_keys').where({ id: row.id }).update({ last_used_at: db.fn.now(), last_used_ip: ip.slice(0, 64) })
       .catch((err: unknown) => logger.warn({ err, keyId: row.id }, 'API key: last use not recorded'));
@@ -414,6 +462,7 @@ async function contextFor(row: KeyWithAccount, userId: number, ip: string): Prom
   return {
     id: row.id, name: row.name, tenantId: row.tenant_id, accountId: row.account_id, creatorId: userId,
     scopes: new Set(scopes), siteScope: row.site_scope, siteIds: new Set(sites.map(Number)),
+    domainScope: domainManager && row.domain_scope === 'all' ? 'all' : 'selected', domainIds: new Set(domainIds),
     actor: { kind: 'client', userId, tenantId: row.tenant_id, accounts: new Map([[row.account_id, caps]]) },
   };
 }
@@ -442,6 +491,11 @@ export function generateClientSecret(): string {
 /** Constant-time check of a connector's client secret. */
 export function clientSecretMatches(raw: string, storedHash: string | null): boolean {
   return keyMatches(raw, storedHash ?? '');
+}
+
+/** A domain given to the key (or a subdomain it created). */
+export function keyAllowsDomain(ctx: ApiKeyContext, domainId: number): boolean {
+  return ctx.domainScope === 'all' || ctx.domainIds.has(domainId);
 }
 
 export function keyAllowsSite(ctx: ApiKeyContext, siteId: number): boolean {

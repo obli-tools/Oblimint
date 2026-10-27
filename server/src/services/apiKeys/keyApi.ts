@@ -21,7 +21,7 @@ import { cronService } from '../cron/cron.service';
 import type { DataPathInputBody, DataPathUpdateBody } from '../../validators/hosting.schema';
 import { assertSource, logsService } from '../logs/logs.service';
 import { releaseService } from '../releases/release.service';
-import { apiKeysService, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
+import { apiKeysService, keyAllowsDomain, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // What an API key can do (routes/v1.routes.ts and the MCP server share it).
@@ -51,11 +51,14 @@ export async function keySite(ctx: ApiKeyContext, siteId: number): Promise<SiteR
 
 interface RouteDomain { id: number; name: string; manageable: boolean; routes: ApiV1Route[] }
 
+const NOT_MANAGEABLE = 'This domain is not given to this key and serves other sites (or none yet): give it to the key in the panel (Access keys › Domains), or route it there';
+
 /**
  * Domains of the account with their path routes. A key manages the routes of
- * a domain only when every route of it leads to one of its sites (a key on
- * every site: any domain of the account) — it never takes a path of a domain
- * serving a site it cannot see.
+ * a domain given to it (Domains of the key: one, several or all), and of a
+ * domain whose routes all lead to its sites (a key on every site: any domain
+ * of the account) — never a path of another domain serving a site it cannot
+ * see. The routes always lead to its own sites (keySite).
  */
 async function routeDomains(ctx: ApiKeyContext): Promise<RouteDomain[]> {
   const doms = await db('domains').where({ account_id: ctx.accountId }).select('id', 'name').orderBy('name') as Array<{ id: number; name: string }>;
@@ -64,7 +67,7 @@ async function routeDomains(ctx: ApiKeyContext): Promise<RouteDomain[]> {
     Array<{ id: number; domain_id: number; path_prefix: string; site_id: number; runtime_id: number | null }>;
   return doms.map((d) => {
     const mine = rows.filter((r) => r.domain_id === d.id);
-    const manageable = ctx.siteScope === 'all' || (mine.length > 0 && mine.every((r) => keyAllowsSite(ctx, r.site_id)));
+    const manageable = ctx.siteScope === 'all' || keyAllowsDomain(ctx, d.id) || (mine.length > 0 && mine.every((r) => keyAllowsSite(ctx, r.site_id)));
     return {
       id: d.id, name: d.name, manageable,
       // A route to a site the key cannot see is shown without its site.
@@ -78,7 +81,7 @@ async function routeDomains(ctx: ApiKeyContext): Promise<RouteDomain[]> {
 async function manageableDomain(ctx: ApiKeyContext, name: string): Promise<RouteDomain> {
   const d = (await routeDomains(ctx)).find((x) => x.name === String(name).trim().toLowerCase().replace(/\.$/, ''));
   if (!d) throw new AppError(404, 'Domain not found', 'notFound');
-  if (!d.manageable) throw new AppError(403, 'This domain also serves sites outside this key: its routes are managed in the panel', 'keyDomainNotManageable');
+  if (!d.manageable) throw new AppError(403, NOT_MANAGEABLE, 'keyDomainNotManageable');
   return d;
 }
 
@@ -86,7 +89,7 @@ async function keyRoute(ctx: ApiKeyContext, routeId: number): Promise<{ domain: 
   for (const d of await routeDomains(ctx)) {
     const route = d.routes.find((r) => r.id === routeId);
     if (!route) continue;
-    if (!d.manageable) throw new AppError(403, 'This domain also serves sites outside this key: its routes are managed in the panel', 'keyDomainNotManageable');
+    if (!d.manageable) throw new AppError(403, NOT_MANAGEABLE, 'keyDomainNotManageable');
     return { domain: d, route };
   }
   throw new AppError(404, 'Route not found', 'notFound');
@@ -295,7 +298,7 @@ export const keyApi = {
     requireScope(ctx, 'domains.subdomain');
     const rows = await db('api_key_domains as k').join('domains as d', 'd.id', 'k.domain_id')
       .leftJoin('site_routes as r', function joinRoute() { this.on('r.domain_id', '=', 'd.id').andOnVal('r.path_prefix', '=', '/'); })
-      .where({ 'k.key_id': ctx.id, 'd.account_id': ctx.accountId })
+      .where({ 'k.key_id': ctx.id, 'k.created_by_key': true, 'd.account_id': ctx.accountId })
       .select('d.id', 'd.name', 'd.verification_status', 'r.site_id') as Array<{ id: number; name: string; verification_status: string | null; site_id: number | null }>;
     return rows.map((r) => ({ id: r.id, name: r.name, siteId: r.site_id ?? 0, verified: r.verification_status === 'verified', url: `https://${r.name}/` }));
   },
@@ -321,7 +324,7 @@ export const keyApi = {
     const domain = await domainsService.create(req, ctx.actor, {
       accountId: ctx.accountId, name, kind: 'subdomain', siteId: site.id, tlsMode: 'letsencrypt', forceHttps: true, includeWww: false,
     } as Parameters<typeof domainsService.create>[2]);
-    await db('api_key_domains').insert({ key_id: ctx.id, domain_id: domain.id, account_id: ctx.accountId }).onConflict(['key_id', 'domain_id']).ignore();
+    await db('api_key_domains').insert({ key_id: ctx.id, domain_id: domain.id, account_id: ctx.accountId, created_by_key: true }).onConflict(['key_id', 'domain_id']).merge({ created_by_key: true });
     return { id: domain.id, name: domain.name, siteId: site.id, verified: domain.verification?.status === 'verified', url: `https://${domain.name}/` };
   },
 
@@ -330,7 +333,7 @@ export const keyApi = {
     requireScope(ctx, 'domains.subdomain');
     const name = normalizeName(rawName);
     const row = await db('api_key_domains as k').join('domains as d', 'd.id', 'k.domain_id')
-      .where({ 'k.key_id': ctx.id, 'd.account_id': ctx.accountId, 'd.name': name }).first('d.id') as { id: number } | undefined;
+      .where({ 'k.key_id': ctx.id, 'k.created_by_key': true, 'd.account_id': ctx.accountId, 'd.name': name }).first('d.id') as { id: number } | undefined;
     if (!row) throw new AppError(404, 'Subdomain not found among the ones this key created', 'notFound');
     await domainsService.remove(req, ctx.actor, row.id);
   },

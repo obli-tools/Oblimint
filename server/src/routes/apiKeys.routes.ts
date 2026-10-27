@@ -24,17 +24,21 @@ const fields = {
   scopes: z.array(scope).max(API_KEY_SCOPES.length),
   siteScope: z.enum(['all', 'selected']),
   siteIds: z.array(z.number().int().positive()).max(500),
+  domainScope: z.enum(['all', 'selected']),
+  domainIds: z.array(z.number().int().positive()).max(500),
   allowedIps: z.array(z.string().max(64)).max(32),
   expiresAt: z.string().datetime({ offset: true }).nullable(),
 };
 const createSchema = z.object({
   kind: z.enum(['key', 'connector']).optional(),
   name: fields.name, scopes: fields.scopes, siteScope: fields.siteScope,
-  siteIds: fields.siteIds.optional(), allowedIps: fields.allowedIps.optional(), expiresAt: fields.expiresAt.optional(),
+  siteIds: fields.siteIds.optional(), domainScope: fields.domainScope.optional(), domainIds: fields.domainIds.optional(),
+  allowedIps: fields.allowedIps.optional(), expiresAt: fields.expiresAt.optional(),
 }).strict();
 const updateSchema = z.object({
   name: fields.name.optional(), scopes: fields.scopes.optional(), siteScope: fields.siteScope.optional(),
-  siteIds: fields.siteIds.optional(), allowedIps: fields.allowedIps.optional(), expiresAt: fields.expiresAt.optional(),
+  siteIds: fields.siteIds.optional(), domainScope: fields.domainScope.optional(), domainIds: fields.domainIds.optional(),
+  allowedIps: fields.allowedIps.optional(), expiresAt: fields.expiresAt.optional(),
 }).strict();
 
 router.get('/:id/api-keys', async (req, res, next) => {

@@ -133,7 +133,13 @@
       "disconnectOne": "End this connection? Claude loses access until it is authorized again.",
       "disconnectAll": "End every connection of \"{{name}}\"? Claude loses access until it is authorized again.",
       "disconnected": "Disconnected"
-    }
+    },
+    "domains": "Domains",
+    "domainsPrefix": "Domains:",
+    "allDomains": "Every domain of the account",
+    "selectedDomains": "Only the domains below",
+    "noDomains": "No domain in this account.",
+    "domainsHint": "With the Routes right, the key may decide which of its sites serves these domains (or a path of them) — even a domain that serves nothing yet. Without a domain here, it only routes the domains that already serve its sites. Giving domains needs the domain management right."
   },
   "oauth": {
     "title": "Connect an application",

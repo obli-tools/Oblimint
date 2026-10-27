@@ -48,6 +48,13 @@ export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
 export type ApiKeySiteScope = 'all' | 'selected';
 
 /**
+ * Domains given to a key: with routes.manage it sets their path routes
+ * (towards its own sites), even a domain serving nothing yet. Without a
+ * grant, a key only manages the domains whose routes all lead to its sites.
+ */
+export type ApiKeyDomainScope = 'all' | 'selected';
+
+/**
  * 'key': a bearer secret (obk_…) for scripts, CI and agents that take a header.
  * 'connector': an OAuth client (« Connecteur Claude ») for claude.ai custom
  * connectors and other OAuth MCP clients — no secret travels in a header the
@@ -69,6 +76,11 @@ export interface ApiKey {
   siteIds: number[];
   /** Sites created through the key. */
   createdSiteIds: number[];
+  domainScope: ApiKeyDomainScope;
+  /** Domains given to a 'selected' key. */
+  domainIds: number[];
+  /** Subdomains the key attached itself. */
+  createdDomainIds: number[];
   /** Allowed source addresses / CIDR (empty: any). */
   allowedIps: string[];
   createdByName: string | null;
@@ -99,6 +111,9 @@ export interface ApiKeyCreate {
   scopes: ApiKeyScope[];
   siteScope: ApiKeySiteScope;
   siteIds?: number[];
+  /** Default 'selected' (none given). Granting needs domains.manage on the account. */
+  domainScope?: ApiKeyDomainScope;
+  domainIds?: number[];
   allowedIps?: string[];
   /** ISO date; null / absent = never. */
   expiresAt?: string | null;

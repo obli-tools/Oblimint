@@ -133,7 +133,13 @@
       "disconnectOne": "Mettre fin à cette connexion ? Claude perd l'accès jusqu'à une nouvelle autorisation.",
       "disconnectAll": "Mettre fin à toutes les connexions de « {{name}} » ? Claude perd l'accès jusqu'à une nouvelle autorisation.",
       "disconnected": "Déconnecté"
-    }
+    },
+    "domains": "Domaines",
+    "domainsPrefix": "Domaines :",
+    "allDomains": "Tous les domaines du compte",
+    "selectedDomains": "Seulement les domaines ci-dessous",
+    "noDomains": "Aucun domaine dans ce compte.",
+    "domainsHint": "Avec le droit Routes, la clé peut choisir lequel de ses sites sert ces domaines (ou un chemin de ces domaines), même un domaine qui ne sert encore rien. Sans domaine ici, elle ne route que les domaines qui servent déjà ses sites. Donner des domaines demande le droit de gérer les domaines."
   },
   "oauth": {
     "title": "Connecter une application",
