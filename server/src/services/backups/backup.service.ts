@@ -586,14 +586,19 @@ export const backupService = {
   },
 
   async restore(req: Request, actor: HostingActor, accountId: number, runId: number, items: BackupRestoreItem[]): Promise<BackupRestoreResult> {
-    const run = await db('backup_runs').where({ id: runId, scope: 'account' }).first() as RunRow | undefined;
-    if (!run || run.account_id !== accountId) throw new AppError(404, 'Backup not found', 'notFound');
-    if (run.purged_at) throw new AppError(409, 'This backup was removed by the retention', 'backupPurged');
-    if (run.status === 'running' || run.status === 'failed') throw new AppError(409, 'This backup is not complete', 'backupNotReady');
-    const needs = new Set(items.map((i) => (i.kind === 'db' ? 'databases.manage' : i.kind === 'code' ? 'sites.manage' : 'files.manage') as 'databases.manage' | 'sites.manage' | 'files.manage'));
+    // The account first (404 when invisible), then its run only: the state of a backup is never
+    // answered (409) for an account the caller does not see (L3).
+    const visible = await loadAccount(actor, accountId, 'read');
+    const run = await db('backup_runs').where({ id: runId, scope: 'account', account_id: visible.id }).first() as RunRow | undefined;
+    if (!run) throw new AppError(404, 'Backup not found', 'notFound');
+    // Code = the staging of the site, overwritten: the files right too, not only sites.manage (L2).
+    const needs = new Set(items.flatMap((i) => (i.kind === 'db' ? ['databases.manage'] : i.kind === 'code' ? ['sites.manage', 'files.manage'] : ['files.manage']) as
+      Array<'databases.manage' | 'sites.manage' | 'files.manage'>));
     let account: AccountRow | null = null;
     for (const n of needs) account = await loadAccount(actor, accountId, n);
     if (!account) throw new AppError(400, 'Nothing to restore', 'validation');
+    if (run.purged_at) throw new AppError(409, 'This backup was removed by the retention', 'backupPurged');
+    if (run.status === 'running' || run.status === 'failed') throw new AppError(409, 'This backup is not complete', 'backupNotReady');
     const acc = account;
     const result = await enqueue(() => restoreItems(run, acc, items));
     await auditService.logReqAs(req, acc.tenant_id, 'backup.restore', {

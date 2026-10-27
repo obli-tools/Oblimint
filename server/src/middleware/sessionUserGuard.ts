@@ -146,9 +146,14 @@ export async function twoFactorSetupRequired(userId: number): Promise<boolean> {
  * sign-in flows (non-API paths), /api/auth/* (me, logout, SSO helpers), the
  * TOTP setup (/api/profile/2fa/*), its own profile and password, the tenant
  * list. Everything else answers 403 twoFactorSetupRequired.
+ *
+ * H1: "is it an API path" ignores case — POST /API/... was waved through as a
+ * non-API path while a case-insensitive router served it. Routing is now
+ * case-sensitive (app.ts); the allow-list below stays exact, so a case
+ * variant of an allowed path (/API/auth/..., /api/Profile) is refused too.
  */
 export function allowedDuringTwoFactorSetup(method: string, path: string): boolean {
-  if (!path.startsWith('/api/')) return true;
+  if (!/^\/api(?:\/|$)/i.test(path)) return true;
   if (path.startsWith('/api/auth/') || path.startsWith('/api/profile/2fa/') || path.startsWith('/api/setup/')) return true;
   if (method === 'GET' && (path === '/api/profile' || path === '/api/tenants')) return true;
   if (method === 'PUT' && path === '/api/profile/password') return true;

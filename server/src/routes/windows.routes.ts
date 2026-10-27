@@ -23,7 +23,7 @@ import { siteTokenService } from '../services/windows/siteTokens';
 //   POST   /:id/windows/:wid/reject           WindowRejectRequest → MaintenanceWindow       (releases.publish; + databases.manage to restore DBs)
 //   POST   /:id/windows/:wid/reanalyze        → MaintenanceWindow                           (releases.publish)
 //   GET    /:id/windows/:wid/files?change&minRisk&q&limit&offset → { items: WindowFile[], total } (read)
-//   GET    /:id/windows/:wid/diff?file=       → WindowFileDiff                              (read, heavyOpLimiter)
+//   GET    /:id/windows/:wid/diff?file=       → WindowFileDiff                              (code.read → 403 codeReadForbidden, heavyOpLimiter)
 //   GET    /:id/tokens                        → SiteApiToken[]                              (releases.publish + sites.manage)
 //   POST   /:id/tokens                        SiteApiTokenCreate → SiteApiTokenCreated (201, token shown once) (releases.publish + sites.manage; valid while its creator keeps both)
 //   DELETE /:id/tokens/:tokenId               → { deleted: true }                           (sites.manage)

@@ -27,11 +27,13 @@ const QUEUE_PAGE = 25;
 
 /** Outbound tab of /mail (one account): sending state, site relays, queue. */
 export function MailOutboundPanel({ accountId }: { accountId: number }) {
+  const { can } = useHostingMe();
   return (
     <div className="flex flex-col gap-5">
       <OutboundStateCard accountId={accountId} />
       <RelaysCard accountId={accountId} />
-      <QueueCard accountId={accountId} />
+      {/* Senders and recipients of every message: the mail managers only (server: mail.manage). */}
+      {can('mail.manage', accountId) && <QueueCard accountId={accountId} />}
     </div>
   );
 }

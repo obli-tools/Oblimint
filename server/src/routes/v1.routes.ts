@@ -136,7 +136,7 @@ router.put('/sites/:id/files/content', (req, res, next) => {
   (async () => {
     const size = Number(req.headers['content-length']);
     if (!Number.isSafeInteger(size) || size < 0) throw new AppError(411, 'Content-Length is required', 'invalidChunk');
-    const path = await keyApi.putFile(ctxOf(req), siteId(req), areaOf(req.query.area), qPath(req), size, req, req.query.overwrite === '1' || req.query.overwrite === 'true');
+    const path = await keyApi.putFile(ctxOf(req), req, siteId(req), areaOf(req.query.area), qPath(req), size, req, req.query.overwrite === '1' || req.query.overwrite === 'true');
     ok(res, { path });
   })().catch((err) => { req.resume(); next(err); });
 });
@@ -152,29 +152,29 @@ router.put('/uploads/:uid/:index', (req, res, next) => {
     if (!/^[0-9a-f]{32}$/.test(uid)) throw new AppError(404, 'Upload not found or expired', 'uploadNotFound');
     const length = Number(req.headers['content-length']);
     if (!Number.isSafeInteger(length) || length < 0) throw new AppError(411, 'Content-Length is required', 'invalidChunk');
-    ok(res, await keyApi.uploadChunk(ctxOf(req), uid, Number(req.params.index), length, req));
+    ok(res, await keyApi.uploadChunk(ctxOf(req), req, uid, Number(req.params.index), length, req));
   })().catch((err) => { req.resume(); next(err); });
 });
 
 router.post('/sites/:id/files/mkdir', h(async (req, res) => {
   const b = parseBody(pathBody, req.body);
-  ok(res, { path: await keyApi.mkdir(ctxOf(req), siteId(req), areaOf(b.area), b.path) });
+  ok(res, { path: await keyApi.mkdir(ctxOf(req), req, siteId(req), areaOf(b.area), b.path) });
 }));
 router.post('/sites/:id/files/delete', h(async (req, res) => {
   const b = parseBody(pathsBody, req.body);
-  ok(res, await keyApi.remove(ctxOf(req), siteId(req), areaOf(b.area), b.paths));
+  ok(res, await keyApi.remove(ctxOf(req), req, siteId(req), areaOf(b.area), b.paths));
 }));
 router.post('/sites/:id/files/move', h(async (req, res) => {
   const b = parseBody(itemsBody, req.body);
-  ok(res, await keyApi.move(ctxOf(req), siteId(req), areaOf(b.area), b.items, b.overwrite === true));
+  ok(res, await keyApi.move(ctxOf(req), req, siteId(req), areaOf(b.area), b.items, b.overwrite === true));
 }));
 router.post('/sites/:id/files/copy', h(async (req, res) => {
   const b = parseBody(itemsBody, req.body);
-  ok(res, await keyApi.move(ctxOf(req), siteId(req), areaOf(b.area), b.items, false, true));
+  ok(res, await keyApi.move(ctxOf(req), req, siteId(req), areaOf(b.area), b.items, false, true));
 }));
 router.post('/sites/:id/files/extract', h(async (req, res) => {
   const b = parseBody(extractBody, req.body);
-  ok(res, await keyApi.extract(ctxOf(req), siteId(req), areaOf(b.area), b.path, b.to, b.overwrite === true));
+  ok(res, await keyApi.extract(ctxOf(req), req, siteId(req), areaOf(b.area), b.path, b.to, b.overwrite === true));
 }));
 
 router.get('/sites/:id/staging', h(async (req, res) => ok(res, await keyApi.stagingStatus(ctxOf(req), siteId(req)))));

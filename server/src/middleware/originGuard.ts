@@ -91,6 +91,8 @@ function hasBody(req: Request): boolean {
  * form / no-cors request cannot send without a CORS preflight either
  * (application/octet-stream / application/sql / application/gzip are not
  * CORS-safelisted types).
+ * Exact case, like the routing (app.ts): a case variant matches no route
+ * and is held to the JSON rule.
  */
 export const RAW_UPLOAD_PATHS: readonly RegExp[] = [
   /^\/api\/databases\/instances\/\d+\/databases\/\d+\/restore$/,
@@ -116,6 +118,8 @@ const RAW_UPLOAD_TYPES = [
  * mail client (no browser, no cookie, read-only answer computed from the
  * Host / e-mail address). Public, never session-authenticated: exempt from
  * the origin and JSON rules (the route reads the body itself, ≤ 16 KiB).
+ * Case-insensitive on purpose: Outlook varies the case, and mailPublic.routes
+ * keeps its own case-insensitive router for it (no session is read there).
  */
 export const PUBLIC_XML_PATHS: readonly RegExp[] = [
   /^\/autodiscover\/autodiscover\.xml$/i,

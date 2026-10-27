@@ -1,7 +1,7 @@
 import type { Knex } from 'knex';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
-import { actorCan, actorSees, scopeToActor, type HostingActor, type HostingNeed } from './access';
+import { actorCan, actorSees, assertNeedSomewhere, scopeToActor, type HostingActor, type HostingNeed } from './access';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Access to the P4b objects (docs/P4b-PLAN.md §12) — ARCHITECT FILE (frozen,
@@ -92,7 +92,9 @@ export async function assertUsable(actor: HostingActor, table: P4bTable, id: num
 /**
  * Restricts a list query to the rows the actor may READ. `alias` = table
  * alias of the query. Platform rows (account_id NULL) are included for staff
- * when `includePlatform`, never for a client.
+ * when `includePlatform`, never for a client. A staff member without the read
+ * need (e.g. users.manage or audit.read only) gets 403, never the rows of its
+ * tenant (M8): the tenant filter alone is not a right.
  */
 export function scopeOwned<T extends Knex.QueryBuilder>(
   actor: HostingActor, qb: T, alias: string, opts: { filterTenantId?: number | null; includePlatform?: boolean } = {},
@@ -100,6 +102,7 @@ export function scopeOwned<T extends Knex.QueryBuilder>(
   const tenant = `${alias}.tenant_id`;
   const account = `${alias}.account_id`;
   if (actor.kind === 'client') return scopeToActor(actor, qb.whereNotNull(account) as T, { tenant, account });
+  assertNeedSomewhere(actor, 'read');
   if (!actor.globalView) qb.where(tenant, actor.tenantId);
   else if (opts.filterTenantId && Number.isInteger(opts.filterTenantId)) qb.where(tenant, opts.filterTenantId);
   if (!opts.includePlatform) qb.whereNotNull(account);

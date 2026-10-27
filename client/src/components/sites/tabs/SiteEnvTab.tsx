@@ -16,7 +16,9 @@ import type { SiteTabProps } from './types';
 
 // Environment variables of the site: secrets out of the code (PHP getenv()
 // / $_SERVER, cron, CLI). The whole set is saved at once; a change restarts
-// the site's containers. A secret is write-only (left empty = unchanged).
+// the site's containers. A secret is write-only (left empty = unchanged);
+// unchecking Secret on a stored one needs a new value (the server refuses to
+// reveal the stored one).
 
 interface Row {
   key: number;
@@ -73,6 +75,7 @@ export function SiteEnvTab({ site }: SiteTabProps) {
     if (reservedEnvName(r.name)) return t('siteEnv.nameReserved') || 'Reserved by the platform';
     if (rows.filter((x) => x.name === r.name).length > 1) return t('siteEnv.nameDuplicate') || 'Duplicate name';
     if (!r.stored && r.value === '' && r.secret) return t('siteEnv.valueRequired') || 'A secret needs a value';
+    if (r.stored && r.value === '' && !r.secret) return t('siteEnv.unsecretValueRequired') || 'Type a new value to make it visible (the stored one stays hidden)';
     return null;
   };
   const invalid = rows.some((r) => problem(r) !== null);
@@ -152,7 +155,7 @@ export function SiteEnvTab({ site }: SiteTabProps) {
                       value={r.value}
                       autoComplete="off"
                       spellCheck={false}
-                      placeholder={r.stored ? (t('siteEnv.keepSecret') || '•••••• (unchanged)') : (t('siteEnv.value') || 'value')}
+                      placeholder={r.stored ? (r.secret ? (t('siteEnv.keepSecret') || '•••••• (unchanged)') : (t('siteEnv.newValue') || 'new value')) : (t('siteEnv.value') || 'value')}
                       onChange={(e) => update(r.key, { value: e.target.value })}
                     />
                     {r.secret && (

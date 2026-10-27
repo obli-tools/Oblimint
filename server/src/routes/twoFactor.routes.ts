@@ -4,7 +4,7 @@ import { requireAuth } from '../middleware/auth';
 import { attachSessionTenant } from '../middleware/tenant';
 import { mfaLimiter, mfaAccountLimiter, stepUpLimiter } from '../middleware/rateLimiter';
 
-const router = Router();
+const router = Router({ caseSensitive: true }); // force_2fa allow-list (sessionUserGuard.ts): exact paths
 router.use(attachSessionTenant);
 
 // Signed-in: manage one's own TOTP.

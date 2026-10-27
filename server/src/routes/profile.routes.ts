@@ -11,7 +11,7 @@ import { updateProfileSchema, changePasswordSchema, type UpdateProfileInput, typ
 // /api/profile — mounted behind requireAuth (routes/index.ts). Same shapes as
 // Obliance's profile.controller.ts.
 
-const router = Router();
+const router = Router({ caseSensitive: true }); // force_2fa allow-list (sessionUserGuard.ts): exact paths
 router.use(attachSessionTenant);
 
 const PROFILE_COLUMNS = ['id', 'username', 'display_name', 'role', 'kind', 'is_active', 'created_at', 'updated_at',

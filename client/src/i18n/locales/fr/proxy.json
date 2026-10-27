@@ -251,6 +251,7 @@
       "customPageInUse": "Cette page est encore utilisée par des hôtes proxy ou par les défauts de la plateforme.",
       "domainInUse": "Ce domaine est déjà servi par autre chose (routes de site ou autre objet proxy).",
       "domainNotInAccount": "Ce domaine n’appartient pas au compte d’hébergement.",
+      "domainsManageRequired": "Ajouter un domaine demande le droit de gérer les domaines du compte.",
       "domainNotVerified": "La propriété de ce domaine n’est pas encore vérifiée : vérifiez-la d’abord (page Domaines).",
       "edgeUnavailable": "Le frontal web (edge) est injoignable. Réessayez dans un instant.",
       "forwardAuthWithUsers": "L’authentification déléguée (Azure AD) ne peut pas être combinée avec des listes d’accès qui ont des utilisateurs (authentification basique) : retirez les utilisateurs ou l’authentification déléguée.",

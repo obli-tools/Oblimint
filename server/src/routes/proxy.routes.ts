@@ -58,7 +58,7 @@ import {
 //   POST   /advanced-config/lint        { text }                    → AdvancedConfigLintResult    (platform staff)
 //
 // Codes: planLimit (409, details.dimension ∈ proxyHosts | redirections), domainNotVerified (409), domainInUse (409:
-// bound elsewhere / has site routes — details.servedBy), domainNotInAccount (404), targetInvalid (400),
+// bound elsewhere / has site routes — details.servedBy), domainNotInAccount (404), domainsManageRequired (403: binding a domain needs domains.manage), targetInvalid (400),
 // targetNotAllowed (403: external targets off for the plan / tenant, private target without staff),
 // targetPortNotExposed (400), streamPortNotApproved (400), streamPortTaken (409), advancedConfigForbidden (403),
 // advancedConfigInvalid (400, details: lint issues), accessListInUse (409), customPageInUse (409), certificateInUse (409),

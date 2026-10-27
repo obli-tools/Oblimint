@@ -433,7 +433,7 @@ export const proxyHostsService = {
       const [row] = await trx('proxy_hosts').insert({ tenant_id: account.tenant_id, account_id: account.id, ...rowValues(state) }).returning('id') as
         Array<{ id: number }>;
       const id = Number(row.id);
-      await bindDomains(trx, account.id, 'proxy', id, state.domainIds);
+      await bindDomains(trx, actor, account.id, 'proxy', id, state.domainIds);
       await writeChildren(trx, id, state);
       return id;
     });
@@ -471,7 +471,7 @@ export const proxyHostsService = {
       await lockAccount(trx, account.id);
       await assertSavedReferences(trx, account.id, state);
       await trx('proxy_hosts').where({ id, tenant_id: account.tenant_id }).update({ ...rowValues(state), updated_at: trx.fn.now() });
-      await bindDomains(trx, account.id, 'proxy', id, state.domainIds);
+      await bindDomains(trx, actor, account.id, 'proxy', id, state.domainIds);
       await writeChildren(trx, id, state);
     });
     await auditProxy(req, account.tenant_id, 'proxy.host.update', 'proxy_host', id, {

@@ -10,6 +10,7 @@ import {
 import { tenantService, refuseSignInWithoutTenant } from '../services/tenant.service';
 import { appConfigService } from '../services/appConfig.service';
 import { permissionSetService } from '../services/permissionSet.service';
+import { CLIENT_MEMBERSHIP_ROLE } from '../services/permission.service';
 import { auditService } from '../services/audit.service';
 import { dashboardService } from '../services/dashboard.service';
 import { forgetSessionUser } from '../middleware/sessionUserGuard';
@@ -24,7 +25,7 @@ import { requestPanelRole, type PanelHostRole } from '../services/panelHosts';
 // take part: getLinkedLocalUserId ignores them, provisioning only ever
 // creates staff og_ accounts.
 
-const router = Router();
+const router = Router({ caseSensitive: true }); // like every router of /auth and /api (app.ts)
 
 /** Public origin of the OAuth redirect_uri — only one this app is really published under. */
 async function resolvePublicOrigin(req: Request): Promise<string | null> {
@@ -333,7 +334,9 @@ router.get('/app-info', async (req, res) => {
       return;
     }
     const tenants = await db('tenants').select('name', 'slug').orderBy('name') as Array<{ name: string; slug: string }>;
-    const permissionSets = (await permissionSetService.getAll()).map((p) => ({ slug: p.slug, name: p.name, isDefault: p.isDefault }));
+    // SSO identities are staff: the client set (client logins only, M12) is not offered.
+    const permissionSets = (await permissionSetService.getAll()).filter((p) => p.slug !== CLIENT_MEMBERSHIP_ROLE)
+      .map((p) => ({ slug: p.slug, name: p.name, isDefault: p.isDefault }));
     res.json({
       success: true,
       data: { roles: ['admin', 'user'], teams: [], tenants: tenants.map((t) => ({ slug: t.slug, name: t.name })), permissionSets },

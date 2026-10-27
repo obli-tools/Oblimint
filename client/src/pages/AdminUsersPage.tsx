@@ -27,6 +27,11 @@ type TenantDraft = Record<number, { isMember: boolean; role: string }>;
 
 const TABS: Tab[] = ['users', 'permissionSets'];
 
+/** Permission set of client logins: theirs only, and only theirs (server: membershipRoleRefusal). */
+const CLIENT_ROLE = 'client';
+/** Membership role of an account created by a manager that is not a platform admin. */
+const DEFAULT_TENANT_ROLE = 'viewer';
+
 /** Obliance stored 'member' for plain members; Oblimint uses permission-set slugs. */
 const normaliseTenantRole = (role: string | null | undefined): string => (!role || role === 'member' ? 'user' : role);
 
@@ -64,6 +69,7 @@ export function AdminUsersPage() {
   const [formEmail, setFormEmail] = useState('');
   const [formPassword, setFormPassword] = useState('');
   const [formRole, setFormRole] = useState<'admin' | 'user'>('user');
+  const [formTenantRole, setFormTenantRole] = useState(DEFAULT_TENANT_ROLE);
   const [saving, setSaving] = useState(false);
 
   // Tenant assignment panel
@@ -96,6 +102,7 @@ export function AdminUsersPage() {
     setFormEmail('');
     setFormPassword('');
     setFormRole('user');
+    setFormTenantRole(DEFAULT_TENANT_ROLE);
   };
 
   const scrollToForm = () => {
@@ -130,6 +137,8 @@ export function AdminUsersPage() {
         displayName: formDisplayName.trim() || null,
         email: formEmail.trim() || null,
         role: isPlatformAdmin ? formRole : 'user',
+        // Joins the current workspace with this role (never more than the creator holds).
+        ...(isPlatformAdmin ? {} : { tenantRole: formTenantRole }),
       });
       toast.success(t('users.created') || 'User created');
       resetUserForm();
@@ -226,7 +235,8 @@ export function AdminUsersPage() {
       setTenantAssignments(assignments);
       const draft: TenantDraft = {};
       for (const a of assignments) {
-        draft[a.tenantId] = { isMember: a.isMember !== false, role: normaliseTenantRole(a.role) };
+        // A client login holds the client set only (a legacy staff role is replaced on save).
+        draft[a.tenantId] = { isMember: a.isMember !== false, role: user.kind === 'client' ? CLIENT_ROLE : normaliseTenantRole(a.role) };
       }
       setTenantDraft(draft);
     } catch {
@@ -245,7 +255,7 @@ export function AdminUsersPage() {
 
   const toggleTenantMember = (tenantId: number) => {
     setTenantDraft((prev) => {
-      const current = prev[tenantId] ?? { isMember: false, role: 'user' };
+      const current = prev[tenantId] ?? { isMember: false, role: tenantPanelUser?.kind === 'client' ? CLIENT_ROLE : 'user' };
       return { ...prev, [tenantId]: { ...current, isMember: !current.isMember } };
     });
   };
@@ -275,9 +285,14 @@ export function AdminUsersPage() {
   };
 
   // Role choices of the tenant panel: the permission sets (fallback: Obliance's two).
-  const roleChoices: Array<{ slug: string; name: string }> = permissionSets.length > 0
+  const allRoleChoices: Array<{ slug: string; name: string }> = permissionSets.length > 0
     ? permissionSets.map((s) => ({ slug: s.slug, name: s.name }))
     : [{ slug: 'user', name: t('users.tenantPanel.member') || 'Member' }, { slug: 'admin', name: t('users.roleAdmin') || 'Admin' }];
+  // A client login holds the client set only; staff never hold it.
+  const staffRoleChoices = allRoleChoices.filter((r) => r.slug !== CLIENT_ROLE);
+  const roleChoices = tenantPanelUser?.kind === 'client'
+    ? allRoleChoices.filter((r) => r.slug === CLIENT_ROLE)
+    : staffRoleChoices;
 
   // ── Row flags / menu ──
 
@@ -362,6 +377,18 @@ export function AdminUsersPage() {
                       <Input label={t('users.emailLabel') || 'E-mail'} type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} autoComplete="off" />
                       {userFormMode === 'create' && (
                         <Input label={t('users.passwordLabel') || 'Password'} type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} required minLength={12} autoComplete="new-password" />
+                      )}
+                      {/* Workspace role: a manager that is not a platform admin creates the account in its workspace. */}
+                      {userFormMode === 'create' && !isPlatformAdmin && (
+                        <div className="space-y-1">
+                          <label htmlFor="user-tenant-role" className="block text-sm font-medium text-text-secondary">{t('users.tenantRoleLabel') || 'Workspace role'}</label>
+                          <select id="user-tenant-role" value={formTenantRole} onChange={(e) => setFormTenantRole(e.target.value)} className={selectCls}>
+                            {staffRoleChoices.map((r) => (
+                              <option key={r.slug} value={r.slug}>{r.name}</option>
+                            ))}
+                          </select>
+                          <p className="text-xs text-text-muted">{t('users.tenantRoleHint') || 'Permission set of the account in this workspace. You can only give a set whose permissions you hold.'}</p>
+                        </div>
                       )}
                       {/* Platform role: only a platform admin may set it. */}
                       {isPlatformAdmin && (

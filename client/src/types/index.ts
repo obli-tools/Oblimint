@@ -61,6 +61,8 @@ export interface CreateUserRequest {
   email?: string | null;
   role: UserRole;
   kind?: UserKind;
+  /** Membership role in the creator's tenant (manager that is not a platform admin). */
+  tenantRole?: string;
 }
 
 export interface UpdateUserRequest {

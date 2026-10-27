@@ -287,6 +287,7 @@
     "empty": "No permission sets defined. Click \"New\" to create one.",
     "loadFailed": "Failed to load permission sets",
     "loading": "Loading permission sets...",
+    "locked": "Fixed set: its capabilities cannot be changed",
     "namePlaceholder": "Set name (e.g. Support L1)",
     "newTitle": "New permission set",
     "noCapabilities": "No capabilities defined.",
@@ -692,6 +693,8 @@
       "saved": "Workspace assignments saved",
       "title": "Workspaces"
     },
+    "tenantRoleHint": "Permission set of the account in this workspace. You can only give a set whose permissions you hold.",
+    "tenantRoleLabel": "Workspace role",
     "title": "Users",
     "updated": "User updated",
     "usernameLabel": "Username"

@@ -15,7 +15,10 @@ import type { AddressInfo } from 'net';
 // PKCE, access to the account), code → tokens (client_secret_basic / _post,
 // PKCE, single use), the MCP server with the access token (rights of the user
 // who approved), refresh rotation and reuse detection, secret rotation,
-// disconnection.
+// disconnection; the token refused on /api/v1 (L17); the connections ended by a
+// credential change of the user, and by force_2fa without TOTP (M4); secret
+// rotation / disconnection by a manager who did not create it, and the end of
+// one's own authorizations (M3).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_URL = process.env.APIKEYS_TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:55490/postgres';
@@ -50,6 +53,7 @@ test('Claude connectors (OAuth) on PostgreSQL', { timeout: 300_000 }, async (t: 
   const { errorHandler } = await import('../../middleware/errorHandler');
   const { originGuard } = await import('../../middleware/originGuard');
   const { mcpRouter } = await import('./mcp');
+  const v1Routes = (await import('../../routes/v1.routes')).default;
   const { oauthPublicRouter, oauthApiRouter } = await import('./oauth');
   const { actorForUser } = await import('../hosting/access');
   const { apiKeysService } = await import('./apiKeys.service');
@@ -109,6 +113,7 @@ test('Claude connectors (OAuth) on PostgreSQL', { timeout: 300_000 }, async (t: 
   app.use(express.json());
   app.use(oauthPublicRouter);
   app.use('/mcp', mcpRouter);
+  app.use('/api/v1', v1Routes);
   app.use('/api/oauth', (req, _res, next) => { (req as unknown as { session: { userId: number } }).session = { userId: sessionUser }; next(); }, oauthApiRouter);
   app.use(errorHandler);
   const server = app.listen(0);
@@ -202,6 +207,12 @@ test('Claude connectors (OAuth) on PostgreSQL', { timeout: 300_000 }, async (t: 
   assert.deepEqual(JSON.parse(sites.body?.result.content[0].text).map((x: { id: number }) => x.id), [s1], 'only the connector sites');
   const ctx = await apiKeysService.verifyAccessToken(tok2.access_token, '203.0.113.7');
   assert.equal(ctx?.creatorId, owner, 'acts for the user who approved');
+  // L17: the access token is an MCP credential only, never a REST one.
+  const rest = await fetch(`${origin}/api/v1/me`, { headers: { authorization: `Bearer ${tok2.access_token}` } });
+  assert.equal(rest.status, 401);
+  assert.equal(((await rest.json()) as { code: string }).code, 'invalidKey');
+  assert.equal(rest.headers.get('www-authenticate'), 'Bearer realm="oblimint", error="invalid_token"', 'no OAuth discovery on /api/v1');
+  assert.equal((await rpc(tok2.access_token, 'ping', {})).status, 200, 'still valid on /mcp');
 
   // ── refresh: rotation, reuse detection ──
   const ref = await (await token({ grant_type: 'refresh_token', refresh_token: tok2.refresh_token }, basic(secret))).json() as typeof tok1;
@@ -225,6 +236,72 @@ test('Claude connectors (OAuth) on PostgreSQL', { timeout: 300_000 }, async (t: 
   assert.ok((await apiKeysService.disconnect(fakeReq(), ownerActor, acme, connector.id, null)) >= 2);
   assert.equal((await rpc(tok4.access_token, 'ping', {})).status, 401, 'disconnected');
   assert.equal((await token({ grant_type: 'refresh_token', refresh_token: tok4.refresh_token }, basic(secret))).status, 400);
+
+  // ── M4: a credential change of the approving user ends his connections ──
+  const { killSessionsForUser, revokeOtherSessions } = await import('../userSessions.service');
+  const fresh = async () => {
+    const c = new URL((await approve(true)).data.redirectUrl).searchParams.get('code')!;
+    return await (await token({ grant_type: 'authorization_code', code: c, redirect_uri: redirectUri, code_verifier: verifier }, basic(secret))).json() as typeof tok1;
+  };
+  const userTokens = async (uid: number) => Number((await db('api_key_oauth_tokens').where({ user_id: uid }).count<{ n: string }[]>('* as n'))[0].n);
+  const tok5 = await fresh();
+  assert.equal((await rpc(tok5.access_token, 'ping', {})).status, 200);
+  await revokeOtherSessions({ session: { userId: owner }, sessionID: 'oauth-test-sid' } as never, 'password_changed');
+  assert.equal((await rpc(tok5.access_token, 'ping', {})).status, 401, 'his own password / TOTP change');
+  assert.equal((await token({ grant_type: 'refresh_token', refresh_token: tok5.refresh_token }, basic(secret))).status, 400);
+  const tok6 = await fresh();
+  assert.ok(await userTokens(owner) > 0);
+  await killSessionsForUser(owner, 'password_reset');
+  assert.equal((await rpc(tok6.access_token, 'ping', {})).status, 401, 'reset, 2FA reset or disable by an admin');
+  assert.equal(await userTokens(owner), 0);
+  // force_2fa: a connector does not act for a user who must still enroll a TOTP.
+  const { forgetTwoFactorPolicy, forgetSessionUser } = await import('../../middleware/sessionUserGuard');
+  const prevForce = await db('app_config').where({ key: 'force_2fa' }).first('value') as { value: string } | undefined;
+  const setForce = async (v: string) => { await db('app_config').insert({ key: 'force_2fa', value: v }).onConflict('key').merge(); forgetTwoFactorPolicy(); forgetSessionUser(owner); };
+  const tok7 = await fresh();
+  try {
+    await setForce('true');
+    assert.equal((await rpc(tok7.access_token, 'ping', {})).status, 401, 'force_2fa, no TOTP');
+  } finally {
+    if (prevForce) await setForce(prevForce.value); else { await db('app_config').where({ key: 'force_2fa' }).del(); forgetTwoFactorPolicy(); forgetSessionUser(owner); }
+  }
+  assert.equal((await rpc(tok7.access_token, 'ping', {})).status, 200, 'policy off again');
+  // ── M3: secret rotation and disconnection by a manager who did not create the connector ──
+  const member = await user('member');
+  await db('account_users').insert({ user_id: member, account_id: acme, capabilities: JSON.stringify(['sites.manage']) });
+  const notOwned = (e: { code: string }) => e.code === 'keyNotOwned';
+  const memberActor = await actorForUser(member, tA);
+  await assert.rejects(apiKeysService.rotateSecret(fakeReq(), memberActor, acme, connector.id), notOwned, 'files.read / files.write not held');
+  await assert.rejects(apiKeysService.disconnect(fakeReq(), memberActor, acme, connector.id, null), notOwned, 'no authorization of his');
+  // He approved it too: he ends his own authorizations, never the creator's.
+  const tokO = await fresh();
+  sessionUser = member;
+  await fresh();
+  await fresh();
+  sessionUser = owner;
+  const famOf = async (uid: number) => (await db('api_key_oauth_tokens').where({ key_id: connector.id, user_id: uid }).pluck('family') as string[]);
+  const [ownerFam] = await famOf(owner);
+  const memberFams = [...new Set(await famOf(member))];
+  assert.equal(memberFams.length, 2);
+  await assert.rejects(apiKeysService.disconnect(fakeReq(), memberActor, acme, connector.id, ownerFam), notOwned, "the creator's authorization");
+  assert.ok((await apiKeysService.disconnect(fakeReq(), memberActor, acme, connector.id, memberFams[0])) >= 1, 'one of his');
+  assert.deepEqual([...new Set(await famOf(member))], [memberFams[1]]);
+  assert.ok((await apiKeysService.disconnect(fakeReq(), memberActor, acme, connector.id, null)) >= 1, 'all of his');
+  assert.equal(await userTokens(member), 0);
+  assert.equal((await rpc(tokO.access_token, 'ping', {})).status, 200, "the creator's authorization stays");
+  // Holding every scope of the connector, he manages it fully.
+  await db('account_users').where({ user_id: member, account_id: acme }).update({ capabilities: JSON.stringify(['sites.manage', 'files.manage']) });
+  const memberFull = await actorForUser(member, tA);
+  secret = (await apiKeysService.rotateSecret(fakeReq(), memberFull, acme, connector.id)).clientSecret!;
+  assert.ok((await apiKeysService.disconnect(fakeReq(), memberFull, acme, connector.id, null)) >= 1);
+  assert.equal((await rpc(tokO.access_token, 'ping', {})).status, 401, 'every authorization ended');
+  // The creator, even without the connector's rights any more.
+  await db('account_users').where({ user_id: owner, account_id: acme }).update({ capabilities: JSON.stringify(['sites.manage']) });
+  const ownerBare = await actorForUser(owner, tA);
+  secret = (await apiKeysService.rotateSecret(fakeReq(), ownerBare, acme, connector.id)).clientSecret!;
+  assert.equal(await apiKeysService.disconnect(fakeReq(), ownerBare, acme, connector.id, null), 0);
+  await db('account_users').where({ user_id: owner, account_id: acme }).update({ capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish']) });
+
   // A plain key never takes OAuth tokens, a connector never works as a bearer key.
   const k = await apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'plain', scopes: ['files.read'], siteScope: 'all' });
   assert.equal(k.oauthClientId, null);

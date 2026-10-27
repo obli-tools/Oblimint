@@ -5,7 +5,7 @@ import { validate } from '../middleware/validate';
 import { authLimiter } from '../middleware/rateLimiter';
 import { loginSchema } from '../validators/auth.schema';
 
-const router = Router();
+const router = Router({ caseSensitive: true }); // like every router of /auth and /api (app.ts)
 
 router.post('/login', authLimiter, validate(loginSchema), authController.login);
 router.post('/logout', requireAuth, authController.logout);

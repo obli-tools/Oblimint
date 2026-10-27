@@ -27,6 +27,7 @@ const APPS_ERRORS = /* i18n:apps.errors */ {
   zipInvalid: 'The archive is invalid (corrupted, forbidden paths or symbolic links).',
   gitUnreachable: 'The git repository is unreachable.',
   gitAuthFailed: 'The git repository refused the credentials.',
+  gitTokenRequired: 'The repository changed: enter its access token again, or remove the stored token.',
   registryAuthFailed: 'The registry refused the credentials.',
   deploymentNotFound: 'This deployment does not exist anymore.',
   nothingToRollback: 'There is nothing to roll back to.',

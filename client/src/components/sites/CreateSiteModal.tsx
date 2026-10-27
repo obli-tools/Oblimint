@@ -109,6 +109,12 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
     if (!slugEdited) setSlug(deriveSlug(v));
   };
 
+  // Without releases.publish the site starts in manual ('auto' publishes every upload; refused by the server).
+  const canPublish = accountId == null || can('releases.publish', accountId);
+  useEffect(() => {
+    if (!canPublish && publishMode === 'auto') setPublishMode('manual');
+  }, [canPublish, publishMode]);
+
   const slugValid = SITE_SLUG_RE.test(slug);
   const docrootNorm = normalizeRelPath(docroot, true);
   const basePathNorm = normalizePathPrefix(basePath);
@@ -299,7 +305,7 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
         </div>
 
         {/* Publication */}
-        <PublishModeField mode={publishMode} onModeChange={setPublishMode} debounce={debounce} onDebounceChange={setDebounce} />
+        <PublishModeField mode={publishMode} onModeChange={setPublishMode} debounce={debounce} onDebounceChange={setDebounce} autoDisabled={!canPublish} />
       </div>
     </Modal>
   );

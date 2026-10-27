@@ -68,7 +68,7 @@ Consequences:
 
 1. **Write to staging, then publish.** Publishing creates a new release and puts it live; the previous ones stay available for a \`rollback\`.
 2. **Publish mode of the site** (\`publishMode\` field of \`get_site\`):
-   - \`auto\` (default for a new site): staging changes are published **automatically** a few seconds after the last write. **Every batch of files therefore goes live.**
+   - \`auto\` (default for a new site when the key has \`releases.publish\`, \`manual\` otherwise): staging changes are published **automatically** a few seconds after the last write. **Every batch of files therefore goes live.** Switching a site to \`auto\` takes \`releases.publish\`.
    - \`manual\`: nothing goes live until you call **\`publish\`**.
    - \`approval\`: publishing waits for a **human's approval** in the panel. Tell them.
 3. **There is no staging preview**: what is not published cannot be visited. To test before the real site goes live, use a development site (see §5).
@@ -91,12 +91,12 @@ Consequences:
 | \`cron.manage\` | Scheduled tasks of its sites: create, change, run, read the output |
 | \`databases.manage\` | Databases: the account's database servers (create one within the plan), databases and users, SQL import / export |
 | \`routes.manage\` | Domain routes: choose which site (or runtime) serves a path, e.g. \`example.com/uploads/\`, towards the key's sites; on the domains given to it in the panel (even one serving nothing yet) or serving only its sites |
-| \`domains.subdomain\` | Attach to the sites **subdomains** of a domain **already in** the account, remove the ones the key created |
+| \`domains.subdomain\` | Attach to the sites **subdomains** of a domain **already in** the account (given to the key in the panel, or serving only its sites), remove the ones the key created |
 | \`logs.read\` | Read access, error (web server / PHP) and application logs |
 
 **Databases**: a key valid for every site sees every database of the account; a key limited to some sites sees only the databases and users **it created**. A key deletes only what it created, and never stops nor deletes a database server.
 
-**Routes**: a key changes only the routes of a domain whose routes **all** lead to its sites (a key valid for every site: every domain of the account), and only towards its sites.
+**Routes**: a key changes the routes of the domains given to it in the panel, and of a domain whose routes **all** lead to its sites (a key limited to some sites; a key valid for every site works only on the domains given to it), and only towards its sites. A route of such a domain towards a site outside the key is never changed nor removed by the key.
 
 Never possible with a key: deleting a site, adding a **new root domain**, deleting a database it did not create or a database server, managing FTP / mail accounts or users, or touching another account. Ask the human for those.
 
@@ -128,7 +128,7 @@ A key never has more rights than the human who created it: if they lose a right,
 | \`rollback\` | Back to a release (\`release_id\`) | \`releases.publish\` |
 | \`list_parent_domains\` | Account domains a subdomain can be created under | \`domains.subdomain\` |
 | \`add_subdomain\` | Create \`xxx.existing-domain.tld\` and route it to a site | \`domains.subdomain\` |
-| \`list_subdomains\` / \`remove_subdomain\` | Subdomains of the key (only the ones it created can be removed) | \`domains.subdomain\` |
+| \`list_subdomains\` / \`remove_subdomain\` | Subdomains of the key (only the ones it created can be removed, and not one with a route towards a site outside the key) | \`domains.subdomain\` |
 | \`get_env\` / \`set_env\` | Environment variables of the site (read by PHP with \`getenv()\`); \`set\` adds / replaces, \`remove\` deletes, the others stay; secrets write-only; the site restarts | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Folders the site may write to (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Secondary runtimes: another container (possibly another engine) serving some paths of the **same** code and data | \`sites.manage\` |
@@ -324,7 +324,8 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`publishInProgress\` / \`noChanges\` (409) | Publish already running / nothing to publish | Wait / check \`staging_changes\` |
 | \`hostdOutdated\` (503) | The server's file service is older than the panel | Tell the human (an update to apply in the panel), then retry |
 | \`keyNotCreator\` (403) | Deleting a database / user the key did not create | Ask the human |
-| \`keyDomainNotManageable\` (403) | The domain also serves sites outside the key | Ask the human, or use a subdomain |
+| \`keyDomainNotManageable\` (403) | The domain is not given to the key and also serves sites outside it (routes, parent of a subdomain) | Ask the human, or use a domain of \`list_parent_domains\` |
+| \`keyRouteOutside\` (403) | The route leads to a site outside the key | Leave it; add another path, or ask the human |
 | \`routeTaken\` (409) · \`runtimeInUse\` (409) | Path already routed · runtime still used by a route | \`list_routes\`; move / remove the route first |
 | \`planLimit\` · \`cronTooFrequent\` (409) | Plan limit (number of databases, cron jobs, minimum interval…) | Stay within the limits, or ask the human |
 | \`instanceNotRunning\` / \`siteNotRunning\` (409) | Database server or site not started | Wait (\`list_databases\`, \`get_site\`), retry |
@@ -393,7 +394,7 @@ Conséquences :
 
 1. **On écrit dans staging, puis on publie.** Publier crée une nouvelle release et la met en ligne ; les précédentes restent disponibles pour un retour arrière (\`rollback\`).
 2. **Mode de publication du site** (champ \`publishMode\` de \`get_site\`) :
-   - \`auto\` (valeur par défaut d'un nouveau site) : les changements de staging sont publiés **automatiquement** quelques secondes après la dernière écriture. **Chaque lot de fichiers part donc en ligne.**
+   - \`auto\` (valeur par défaut d'un nouveau site si la clé a \`releases.publish\`, \`manual\` sinon) : les changements de staging sont publiés **automatiquement** quelques secondes après la dernière écriture. **Chaque lot de fichiers part donc en ligne.** Passer un site en \`auto\` demande \`releases.publish\`.
    - \`manual\` : rien ne part en ligne tant que tu n'appelles pas **\`publish\`**.
    - \`approval\` : la publication attend la **validation d'un humain** dans le panel. Préviens-le.
 3. **Il n'y a pas d'aperçu du staging** : ce qui n'est pas publié ne peut pas être visité. Pour tester avant la mise en ligne du vrai site, utilise un site de développement (voir §5).
@@ -416,12 +417,12 @@ Conséquences :
 | \`cron.manage\` | Tâches planifiées de ses sites : créer, modifier, lancer, lire le résultat |
 | \`databases.manage\` | Bases de données : serveurs de bases du compte (en créer un dans les limites du plan), bases et utilisateurs, import / export SQL |
 | \`routes.manage\` | Routes des domaines : choisir quel site (ou runtime) sert un chemin, ex. \`exemple.com/uploads/\`, vers les sites de la clé ; sur les domaines qui lui sont donnés dans le panel (même un domaine qui ne sert encore rien) ou qui ne servent que ses sites |
-| \`domains.subdomain\` | Rattacher aux sites des **sous-domaines** d'un domaine **déjà présent** sur le compte, retirer ceux créés par la clé |
+| \`domains.subdomain\` | Rattacher aux sites des **sous-domaines** d'un domaine **déjà présent** sur le compte (donné à la clé dans le panel, ou qui ne sert que ses sites), retirer ceux créés par la clé |
 | \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs |
 
 **Bases de données** : une clé valable pour tous les sites voit toutes les bases du compte ; une clé limitée à certains sites ne voit que les bases et utilisateurs **qu'elle a créés**. Une clé ne supprime que ce qu'elle a créé, et n'arrête ni ne supprime jamais un serveur de bases.
 
-**Routes** : une clé ne change que les routes d'un domaine dont **toutes** les routes mènent à ses sites (une clé valable pour tous les sites : tous les domaines du compte), et seulement vers ses sites.
+**Routes** : une clé change les routes des domaines qui lui sont donnés dans le panel, et d'un domaine dont **toutes** les routes mènent à ses sites (clé limitée à certains sites ; une clé valable pour tous les sites ne travaille que sur les domaines qui lui sont donnés), et seulement vers ses sites. Une route d'un tel domaine vers un site hors de la clé n'est jamais modifiée ni retirée par la clé.
 
 Jamais possible avec une clé : supprimer un site, ajouter un **nouveau domaine racine**, supprimer une base qu'elle n'a pas créée ou un serveur de bases, gérer les comptes FTP / mail ou les utilisateurs, ou toucher à un autre compte. Pour ça, demande à l'humain.
 
@@ -453,7 +454,7 @@ Une clé n'a jamais plus de droits que l'humain qui l'a créée : s'il perd un d
 | \`rollback\` | Retour à une release (\`release_id\`) | \`releases.publish\` |
 | \`list_parent_domains\` | Domaines du compte sous lesquels créer un sous-domaine | \`domains.subdomain\` |
 | \`add_subdomain\` | Créer \`xxx.domaine-existant.tld\` et le router vers un site | \`domains.subdomain\` |
-| \`list_subdomains\` / \`remove_subdomain\` | Sous-domaines de la clé (seuls ceux qu'elle a créés peuvent être retirés) | \`domains.subdomain\` |
+| \`list_subdomains\` / \`remove_subdomain\` | Sous-domaines de la clé (seuls ceux qu'elle a créés peuvent être retirés, et pas un qui a une route vers un site hors de la clé) | \`domains.subdomain\` |
 | \`get_env\` / \`set_env\` | Variables d'environnement du site (lues par PHP avec \`getenv()\`) ; \`set\` ajoute / remplace, \`remove\` supprime, les autres restent ; secrets en écriture seule ; le site redémarre | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Dossiers où le site peut écrire (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Runtimes secondaires : un autre conteneur (autre moteur possible) qui sert certains chemins du **même** code et des mêmes données | \`sites.manage\` |
@@ -649,7 +650,8 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`publishInProgress\` / \`noChanges\` (409) | Publication en cours / rien à publier | Attendre / vérifier \`staging_changes\` |
 | \`hostdOutdated\` (503) | Le service de fichiers du serveur est plus ancien que le panel | Prévenir l'humain (mise à jour à appliquer dans le panel), puis réessayer |
 | \`keyNotCreator\` (403) | Suppression d'une base / d'un utilisateur que la clé n'a pas créé | Demander à l'humain |
-| \`keyDomainNotManageable\` (403) | Le domaine sert aussi des sites hors de la clé | Demander à l'humain, ou utiliser un sous-domaine |
+| \`keyDomainNotManageable\` (403) | Le domaine n'est pas donné à la clé et sert aussi des sites hors d'elle (routes, parent d'un sous-domaine) | Demander à l'humain, ou utiliser un domaine de \`list_parent_domains\` |
+| \`keyRouteOutside\` (403) | La route mène à un site hors de la clé | La laisser ; ajouter un autre chemin, ou demander à l'humain |
 | \`routeTaken\` (409) · \`runtimeInUse\` (409) | Chemin déjà routé · runtime encore utilisé par une route | \`list_routes\` ; déplacer / retirer la route d'abord |
 | \`planLimit\` · \`cronTooFrequent\` (409) | Limite du plan (nombre de bases, de crons, intervalle minimal…) | Rester dans les limites, ou demander à l'humain |
 | \`instanceNotRunning\` / \`siteNotRunning\` (409) | Serveur de bases ou site pas démarré | Attendre (\`list_databases\`, \`get_site\`), réessayer |

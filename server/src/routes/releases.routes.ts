@@ -5,7 +5,7 @@ import { AppError } from '../middleware/errorHandler';
 import { validate } from '../middleware/validate';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { auditService } from '../services/audit.service';
-import { idParam, loadSite, resolveActor } from '../services/hosting/access';
+import { actorReadsCode, assertReadsCode, idParam, loadSite, resolveActor } from '../services/hosting/access';
 import { toSite, type SiteRow } from '../services/hosting/rows';
 import { forActor, releaseForActor } from '../services/hosting/statusMessage';
 import { releaseService } from '../services/releases/release.service';
@@ -15,7 +15,9 @@ import { releaseService } from '../services/releases/release.service';
 //   GET  /:id/releases               ?limit=&offset= → { items: Release[]; total: number } (read)
 //   POST /:id/releases               PublishRequest → Release (releases.publish; 409 publishInProgress | stagingEmpty | noChanges)
 //   GET  /:id/releases/:rid          → ReleaseDetail (read)
-//   GET  /:id/releases/:rid/diff     ?against=<rid>|previous|empty &file=<path> → ReleaseDiff (read)
+//   GET  /:id/releases/:rid/diff     ?against=<rid>|previous|empty &file=<path> → ReleaseDiff (read: names and
+//                                    stats; the patches need code.read — files.manage or client releases.approve, staff sites.manage too —,
+//                                    contentHidden otherwise and ?file= → 403 codeReadForbidden)
 //   POST /:id/releases/:rid/rollback → Site (releases.publish)
 //   POST /:id/releases/:rid/approve  ApproveRequest { override?, reason? } → Release (releases.approve;
 //                                    P3: a BLOCKED scan → 409 riskBlocked {score, level} unless override by a STAFF
@@ -105,9 +107,14 @@ router.get('/:id/releases/:rid', async (req, res, next) => {
 
 router.get('/:id/releases/:rid/diff', heavyOpLimiter, validate(diffQuery, 'query'), async (req, res, next) => {
   try {
-    const site = await siteFor(req, 'read');
+    const actor = await resolveActor(req);
+    const site = await loadSite(actor, idParam(req), 'read');
     const q = req.query as unknown as z.infer<typeof diffQuery>;
-    res.json({ success: true, data: await releaseService.diff(site.id, idParam(req, 'rid'), q.against, q.file ?? null) });
+    if (q.file) assertReadsCode(actor, site);
+    res.json({
+      success: true,
+      data: await releaseService.diff(site.id, idParam(req, 'rid'), q.against, q.file ?? null, { content: actorReadsCode(actor, site) }),
+    });
   } catch (err) { next(err); }
 });
 

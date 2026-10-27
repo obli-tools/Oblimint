@@ -95,4 +95,17 @@ test('site environment variables', { timeout: 300_000 }, async (t: TestContext) 
   assert.deepEqual(removed.vars.map((v) => v.name), ['TWITCH_SECRET']);
   const audit = await db('audit_logs').where({ action: 'site.env.update', tenant_id: tA }).count('* as c').first();
   assert.equal(Number(audit?.c), 2);
+
+  // A secret is never turned visible without a new value: list() would send the stored one back in clear.
+  for (const v of [{ name: 'TWITCH_SECRET', secret: false }, { name: 'TWITCH_SECRET' }, { name: 'TWITCH_SECRET', value: null, secret: false }]) {
+    await assert.rejects(siteEnvService.replace(req, actor, siteId, [v]), (e: { code: string }) => e.code === 'envValueRequired');
+  }
+  assert.deepEqual((await siteEnvService.list(actor, siteId)).map((v) => [v.name, v.value, v.secret]), [['TWITCH_SECRET', null, true]]);
+  assert.deepEqual((await siteEnvFor([siteId])).get(siteId), [['TWITCH_SECRET', 'abc"; rm -rf / #=']], 'stored value untouched');
+  // With a new value it becomes visible (that value only); a visible one can turn secret without retyping.
+  const visible = await siteEnvService.replace(req, actor, siteId, [{ name: 'TWITCH_SECRET', value: 'public-id', secret: false }]);
+  assert.deepEqual([visible.changed, visible.vars.map((v) => [v.name, v.value, v.secret])], [true, [['TWITCH_SECRET', 'public-id', false]]]);
+  const hidden = await siteEnvService.replace(req, actor, siteId, [{ name: 'TWITCH_SECRET', secret: true }]);
+  assert.deepEqual([hidden.changed, hidden.vars.map((v) => [v.name, v.value, v.secret])], [true, [['TWITCH_SECRET', null, true]]]);
+  assert.deepEqual((await siteEnvFor([siteId])).get(siteId), [['TWITCH_SECRET', 'public-id']]);
 });

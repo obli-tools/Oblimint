@@ -18,7 +18,10 @@ export type HostingNeed =
   // P2: cron → sites.manage, allow-list → files.manage, logs / usage → read.
   | 'databases.manage' | 'dns.manage'
   // P4: mail (domains, mailboxes, aliases, DKIM, relay, webmail SSO).
-  | 'mail.manage';
+  | 'mail.manage'
+  // Content of the code (release / window diff patches); 'read' only lists the files.
+  // Client: files.manage or releases.approve (an approver reviews the code).
+  | 'code.read';
 
 const STAFF_CAPS: Record<HostingNeed, string[]> = {
   read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage', 'mail.manage'],
@@ -32,9 +35,11 @@ const STAFF_CAPS: Record<HostingNeed, string[]> = {
   'databases.manage': ['databases.manage'],
   'dns.manage': ['dns.manage'],
   'mail.manage': ['mail.manage'],
+  'code.read': ['files.manage', 'sites.manage'],
 };
 
-const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
+/** null = never for a client; a list = any of them. */
+const CLIENT_CAP: Record<HostingNeed, ClientCapability | readonly ClientCapability[] | 'member' | null> = {
   read: 'member',
   'plans.manage': null,
   'accounts.manage': null,
@@ -46,6 +51,7 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
   'databases.manage': 'databases.manage',
   'dns.manage': 'dns.manage',
   'mail.manage': 'mail.manage',
+  'code.read': ['files.manage', 'releases.approve'],
 };
 
 /** Pure check (exported for tests / non-hook callers). accountId omitted = "on some account". */
@@ -59,7 +65,8 @@ export function hostingCan(me: HostingMe | null, need: HostingNeed, accountId?: 
   const required = CLIENT_CAP[need];
   if (required === null) return false;
   const entries = accountId != null ? [me.accounts[accountId]].filter(Boolean) : Object.values(me.accounts);
-  return entries.some((caps) => required === 'member' || caps!.includes(required));
+  return entries.some((caps) => required === 'member'
+    || (typeof required === 'string' ? caps!.includes(required) : required.some((c) => caps!.includes(c))));
 }
 
 interface HostingState {

@@ -368,6 +368,15 @@ test('list, diff (previous / empty / other release / single file), staging statu
   assert.equal(one.files.length, 1);
   assert.match(one.files[0].patch ?? '', /^\+b$/m);
   await assert.rejects(m.releaseService.diff(s.siteId, r2.id, r1.id, 'nope.txt'), (err: any) => err.statusCode === 404);
+  assert.equal(d.contentHidden, false);
+  // M1: without the code right, names and stats only; a file's patch is refused (before its existence is told).
+  const names = await m.releaseService.diff(s.siteId, r2.id, 'previous', null, { content: false });
+  assert.equal(names.contentHidden, true);
+  assert.deepEqual(names.files.map((f) => `${f.status}:${f.path}`).sort(), ['added:new.txt', 'modified:readme.txt']);
+  assert.ok(names.files.every((f) => f.patch === null && !f.patchTruncated), 'no patch inlined');
+  assert.deepEqual(names.files.map((f) => f.additions + f.deletions), d.files.map((f) => f.additions + f.deletions), 'stats kept');
+  await assert.rejects(m.releaseService.diff(s.siteId, r2.id, r1.id, 'readme.txt', { content: false }), (err: any) => err.statusCode === 403 && err.code === 'codeReadForbidden');
+  await assert.rejects(m.releaseService.diff(s.siteId, r2.id, r1.id, 'nope.txt', { content: false }), (err: any) => err.statusCode === 403);
   const other = await newSite({ files: { 'x': 'x' } });
   const ro = await publish(other.siteId);
   await assert.rejects(m.releaseService.diff(s.siteId, r2.id, ro.id), (err: any) => err.statusCode === 404, 'release of another site');
@@ -381,6 +390,72 @@ test('list, diff (previous / empty / other release / single file), staging statu
 
   const det = await m.releaseService.detectProfile(s.siteId);
   assert.equal(det.profile, 'wordpress');
+});
+
+test('GET /sites/:id/releases/:rid/diff: the patches follow the code right of the caller (M1, at the route)', { skip: SKIP }, async (t) => {
+  const s = await newSite({ files: { 'index.php': '<?php echo 1;\n', 'config.php': '<?php $secret = "s3cr3t";\n' } });
+  await publish(s.siteId);
+  fs.writeFileSync(`${s.staging}/config.php`, '<?php $secret = "rotated";\n');
+  const r2 = await publish(s.siteId);
+
+  const express = (await import('express')).default;
+  const { setRequestActor } = await import('../hosting/access');
+  const { errorHandler } = await import('../../middleware/errorHandler');
+  const releasesRoutes = (await import('../../routes/releases.routes')).default;
+  type Actor = import('../hosting/access').HostingActor;
+  const client = (uid: number, caps: string[]): Actor => ({ kind: 'client', userId: uid, tenantId: 1, accounts: new Map([[accountId, new Set(caps as never[])]]) });
+  const staff = (uid: number, caps: string[]): Actor => ({ kind: 'staff', userId: uid, tenantId: 1, globalView: false, caps: new Set(caps) });
+  const actors: Record<string, Actor> = {
+    helpdesk: staff(9001, ['overview.read', 'users.manage']),
+    member: client(9002, []),
+    alice: client(9003, ['files.manage', 'sites.manage']),
+    approver: client(9004, ['releases.approve']),
+    ops: staff(9005, ['sites.manage']),
+  };
+  // The actor is set as an API-key request would set it: the route's own resolveActor / loadSite / code gate run unchanged.
+  const app = express();
+  app.use((req, _res, next) => {
+    const who = String(req.headers['x-actor']);
+    (req as unknown as { session: unknown }).session = { userId: actors[who].userId };
+    req.tenantId = 1;
+    setRequestActor(req, actors[who]);
+    next();
+  });
+  app.use('/sites', releasesRoutes);
+  app.use(errorHandler);
+  const server = app.listen(0);
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${(server.address() as import('net').AddressInfo).port}/sites/${s.siteId}/releases/${r2.id}/diff`;
+  type DiffBody = { success: boolean; code?: string; data?: { contentHidden: boolean; files: Array<{ path: string; patch: string | null; additions: number }> } };
+  const get = async (who: string, qs = '') => {
+    const r = await fetch(`${base}${qs}`, { headers: { 'x-actor': who } });
+    return { status: r.status, body: await r.json() as DiffBody };
+  };
+
+  // (a) read only: names and stats, every patch null — the secret never leaves.
+  for (const who of ['helpdesk', 'member']) {
+    const r = await get(who);
+    assert.equal(r.status, 200, who);
+    assert.equal(r.body.data?.contentHidden, true, `${who}: contentHidden`);
+    assert.deepEqual(r.body.data?.files.map((f) => f.path), ['config.php'], `${who}: names kept`);
+    assert.ok(r.body.data?.files.every((f) => f.patch === null && f.additions === 1), `${who}: stats only, no patch`);
+    assert.doesNotMatch(JSON.stringify(r.body), /s3cr3t|rotated/, `${who}: no file content in the answer`);
+    // (b) ?file= (and against=empty, the whole tree) → 403 codeReadForbidden.
+    const one = await get(who, '?file=config.php');
+    assert.equal(one.status, 403, `${who}: ?file=`);
+    assert.equal(one.body.code, 'codeReadForbidden');
+    assert.equal((await get(who, '?against=empty&file=index.php')).body.code, 'codeReadForbidden', `${who}: against=empty`);
+  }
+  // (c) the code right (client files.manage or releases.approve, staff sites.manage): the patches inline.
+  for (const who of ['alice', 'approver', 'ops']) {
+    const r = await get(who);
+    assert.equal(r.status, 200, who);
+    assert.equal(r.body.data?.contentHidden, false, `${who}: content shown`);
+    assert.match(r.body.data?.files[0].patch ?? '', /rotated/, `${who}: inline patch`);
+    const one = await get(who, '?file=config.php');
+    assert.equal(one.status, 200, `${who}: ?file=`);
+    assert.match(one.body.data?.files[0].patch ?? '', /^\+<\?php \$secret = "rotated";$/m);
+  }
 });
 
 test('recoverInterrupted marks in-flight releases as failed', { skip: SKIP }, async () => {

@@ -291,7 +291,7 @@ export function WindowReviewPage() {
 
       <section>
         <div className={sectionLabelCls}>{t('windowReview.changes') || 'Changed files'}</div>
-        <ChangesBrowser siteId={siteId} windowId={w.id} tick={filesTick} />
+        <ChangesBrowser siteId={siteId} windowId={w.id} tick={filesTick} canReadCode={can('code.read', accountId)} />
       </section>
 
       {w.log.length > 0 && (

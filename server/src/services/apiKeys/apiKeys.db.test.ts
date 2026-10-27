@@ -14,7 +14,10 @@ import type { AddressInfo } from 'net';
 // creator's current rights), site restriction (404 outside the selection,
 // other accounts), /api/v1 over HTTP (401 / 403 keyScope / 404), site
 // creation through a key (joins its selection), audit (creator + key name),
-// revocation.
+// revocation; subdomain parents and routes of given domains (L19, L20), file
+// writes audited with the key (M13), MCP batches (M5), key ownership (M3),
+// force_2fa (M4), the grantable scopes and the preset of the key form in the
+// audit (presets).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_URL = process.env.APIKEYS_TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:55490/postgres';
@@ -115,6 +118,30 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   const stored = await db('api_keys').where({ id: created.id }).first('token_hash');
   assert.notEqual(stored.token_hash, created.key!, 'only the hash is stored');
 
+  // ── grantable scopes (the key form's presets) and the preset recorded in the audit ──
+  assert.deepEqual(await apiKeysService.grantable(ownerActor, acme), {
+    scopes: ['files.read', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'cron.manage', 'logs.read'], canGrantDomains: false,
+  }, 'what sites.manage + files.manage + releases.publish allow, no domain');
+  await assert.rejects(apiKeysService.grantable(readerActor, acme), (e: { statusCode: number }) => e.statusCode === 403, 'a reader manages no key');
+  await assert.rejects(apiKeysService.grantable(ownerActor, other), (e: { statusCode: number }) => e.statusCode === 404);
+  const presetOf = async (keyId: number) => {
+    const row = await db('audit_logs').where({ action: 'apiKey.create', tenant_id: tA }).orderBy('id', 'desc').first('details');
+    const d = typeof row.details === 'string' ? JSON.parse(row.details) : row.details;
+    assert.equal(d.keyId, keyId);
+    return d.preset as string;
+  };
+  const ci = await apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'ci-preset', scopes: ['files.read', 'files.write', 'releases.publish'], siteScope: 'selected', siteIds: [s1] });
+  assert.equal(await presetOf(ci.id), 'update');
+  await apiKeysService.remove(fakeReq(), ownerActor, acme, ci.id);
+  const every = await apiKeysService.create(fakeReq(), ownerActor, acme, {
+    name: 'all-preset', scopes: ['files.read', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'cron.manage', 'logs.read'], siteScope: 'all',
+  });
+  assert.equal(await presetOf(every.id), 'all', 'everything the owner holds; no domain since he may not give any');
+  await apiKeysService.remove(fakeReq(), ownerActor, acme, every.id);
+  const custom = await apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'custom-preset', scopes: ['files.write'], siteScope: 'all' });
+  assert.equal(await presetOf(custom.id), 'custom');
+  await apiKeysService.remove(fakeReq(), ownerActor, acme, custom.id);
+
   // ── verify ──
   assert.equal(await apiKeysService.verify(`${created.key!}x`, '203.0.113.7'), null);
   assert.equal(await apiKeysService.verify(created.key!.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')), '203.0.113.7'), null);
@@ -151,10 +178,10 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
 
   // ── MCP ──
   const mcpUrl = base.replace(/\/api\/v1$/, '/mcp');
-  const rpc = async (method: string, params: unknown, id: number | null = 1) => {
+  const rpc = async (method: string, params: unknown, id: number | null = 1, key = created.key!) => {
     const r = await fetch(mcpUrl, {
       method: 'POST',
-      headers: { authorization: `Bearer ${created.key!}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', ...(id === null ? {} : { id }), method, params }),
     });
     return { status: r.status, body: r.status === 202 ? null : await r.json() as { result?: any; error?: { code: number } } }; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -163,8 +190,13 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   assert.equal(init.body?.result.protocolVersion, '2025-06-18');
   assert.equal(init.body?.result.serverInfo.name, 'oblimint');
   assert.equal((await rpc('notifications/initialized', {}, null)).status, 202);
-  const tools = (await rpc('tools/list', {})).body?.result.tools as Array<{ name: string; inputSchema: { type: string } }>;
+  const tools = (await rpc('tools/list', {})).body?.result.tools as Array<{ name: string; description: string; inputSchema: { type: string } }>;
   assert.ok(tools.some((x) => x.name === 'write_file') && tools.every((x) => x.inputSchema.type === 'object'));
+  // The agent is told BEFORE trying that "auto" takes releases.publish (create and update alike, M6).
+  for (const name of ['create_site', 'update_site']) {
+    const d = tools.find((x) => x.name === name)?.description ?? '';
+    assert.match(d, /"auto"[^.]*releases\.publish|releases\.publish[^.]*"auto"/, `${name} says auto needs releases.publish`);
+  }
   const sitesCall = (await rpc('tools/call', { name: 'list_sites', arguments: {} })).body?.result;
   assert.deepEqual(JSON.parse(sitesCall.content[0].text).map((x: { id: number }) => x.id), [s1]);
   const denied = (await rpc('tools/call', { name: 'get_site', arguments: { site_id: s2 } })).body?.result;
@@ -201,6 +233,44 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   const details = typeof audit.details === 'string' ? JSON.parse(audit.details) : audit.details;
   assert.equal(details.apiKey.name, 'claude');
 
+  // ── create_site (MCP) is validated like POST /api/v1/sites (M7) ──
+  await db('plans').whereIn('id', db('hosting_accounts').where({ id: acme }).select('plan_id')).update({ limits: JSON.stringify({ maxSites: 50 }) });
+  for (const [args, field] of [
+    [{ base: 'nginx-static', docroot: './public' }, 'docroot'],
+    [{ base: 'nginx-static', app_profile: 'nope' }, 'appProfile'],
+    [{ base: 'no-such-base' }, 'base'],
+    [{ base: 'nginx-static', base_path: '../x' }, 'basePath'],
+  ] as Array<[Record<string, string>, string]>) {
+    const bad = (await rpc('tools/call', { name: 'create_site', arguments: { name: 'Bad', slug: `bad${suffix}`.slice(0, 30), ...args } })).body?.result;
+    assert.equal(bad.isError, true, `create_site with an invalid ${field}`);
+    assert.match(bad.content[0].text, new RegExp(`Validation failed[\\s\\S]*${field}`), field);
+  }
+  assert.equal(await db('sites').where({ account_id: acme, slug: `bad${suffix}`.slice(0, 30) }).first('id'), undefined, 'nothing inserted');
+  const viaMcp = (await rpc('tools/call', { name: 'create_site', arguments: { name: 'Via MCP', slug: `mc${suffix}`.slice(0, 30), base: 'nginx-static', docroot: 'public/', base_path: 'shop' } })).body?.result;
+  assert.equal(viaMcp.isError, undefined, viaMcp.content?.[0]?.text);
+  const mcpRow = await db('sites').where({ account_id: acme, slug: `mc${suffix}`.slice(0, 30) }).first('docroot', 'base_path', 'publish_mode');
+  assert.deepEqual(mcpRow, { docroot: 'public', base_path: '/shop/', publish_mode: 'auto' }, 'normalized; auto with releases.publish');
+
+  // ── publish mode auto needs releases.publish (M6) ──
+  const noPub = await apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'no-publish', scopes: ['sites.create', 'sites.manage', 'files.write'], siteScope: 'selected', siteIds: [] });
+  const npRes = await call('/sites', { method: 'POST', body: JSON.stringify({ name: 'No publish', slug: `np${suffix}`.slice(0, 30), base: 'nginx-static' }) }, noPub.key!);
+  const npBody = await npRes.json() as { data: { id: number; publishMode: string }; error?: string };
+  assert.equal(npRes.status, 201, npBody.error);
+  assert.equal(npBody.data.publishMode, 'manual', 'a key without releases.publish creates in manual');
+  const npAuto = await call('/sites', { method: 'POST', body: JSON.stringify({ name: 'No publish 2', slug: `npa${suffix}`.slice(0, 30), base: 'nginx-static', publishMode: 'auto' }) }, noPub.key!);
+  assert.equal(npAuto.status, 403);
+  assert.equal(((await npAuto.json()) as { code: string }).code, 'keyScope');
+  const npSwitch = await call(`/sites/${npBody.data.id}`, { method: 'PATCH', body: JSON.stringify({ publishMode: 'auto' }) }, noPub.key!);
+  assert.equal(npSwitch.status, 403, 'switching to auto');
+  assert.equal(((await npSwitch.json()) as { code: string }).code, 'keyScope');
+  const npMcp = (await rpc('tools/call', { name: 'update_site', arguments: { site_id: npBody.data.id, publish_mode: 'auto' } }, 1, noPub.key!)).body?.result;
+  assert.equal(npMcp.isError, true);
+  assert.match(npMcp.content[0].text, /keyScope/);
+  assert.equal((await db('sites').where({ id: npBody.data.id }).first('publish_mode')).publish_mode, 'manual');
+  // Other settings, and approval, stay open to sites.manage.
+  const npOk = await call(`/sites/${npBody.data.id}`, { method: 'PATCH', body: JSON.stringify({ publishMode: 'approval', name: 'Renamed' }) }, noPub.key!);
+  assert.equal(npOk.status, 200);
+
   // ── the creator's rights bound the key ──
   await db('account_users').where({ user_id: owner, account_id: acme }).update({ capabilities: JSON.stringify(['files.manage']) });
   const reduced = (await apiKeysService.verify(created.key!, '203.0.113.7'))!;
@@ -221,7 +291,10 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
     tenant_id: tA, account_id: acme, name: `manual.${parentName}`, kind: 'subdomain', include_www: false, tls_mode: 'none', force_https: false, wildcard: false,
     verification_status: 'verified', verification_method: 'inherited', verified_at: db.fn.now(),
   }).returning('id');
-  void pd; void fd;
+  void fd;
+  const pdId = Number(pd.id ?? pd);
+  // The parent serves site one only: a parent for the keys of site one (L19).
+  await db('site_routes').insert({ account_id: acme, domain_id: pdId, path_prefix: '/', site_id: s1, runtime_id: null });
   const owner3 = await actorForUser(owner, tA);
   await db('account_users').where({ user_id: owner, account_id: acme }).update({ capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish', 'domains.manage']) });
   const k3 = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'subs', scopes: ['domains.subdomain'], siteScope: 'selected', siteIds: [s1] });
@@ -242,11 +315,44 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   await assert.rejects(keyApi.removeSubdomain(c3, fakeReq(), parentName), (e: { statusCode: number }) => e.statusCode === 404);
   await keyApi.removeSubdomain(c3, fakeReq(), `blog.${parentName}`);
   assert.equal(await db('domains').where({ id: sub.id }).first('id'), undefined);
+  // L20: a subdomain of the key the panel also routes to a site outside the key stays (with its routes).
+  const held = await keyApi.addSubdomain(c3, fakeReq(), s1, `held.${parentName}`);
+  await db('site_routes').insert({ account_id: acme, domain_id: held.id, path_prefix: '/x/', site_id: s2, runtime_id: null });
+  await assert.rejects(keyApi.removeSubdomain(c3, fakeReq(), `held.${parentName}`), (e: { code: string }) => e.code === 'keyRouteOutside');
+  const heldMcp = (await rpc('tools/call', { name: 'remove_subdomain', arguments: { name: `held.${parentName}` } }, 1, k3.key!)).body?.result;
+  assert.equal(heldMcp.isError, true);
+  assert.match(heldMcp.content[0].text, /keyRouteOutside/);
+  const heldDel = await call(`/subdomains/held.${parentName}`, { method: 'DELETE' }, k3.key!);
+  assert.equal(heldDel.status, 403);
+  assert.equal(((await heldDel.json()) as { code: string }).code, 'keyRouteOutside');
+  assert.equal((await db('site_routes').where({ domain_id: held.id }).count('* as n').first())?.n, '2', 'the domain and its routes stay');
+  await db('site_routes').where({ domain_id: held.id, path_prefix: '/x/' }).del();
+  await keyApi.removeSubdomain(c3, fakeReq(), `held.${parentName}`);
+  assert.equal(await db('domains').where({ id: held.id }).first('id'), undefined, 'once the outside route is gone');
   const keyNoSub = (await apiKeysService.verify(created.key!, '203.0.113.7'));
   if (keyNoSub) await assert.rejects(keyApi.addSubdomain(keyNoSub, fakeReq(), s1, `y.${parentName}`), (e: { code: string }) => e.code === 'keyScope');
+  // L19: only under a domain given to the key, or serving only its sites.
+  await assert.rejects(keyApi.addSubdomain(c3, fakeReq(), s1, `x.manual.${parentName}`), (e: { code: string }) => e.code === 'keyDomainNotManageable',
+    'the closest parent (manual.) serves nothing and is not given');
+  const k3two = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'subs-two', scopes: ['domains.subdomain'], siteScope: 'selected', siteIds: [s2] });
+  const c3two = (await apiKeysService.verify(k3two.key!, '203.0.113.7'))!;
+  assert.deepEqual(await keyApi.parentDomains(c3two), [], 'the parent serves a site outside the key');
+  await assert.rejects(keyApi.addSubdomain(c3two, fakeReq(), s2, `evil.${parentName}`), (e: { code: string }) => e.code === 'keyDomainNotManageable');
+  const k3all = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'subs-all', scopes: ['domains.subdomain'], siteScope: 'all' });
+  const c3all = (await apiKeysService.verify(k3all.key!, '203.0.113.7'))!;
+  assert.deepEqual(await keyApi.parentDomains(c3all), [], 'a key on every site: only the domains given to it');
+  await assert.rejects(keyApi.addSubdomain(c3all, fakeReq(), s2, `evil.${parentName}`), (e: { code: string }) => e.code === 'keyDomainNotManageable');
+  assert.equal(await db('domains').where({ name: `evil.${parentName}` }).first('id'), undefined);
+  await apiKeysService.update(fakeReq(), await actorForUser(owner, tA), acme, k3all.id, { domainIds: [pdId] });
+  const c3given = (await apiKeysService.verify(k3all.key!, '203.0.113.7'))!;
+  assert.deepEqual((await keyApi.parentDomains(c3given)).map((d) => d.name), [parentName], 'given to the key');
+  const two = await keyApi.addSubdomain(c3given, fakeReq(), s2, `two.${parentName}`);
+  assert.equal(two.siteId, s2);
+  await keyApi.removeSubdomain(c3given, fakeReq(), `two.${parentName}`);
 
   // ── routes (routes.manage), environment, cron, databases: a key limited to site one ──
   const { keyEnv } = await import('./keyEnv');
+  const { siteEnvFor } = await import('../hosting/siteEnv.service');
   const { keyDatabases } = await import('./keyDatabases');
   await db('account_users').where({ user_id: owner, account_id: acme })
     .update({ capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish', 'domains.manage', 'databases.manage']) });
@@ -254,8 +360,6 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
     name: 'ops', scopes: ['sites.manage', 'routes.manage', 'cron.manage', 'databases.manage'], siteScope: 'selected', siteIds: [s1],
   });
   const c4 = (await apiKeysService.verify(k4.key!, '203.0.113.7'))!;
-  const pdId = Number(pd.id ?? pd);
-  await db('site_routes').insert({ account_id: acme, domain_id: pdId, path_prefix: '/', site_id: s1, runtime_id: null });
   const mixedName = `mixed-${suffix}.test`;
   const [md] = await db('domains').insert({
     tenant_id: tA, account_id: acme, name: mixedName, kind: 'addon', include_www: false, tls_mode: 'none', force_https: false, wildcard: false,
@@ -299,6 +403,26 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   await apiKeysService.update(fakeReq(), await actorForUser(owner, tA), acme, k4.id, { domainScope: 'all', domainIds: [] });
   const c4all = (await apiKeysService.verify(k4.key!, '203.0.113.7'))!;
   assert.equal((await keyApi.routes(c4all)).find((d) => d.domain === mixedName)?.manageable, true, 'every domain of the account given');
+  // L20: a given domain takes new paths, but its routes towards sites outside the key stay as they are.
+  const xRoute = mixed.routes.find((r) => r.pathPrefix === '/x/')!.id;
+  await assert.rejects(keyApi.deleteRoute(c4all, fakeReq(), xRoute), (e: { code: string }) => e.code === 'keyRouteOutside');
+  await assert.rejects(keyApi.updateRoute(c4all, fakeReq(), xRoute, { siteId: s1 }), (e: { code: string }) => e.code === 'keyRouteOutside');
+  const xPut = await call(`/routes/${xRoute}`, { method: 'PUT', body: JSON.stringify({ siteId: s1 }) }, k4.key!);
+  assert.equal(xPut.status, 403);
+  assert.equal(((await xPut.json()) as { code: string }).code, 'keyRouteOutside');
+  assert.equal((await db('site_routes').where({ id: xRoute }).first('site_id')).site_id, s2, 'still towards site two');
+  const yRoute = await keyApi.addRoute(c4all, fakeReq(), mixedName, '/y/', s1);
+  await keyApi.updateRoute(c4all, fakeReq(), yRoute.id, { pathPrefix: '/yy/' });
+  await keyApi.deleteRoute(c4all, fakeReq(), yRoute.id);
+  // L20: a key on every site works only on the domains given to it (domainScope whatever the site scope).
+  const kRoutesAll = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'routes-all', scopes: ['routes.manage'], siteScope: 'all' });
+  const cRoutesAll = (await apiKeysService.verify(kRoutesAll.key!, '203.0.113.7'))!;
+  assert.deepEqual((await keyApi.routes(cRoutesAll)).filter((d) => d.manageable).map((d) => d.domain), [], 'no domain given, none manageable');
+  await assert.rejects(keyApi.addRoute(cRoutesAll, fakeReq(), parentName, '/hijack/', s2), (e: { code: string }) => e.code === 'keyDomainNotManageable');
+  await apiKeysService.update(fakeReq(), await actorForUser(owner, tA), acme, kRoutesAll.id, { domainIds: [pdId] });
+  const cRoutesGiven = (await apiKeysService.verify(kRoutesAll.key!, '203.0.113.7'))!;
+  assert.deepEqual((await keyApi.routes(cRoutesGiven)).filter((d) => d.manageable).map((d) => d.domain), [parentName]);
+  await apiKeysService.remove(fakeReq(), await actorForUser(owner, tA), acme, kRoutesAll.id);
   // Without domains.manage: giving domains is refused, and a grant in place stops counting.
   await db('account_users').where({ user_id: owner, account_id: acme })
     .update({ capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish', 'databases.manage']) });
@@ -318,6 +442,33 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   assert.deepEqual(env2.vars.map((v) => [v.name, v.value]), [['API_TOKEN', null], ['APP_MODE', 'dev']]);
   await keyEnv.update(c4, fakeReq(), s1, [], ['APP_MODE']);
   assert.deepEqual((await keyEnv.list(c4, s1)).map((v) => v.name), ['API_TOKEN']);
+  // A secret is never turned visible without a new value (the stored one would be read back),
+  // through the service, PATCH /api/v1 and MCP set_env alike.
+  await assert.rejects(keyEnv.update(c4, fakeReq(), s1, [{ name: 'API_TOKEN', secret: false }]), (e: { code: string }) => e.code === 'envValueRequired');
+  await assert.rejects(keyEnv.update(c4, fakeReq(), s1, [{ name: 'API_TOKEN', value: null, secret: false }]), (e: { code: string }) => e.code === 'envValueRequired');
+  const sameSecret = await keyEnv.update(c4, fakeReq(), s1, [{ name: 'API_TOKEN' }]);
+  assert.deepEqual([sameSecret.changed, sameSecret.vars.map((v) => [v.name, v.value, v.secret])], [false, [['API_TOKEN', null, true]]], 'no flag, no value: kept as a secret');
+  for (const set of [[{ name: 'API_TOKEN', secret: false }], [{ name: 'API_TOKEN', value: null, secret: false }]]) {
+    const patched = await call(`/sites/${s1}/env`, { method: 'PATCH', body: JSON.stringify({ set }) }, k4.key!);
+    const text = await patched.text();
+    assert.equal(patched.status, 400, text);
+    assert.equal((JSON.parse(text) as { code: string }).code, 'envValueRequired');
+    assert.ok(!text.includes('tok-123'), 'the stored secret is not sent back');
+  }
+  const mcpUnsecret = (await rpc('tools/call', { name: 'set_env', arguments: { site_id: s1, set: [{ name: 'API_TOKEN', secret: false }] } }, 1, k4.key!)).body?.result;
+  assert.equal(mcpUnsecret.isError, true);
+  assert.match(mcpUnsecret.content[0].text, /envValueRequired/);
+  assert.ok(!mcpUnsecret.content[0].text.includes('tok-123'));
+  const mcpGet = (await rpc('tools/call', { name: 'get_env', arguments: { site_id: s1 } }, 1, k4.key!)).body?.result;
+  assert.deepEqual(JSON.parse(mcpGet.content[0].text).map((v: { name: string; value: string | null; secret: boolean }) => [v.name, v.value, v.secret]), [['API_TOKEN', null, true]]);
+  assert.deepEqual((await siteEnvFor([s1])).get(s1), [['API_TOKEN', 'tok-123']], 'stored value untouched');
+  // A new value without flag stays a secret; with secret:false and a new value it becomes visible (that value only).
+  const rotated = await keyEnv.update(c4, fakeReq(), s1, [{ name: 'API_TOKEN', value: 'tok-456' }]);
+  assert.deepEqual(rotated.vars.map((v) => [v.name, v.value, v.secret]), [['API_TOKEN', null, true]]);
+  const mcpVisible = (await rpc('tools/call', { name: 'set_env', arguments: { site_id: s1, set: [{ name: 'API_TOKEN', value: 'public-id', secret: false }] } }, 1, k4.key!)).body?.result;
+  assert.equal(mcpVisible.isError, undefined, mcpVisible.content[0].text);
+  assert.deepEqual(JSON.parse(mcpVisible.content[0].text).vars.map((v: { name: string; value: string | null; secret: boolean }) => [v.name, v.value, v.secret]), [['API_TOKEN', 'public-id', false]]);
+  await keyEnv.update(c4, fakeReq(), s1, [{ name: 'API_TOKEN', value: 'tok-123', secret: true }]);
   await assert.rejects(keyEnv.list(c4, s2), (e: { statusCode: number }) => e.statusCode === 404);
   await assert.rejects(keyEnv.list(c3, s1), (e: { code: string }) => e.code === 'keyScope');
 
@@ -327,6 +478,84 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   await assert.rejects(keyApi.cronJobs(c4, s2), (e: { statusCode: number }) => e.statusCode === 404);
   await keyApi.deleteCronJob(c4, fakeReq(), s1, job.id);
   await assert.rejects(keyApi.cronJobs(c3, s1), (e: { code: string }) => e.code === 'keyScope');
+
+  // ── file writes through a key or MCP are audited, with the key (M13) ──
+  // The file service itself (hostd) is not there: its calls are stubbed.
+  const { filesService } = await import('../files/files.service');
+  const realFiles = { ...filesService };
+  const drain = async (body: AsyncIterable<unknown>) => { for await (const _c of body) { /* drained */ } };
+  Object.assign(filesService, {
+    putSmall: async (_a: unknown, r: { path: string }, body: AsyncIterable<unknown>) => { await drain(body); return r.path; },
+    mkdir: async (_a: unknown, p: string) => p,
+    remove: async (_a: unknown, paths: string[]) => paths.map((p) => ({ path: p, ok: true })),
+    move: async (_a: unknown, items: Array<{ to: string }>) => items.map((i) => ({ path: i.to, ok: true })),
+    copy: async (_a: unknown, items: Array<{ to: string }>) => items.map((i) => ({ path: i.to, ok: true })),
+    extract: async () => ({ files: 3, dirs: 1, bytes: 42, skipped: 0 }),
+    uploadInfo: () => ({ path: '/staging/one/big.bin', size: 5 }),
+    uploadChunk: async (_a: unknown, _u: number, _id: string, _i: number, _l: number, body: AsyncIterable<unknown>) => { await drain(body); return { done: true, received: 5 }; },
+  });
+  const kFiles = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'files', scopes: ['files.read', 'files.write'], siteScope: 'selected', siteIds: [s1] });
+  const sinceAudit = Number((await db('audit_logs').max('id as m').first() as { m: number | null }).m ?? 0);
+  try {
+    const post = (p: string, b: unknown) => call(p, { method: 'POST', body: JSON.stringify(b) }, kFiles.key!);
+    assert.equal((await post(`/sites/${s1}/files/mkdir`, { path: 'assets' })).status, 200);
+    assert.equal((await call(`/sites/${s1}/files/content?path=/a.txt`, { method: 'PUT', body: 'hello', headers: { 'content-type': 'application/octet-stream' } }, kFiles.key!)).status, 200);
+    assert.equal((await post(`/sites/${s1}/files/delete`, { paths: ['/old.txt'] })).status, 200);
+    assert.equal((await post(`/sites/${s1}/files/move`, { items: [{ from: '/a.txt', to: '/b.txt' }] })).status, 200);
+    assert.equal((await post(`/sites/${s1}/files/copy`, { items: [{ from: '/b.txt', to: '/c.txt' }] })).status, 200);
+    assert.equal((await post(`/sites/${s1}/files/extract`, { path: '/x.zip', to: '/x' })).status, 200);
+    assert.equal((await call(`/uploads/${'a'.repeat(32)}/0`, { method: 'PUT', body: 'hello', headers: { 'content-type': 'application/octet-stream' } }, kFiles.key!)).status, 200);
+    const wrote = (await rpc('tools/call', { name: 'write_file', arguments: { site_id: s1, path: '/dir/m.txt', content: 'mcp' } }, 1, kFiles.key!)).body?.result;
+    assert.equal(wrote.isError, undefined, wrote.content?.[0]?.text);
+  } finally {
+    Object.assign(filesService, realFiles);
+  }
+  const fileAudits = (await db('audit_logs').where('id', '>', sinceAudit).andWhere('tenant_id', tA).andWhere('action', 'like', 'files.%').orderBy('id')
+    .select('action', 'user_id', 'resource_path', 'details') as Array<{ action: string; user_id: number; resource_path: string; details: unknown }>)
+    .map((r) => ({ ...r, details: (typeof r.details === 'string' ? JSON.parse(r.details) : r.details) as Record<string, any> })) // eslint-disable-line @typescript-eslint/no-explicit-any
+    .filter((r) => r.details.apiKey?.id === kFiles.id);
+  assert.deepEqual(fileAudits.map((r) => [r.action, r.details.path ?? r.details.paths ?? r.details.items]), [
+    ['files.mkdir', '/staging/one/assets'],
+    ['files.upload', '/staging/one/a.txt'],
+    ['files.delete', ['/staging/one/old.txt']],
+    ['files.move', ['/staging/one/a.txt → /staging/one/b.txt']],
+    ['files.copy', ['/staging/one/b.txt → /staging/one/c.txt']],
+    ['files.extract', '/staging/one/x.zip'],
+    ['files.upload', '/staging/one/big.bin'],
+    ['files.mkdir', '/staging/one/dir'],
+    ['files.upload', '/staging/one/dir/m.txt'],
+  ]);
+  assert.ok(fileAudits.every((r) => r.user_id === owner && r.resource_path === String(acme) && r.details.apiKey.name === 'files'), 'the key\'s user, the account, the key');
+  assert.deepEqual([fileAudits[1].details.size, fileAudits[5].details.files, fileAudits[5].details.to], [5, 3, '/staging/one/x']);
+  assert.ok(fileAudits.filter((r) => r.action !== 'files.upload' || r.details.path !== '/staging/one/big.bin').every((r) => r.details.siteId === s1), 'the site');
+
+  // ── MCP batches: at most 20 messages, each tools/call counted for the key (M5) ──
+  const { apiKeyLimiter, countKeyRequest } = await import('./middleware');
+  const kBatch = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'batch', scopes: ['files.read'], siteScope: 'selected', siteIds: [s1] });
+  const batchCall = async (msgs: unknown[]) => {
+    const r = await fetch(mcpUrl, { method: 'POST', headers: { authorization: `Bearer ${kBatch.key!}`, 'content-type': 'application/json' }, body: JSON.stringify(msgs) });
+    return { status: r.status, body: await r.json() as any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  };
+  const ping = (id: number) => ({ jsonrpc: '2.0', id, method: 'ping' });
+  const listCall = (id: number) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'list_sites', arguments: {} } });
+  const tooMany = await batchCall(Array.from({ length: 21 }, (_, i) => ping(i + 1)));
+  assert.equal(tooMany.status, 400);
+  assert.equal(tooMany.body.error.code, -32600);
+  assert.equal((await batchCall([])).status, 400, 'an empty batch is invalid');
+  const hits = async () => (await apiKeyLimiter.getKey(`apikey:${kBatch.id}`))?.totalHits ?? 0;
+  const before = await hits();
+  const okBatch = await batchCall([listCall(1), ping(2), listCall(3), { jsonrpc: '2.0', method: 'notifications/initialized' }]);
+  assert.equal(okBatch.status, 200);
+  assert.deepEqual(okBatch.body.map((a: { id: number }) => a.id), [1, 2, 3], 'answers in order, none for the notification');
+  assert.equal(await hits(), before + 3, 'the request, then each tools/call');
+  // At the limit: the tools/call over it are refused one by one.
+  const reqOf = { apiKey: { id: kBatch.id } } as never;
+  while (await hits() < 1197) await countKeyRequest(reqOf);
+  const edge = await batchCall([listCall(1), listCall(2), listCall(3)]);
+  assert.equal(edge.status, 200);
+  assert.deepEqual(edge.body.map((a: { error?: { code: number } }) => a.error?.code ?? null), [null, null, -32000]);
+  assert.equal((await batchCall([ping(1)])).status, 429, 'over the limit: the request itself');
+  await apiKeyLimiter.resetKey(`apikey:${kBatch.id}`);
 
   // Databases: a key limited to some sites reaches only the databases it created; deletes only those.
   const [inst] = await db('db_instances').insert({
@@ -361,4 +590,77 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   assert.equal(await apiKeysService.verify(k2.key!, '198.51.100.20'), null, 'expired');
   await apiKeysService.remove(fakeReq(), ownerAgain, acme, created.id);
   assert.equal(await apiKeysService.verify(created.key!, '203.0.113.7'), null, 'revoked');
+
+  // ── a key belongs to its creator (M3) ──
+  const ALL_CAPS = ['sites.manage', 'files.manage', 'releases.publish', 'domains.manage', 'databases.manage'];
+  const setCaps = (uid: number, caps: string[]) => db('account_users').where({ user_id: uid, account_id: acme }).update({ capabilities: JSON.stringify(caps) });
+  const member = await user('member', 'client');
+  await db('account_users').insert({ user_id: member, account_id: acme, capabilities: JSON.stringify(['sites.manage', 'files.manage']) });
+  const in7days = new Date(Date.now() + 7 * 86_400_000);
+  const owned = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, {
+    name: 'owned', scopes: ['files.read', 'releases.publish'], siteScope: 'selected', siteIds: [s1], allowedIps: ['198.51.100.0/24'], expiresAt: in7days.toISOString(),
+  });
+  const notOwned = (e: { code: string }) => e.code === 'keyNotOwned';
+  const memberLacking = await actorForUser(member, tA);
+  await assert.rejects(apiKeysService.update(fakeReq(), memberLacking, acme, owned.id, { name: 'renamed' }), notOwned, 'without releases.publish: not even a rename');
+  await assert.rejects(apiKeysService.update(fakeReq(), memberLacking, acme, owned.id, { siteScope: 'all' }), notOwned);
+  await assert.rejects(apiKeysService.update(fakeReq(), memberLacking, acme, owned.id, { allowedIps: [] }), notOwned);
+  await assert.rejects(apiKeysService.update(fakeReq(), memberLacking, acme, owned.id, { expiresAt: null }), notOwned);
+  await assert.rejects(apiKeysService.remove(fakeReq(), memberLacking, acme, owned.id), notOwned);
+  const ownedRow = () => db('api_keys').where({ id: owned.id }).first('name', 'created_by', 'site_scope', 'allowed_ips', 'expires_at');
+  assert.equal((await ownedRow()).name, 'owned');
+  // Holding every scope: narrowing keeps the owner, widening makes the editor the owner.
+  await setCaps(member, ['sites.manage', 'files.manage', 'releases.publish']);
+  const memberFull = await actorForUser(member, tA);
+  await apiKeysService.update(fakeReq(), memberFull, acme, owned.id, { name: 'owned-2', scopes: ['files.read', 'releases.publish'], siteScope: 'selected', siteIds: [s1] });
+  await apiKeysService.update(fakeReq(), memberFull, acme, owned.id, { allowedIps: ['198.51.100.128/25'], expiresAt: new Date(Date.now() + 3 * 86_400_000).toISOString(), siteIds: [] });
+  assert.equal((await ownedRow()).created_by, owner, 'renamed and narrowed: still the creator\'s');
+  for (const widen of [{ allowedIps: ['198.51.100.0/24'] }, { expiresAt: null }, { siteScope: 'all' as const }, { siteIds: [s2] }, { scopes: ['files.read', 'files.write', 'releases.publish'] as never }]) {
+    await setCaps(owner, ALL_CAPS);
+    await db('api_keys').where({ id: owned.id }).update({ created_by: owner, site_scope: 'selected', allowed_ips: JSON.stringify(['198.51.100.128/25']), expires_at: in7days, scopes: JSON.stringify(['files.read', 'releases.publish']) });
+    await db('api_key_sites').where({ key_id: owned.id }).del();
+    await apiKeysService.update(fakeReq(), memberFull, acme, owned.id, widen);
+    assert.equal((await ownedRow()).created_by, member, `widened (${Object.keys(widen)[0]}): the editor owns it`);
+  }
+  const audited = await db('audit_logs').where({ action: 'apiKey.update', tenant_id: tA }).orderBy('id', 'desc').first('details');
+  const auditedDetails = typeof audited.details === 'string' ? JSON.parse(audited.details) : audited.details;
+  assert.deepEqual([auditedDetails.previousOwnerId, auditedDetails.ownerId], [owner, member]);
+  assert.equal((await apiKeysService.verify(owned.key!, '198.51.100.200'))?.creatorId, member, 'the key now acts for the editor');
+  // The former creator is now a manager like any other.
+  await setCaps(owner, ['sites.manage', 'files.manage']);
+  await assert.rejects(apiKeysService.update(fakeReq(), await actorForUser(owner, tA), acme, owned.id, { name: 'back' }), notOwned);
+  await setCaps(owner, ALL_CAPS);
+  // Domains given: domains.manage too.
+  await apiKeysService.update(fakeReq(), await actorForUser(owner, tA), acme, owned.id, { domainIds: [pdId] });
+  await db('api_keys').where({ id: owned.id }).update({ created_by: owner });
+  await assert.rejects(apiKeysService.update(fakeReq(), memberFull, acme, owned.id, { name: 'owned-3' }), notOwned, 'domains given, no domains.manage');
+  await assert.rejects(apiKeysService.remove(fakeReq(), memberFull, acme, owned.id), notOwned);
+  // The creator removes his own key even without one of its rights; a manager holding them all removes it too.
+  const mine = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'mine', scopes: ['releases.publish'], siteScope: 'all' });
+  await setCaps(owner, ['sites.manage', 'files.manage']);
+  await apiKeysService.remove(fakeReq(), await actorForUser(owner, tA), acme, mine.id);
+  await setCaps(owner, ALL_CAPS);
+  await setCaps(member, ALL_CAPS);
+  await apiKeysService.remove(fakeReq(), await actorForUser(member, tA), acme, owned.id);
+  assert.equal(await db('api_keys').where({ id: owned.id }).first('id'), undefined);
+
+  // ── force_2fa: no key acts for a user who must still enroll a TOTP (M4) ──
+  const { forgetTwoFactorPolicy, forgetSessionUser } = await import('../../middleware/sessionUserGuard');
+  const prevForce = await db('app_config').where({ key: 'force_2fa' }).first('value') as { value: string } | undefined;
+  const setForce = async (v: string) => { await db('app_config').insert({ key: 'force_2fa', value: v }).onConflict('key').merge(); forgetTwoFactorPolicy(); };
+  const tfa = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: '2fa', scopes: ['files.read'], siteScope: 'all' });
+  assert.ok(await apiKeysService.verify(tfa.key!, '203.0.113.7'));
+  try {
+    await setForce('true');
+    forgetSessionUser(owner);
+    assert.equal(await apiKeysService.verify(tfa.key!, '203.0.113.7'), null, 'no TOTP while force_2fa');
+    assert.equal((await call('/me', {}, tfa.key!)).status, 401);
+    await db('users').where({ id: owner }).update({ totp_enabled: true, totp_secret: 'JBSWY3DPEHPK3PXP' });
+    forgetSessionUser(owner);
+    assert.ok(await apiKeysService.verify(tfa.key!, '203.0.113.7'), 'TOTP enrolled');
+  } finally {
+    if (prevForce) await setForce(prevForce.value); else { await db('app_config').where({ key: 'force_2fa' }).del(); forgetTwoFactorPolicy(); }
+    await db('users').where({ id: owner }).update({ totp_enabled: false, totp_secret: null });
+    forgetSessionUser(owner);
+  }
 });

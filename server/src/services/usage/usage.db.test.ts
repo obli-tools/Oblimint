@@ -241,11 +241,31 @@ test('usage module on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Test
       const raw = await db('notification_channels').where({ id: channelA }).first();
       assert.ok(String(raw.secrets).startsWith('v1:'));
       assert.ok(!JSON.stringify(raw).includes('top-secret'));
-      // null keeps the secret
-      const upd = await notif.notificationService.update(fakeReq(staffA, tenantA), asStaffA, channelA, {
+      // null keeps the secret, for the same destination only (L8): another URL needs it again, or '' to clear it.
+      await rejectsWith(notif.notificationService.update(fakeReq(staffA, tenantA), asStaffA, channelA, {
         config: { type: 'webhook', url: 'https://hooks.example.com/oblimint2', method: 'POST', headerName: 'X-Token', headerValue: null },
+      }), 400, 'channelInvalid');
+      const same = await notif.notificationService.update(fakeReq(staffA, tenantA), asStaffA, channelA, {
+        config: { type: 'webhook', url: 'https://hooks.example.com/oblimint', method: 'PUT', headerName: 'X-Token', headerValue: null },
+      });
+      assert.deepEqual(same.secretsSet, ['headerValue']);
+      const upd = await notif.notificationService.update(fakeReq(staffA, tenantA), asStaffA, channelA, {
+        config: { type: 'webhook', url: 'https://hooks.example.com/oblimint2', method: 'POST', headerName: 'X-Token', headerValue: 'top-secret' },
       });
       assert.deepEqual(upd.secretsSet, ['headerValue']);
+      // SMTP: the stored password never follows a new host or port.
+      const mailer = await notif.notificationService.create(fakeReq(staffA, tenantA), asStaffA, {
+        name: 'Ops mail', events: ['quota.warning'],
+        config: { type: 'smtp', host: 'smtp.example.com', port: 587, secure: false, username: 'ops', password: 'smtp-pass', from: 'ops@example.com', to: ['a@example.com'] },
+      });
+      const smtp = (over: Record<string, unknown>) => ({
+        config: { type: 'smtp' as const, host: 'smtp.example.com', port: 587, secure: false, username: 'ops', password: null, from: 'ops@example.com', to: ['a@example.com'], ...over },
+      });
+      await rejectsWith(notif.notificationService.update(fakeReq(staffA, tenantA), asStaffA, mailer.id, smtp({ host: 'smtp.example.org' })), 400, 'channelInvalid');
+      await rejectsWith(notif.notificationService.update(fakeReq(staffA, tenantA), asStaffA, mailer.id, smtp({ port: 2525 })), 400, 'channelInvalid');
+      assert.deepEqual((await notif.notificationService.update(fakeReq(staffA, tenantA), asStaffA, mailer.id, smtp({ host: 'SMTP.example.com' }))).secretsSet, ['password']);
+      assert.deepEqual((await notif.notificationService.update(fakeReq(staffA, tenantA), asStaffA, mailer.id, smtp({ port: 2525, password: '' }))).secretsSet, []);
+      await notif.notificationService.remove(fakeReq(staffA, tenantA), asStaffA, mailer.id);
       const test1 = await notif.notificationService.test(fakeReq(staffA, tenantA), asStaffA, channelA);
       assert.deepEqual(test1, { ok: true, error: null });
       assert.equal(hits.at(-1)!.headers['x-token'], 'top-secret');

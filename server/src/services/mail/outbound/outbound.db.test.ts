@@ -167,6 +167,14 @@ test('outbound + security on PostgreSQL (PGlite)', { timeout: 300_000 }, async (
     const bob = Number((await db('users').where({ username: 'bob' }).first('id')).id);
     const asAlice = () => fakeReq(alice, tenantA, 'alice');
     const asBob = () => fakeReq(bob, tenantA, 'bob');
+    // carol manages the mail of bob's account (bob has sites.manage only); staff-users holds users / audit only (M8).
+    const carol = await mkUser('carol', 'user', 'client');
+    await db('account_users').insert({ user_id: carol, account_id: other.id, capabilities: JSON.stringify(['mail.manage']) });
+    const asCarol = () => fakeReq(carol, tenantA, 'carol');
+    await db('permission_sets').insert({ name: 'Users only', slug: 'users-only-outbound', capabilities: JSON.stringify(['users.manage', 'audit.read']) });
+    const staffUsers = await mkUser('staff-users', 'user');
+    await db('user_tenants').insert({ user_id: staffUsers, tenant_id: tenantA, role: 'users-only-outbound' });
+    const asStaffUsers = () => fakeReq(staffUsers, tenantA, 'staff-users');
 
     // Domains (verified) + mail domains + sites (direct rows: other modules' services are not under test).
     const mkDomain = async (acc: { id: number; tenantId: number }, name: string, verified = true) => {
@@ -358,8 +366,13 @@ test('outbound + security on PostgreSQL (PGlite)', { timeout: 300_000 }, async (
       assert.equal((await outboundService.logs(await actorOf(asAlice()), { q: 'shop@', limit: 50, offset: 0 })).total, 1);
       assert.equal((await outboundService.logs(await actorOf(asAlice()), { q: '%', limit: 50, offset: 0 })).total, 0, 'LIKE wildcards escaped');
       await rejectsWith(outboundService.logs(await actorOf(asAlice()), { accountId: other.id, limit: 50, offset: 0 }), 404);
-      // bob (other account) sees his row only; tenant B staff sees nothing of A.
-      assert.deepEqual((await outboundService.logs(await actorOf(asBob()), { limit: 50, offset: 0 })).items.map((i) => i.sender), ['boss@autre.fr']);
+      // carol (mail.manage on the other account) sees its row only; tenant B staff sees nothing of A.
+      assert.deepEqual((await outboundService.logs(await actorOf(asCarol()), { limit: 50, offset: 0 })).items.map((i) => i.sender), ['boss@autre.fr']);
+      // Senders and recipients need mail.manage (M8): bob (sites.manage only), a staff member with users / audit only.
+      await rejectsWith(outboundService.logs(await actorOf(asBob()), { limit: 50, offset: 0 }), 403);
+      await rejectsWith(outboundService.logs(await actorOf(asBob()), { accountId: other.id, limit: 50, offset: 0 }), 403);
+      await rejectsWith(outboundService.logs(await actorOf(asStaffUsers()), { limit: 50, offset: 0 }), 403);
+      await rejectsWith(outboundService.logs(await actorOf(asCarol()), { accountId: shop.id, limit: 50, offset: 0 }), 404);
       assert.equal((await outboundService.logs(await actorOf(asStaffB()), { limit: 50, offset: 0 })).total, 0);
       // Tenant staff: its accounts with the engine text; platform admin: everything, unattributed included.
       const staffLogs = await outboundService.logs(await actorOf(asStaffA()), { limit: 50, offset: 0 });
@@ -409,7 +422,9 @@ test('outbound + security on PostgreSQL (PGlite)', { timeout: 300_000 }, async (
       assert.deepEqual(q.items.map((i) => i.queueId), ['AAA111']);
       assert.ok(!q.items[0].reason?.includes('raw'), 'reason masked for a client');
       assert.deepEqual((await outboundService.queue(await actorOf(asStaffA()), { limit: 50, offset: 0 })).items.map((i) => i.queueId), ['AAA111', 'BBB222', 'FFF666']);
-      assert.deepEqual((await outboundService.queue(await actorOf(asBob()), { limit: 50, offset: 0 })).items.map((i) => i.queueId), ['BBB222', 'FFF666']);
+      assert.deepEqual((await outboundService.queue(await actorOf(asCarol()), { limit: 50, offset: 0 })).items.map((i) => i.queueId), ['BBB222', 'FFF666']);
+      await rejectsWith(outboundService.queue(await actorOf(asBob()), { limit: 50, offset: 0 }), 403);
+      await rejectsWith(outboundService.queue(await actorOf(asStaffUsers()), { limit: 50, offset: 0 }), 403);
       assert.deepEqual((await outboundService.queue(await actorOf(asRoot()), { limit: 50, offset: 0 })).items.map((i) => i.queueId), ['AAA111', 'BBB222', 'CCC333', 'DDD444', 'EEE555', 'FFF666']);
       assert.deepEqual((await outboundService.queue(await actorOf(asRoot()), { accountId: other.id, limit: 50, offset: 0 })).items.map((i) => i.queueId), ['BBB222', 'FFF666']);
       await rejectsWith(outboundService.queueAction(asAlice(), await actorOf(asAlice()), 'EEE555', 'delete'), 404, 'queueItemNotFound');

@@ -32,7 +32,9 @@ export function requirePlatformAdminOnMaster(req: Request, _res: Response, next:
 /**
  * Tenant-scoped capability check — a platform admin always passes; anyone
  * else needs the capability in the permission set of its membership of the
- * request's tenant (a tenant admin holds every capability).
+ * request's tenant (a tenant admin holds every capability). A client login
+ * (users.kind = 'client') never passes: it holds no tenant capability
+ * (permissionService, M12), its rights are per hosting account.
  */
 export function requireTenantCapability(capability: string) {
   return requireAnyTenantCapability(capability);

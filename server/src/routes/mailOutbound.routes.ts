@@ -11,10 +11,10 @@ import { relayService } from '../services/mail/outbound/relay.service';
 //   GET  /outbound?accountId                         → MailOutboundState                (read)
 //   POST /outbound/:accountId/suspend  {reason?}     → MailOutboundState                (STAFF mail.manage; audit)
 //   POST /outbound/:accountId/resume                 → MailOutboundState                (STAFF mail.manage; audit)
-//   GET  /queue?accountId&tenantId&limit&offset      → { items: MailQueueItem[], total } (read, scoped; heavyOpLimiter)
+//   GET  /queue?accountId&tenantId&limit&offset      → { items: MailQueueItem[], total } (mail.manage, scoped; heavyOpLimiter)
 //   POST /queue/:queueId/retry | /delete             → { done: true }                   (mail.manage on the item's account)
 //   GET  /logs?accountId&tenantId&siteId&mailboxId&direction&event&since&until&q&limit&offset
-//                                                    → { items: MailLogEntry[], total }  (read, scoped)
+//                                                    → { items: MailLogEntry[], total }  (mail.manage, scoped)
 //   GET  /relays?accountId                           → SiteMailRelay[]                  (read)
 //   (sites router) GET  /:id/mail-relay              → SiteMailRelay                    (read)
 //                  PUT  /:id/mail-relay  SiteMailRelayUpdate → SiteMailRelay           (mail.manage)

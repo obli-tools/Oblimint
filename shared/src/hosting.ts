@@ -885,6 +885,11 @@ export interface ReleaseDiff {
   files: ReleaseDiffFile[];
   totalFiles: number;
   truncated: boolean;
+  /**
+   * The caller may only read names and stats (no code right: files.manage, or
+   * sites.manage for staff): every `patch` is null and ?file= is refused.
+   */
+  contentHidden: boolean;
 }
 
 /** GET /api/sites/:id/staging — pending changes of the staging vs the last commit. */

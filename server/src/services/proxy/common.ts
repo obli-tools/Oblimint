@@ -7,7 +7,7 @@ import {
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { auditService } from '../audit.service';
-import type { HostingActor } from '../hosting/access';
+import { actorCan, type HostingActor } from '../hosting/access';
 import { accountDeleting } from '../hosting/accounts.service';
 import { emitHosting } from '../hosting/events';
 import { isUniqueViolation } from '../hosting/hostingValidation.service';
@@ -85,18 +85,26 @@ function domainInUse(servedBy: string): AppError {
  * no longer listed (served_by back to 'sites'). Under the account row lock
  * (caller). Domains: same account (404 domainNotInAccount), VERIFIED (409
  * domainNotVerified), no site route, no other consumer (409 domainInUse).
+ * Binding a domain takes it from the sites of the account: an ADDED domain
+ * needs domains.manage too (403 domainsManageRequired, L1); proxy.manage
+ * alone only keeps or releases the domains already bound.
  */
-export async function bindDomains(trx: Knex.Transaction, accountId: number, kind: BindingKind, refId: number, domainIds: number[]): Promise<void> {
+export async function bindDomains(
+  trx: Knex.Transaction, actor: HostingActor, accountId: number, kind: BindingKind, refId: number, domainIds: number[],
+): Promise<void> {
   const wanted = [...new Set(domainIds)];
   const current = await trx('edge_domain_bindings').where({ kind, ref_id: refId }).pluck('domain_id') as number[];
   const added = wanted.filter((id) => !current.map(Number).includes(id));
   const removed = current.map(Number).filter((id) => !wanted.includes(id));
   if (added.length) {
-    const rows = await trx('domains').whereIn('id', added).forUpdate().select('id', 'account_id', 'verification_status', 'served_by') as
-      Array<{ id: number; account_id: number; verification_status: string; served_by: string }>;
+    const rows = await trx('domains').whereIn('id', added).forUpdate().select('id', 'tenant_id', 'account_id', 'verification_status', 'served_by') as
+      Array<{ id: number; tenant_id: number; account_id: number; verification_status: string; served_by: string }>;
     for (const id of added) {
       const d = rows.find((r) => Number(r.id) === id);
       if (!d || Number(d.account_id) !== accountId) throw new AppError(404, 'Domain not found in this account', 'domainNotInAccount', { domainId: id });
+      if (!actorCan(actor, 'domains.manage', { tenantId: Number(d.tenant_id), accountId })) {
+        throw new AppError(403, 'Binding a domain needs the right to manage the domains', 'domainsManageRequired', { domainId: id });
+      }
       if (d.verification_status !== 'verified') throw new AppError(409, 'The ownership of this domain is not verified', 'domainNotVerified', { domainId: id });
       if (d.served_by !== 'sites') throw domainInUse(d.served_by);
     }

@@ -55,6 +55,26 @@ export function gitDraftProblem(t: TFunction, d: GitDraft, minPollSec = 60): str
   return null;
 }
 
+/** Repository URL as the server stores it (lower-case host, no trailing slash); the raw text when unparsable. */
+function normalizedRepoUrl(raw: string): string {
+  try {
+    const u = new URL(raw.trim());
+    return `https://${u.host.toLowerCase()}${u.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return raw.trim();
+  }
+}
+
+/**
+ * The repository changes while a token is stored and no new token is given:
+ * the server refuses (gitTokenRequired), the stored token never goes to
+ * another repository.
+ */
+export function gitTokenMissing(d: GitDraft, stored: AppGitSource | null): boolean {
+  if (!stored?.hasToken || d.token || d.removeToken) return false;
+  return normalizedRepoUrl(d.repoUrl) !== stored.repoUrl;
+}
+
 export function gitDraftOut(d: GitDraft): AppGitSourceInput {
   return {
     repoUrl: d.repoUrl.trim(),
@@ -68,17 +88,20 @@ export function gitDraftOut(d: GitDraft): AppGitSourceInput {
 }
 
 /** Git source fields (create page, settings tab). */
-export function GitSourceForm({ value, onChange, buildAllowed, hasToken = false, idPrefix = 'git' }: {
+export function GitSourceForm({ value, onChange, buildAllowed, hasToken = false, stored = null, idPrefix = 'git' }: {
   value: GitDraft;
   onChange: (next: GitDraft) => void;
   buildAllowed: boolean;
   /** A token is already stored (edit). */
   hasToken?: boolean;
+  /** Stored source (edit): a new repository needs its token again. */
+  stored?: AppGitSource | null;
   idPrefix?: string;
 }) {
   const { t } = useTranslation();
   const set = (patch: Partial<GitDraft>) => onChange({ ...value, ...patch });
   const urlIssue = value.repoUrl.trim() ? gitUrlProblem(t, value.repoUrl) : null;
+  const tokenMissing = !urlIssue && gitTokenMissing(value, stored);
   return (
     <div className="space-y-3">
       <div>
@@ -109,6 +132,11 @@ export function GitSourceForm({ value, onChange, buildAllowed, hasToken = false,
           className={cn(inputCls, 'font-mono')}
         />
         <p className="mt-1 text-xs text-text-muted">{t('apps.git.tokenHint') || 'Stored encrypted, never written in the URL nor in the logs.'}</p>
+        {tokenMissing && (
+          <p className="mt-1 text-xs text-status-down">
+            {t('apps.git.tokenRequired') || 'The repository changed: the stored token is not sent to another repository. Enter its access token again, or remove the stored token.'}
+          </p>
+        )}
         {hasToken && (
           <div className="mt-2">
             <ToggleSwitch size="sm" checked={value.removeToken} onChange={(c) => set({ removeToken: c, token: '' })} label={<span className="text-xs">{t('apps.git.removeToken') || 'Remove the stored token'}</span>} />

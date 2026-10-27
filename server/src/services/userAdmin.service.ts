@@ -3,7 +3,8 @@ import type { User } from '@oblimint/shared';
 import { db } from '../db';
 import { AppError } from '../middleware/errorHandler';
 import { userService } from './user.service';
-import { userScope, type ScopeActor } from './userScope.service';
+import { userScope, normaliseTenantRole, type ScopeActor } from './userScope.service';
+import { CLIENT_MEMBERSHIP_ROLE } from './permission.service';
 import type { CreateUserInput, UpdateUserInput } from '../validators/user.schema';
 
 // Create / update / delete a user account (Obliance userAdmin.service, without
@@ -14,7 +15,14 @@ import type { CreateUserInput, UpdateUserInput } from '../validators/user.schema
 //    role; a client account is never an administrator;
 //  - SSO (Obligate) accounts are managed from Obligate;
 //  - the last active administrator is never demoted, disabled or deleted;
-//  - one's own account is never deleted.
+//  - one's own account is never deleted;
+//  - an account created by a manager that is not a platform admin joins the
+//    manager's tenant with an explicit role the manager could grant
+//    (userScope.assertGrantableRole, H3): 'viewer' by default, 'client' for
+//    a client account (M12).
+
+/** Membership role of an account created without one (the smallest set). */
+export const DEFAULT_TENANT_ROLE = 'viewer';
 
 async function audit(req: Request | undefined, action: string, targetId: number, details: Record<string, unknown>): Promise<void> {
   if (!req) return;
@@ -45,6 +53,13 @@ export async function createUserAccount(
   }
   if (data.kind === 'client' && data.role === 'admin') throw new AppError(400, 'A client account cannot be an administrator');
   if (await usernameTaken(data.username)) throw new AppError(409, 'Username already exists');
+  // A manager that is not a platform admin creates the account IN its tenant
+  // (otherwise it could neither see it nor would it get a session), with a
+  // role checked BEFORE the account exists: never more than the manager holds.
+  const kind = data.kind ?? 'staff';
+  const memberOf = !actor.isPlatformAdmin && Number.isInteger(actor.tenantId) && actor.tenantId > 0 ? actor.tenantId : undefined;
+  const tenantRole = normaliseTenantRole(data.tenantRole ?? (kind === 'client' ? CLIENT_MEMBERSHIP_ROLE : DEFAULT_TENANT_ROLE));
+  if (memberOf) await userScope.assertGrantableRole(actor, memberOf, tenantRole, kind);
   let user: User;
   try {
     user = await userService.createWithPasswordHash({
@@ -53,22 +68,18 @@ export async function createUserAccount(
       displayName: data.displayName ?? null,
       email: data.email ?? null,
       role: data.role ?? 'user',
-      kind: data.kind ?? 'staff',
+      kind,
     });
   } catch (err) {
     if ((err as { code?: string })?.code === '23505') throw new AppError(409, 'Username or e-mail already exists');
     throw err;
   }
-  // A manager that is not a platform admin creates the account IN its tenant
-  // (role 'user'); otherwise it could neither see it nor would it get a session.
-  let memberOf: number | undefined;
-  if (!actor.isPlatformAdmin && Number.isInteger(actor.tenantId) && actor.tenantId > 0) {
-    await db('user_tenants').insert({ user_id: user.id, tenant_id: actor.tenantId, role: 'user' })
+  if (memberOf) {
+    await db('user_tenants').insert({ user_id: user.id, tenant_id: memberOf, role: tenantRole })
       .onConflict(['user_id', 'tenant_id']).ignore();
-    memberOf = actor.tenantId;
   }
   await audit(req, 'user.created', user.id, {
-    username: user.username, role: user.role, kind: user.kind, ...(memberOf ? { tenantId: memberOf, tenantRole: 'user' } : {}),
+    username: user.username, role: user.role, kind: user.kind, ...(memberOf ? { tenantId: memberOf, tenantRole } : {}),
   });
   return user;
 }

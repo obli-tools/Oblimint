@@ -1,11 +1,17 @@
 import apiClient from './client';
-import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyUpdate, ApiResponse, OAuthAuthorizeInfo } from '@oblimint/shared';
+import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyGrantable, ApiKeyUpdate, ApiResponse, OAuthAuthorizeInfo } from '@oblimint/shared';
 
 // /api/accounts/:id/api-keys — access keys of an account (API /api/v1 and MCP server /mcp).
 export const apiKeysApi = {
   async list(accountId: number): Promise<ApiKey[]> {
     const res = await apiClient.get<ApiResponse<ApiKey[]>>(`/accounts/${accountId}/api-keys`);
     return res.data.data ?? [];
+  },
+
+  /** Scopes the caller may grant on the account (greyed / presets of the key form); the server re-checks every save. */
+  async grantable(accountId: number): Promise<ApiKeyGrantable> {
+    const res = await apiClient.get<ApiResponse<ApiKeyGrantable>>(`/accounts/${accountId}/api-keys/grantable`);
+    return res.data.data!;
   },
 
   async create(accountId: number, body: ApiKeyCreate): Promise<ApiKeyCreated> {

@@ -174,11 +174,14 @@ function InspectDrawer({ stackId, service, onClose }: { stackId: number; service
 
           <section>
             <h3 className={cn(sectionTitleCls, 'mb-2')}>{t('apps.containers.env') || 'Environment'}</h3>
+            {data.envValuesHidden && data.env.length > 0 && (
+              <p className="mb-2 text-xs text-text-muted">{t('apps.containers.envValuesHidden') || 'Only the names are shown: the values are visible to the users who manage the applications.'}</p>
+            )}
             {data.env.length === 0 ? <p className="text-xs text-text-muted">—</p> : (
               <div className="overflow-x-auto rounded-lg bg-bg-primary p-3 font-mono text-[11.5px]">
                 {data.env.map((e) => (
                   <div key={e.key} className="whitespace-pre break-all">
-                    <span className="text-accent">{e.key}</span>=<span className={e.value == null ? 'italic text-text-muted' : 'text-text-secondary'}>{e.value ?? (t('apps.containers.masked') || '•••• (secret)')}</span>
+                    <span className="text-accent">{e.key}</span>=<span className={e.value == null ? 'italic text-text-muted' : 'text-text-secondary'}>{e.value ?? (data.envValuesHidden ? (t('apps.containers.hiddenValue') || '••••') : (t('apps.containers.masked') || '•••• (secret)'))}</span>
                   </div>
                 ))}
               </div>
@@ -204,7 +207,11 @@ function InspectDrawer({ stackId, service, onClose }: { stackId: number; service
             <section>
               <h3 className={cn(sectionTitleCls, 'mb-2')}>{t('apps.containers.labels') || 'Labels'}</h3>
               <div className="overflow-x-auto rounded-lg bg-bg-primary p-3 font-mono text-[11px] text-text-secondary">
-                {Object.entries(data.labels).map(([k, v]) => <div key={k} className="whitespace-pre break-all"><span className="text-text-muted">{k}</span>={v}</div>)}
+                {Object.entries(data.labels).map(([k, v]) => (
+                  <div key={k} className="whitespace-pre break-all">
+                    <span className="text-text-muted">{k}</span>=<span className={v == null ? 'italic text-text-muted' : undefined}>{v ?? (data.labelValuesHidden ? (t('apps.containers.hiddenValue') || '••••') : (t('apps.containers.masked') || '•••• (secret)'))}</span>
+                  </div>
+                ))}
               </div>
             </section>
           )}

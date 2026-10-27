@@ -396,6 +396,7 @@
       "channelInvalidField": "Invalid value for « {{field}} ».",
       "channelNameTaken": "A channel with this name already exists.",
       "httpsOnly": "A public https:// URL is required.",
+      "secretAgain": "The destination changed: enter the secret again (the stored one is only sent where it was given), or remove it.",
       "notificationFailed": "The notification could not be sent.",
       "port": "Invalid port.",
       "rateLimited": "Too many tests: wait a minute before sending another one.",

@@ -1,5 +1,6 @@
 import type { CapabilityDef, PermissionSet } from '@oblimint/shared';
 import { db } from '../db';
+import { CLIENT_MEMBERSHIP_ROLE } from './permission.service';
 
 interface PermissionSetRow {
   id: number;
@@ -36,14 +37,22 @@ const CAPABILITY_KEYS = new Set(AVAILABLE_CAPABILITIES.map((c) => c.key));
 
 const iso = (d: unknown): string => (d instanceof Date ? d.toISOString() : String(d));
 
+/** Sets whose capabilities never change: 'admin' always holds everything
+ *  (tenant admins bypass it anyway), 'client' never holds anything (a client
+ *  login has no tenant capability, M12). */
+export const LOCKED_PERMISSION_SETS: ReadonlySet<string> = new Set(['admin', CLIENT_MEMBERSHIP_ROLE]);
+
 function rowToPermissionSet(row: PermissionSetRow): PermissionSet {
   const caps = typeof row.capabilities === 'string' ? JSON.parse(row.capabilities) : row.capabilities;
   return {
     id: row.id,
     name: row.name,
     slug: row.slug,
-    capabilities: Array.isArray(caps) ? caps.map(String) : [],
+    // Locked sets read as they are evaluated: admin everything, client nothing.
+    capabilities: row.slug === 'admin' ? AVAILABLE_CAPABILITIES.map((c) => c.key)
+      : row.slug === CLIENT_MEMBERSHIP_ROLE || !Array.isArray(caps) ? [] : caps.map(String),
     isDefault: row.is_default,
+    locked: LOCKED_PERMISSION_SETS.has(row.slug),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at ?? row.created_at),
   };
@@ -77,8 +86,7 @@ export const permissionSetService = {
     if (!existing) return null;
     const update: Record<string, unknown> = { updated_at: new Date() };
     if (data.name !== undefined) update.name = data.name;
-    // The 'admin' set always holds everything (tenant admins bypass it anyway).
-    if (data.capabilities !== undefined && existing.slug !== 'admin') update.capabilities = JSON.stringify(cleanCapabilities(data.capabilities));
+    if (data.capabilities !== undefined && !LOCKED_PERMISSION_SETS.has(existing.slug)) update.capabilities = JSON.stringify(cleanCapabilities(data.capabilities));
     await db('permission_sets').where({ id }).update(update);
     const row = await db('permission_sets').where({ id }).first() as PermissionSetRow;
     return rowToPermissionSet(row);

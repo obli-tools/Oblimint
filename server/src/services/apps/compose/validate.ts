@@ -1064,6 +1064,33 @@ export function secretValues(env: ReadonlyMap<string, string>): string[] {
   return out;
 }
 
+/** `scheme://userinfo@`: the credentials part of a URL (user:pass, or a token alone). */
+const URL_CREDENTIALS_RE = /([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi;
+
+/**
+ * Value of a container variable shown by the inspect (M9): null when its name
+ * looks secret or when it carries a secret value of the stack .env (equal or
+ * contained: DATABASE_URL built from ${DB_PASSWORD}); the credentials of a
+ * URL (user:pass@) are masked.
+ */
+export function inspectEnvValue(key: string, value: string, secrets: readonly string[]): string | null {
+  if (looksSecret(key)) return null;
+  if (secrets.some((s) => value.includes(s))) return null;
+  return value.replace(URL_CREDENTIALS_RE, `$1${MASK}@`);
+}
+
+/**
+ * Labels of a container shown by the inspect (M9): interpolated from the .env
+ * like the environment, so masked by the same rule (secret-looking name, secret
+ * value of the .env equal or contained, URL credentials) whatever the caller's
+ * right; every value null when the .env cannot be read (secrets null).
+ */
+export function inspectLabels(labels: Readonly<Record<string, string>>, secrets: readonly string[] | null): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const [k, v] of Object.entries(labels)) out[k] = secrets === null ? null : inspectEnvValue(k, v ?? '', secrets);
+  return out;
+}
+
 /** The rewritten compose shown in the preview (what the panel deploys), secrets masked. */
 export function renderEffectiveYaml(stack: ResolvedStack, env: ReadonlyMap<string, string>): string {
   const secrets = new Set(secretValues(env));

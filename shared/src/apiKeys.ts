@@ -129,6 +129,134 @@ export interface ApiKeyCreated extends ApiKey {
   clientSecret: string | null;
 }
 
+/** GET /api/accounts/:id/api-keys/grantable: what the caller may put in a key of the account (the server re-checks every save). */
+export interface ApiKeyGrantable {
+  /** Scopes whose right the caller holds on the account (SCOPE_NEED). */
+  scopes: ApiKeyScope[];
+  /** The caller holds domains.manage: he may give domains to a key. */
+  canGrantDomains: boolean;
+}
+
+// ── Presets of the key form ─────────────────────────────────────────────────
+// One click fills the rights, the sites and the domains of a usual profile.
+// They only prefill the form: the scopes are cut down to the grantable ones,
+// and the server (apiKeys.service normalize) stays the only authority. No
+// preset gives more than its name says (presets.test.ts). A domain given to a
+// key is a parent of its subdomains AND a domain it routes (keyApi
+// manageableDomain): a preset that asks for domains ('pick') therefore has no
+// routes.manage, or the key would route paths of the sites they serve.
+
+export type ApiKeyPresetId = 'readonly' | 'update' | 'site' | 'multisite' | 'autonomous' | 'all';
+
+export interface ApiKeyPreset {
+  id: ApiKeyPresetId;
+  /** Scopes it checks (among the grantable ones); 'all' checks every grantable scope. */
+  scopes: readonly ApiKeyScope[] | 'all';
+  /** Site scopes it allows; the first one is set when the current one is not allowed. */
+  siteScopes: readonly ApiKeySiteScope[];
+  /** With 'selected': sites chosen by hand (the ones the key created aside), at least / at most. */
+  minSites: number;
+  maxSites: number | null;
+  /**
+   * Domains given to the key: 'none' (it only works on the domains serving
+   * its sites alone), 'optional' (none set, the user may give some), 'pick'
+   * (chosen by the user: parents of its subdomains), 'all' (every domain when
+   * the user may give them, none otherwise).
+   */
+  domains: 'none' | 'optional' | 'pick' | 'all';
+}
+
+/** Rights of a site's daily management (both « Gestion » presets). */
+const SITE_MANAGEMENT_SCOPES: readonly ApiKeyScope[] = [
+  'files.read', 'files.write', 'releases.publish', 'sites.manage', 'logs.read', 'databases.manage', 'routes.manage', 'cron.manage',
+];
+
+export const API_KEY_PRESETS: readonly ApiKeyPreset[] = [
+  // Supervision: reads code, data and logs; writes nothing.
+  { id: 'readonly', scopes: ['files.read', 'logs.read'], siteScopes: ['selected', 'all'], minSites: 1, maxSites: null, domains: 'none' },
+  // CI: pushes files to staging and publishes; no setting (publish mode, env, data paths), cron, database, route or subdomain.
+  { id: 'update', scopes: ['files.read', 'files.write', 'releases.publish'], siteScopes: ['selected'], minSites: 1, maxSites: null, domains: 'none' },
+  // One site end to end; no site creation, no subdomain, no domain given (routes only on the domains serving it alone).
+  { id: 'site', scopes: SITE_MANAGEMENT_SCOPES, siteScopes: ['selected'], minSites: 1, maxSites: 1, domains: 'none' },
+  { id: 'multisite', scopes: SITE_MANAGEMENT_SCOPES, siteScopes: ['selected', 'all'], minSites: 2, maxSites: null, domains: 'optional' },
+  // Creates its own sites and works on them only (no existing site); subdomains under the domains given (attached to
+  // its site on creation); no route (the domains given would be routed too, existing sites' paths included), no cron.
+  {
+    id: 'autonomous', scopes: ['sites.create', 'files.read', 'files.write', 'releases.publish', 'sites.manage', 'logs.read', 'databases.manage', 'domains.subdomain'],
+    siteScopes: ['selected'], minSites: 0, maxSites: 0, domains: 'pick',
+  },
+  { id: 'all', scopes: 'all', siteScopes: ['all'], minSites: 0, maxSites: null, domains: 'all' },
+];
+
+export function apiKeyPreset(id: ApiKeyPresetId): ApiKeyPreset {
+  return API_KEY_PRESETS.find((p) => p.id === id) ?? API_KEY_PRESETS[0];
+}
+
+/** Scopes a preset checks for someone who may grant `grantable`, in API_KEY_SCOPES order. */
+export function apiKeyPresetScopes(preset: ApiKeyPreset, grantable: readonly ApiKeyScope[]): ApiKeyScope[] {
+  return API_KEY_SCOPES.filter((s) => grantable.includes(s) && (preset.scopes === 'all' || preset.scopes.includes(s)));
+}
+
+/** State of a key form, as the presets see it. */
+export interface ApiKeyPresetState {
+  scopes: readonly ApiKeyScope[];
+  siteScope: ApiKeySiteScope;
+  /** Sites selected by hand (the ones the key created not counted). */
+  siteCount: number;
+  domainScope: ApiKeyDomainScope;
+  /** Domains given (the subdomains the key created not counted). */
+  domainCount: number;
+}
+
+/**
+ * The state still is what the preset sets (scopes, site scope, at most
+ * maxSites, domains). minSites is not part of it: it is what the user has
+ * left to choose after the click.
+ */
+export function apiKeyPresetMatches(preset: ApiKeyPreset, state: ApiKeyPresetState, grantable: readonly ApiKeyScope[], canGrantDomains: boolean): boolean {
+  const want = apiKeyPresetScopes(preset, grantable);
+  if (state.scopes.length !== want.length || want.some((s) => !state.scopes.includes(s))) return false;
+  if (!preset.siteScopes.includes(state.siteScope)) return false;
+  if (state.siteScope === 'selected' && preset.maxSites !== null && state.siteCount > preset.maxSites) return false;
+  const noDomain = state.domainScope === 'selected' && state.domainCount === 0;
+  switch (preset.domains) {
+    case 'none': return noDomain;
+    case 'pick': return state.domainScope === 'selected';
+    case 'all': return canGrantDomains ? state.domainScope === 'all' : noDomain;
+    default: return true;
+  }
+}
+
+/**
+ * The preset gives subdomains under the domains chosen ('pick'), the user may
+ * give domains and has chosen none yet: the subdomain right does nothing.
+ */
+export function apiKeyPresetNeedsParents(preset: ApiKeyPreset, state: ApiKeyPresetState, grantable: readonly ApiKeyScope[], canGrantDomains: boolean): boolean {
+  return preset.domains === 'pick' && canGrantDomains && state.scopes.includes('domains.subdomain')
+    && apiKeyPresetScopes(preset, grantable).includes('domains.subdomain')
+    && state.domainScope === 'selected' && state.domainCount === 0;
+}
+
+/**
+ * A new key's form once the grantable rights are known (it may have been
+ * touched before): drops the scopes the user does not hold, and the domains
+ * given when he may not give any — the save would be refused otherwise.
+ */
+export function apiKeyFormCutToGrantable<T extends { scopes: readonly ApiKeyScope[]; domainScope: ApiKeyDomainScope; domainIds: readonly number[] }>(form: T, g: ApiKeyGrantable): T {
+  return {
+    ...form,
+    scopes: form.scopes.filter((s) => g.scopes.includes(s)),
+    ...(g.canGrantDomains ? {} : { domainScope: 'selected' as const, domainIds: [] }),
+  };
+}
+
+/** First preset the state matches, with its minimum of sites met (null: « Personnalisé »). */
+export function matchApiKeyPreset(state: ApiKeyPresetState, grantable: readonly ApiKeyScope[], canGrantDomains: boolean): ApiKeyPresetId | null {
+  const p = API_KEY_PRESETS.find((x) => apiKeyPresetMatches(x, state, grantable, canGrantDomains)
+    && (state.siteScope !== 'selected' || state.siteCount >= x.minSites));
+  return p?.id ?? null;
+}
+
 /**
  * OAuth redirect URIs a connector accepts: Claude's callbacks (claude.ai /
  * claude.com, personal and organization connectors) and loopback addresses of

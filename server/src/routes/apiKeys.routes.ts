@@ -10,6 +10,7 @@ import { idParam, resolveActor } from '../services/hosting/access';
 // Mounted on /accounts (no catch-all). Every route: sites.manage on the account;
 // granting a scope also needs its right (403 capabilityNotHeld).
 //   GET    /:id/api-keys            → ApiKey[]
+//   GET    /:id/api-keys/grantable  → ApiKeyGrantable (scopes the caller may grant, domains: the form's presets)
 //   POST   /:id/api-keys            ApiKeyCreate → ApiKeyCreated (201; the key is shown ONCE)
 //   PUT    /:id/api-keys/:keyId     ApiKeyUpdate → ApiKey
 //   DELETE /:id/api-keys/:keyId     → { deleted: true } (the key stops working at once)
@@ -45,6 +46,13 @@ router.get('/:id/api-keys', async (req, res, next) => {
   try {
     res.setHeader('Cache-Control', 'no-store');
     res.json({ success: true, data: await apiKeysService.list(await resolveActor(req), idParam(req)) });
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/api-keys/grantable', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, data: await apiKeysService.grantable(await resolveActor(req), idParam(req)) });
   } catch (err) { next(err); }
 });
 

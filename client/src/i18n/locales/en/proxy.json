@@ -251,6 +251,7 @@
       "customPageInUse": "This page is still used by proxy hosts or the platform defaults.",
       "domainInUse": "This domain is already served by something else (site routes or another proxy object).",
       "domainNotInAccount": "This domain does not belong to the hosting account.",
+      "domainsManageRequired": "Adding a domain needs the right to manage the domains of the account.",
       "domainNotVerified": "The ownership of this domain is not verified yet: verify it first (Domains page).",
       "edgeUnavailable": "The web front end (edge) is unreachable. Try again in a moment.",
       "forwardAuthWithUsers": "Forward-auth (Azure AD) cannot be combined with access lists that have users (basic auth): remove the users or the forward-auth.",

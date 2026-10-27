@@ -6,12 +6,13 @@ import { validate } from '../middleware/validate';
 import { requirePlatformAdminOnMaster } from '../middleware/rbac';
 import { tenantService, createTenantSchema, updateTenantSchema } from '../services/tenant.service';
 import { auditService } from '../services/audit.service';
+import { CLIENT_MEMBERSHIP_ROLE, membershipRoleRefusal } from '../services/permission.service';
 
 // Mounted (behind requireAuth) on BOTH /api/tenants and /api/tenant, like
 // Obliance: GET /api/tenants, POST /api/tenant/switch, CRUD /api/tenants.
 // Writes: platform admin sitting on the master tenant (god view).
 
-const router = Router();
+const router = Router({ caseSensitive: true }); // force_2fa allow-list (sessionUserGuard.ts): exact paths
 
 const idParam = (raw: string): number => {
   const id = Number(raw);
@@ -19,9 +20,15 @@ const idParam = (raw: string): number => {
   return id;
 };
 
-/** A tenant role is 'admin' or a permission-set slug; absent / 'member' → 'user'. */
-async function tenantRoleFrom(raw: unknown): Promise<string> {
-  const role = raw === undefined || raw === null || raw === '' || raw === 'member' ? 'user' : String(raw);
+/** A tenant role is 'admin' or a permission-set slug; absent → 'user' ('client'
+ *  for a client account), 'member' → 'user'. A client account holds the
+ *  'client' role only, and that role is a client's (M12). */
+async function tenantRoleFrom(raw: unknown, kind: string): Promise<string> {
+  const absent = raw === undefined || raw === null || raw === '';
+  const role = absent ? (kind === 'client' ? CLIENT_MEMBERSHIP_ROLE : 'user') : raw === 'member' ? 'user' : String(raw);
+  if (role === 'admin' && kind === 'client') throw new AppError(400, 'A client account cannot be a workspace administrator');
+  const refusal = membershipRoleRefusal(kind, role);
+  if (refusal) throw new AppError(400, refusal);
   if (!(await db('permission_sets').where({ slug: role }).first('slug'))) throw new AppError(400, `Unknown role '${role}'`);
   return role;
 }
@@ -127,8 +134,7 @@ router.post('/:id/members', requirePlatformAdminOnMaster, async (req, res, next)
     const target = await db('users').where({ id: userId }).first('kind', 'foreign_source') as { kind: string; foreign_source: string | null } | undefined;
     if (!target) throw new AppError(404, 'User not found');
     if (target.foreign_source === 'obligate') throw new AppError(400, 'Cannot modify SSO user tenant access — manage from Obligate');
-    const r = await tenantRoleFrom(role);
-    if (r === 'admin' && target.kind === 'client') throw new AppError(400, 'A client account cannot be a workspace administrator');
+    const r = await tenantRoleFrom(role, target.kind);
     await tenantService.addUser(tenantId, userId, r);
     await auditService.logReqAs(req, tenantId, 'tenant.member_added', { resourceType: 'user', resourcePath: String(userId), details: { role: r } });
     res.json({ success: true });
@@ -144,8 +150,7 @@ router.put('/:id/members/:uid', requirePlatformAdminOnMaster, async (req, res, n
     const target = await db('users').where({ id: userId }).first('kind', 'foreign_source') as { kind: string; foreign_source: string | null } | undefined;
     if (!target) throw new AppError(404, 'User not found');
     if (target.foreign_source === 'obligate') throw new AppError(400, 'Cannot modify SSO user tenant access — manage from Obligate');
-    const r = await tenantRoleFrom(role);
-    if (r === 'admin' && target.kind === 'client') throw new AppError(400, 'A client account cannot be a workspace administrator');
+    const r = await tenantRoleFrom(role, target.kind);
     if (!(await tenantService.updateUserRole(tenantId, userId, r))) throw new AppError(404, 'Membership not found');
     await auditService.logReqAs(req, tenantId, 'tenant.member_role_changed', { resourceType: 'user', resourcePath: String(userId), details: { role: r } });
     res.json({ success: true });

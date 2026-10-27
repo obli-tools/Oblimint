@@ -1,13 +1,14 @@
 import crypto from 'crypto';
 import type { Request } from 'express';
-import type { ApiKey, ApiKeyConnection, ApiKeyCreate, ApiKeyCreated, ApiKeyDomainScope, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, ApiKeyUpdate, ClientCapability } from '@oblimint/shared';
-import { API_KEY_SCOPES, MAX_API_KEYS_PER_ACCOUNT } from '@oblimint/shared';
+import type { ApiKey, ApiKeyConnection, ApiKeyCreate, ApiKeyCreated, ApiKeyDomainScope, ApiKeyGrantable, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, ApiKeyUpdate, ClientCapability } from '@oblimint/shared';
+import { API_KEY_SCOPES, MAX_API_KEYS_PER_ACCOUNT, matchApiKeyPreset } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
 import { cidrContains, normalizeCidr } from '../firewall/addresses';
 import { actorCan, actorForUser, loadAccount, type HostingActor, type HostingNeed } from '../hosting/access';
+import { twoFactorSetupRequired } from '../../middleware/sessionUserGuard';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API access keys of a hosting account (shared/src/apiKeys.ts).
@@ -27,6 +28,17 @@ import { actorCan, actorForUser, loadAccount, type HostingActor, type HostingNee
 //     domains.manage, and stops counting when the user no longer holds it.
 // Managing the keys of an account needs sites.manage on it, and creating /
 // widening a key needs every scope's right (no one hands out rights he lacks).
+//
+// A key belongs to its creator (created_by: whose rights it uses). Anyone
+// else changing, rotating, disconnecting or deleting it must also hold every
+// scope it has now, and domains.manage when it has domains given (M3): a
+// sites.manage member never edits a key wider than his own rights. A change
+// by someone else that WIDENS it (scopes, sites, domains, allowed addresses,
+// expiry) makes him its owner: from then on the key uses his rights.
+//
+// A key or connector stops for a user without TOTP while force_2fa is on, as
+// his sessions do; a credential change of the user ends his connectors'
+// tokens (userSessions.service.ts).
 //
 // A key of kind 'connector' (« Connecteur Claude ») has no bearer secret: it
 // is an OAuth client (oauth.ts). Its access tokens (oba_…) resolve through
@@ -269,10 +281,68 @@ async function normalize(actor: HostingActor, account: { id: number; tenant_id: 
   return out;
 }
 
+type ManagedRow = Pick<KeyRow, 'id' | 'name' | 'kind' | 'scopes' | 'site_scope' | 'domain_scope' | 'allowed_ips' | 'expires_at' | 'created_by'>;
+
+/** A key of the account for a manager (404 elsewhere); `creator`: the actor created it. Throws keyNotOwned (M3). */
+async function managedKey(actor: HostingActor, account: { id: number; tenant_id: number }, keyId: number, what: { kind?: ApiKeyKind; label: string }): Promise<{ row: ManagedRow; creator: boolean }> {
+  const q = db('api_keys').where({ id: keyId, account_id: account.id });
+  if (what.kind) q.andWhere({ kind: what.kind });
+  const row = await q.first('id', 'name', 'kind', 'scopes', 'site_scope', 'domain_scope', 'allowed_ips', 'expires_at', 'created_by') as ManagedRow | undefined;
+  if (!row) throw new AppError(404, `${what.label} not found`, 'notFound');
+  if (row.created_by !== null && row.created_by === actor.userId) return { row, creator: true };
+  const target = { tenantId: account.tenant_id, accountId: account.id };
+  const missing: string[] = scopesOf(row.scopes).filter((s) => !actorCan(actor, SCOPE_NEED[s], target));
+  const given = row.domain_scope === 'all' || !!(await db('api_key_domains').where({ key_id: row.id, created_by_key: false }).first('domain_id'));
+  if (given && !actorCan(actor, 'domains.manage', target)) missing.push('domains.manage');
+  if (missing.length) {
+    throw new AppError(403, `This key was created by someone else and has rights you do not hold (${missing.join(', ')})`, 'keyNotOwned', { missing });
+  }
+  return { row, creator: false };
+}
+
+/** `inner` (normalized CIDR) lies inside `outer`. */
+function cidrWithin(inner: string, outer: string): boolean {
+  try {
+    const i = normalizeCidr(inner, { 4: 0, 6: 0 });
+    const o = normalizeCidr(outer, { 4: 0, 6: 0 });
+    return i.family === o.family && i.bits >= o.bits && cidrContains(o.cidr, i.cidr.split('/')[0]);
+  } catch {
+    return false;
+  }
+}
+
+/** Does the change give the key more than it has (scopes, sites, domains, addresses, expiry)? */
+async function widens(row: ManagedRow, n: Normalized): Promise<boolean> {
+  const scopes = scopesOf(row.scopes);
+  if (n.scopes?.some((s) => !scopes.includes(s))) return true;
+  if (n.siteScope === 'all' && row.site_scope !== 'all') return true;
+  if ((n.siteScope ?? row.site_scope) === 'selected' && row.site_scope === 'selected' && n.siteIds?.length) {
+    const have = new Set(await db('api_key_sites').where({ key_id: row.id }).pluck('site_id') as number[]);
+    if (n.siteIds.some((s) => !have.has(s))) return true;
+  }
+  const domScope = row.domain_scope ?? 'selected';
+  if (n.domainScope === 'all' && domScope !== 'all') return true;
+  if ((n.domainScope ?? domScope) === 'selected' && domScope === 'selected' && n.domainIds?.length) {
+    const have = new Set(await db('api_key_domains').where({ key_id: row.id }).pluck('domain_id') as number[]);
+    if (n.domainIds.some((d) => !have.has(d))) return true;
+  }
+  const ips = ipsOf(row.allowed_ips);
+  if (n.allowedIps !== undefined && ips.length && (!n.allowedIps.length || n.allowedIps.some((c) => !ips.some((o) => cidrWithin(c, o))))) return true;
+  if (n.expiresAt !== undefined && row.expires_at && (n.expiresAt === null || n.expiresAt.getTime() > new Date(row.expires_at).getTime())) return true;
+  return false;
+}
+
 export const apiKeysService = {
   async list(actor: HostingActor, accountId: number): Promise<ApiKey[]> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
     return toApiKeys(await keyQuery().where('k.account_id', account.id).orderBy('k.id') as KeyRow[]);
+  },
+
+  /** What the actor may put in a key of the account (the key form's presets); normalize() still decides on every save. */
+  async grantable(actor: HostingActor, accountId: number): Promise<ApiKeyGrantable> {
+    const account = await loadAccount(actor, accountId, 'sites.manage');
+    const target = { tenantId: account.tenant_id, accountId: account.id };
+    return { scopes: heldScopes(actor, target, [...API_KEY_SCOPES]), canGrantDomains: actorCan(actor, 'domains.manage', target) };
   },
 
   async create(req: Request, actor: HostingActor, accountId: number, body: ApiKeyCreate): Promise<ApiKeyCreated> {
@@ -306,19 +376,24 @@ export const apiKeysService = {
       if (n.domainIds?.length) await trx('api_key_domains').insert(n.domainIds.map((d) => ({ key_id: id, account_id: account.id, domain_id: d, created_by_key: false })));
       return { id, key: g?.key ?? null, clientSecret: client?.secret ?? null };
     });
+    // The form's preset the key matches, worked out here from what was saved (the client's word is not needed).
+    const target = { tenantId: account.tenant_id, accountId: account.id };
+    const preset = matchApiKeyPreset({
+      scopes: n.scopes ?? [], siteScope: n.siteScope ?? 'selected', siteCount: n.siteIds?.length ?? 0,
+      domainScope: n.domainScope ?? 'selected', domainCount: n.domainIds?.length ?? 0,
+    }, heldScopes(actor, target, [...API_KEY_SCOPES]), actorCan(actor, 'domains.manage', target)) ?? 'custom';
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.create', {
       resourceType: 'account', resourcePath: String(account.id),
-      details: { keyId: created.id, kind, name: n.name, scopes: n.scopes, siteScope: n.siteScope, siteIds: n.siteIds ?? [], domainScope: n.domainScope ?? 'selected', domainIds: n.domainIds ?? [], allowedIps: n.allowedIps ?? [], expiresAt: n.expiresAt?.toISOString() ?? null },
+      details: { keyId: created.id, kind, name: n.name, preset, scopes: n.scopes, siteScope: n.siteScope, siteIds: n.siteIds ?? [], domainScope: n.domainScope ?? 'selected', domainIds: n.domainIds ?? [], allowedIps: n.allowedIps ?? [], expiresAt: n.expiresAt?.toISOString() ?? null },
     });
     const [key] = await toApiKeys(await keyQuery().where('k.id', created.id) as KeyRow[]);
     return { ...key, key: created.key, clientSecret: created.clientSecret };
   },
 
-  /** Connector: new client secret (the old one stops at once; live connections stay). */
+  /** Connector: new client secret (the old one stops at once; live connections stay). Its creator, or a manager holding its scopes. */
   async rotateSecret(req: Request, actor: HostingActor, accountId: number, keyId: number): Promise<ApiKeyCreated> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
-    const row = await db('api_keys').where({ id: keyId, account_id: account.id, kind: 'connector' }).first('id', 'name') as { id: number; name: string } | undefined;
-    if (!row) throw new AppError(404, 'Connector not found', 'notFound');
+    const { row } = await managedKey(actor, account, keyId, { kind: 'connector', label: 'Connector' });
     const secret = generateClientSecret();
     await db('api_keys').where({ id: row.id }).update({ oauth_secret_hash: hashKey(secret), updated_at: db.fn.now() });
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.rotateSecret', { resourceType: 'account', resourcePath: String(account.id), details: { keyId: row.id, name: row.name } });
@@ -326,25 +401,44 @@ export const apiKeysService = {
     return { ...key, key: null, clientSecret: secret };
   },
 
-  /** Connector: ends one authorization (family) or all of them; the client must authorize again. */
+  /**
+   * Connector: ends one authorization (family) or all of them; the client must
+   * authorize again. Its creator, or a manager holding its scopes — and anyone
+   * for the authorizations they approved themselves (the connector acts with
+   * their rights): their family, or all of theirs when no family is named.
+   */
   async disconnect(req: Request, actor: HostingActor, accountId: number, keyId: number, family: string | null): Promise<number> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
-    const row = await db('api_keys').where({ id: keyId, account_id: account.id, kind: 'connector' }).first('id', 'name') as { id: number; name: string } | undefined;
-    if (!row) throw new AppError(404, 'Connector not found', 'notFound');
+    let row: ManagedRow;
+    let ownOnly = false;
+    try {
+      ({ row } = await managedKey(actor, account, keyId, { kind: 'connector', label: 'Connector' }));
+    } catch (err) {
+      if (!(err instanceof AppError) || err.code !== 'keyNotOwned') throw err;
+      const rows = await db('api_key_oauth_tokens').where({ key_id: keyId, ...(family ? { family } : {}) }).distinct('user_id') as Array<{ user_id: number }>;
+      const mine = rows.some((r) => Number(r.user_id) === actor.userId);
+      // A family of someone else (or no authorization of theirs at all): the M3 refusal stands.
+      if (!mine || (family && rows.length !== 1)) throw err;
+      row = (await db('api_keys').where({ id: keyId }).first('id', 'name')) as ManagedRow;
+      ownOnly = true;
+    }
     const q = db('api_key_oauth_tokens').where({ key_id: row.id });
     if (family) q.andWhere({ family });
+    if (ownOnly) q.andWhere({ user_id: actor.userId });
     const n = Number(await q.del());
-    await auditService.logReqAs(req, account.tenant_id, 'apiKey.disconnect', { resourceType: 'account', resourcePath: String(account.id), details: { keyId: row.id, name: row.name, family, tokens: n } });
+    await auditService.logReqAs(req, account.tenant_id, 'apiKey.disconnect', { resourceType: 'account', resourcePath: String(account.id), details: { keyId: row.id, name: row.name, family, tokens: n, ...(ownOnly ? { ownOnly } : {}) } });
     return n;
   },
 
+  /** Its creator, or a manager holding its scopes; a manager who widens it becomes its owner (M3). */
   async update(req: Request, actor: HostingActor, accountId: number, keyId: number, body: ApiKeyUpdate): Promise<ApiKey> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
-    const row = await db('api_keys').where({ id: keyId, account_id: account.id }).first('id') as { id: number } | undefined;
-    if (!row) throw new AppError(404, 'Key not found', 'notFound');
+    const { row, creator } = await managedKey(actor, account, keyId, { label: 'Key' });
     const n = await normalize(actor, account, body, false);
+    const newOwner = !creator && await widens(row, n) ? actor.userId : null;
     await db.transaction(async (trx) => {
       const patch: Record<string, unknown> = { updated_at: trx.fn.now() };
+      if (newOwner !== null) patch.created_by = newOwner;
       if (n.name !== undefined) {
         if (await trx('api_keys').where({ account_id: account.id, name: n.name }).whereNot({ id: row.id }).first('id')) {
           throw new AppError(409, 'A key of this account already has this name', 'keyNameTaken');
@@ -374,16 +468,19 @@ export const apiKeysService = {
     });
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.update', {
       resourceType: 'account', resourcePath: String(account.id),
-      details: { keyId: row.id, ...Object.fromEntries(Object.entries(n).map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v])) },
+      details: {
+        keyId: row.id, ...Object.fromEntries(Object.entries(n).map(([k, v]) => [k, v instanceof Date ? v.toISOString() : v])),
+        ...(newOwner !== null ? { previousOwnerId: row.created_by, ownerId: newOwner } : {}),
+      },
     });
     const [key] = await toApiKeys(await keyQuery().where('k.id', row.id) as KeyRow[]);
     return key;
   },
 
+  /** Its creator, or a manager holding its scopes. */
   async remove(req: Request, actor: HostingActor, accountId: number, keyId: number): Promise<void> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
-    const row = await db('api_keys').where({ id: keyId, account_id: account.id }).first('id', 'name') as { id: number; name: string } | undefined;
-    if (!row) throw new AppError(404, 'Key not found', 'notFound');
+    const { row } = await managedKey(actor, account, keyId, { label: 'Key' });
     await db('api_keys').where({ id: row.id }).del();
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.delete', {
       resourceType: 'account', resourcePath: String(account.id), details: { keyId: row.id, name: row.name },
@@ -445,6 +542,8 @@ async function contextFor(row: KeyWithAccount, userId: number, ip: string): Prom
   if (ips.length && !ips.some((c) => cidrContains(c, ip))) return null;
   let user: HostingActor;
   try { user = await actorForUser(userId, row.tenant_id); } catch { return null; }
+  // force_2fa: a user who must still enroll a TOTP gets no session, nor a key acting for him.
+  if (await twoFactorSetupRequired(userId)) return null;
   const target = { tenantId: row.tenant_id, accountId: row.account_id };
   if (!actorCan(user, 'read', target)) return null;
   const scopes = heldScopes(user, target, scopesOf(row.scopes));

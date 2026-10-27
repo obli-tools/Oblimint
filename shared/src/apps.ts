@@ -293,11 +293,19 @@ export interface AppContainerInspect {
   createdAt: string | null;
   startedAt: string | null;
   restartCount: number;
-  /** Values of variables whose name looks secret (PASSWORD, SECRET, TOKEN, KEY…) are null. */
+  /**
+   * Values of variables whose name looks secret (PASSWORD, SECRET, TOKEN, KEY…)
+   * or that carry a secret value of the .env are null; URL credentials masked.
+   */
   env: Array<{ key: string; value: string | null }>;
+  /** Every value is null: the caller may read the application, not manage it (names only). */
+  envValuesHidden: boolean;
   mounts: Array<{ kind: 'volume' | 'bind' | 'tmpfs'; source: string; target: string; readOnly: boolean }>;
   networks: Array<{ name: string; ip: string | null; aliases: string[] }>;
-  labels: Record<string, string>;
+  /** Masked like env (whatever the caller's right): null when the name looks secret or the value carries a .env secret. */
+  labels: Record<string, string | null>;
+  /** Every label value is null: the .env cannot be read, so its secrets cannot be masked. */
+  labelValuesHidden: boolean;
   limits: { cpus: number | null; memoryMb: number | null; pids: number | null };
   capAdd: string[];
   healthLog: Array<{ at: string; exitCode: number; output: string }>;

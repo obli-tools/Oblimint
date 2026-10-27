@@ -243,7 +243,7 @@ const tokenLimiter = rateLimit({
 });
 
 /** Public part, mounted at the root before the SPA fallback (no session). */
-export const oauthPublicRouter = Router();
+export const oauthPublicRouter = Router({ caseSensitive: true });
 
 const publicJson = (res: Response, body: unknown) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -290,7 +290,7 @@ oauthPublicRouter.post('/oauth/token', tokenLimiter, express.urlencoded({ extend
 });
 
 /** Session part: /api/oauth (requireAuth). */
-export const oauthApiRouter = Router();
+export const oauthApiRouter = Router({ caseSensitive: true });
 
 oauthApiRouter.get('/authorize', async (req, res, next) => {
   try {

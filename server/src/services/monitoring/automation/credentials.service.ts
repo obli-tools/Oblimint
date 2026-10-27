@@ -296,6 +296,8 @@ export const sftpTargetService = {
     } else {
       if (body.password) patch.password_sealed = seal('automation', body.password);
       else if (!current.password_sealed) throw invalid('Password authentication needs a password', 'password');
+      // The stored password only goes to the server it was given for: another host or port needs it again (L8).
+      else if (patch.host !== undefined || patch.port !== undefined) throw invalid('The server changed: enter the password again', 'password');
       patch.ssh_key_id = null;
     }
     const [row] = await db('sftp_targets').where({ id: current.id }).update(patch).returning('*') as SftpTargetRow[];

@@ -226,17 +226,30 @@ export function toChannel(row: ChannelRow): NotificationChannel {
 }
 
 /**
+ * Destination of a channel whose secret is not the destination itself (SMTP
+ * host / port, webhook URL): a stored secret only goes where it was given (L8).
+ */
+function destinationChanged(cfg: ParsedConfig, previous: Record<string, unknown>): boolean {
+  if (cfg.type === 'smtp') return String(previous.host ?? '').toLowerCase() !== cfg.host.toLowerCase() || Number(previous.port) !== cfg.port;
+  if (cfg.type === 'webhook') return String(previous.url ?? '') !== cfg.url;
+  return false;
+}
+
+/**
  * Splits a validated config into its stored (non-secret) part and its
- * secrets, merging the secret with the stored one (same type only).
+ * secrets, merging the secret with the stored one (same type only). A kept
+ * secret with a new destination (SMTP host / port, webhook URL) is refused:
+ * the secret is given again with it, or cleared ('').
  */
 async function prepareConfig(
   cfg: ParsedConfig,
-  previous: { type: NotificationChannelType; secrets: ChannelSecrets } | null,
+  previous: { type: NotificationChannelType; secrets: ChannelSecrets; config: Record<string, unknown> } | null,
   policy: { allowPrivate: boolean; allowLoopback: boolean },
 ): Promise<{ config: Record<string, unknown>; secrets: ChannelSecrets }> {
   const field = SECRET_FIELD[cfg.type];
   const { [field]: secretInput, ...rest } = cfg as Record<string, unknown>;
   let value: string | null = previous && previous.type === cfg.type ? (previous.secrets[field] ?? null) : null;
+  const kept = value !== null && typeof secretInput !== 'string';
   if (typeof secretInput === 'string') value = secretInput.trim() === '' ? null : secretInput.trim();
 
   switch (cfg.type) {
@@ -270,6 +283,9 @@ async function prepareConfig(
       if (!/^\d{3,20}:[A-Za-z0-9_-]{20,100}$/.test(value)) throw invalid('Invalid Telegram bot token', 'config.botToken');
       break;
     }
+  }
+  if (kept && value && previous && destinationChanged(cfg, previous.config)) {
+    throw invalid('The destination changed: enter the secret again (or clear it)', `config.${field}`);
   }
   const secrets: ChannelSecrets = value ? { [field]: value } : {};
   return { config: { ...rest, type: cfg.type, __secretsSet: value ? [field] : [] }, secrets };
@@ -525,7 +541,8 @@ export const notificationService = {
           if (!(err instanceof SecretBoxError)) throw err;
         }
       }
-      const prepared = await prepareConfig(body.config, { type: row.type, secrets: previous }, smtpPolicyFor(actor, row.tenant_id));
+      const prepared = await prepareConfig(body.config, { type: row.type, secrets: previous, config: json<Record<string, unknown>>(row.config, {}) },
+        smtpPolicyFor(actor, row.tenant_id));
       patch.type = body.config.type;
       patch.config = JSON.stringify(prepared.config);
       patch.secrets = Object.keys(prepared.secrets).length ? sealJson('notification', prepared.secrets) : null;

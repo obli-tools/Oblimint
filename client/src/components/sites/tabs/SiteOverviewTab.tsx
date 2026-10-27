@@ -226,6 +226,7 @@ function SettingsCard({ site, onSiteChange }: SiteTabProps) {
           debounce={form.debounce}
           onDebounceChange={(v) => set('debounce', v)}
           disabled={disabled}
+          autoDisabled={site.publishMode !== 'auto' && !can('releases.publish', site.accountId)}
         />
 
         {siteBaseDef(site.base).php && (

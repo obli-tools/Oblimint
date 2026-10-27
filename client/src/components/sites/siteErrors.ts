@@ -42,6 +42,8 @@ const SITE_ERROR_FALLBACKS = {
   runtimePrefixLimit: 'A runtime serves at most 64 path prefixes.',
   runtimeSwitchFailed: 'The runtime change failed: the previous runtime was restored (details for administrators in the logs).',
   releaseRebuildFailed: 'The live release could not be rebuilt with the new data paths: nothing was changed.',
+  publishRequired: 'Automatic publication requires the right to publish releases.',
+  codeReadForbidden: 'Reading the content of the files needs the right to manage the files or to approve the releases.',
 } as const;
 
 const RUNTIME_NOT_RESTORED_FALLBACK = 'The runtime change failed and the previous runtime could not be restored: the site may be down, contact an administrator.';

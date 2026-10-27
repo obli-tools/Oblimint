@@ -73,7 +73,7 @@
       "domains": {
         "subdomain": {
           "label": "Subdomains",
-          "hint": "Attach to its sites subdomains of a domain already in the account (never a new domain), remove the ones it created."
+          "hint": "Attach to its sites subdomains of a domain already in the account (never a new domain): only under the domains given to the key or, for a key limited to some sites, under domains serving its sites alone. Removes only the ones it created, and not one that also serves a site outside the key."
         }
       },
       "logs": {
@@ -97,7 +97,7 @@
       "routes": {
         "manage": {
           "label": "Routes",
-          "hint": "Choose which of its sites (or runtime of a site) serves a path of a domain, e.g. example.com/uploads/; only on domains serving its sites alone."
+          "hint": "Choose which of its sites (or runtime of a site) serves a path of a domain, e.g. example.com/uploads/; only on the domains given to the key or, for a key limited to some sites, on domains serving its sites alone. A route towards a site outside the key is never changed or removed."
         }
       }
     },
@@ -139,7 +139,45 @@
     "allDomains": "Every domain of the account",
     "selectedDomains": "Only the domains below",
     "noDomains": "No domain in this account.",
-    "domainsHint": "With the Routes right, the key may decide which of its sites serves these domains (or a path of them) — even a domain that serves nothing yet. Without a domain here, it only routes the domains that already serve its sites. Giving domains needs the domain management right."
+    "domainsHint": "With the Routes right, the key may decide which of its sites serves these domains (or a path of them) — even a domain that serves nothing yet; with the Subdomains right, it attaches subdomains under them. A key valid for every site only works on the domains given here. Without a domain here, a key limited to some sites works only on the domains serving its sites alone (subdomains under those same domains). A route towards a site outside the key is never changed or removed. Giving domains needs the domain management right.",
+    "notHeld": "not held",
+    "notHeldHint": "You do not hold this right on the account: you cannot grant it.",
+    "domainsNotHeld": "You do not hold the domain management right on the account: you cannot give domains to a key.",
+    "presets": {
+      "label": "Preset",
+      "readonly": {
+        "label": "Read only",
+        "hint": "Reads the files and the logs of the chosen sites; writes nothing."
+      },
+      "update": {
+        "label": "Updates only",
+        "hint": "For a CI: writes the files and publishes them. No site setting (publish mode, environment, data paths), cron job, database, route or subdomain. On a site in automatic publication the writes go live at once, and so do the files written in the data area."
+      },
+      "site": {
+        "label": "Manage one site",
+        "hint": "Everything on exactly one site: files, publication, settings, logs, databases, cron jobs, routes of the domains serving it alone. No site creation, no subdomain, no domain given."
+      },
+      "multisite": {
+        "label": "Manage several sites",
+        "hint": "The same rights on several sites, or on every site. No domain given by default: give some below only if the key must route them."
+      },
+      "autonomous": {
+        "label": "Autonomous creation",
+        "hint": "Creates its own sites and works on them alone (no existing site): files, publication, settings, logs, databases, subdomains attached to its sites. The domains given below only serve as parents of its subdomains. No path route (it would also route the domains given, over the sites they serve); cron jobs (they run code) are to tick apart."
+      },
+      "all": {
+        "label": "Everything",
+        "hint": "Every right you may grant, on every site, and every domain if you may give them. Never: deleting a site, adding a root domain, users, other keys."
+      },
+      "custom": {
+        "label": "Custom",
+        "hint": "Rights, sites and domains chosen one by one."
+      },
+      "pickOneSite": "Choose its site below.",
+      "pickSites": "Choose two sites or more below, or every site.",
+      "pickSite": "Choose at least one site below.",
+      "pickParents": "Choose below the domains it will create its subdomains under."
+    }
   },
   "oauth": {
     "title": "Connect an application",

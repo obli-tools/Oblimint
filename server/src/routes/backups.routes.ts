@@ -16,7 +16,7 @@ import { backupService } from '../services/backups/backup.service';
 //   GET  /:id/backups                        → { runs, enabled, scheduled }      (read)
 //   POST /:id/backups/run                    → { runId }                         (sites.manage)
 //   PUT  /:id/backups/enabled { enabled }                                        (accounts.manage)
-//   POST /:id/backups/:runId/restore { items } → BackupRestoreResult            (per item: sites / files / databases.manage)
+//   POST /:id/backups/:runId/restore { items } → BackupRestoreResult            (per item: code sites + files.manage, data files.manage, db databases.manage)
 
 const optStr = (max: number) => z.string().trim().max(max).optional();
 

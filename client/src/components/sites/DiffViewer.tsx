@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, ChevronDown, ChevronRight, FileWarning, Loader2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, FileWarning, Loader2, Lock } from 'lucide-react';
 import type { Release, ReleaseDiff, ReleaseDiffFile } from '@oblimint/shared';
 import { releasesApi } from '@/api/releases.api';
 import { cn } from '@/utils/cn';
@@ -28,6 +28,8 @@ export interface ReleaseDiffPanelProps {
 /**
  * Diff of a release against the previous one / the empty tree / another
  * release: file list with +/− counts, each file's patch lazy-loaded on click.
+ * Without the code right (files.manage; staff sites.manage too) the server
+ * sends names and counts only (contentHidden): the rows do not open.
  */
 export function ReleaseDiffPanel({ siteId, release, releases }: ReleaseDiffPanelProps) {
   const { t } = useTranslation();
@@ -63,7 +65,10 @@ export function ReleaseDiffPanel({ siteId, release, releases }: ReleaseDiffPanel
     }
   }, [siteId, release.id, against, t]);
 
+  const hidden = !!diff?.contentHidden;
+
   const toggle = (file: ReleaseDiffFile) => {
+    if (hidden) return;
     const next = new Set(open);
     if (next.has(file.path)) {
       next.delete(file.path);
@@ -119,6 +124,12 @@ export function ReleaseDiffPanel({ siteId, release, releases }: ReleaseDiffPanel
         <p className="py-2 text-sm text-text-muted">{t('releases.diff.noChange') || 'No difference.'}</p>
       ) : diff && (
         <div className="space-y-1">
+          {hidden && (
+            <p className="mb-2 flex items-start gap-2 rounded-lg bg-bg-tertiary/60 px-3 py-2 text-xs text-text-secondary">
+              <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted" />
+              {t('releases.diff.contentHidden') || 'Only the names and line counts of the changed files are shown: their content needs the right to manage the files or to approve the releases.'}
+            </p>
+          )}
           {diff.files.map((f) => {
             const isOpen = open.has(f.path);
             const state = patches[f.path];
@@ -131,10 +142,11 @@ export function ReleaseDiffPanel({ siteId, release, releases }: ReleaseDiffPanel
                 <button
                   type="button"
                   onClick={() => toggle(f)}
-                  aria-expanded={isOpen}
-                  className="flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-bg-hover coarse:min-h-10"
+                  aria-expanded={hidden ? undefined : isOpen}
+                  disabled={hidden}
+                  className={cn('flex w-full min-w-0 items-center gap-2 px-3 py-2 text-left text-xs transition-colors coarse:min-h-10', !hidden && 'hover:bg-bg-hover')}
                 >
-                  {isOpen ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />}
+                  {hidden ? <span className="h-3.5 w-3.5 shrink-0" aria-hidden /> : isOpen ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-muted" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />}
                   <FileStatusIcon status={f.status} />
                   <span className="min-w-0 flex-1 truncate font-mono text-text-primary" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}>
                     {f.oldPath && f.status === 'renamed' ? (<><span className="text-text-muted">{f.oldPath}</span> → {f.path}</>) : f.path}

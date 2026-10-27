@@ -697,6 +697,11 @@ test('settings validation through the service: time zone, databases of another a
   const outsider: HostingActor = { kind: 'client', userId: adminId, tenantId: 1, accounts: new Map() };
   assert.equal((await m.windowService.listAll(outsider, { limit: 100, offset: 0 })).total, 0);
   await assert.rejects(m.windowService.get(outsider, s.siteId, w.id), (e: any) => e.statusCode === 404);
+  // A staff member of the tenant without the read need (users / audit only): 403, not the tenant's windows (M8).
+  const usersOnly: HostingActor = { kind: 'staff', userId: adminId, tenantId: 1, globalView: false, caps: new Set(['users.manage', 'audit.read']) };
+  await assert.rejects(m.windowService.listAll(usersOnly, { limit: 100, offset: 0 }), (e: any) => e.statusCode === 403);
+  const reader: HostingActor = { kind: 'staff', userId: adminId, tenantId: 1, globalView: false, caps: new Set(['overview.read']) };
+  assert.ok((await m.windowService.listAll(reader, { status: 'discarded', accountId, limit: 100, offset: 0 })).items.some((i) => i.id === w.id));
 });
 
 test('site API tokens: create (shown once), limit, unique name, verify, expiry, revoke', { skip: SKIP }, async () => {

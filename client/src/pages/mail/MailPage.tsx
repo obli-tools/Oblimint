@@ -6,6 +6,7 @@ import { HostingSocketEvents, type HostingAccount, type MailOverview, type MailU
 import { accountsApi } from '@/api/accounts.api';
 import { mailApi } from '@/api/mail.api';
 import { useTenantStore } from '@/store/tenantStore';
+import { useHostingMe } from '@/store/hostingStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { useTenantFilter } from '@/hooks/useTenantFilter';
 import { PageContainer } from '@/components/common/PageContainer';
@@ -39,6 +40,7 @@ function isTab(v: string | null): v is Tab {
 export function MailPage() {
   const { t } = useTranslation();
   const isMaster = useIsMasterTenant();
+  const { me, can } = useHostingMe();
   const currentTenantId = useTenantStore((s) => s.currentTenantId);
   const tenantFilter = useTenantFilter();
   // God view: one workspace at a time (the mail lists take a single tenantId).
@@ -109,6 +111,8 @@ export function MailPage() {
   }, [multiTenantUrl, update]);
 
   const mailboxesAllowed = overview ? engineHasMailboxes(overview.engine) : true;
+  // Mail logs list senders and recipients: the mail managers only (server: mail.manage). Shown until `me` is known.
+  const logsAllowed = !me || can('mail.manage', accountId);
   const counts = overview?.counts;
   const badge = (n: number | undefined) => (n ? <span className="ml-1 rounded-full bg-accent/15 px-1.5 font-mono text-[10px] text-accent">{n}</span> : null);
   const tabs: SegmentedTab<Tab>[] = [
@@ -116,9 +120,9 @@ export function MailPage() {
     { id: 'mailboxes', label: t('mail.tabs.mailboxes') || 'Mailboxes', icon: <Mail size={16} />, badge: badge(counts?.mailboxes), hidden: !mailboxesAllowed },
     { id: 'aliases', label: t('mail.tabs.aliases') || 'Aliases', icon: <Forward size={16} />, badge: badge(counts?.aliases), hidden: !mailboxesAllowed },
     { id: 'outbound', label: t('mail.tabs.outbound') || 'Outbound', icon: <Send size={16} /> },
-    { id: 'logs', label: t('mail.tabs.logs') || 'Logs', icon: <ScrollText size={16} /> },
+    { id: 'logs', label: t('mail.tabs.logs') || 'Logs', icon: <ScrollText size={16} />, hidden: !logsAllowed },
   ];
-  const shownTab: Tab = !mailboxesAllowed && (tab === 'mailboxes' || tab === 'aliases') ? 'domains' : tab;
+  const shownTab: Tab = (!mailboxesAllowed && (tab === 'mailboxes' || tab === 'aliases')) || (!logsAllowed && tab === 'logs') ? 'domains' : tab;
   const selectedAccount = useMemo(() => accounts.find((a) => a.id === accountId) ?? null, [accounts, accountId]);
   const units = { mb: t('units.mb') || 'MB', gb: t('units.gb') || 'GB' };
   const unlimited = t('hostingCommon.unlimited') || 'unlimited';

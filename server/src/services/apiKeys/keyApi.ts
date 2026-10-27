@@ -52,13 +52,24 @@ export async function keySite(ctx: ApiKeyContext, siteId: number): Promise<SiteR
 interface RouteDomain { id: number; name: string; manageable: boolean; routes: ApiV1Route[] }
 
 const NOT_MANAGEABLE = 'This domain is not given to this key and serves other sites (or none yet): give it to the key in the panel (Access keys › Domains), or route it there';
+const ROUTE_OUTSIDE = 'This route leads to a site outside this key: only the panel changes or removes it';
+
+/**
+ * A domain the key works on without it being given (L20): every route of it
+ * leads to a site of a key limited to some sites. A key on every site gets
+ * no domain this way: its domains are the ones given to it (domainScope).
+ */
+function servesOnlyKeySites(ctx: ApiKeyContext, routes: Array<{ site_id: number }>): boolean {
+  return ctx.siteScope === 'selected' && routes.length > 0 && routes.every((r) => keyAllowsSite(ctx, r.site_id));
+}
 
 /**
  * Domains of the account with their path routes. A key manages the routes of
  * a domain given to it (Domains of the key: one, several or all), and of a
- * domain whose routes all lead to its sites (a key on every site: any domain
- * of the account) — never a path of another domain serving a site it cannot
- * see. The routes always lead to its own sites (keySite).
+ * domain whose routes all lead to its sites (servesOnlyKeySites) — never a
+ * path of another domain serving a site it cannot see. The routes always
+ * lead to its own sites (keySite), and a route of a given domain towards a
+ * site outside the key stays as it is (keyRoute, L20).
  */
 async function routeDomains(ctx: ApiKeyContext): Promise<RouteDomain[]> {
   const doms = await db('domains').where({ account_id: ctx.accountId }).select('id', 'name').orderBy('name') as Array<{ id: number; name: string }>;
@@ -67,7 +78,7 @@ async function routeDomains(ctx: ApiKeyContext): Promise<RouteDomain[]> {
     Array<{ id: number; domain_id: number; path_prefix: string; site_id: number; runtime_id: number | null }>;
   return doms.map((d) => {
     const mine = rows.filter((r) => r.domain_id === d.id);
-    const manageable = ctx.siteScope === 'all' || keyAllowsDomain(ctx, d.id) || (mine.length > 0 && mine.every((r) => keyAllowsSite(ctx, r.site_id)));
+    const manageable = keyAllowsDomain(ctx, d.id) || servesOnlyKeySites(ctx, mine);
     return {
       id: d.id, name: d.name, manageable,
       // A route to a site the key cannot see is shown without its site.
@@ -85,11 +96,13 @@ async function manageableDomain(ctx: ApiKeyContext, name: string): Promise<Route
   return d;
 }
 
+/** A route the key may change or remove: on a manageable domain, and towards one of its sites (L20). */
 async function keyRoute(ctx: ApiKeyContext, routeId: number): Promise<{ domain: RouteDomain; route: ApiV1Route }> {
   for (const d of await routeDomains(ctx)) {
     const route = d.routes.find((r) => r.id === routeId);
     if (!route) continue;
     if (!d.manageable) throw new AppError(403, NOT_MANAGEABLE, 'keyDomainNotManageable');
+    if (route.siteId === 0) throw new AppError(403, ROUTE_OUTSIDE, 'keyRouteOutside');
     return { domain: d, route };
   }
   throw new AppError(404, 'Route not found', 'notFound');
@@ -109,10 +122,36 @@ function relOf(site: Pick<SiteRow, 'slug'>, area: SiteArea, virtual: string): st
   return virtual === root ? '/' : virtual.startsWith(`${root}/`) ? virtual.slice(root.length) : virtual;
 }
 
+/**
+ * Domains a subdomain can be created under (L19): the ones given to the key
+ * (and the subdomains it created), or serving only its sites — the same rule
+ * as the routes. A key on every site gets parents only by being given them.
+ */
+async function parentIds(ctx: ApiKeyContext): Promise<Set<number>> {
+  const doms = await db('domains').where({ account_id: ctx.accountId }).pluck('id') as number[];
+  if (!doms.length) return new Set();
+  const routes = await db('site_routes').whereIn('domain_id', doms).select('domain_id', 'site_id') as Array<{ domain_id: number; site_id: number }>;
+  return new Set(doms.map(Number).filter((id) => keyAllowsDomain(ctx, id) || servesOnlyKeySites(ctx, routes.filter((r) => Number(r.domain_id) === id))));
+}
+
 async function filesAccount(ctx: ApiKeyContext, write: boolean): Promise<AccountRow> {
   requireScope(ctx, write ? 'files.write' : 'files.read');
   return loadAccount(ctx.actor, ctx.accountId, 'files.manage');
 }
+
+/**
+ * Audit of a file write through the key (M13): the same actions and details
+ * as the panel's explorer (files.routes.ts: virtual paths), plus the site;
+ * logReqAs files it under the key's user with the key (apiKey {id, name}).
+ */
+function fileAudit(req: Request, a: AccountRow, siteId: number | null, action: string, details: Record<string, unknown>): Promise<void> {
+  return auditService.logReqAs(req, a.tenant_id, action, {
+    resourceType: 'account', resourcePath: String(a.id), details: { username: a.username, ...(siteId ? { siteId } : {}), ...details },
+  });
+}
+
+/** Paths in an audit entry: the first 50 of a batch. */
+const sample = (paths: string[]) => (paths.length > 50 ? [...paths.slice(0, 50), `… +${paths.length - 50}`] : paths);
 
 async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV1Site[]> {
   const q = db('sites as s')
@@ -165,8 +204,10 @@ export const keyApi = {
     return v;
   },
 
+  /** Without the releases.publish scope the site starts in manual (sitesService: 'auto' takes releases.publish). */
   async createSite(ctx: ApiKeyContext, req: Request, body: Omit<SiteCreate, 'accountId'>): Promise<ApiV1Site> {
     requireScope(ctx, 'sites.create');
+    if (body.publishMode === 'auto') requireScope(ctx, 'releases.publish');
     const site = await sitesService.create(req, ctx.actor, { ...body, accountId: ctx.accountId } as SiteCreate & { accountId: number });
     await apiKeysService.recordCreatedSite(ctx, site.id);
     const self = { ...ctx, siteIds: new Set([...ctx.siteIds, site.id]) };
@@ -178,6 +219,8 @@ export const keyApi = {
   async updateSite(ctx: ApiKeyContext, req: Request, siteId: number, body: ApiV1SiteUpdate): Promise<ApiV1Site> {
     requireScope(ctx, 'sites.manage');
     const site = await keySite(ctx, siteId);
+    // Switching to 'auto' publishes every later write: the releases.publish scope too.
+    if (body.publishMode === 'auto' && site.publish_mode !== 'auto') requireScope(ctx, 'releases.publish');
     await sitesService.update(req, ctx.actor, site.id, body);
     const [v] = await siteViews(ctx, [site.id]);
     return v;
@@ -210,10 +253,11 @@ export const keyApi = {
     return releaseService.stagingStatus(site.id);
   },
 
-  async putFile(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string, size: number, body: Readable, overwrite: boolean): Promise<string> {
+  async putFile(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, size: number, body: Readable, overwrite: boolean): Promise<string> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     const p = await filesService.putSmall(a, { path: areaPath(site, area, path), size, overwrite }, body);
+    await fileAudit(req, a, site.id, 'files.upload', { path: p, size });
     return relOf(site, area, p);
   },
 
@@ -223,36 +267,50 @@ export const keyApi = {
     return filesService.uploadStart(a, ctx.creatorId, { path: areaPath(site, area, path), size, overwrite });
   },
 
-  async uploadChunk(ctx: ApiKeyContext, uploadId: string, index: number, length: number, body: Readable): Promise<FileUploadChunkResult> {
+  async uploadChunk(ctx: ApiKeyContext, req: Request, uploadId: string, index: number, length: number, body: Readable): Promise<FileUploadChunkResult> {
     const a = await filesAccount(ctx, true);
-    return filesService.uploadChunk(a, ctx.creatorId, uploadId, index, length, body);
+    const info = filesService.uploadInfo(uploadId);
+    const res = await filesService.uploadChunk(a, ctx.creatorId, uploadId, index, length, body);
+    // One entry per uploaded file (the chunk that completed it), as in the panel.
+    if (res.done && info) await fileAudit(req, a, null, 'files.upload', info);
+    return res;
   },
 
-  async mkdir(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string): Promise<string> {
+  async mkdir(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string): Promise<string> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
-    return relOf(site, area, await filesService.mkdir(a, areaPath(site, area, path)));
+    const created = await filesService.mkdir(a, areaPath(site, area, path));
+    await fileAudit(req, a, site.id, 'files.mkdir', { path: created });
+    return relOf(site, area, created);
   },
 
-  async remove(ctx: ApiKeyContext, siteId: number, area: SiteArea, paths: string[]): Promise<FileOpResult[]> {
+  async remove(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, paths: string[]): Promise<FileOpResult[]> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     const res = await filesService.remove(a, paths.map((p) => areaPath(site, area, p)));
+    const done = res.filter((r) => r.ok).map((r) => r.path);
+    if (done.length) await fileAudit(req, a, site.id, 'files.delete', { paths: sample(done) });
     return res.map((r) => ({ ...r, path: relOf(site, area, r.path) }));
   },
 
-  async move(ctx: ApiKeyContext, siteId: number, area: SiteArea, items: Array<{ from: string; to: string }>, overwrite: boolean, copy = false): Promise<FileOpResult[]> {
+  async move(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, items: Array<{ from: string; to: string }>, overwrite: boolean, copy = false): Promise<FileOpResult[]> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     const mapped = items.map((i) => ({ from: areaPath(site, area, i.from), to: areaPath(site, area, i.to) }));
     const res = copy ? await filesService.copy(a, mapped) : await filesService.move(a, mapped, overwrite);
+    const done = mapped.filter((_, i) => res[i]?.ok).map((i) => `${i.from} → ${i.to}`);
+    if (done.length) await fileAudit(req, a, site.id, copy ? 'files.copy' : 'files.move', { items: sample(done), ...(copy ? {} : { overwrite }) });
     return res.map((r) => ({ ...r, path: relOf(site, area, r.path) }));
   },
 
-  async extract(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string, to: string | undefined, overwrite: boolean): Promise<FileExtractResult> {
+  async extract(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, to: string | undefined, overwrite: boolean): Promise<FileExtractResult> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
-    return filesService.extract(a, areaPath(site, area, path), to === undefined ? undefined : areaPath(site, area, to), overwrite);
+    const archive = areaPath(site, area, path);
+    const target = to === undefined ? undefined : areaPath(site, area, to);
+    const res = await filesService.extract(a, archive, target, overwrite);
+    await fileAudit(req, a, site.id, 'files.extract', { path: archive, to: target ?? null, overwrite, files: res.files, bytes: res.bytes });
+    return res;
   },
 
   // ── releases ──
@@ -282,15 +340,16 @@ export const keyApi = {
   },
 
   // ── subdomains (scope domains.subdomain) ──
-  /** Domains of the account a subdomain can be created under. */
+  /** Domains of the account a subdomain can be created under (parentIds: given to the key, or serving only its sites). */
   async parentDomains(ctx: ApiKeyContext): Promise<ApiV1ParentDomain[]> {
     requireScope(ctx, 'domains.subdomain');
+    const allowed = await parentIds(ctx);
     const rows = await db('domains as d')
       .leftJoin('dns_zones as z', function joinZone() { this.on('z.domain_id', '=', 'd.id').andOn('z.account_id', '=', 'd.account_id'); })
       .where('d.account_id', ctx.accountId)
-      .select('d.name', 'd.verification_status', 'z.kind as zone_kind')
-      .orderBy('d.name') as Array<{ name: string; verification_status: string | null; zone_kind: string | null }>;
-    return rows.map((r) => ({ name: r.name, verified: r.verification_status === 'verified', hostedZone: r.zone_kind === 'hosted' }));
+      .select('d.id', 'd.name', 'd.verification_status', 'z.kind as zone_kind')
+      .orderBy('d.name') as Array<{ id: number; name: string; verification_status: string | null; zone_kind: string | null }>;
+    return rows.filter((r) => allowed.has(Number(r.id))).map((r) => ({ name: r.name, verified: r.verification_status === 'verified', hostedZone: r.zone_kind === 'hosted' }));
   },
 
   /** Subdomains this key created. */
@@ -316,10 +375,16 @@ export const keyApi = {
     if (!/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(name)) {
       throw new AppError(400, 'Invalid domain name', 'invalidDomain');
     }
-    const parents = await db('domains').where({ account_id: ctx.accountId }).pluck('name') as string[];
-    const parent = parents.filter((p) => name.endsWith(`.${p}`)).sort((a, b) => b.length - a.length)[0];
+    const allowed = await parentIds(ctx);
+    const doms = await db('domains').where({ account_id: ctx.accountId }).select('id', 'name') as Array<{ id: number; name: string }>;
+    const parents = doms.filter((d) => allowed.has(Number(d.id))).map((d) => d.name).sort();
+    // The closest domain of the account above the name: it must be one of the key's parents (L19).
+    const parent = doms.filter((d) => name.endsWith(`.${d.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
     if (!parent) {
-      throw new AppError(400, `Only a subdomain of a domain of the account can be attached (${parents.join(', ') || 'no domain yet'}): add new domains from the panel`, 'notASubdomain', { parents });
+      throw new AppError(400, `Only a subdomain of a domain of the account can be attached (${parents.join(', ') || 'no domain for this key'}): add new domains from the panel`, 'notASubdomain', { parents });
+    }
+    if (!allowed.has(Number(parent.id))) {
+      throw new AppError(403, `${parent.name} is not given to this key and serves other sites (or none yet): give it to the key in the panel (Access keys › Domains), or use one of ${parents.join(', ') || 'its domains (none yet)'}`, 'keyDomainNotManageable', { parents });
     }
     const domain = await domainsService.create(req, ctx.actor, {
       accountId: ctx.accountId, name, kind: 'subdomain', siteId: site.id, tlsMode: 'letsencrypt', forceHttps: true, includeWww: false,
@@ -328,13 +393,19 @@ export const keyApi = {
     return { id: domain.id, name: domain.name, siteId: site.id, verified: domain.verification?.status === 'verified', url: `https://${domain.name}/` };
   },
 
-  /** Removes a subdomain THIS key created (by name). */
+  /**
+   * Removes a subdomain THIS key created (by name). Its routes go with it: one
+   * the panel pointed since at a site outside the key keeps the whole domain
+   * (L20, as keyRoute does for a single route).
+   */
   async removeSubdomain(ctx: ApiKeyContext, req: Request, rawName: string): Promise<void> {
     requireScope(ctx, 'domains.subdomain');
     const name = normalizeName(rawName);
     const row = await db('api_key_domains as k').join('domains as d', 'd.id', 'k.domain_id')
       .where({ 'k.key_id': ctx.id, 'k.created_by_key': true, 'd.account_id': ctx.accountId, 'd.name': name }).first('d.id') as { id: number } | undefined;
     if (!row) throw new AppError(404, 'Subdomain not found among the ones this key created', 'notFound');
+    const routes = await db('site_routes').where({ domain_id: row.id }).select('site_id') as Array<{ site_id: number }>;
+    if (routes.some((r) => !keyAllowsSite(ctx, Number(r.site_id)))) throw new AppError(403, ROUTE_OUTSIDE, 'keyRouteOutside');
     await domainsService.remove(req, ctx.actor, row.id);
   },
 

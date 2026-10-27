@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Trash2, Check, Shield, Pencil, X } from 'lucide-react';
+import { Plus, Trash2, Check, Shield, Pencil, X, Lock } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import type { PermissionSet } from '@oblimint/shared';
@@ -62,6 +62,7 @@ export function PermissionSetsTab() {
   }, [fetchData]);
 
   const toggleCapability = async (set: PermissionSet, capKey: string) => {
+    if (set.locked) return;
     const has = set.capabilities.includes(capKey);
     const updated = has
       ? set.capabilities.filter((c) => c !== capKey)
@@ -242,6 +243,11 @@ export function PermissionSetsTab() {
                               <Shield size={11} className="text-accent shrink-0" />
                             </Tip>
                           )}
+                          {set.locked && (
+                            <Tip content={t('permissionSets.locked') || 'Fixed set: its capabilities cannot be changed'}>
+                              <Lock size={11} className="text-text-muted shrink-0" />
+                            </Tip>
+                          )}
                         </>
                       )}
                     </div>
@@ -288,10 +294,11 @@ export function PermissionSetsTab() {
                       <td key={set.id} className="px-3 py-2 text-center">
                         <button
                           onClick={() => toggleCapability(set, cap.key)}
+                          disabled={set.locked}
                           aria-pressed={checked}
                           aria-label={`${capLabel(cap)} — ${set.name}`}
                           // Touch: 20px box inside an invisible 40px hit area.
-                          className={`relative w-5 h-5 rounded border inline-flex items-center justify-center transition-colors coarse:after:absolute coarse:after:-inset-2.5 coarse:after:content-[''] ${
+                          className={`relative w-5 h-5 rounded border inline-flex items-center justify-center transition-colors coarse:after:absolute coarse:after:-inset-2.5 coarse:after:content-[''] disabled:opacity-40 disabled:cursor-not-allowed ${
                             checked
                               ? 'bg-accent border-accent text-white'
                               : 'border-transparent bg-bg-tertiary hover:border-text-muted'

@@ -601,6 +601,7 @@
     },
     "decidedBy": "décidée le {{date}} par {{name}}",
     "diff": "Diff",
+    "diffHidden": "Le contenu des fichiers modifiés demande le droit de gérer les fichiers ou d’approuver les releases.",
     "expandAll": "Tout déplier",
     "filesFailed": "Échec du chargement des fichiers modifiés",
     "filter": {

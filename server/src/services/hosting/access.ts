@@ -48,7 +48,13 @@ export type HostingNeed =
   | 'apps.manage'
   | 'apps.console'
   | 'proxy.manage'
-  | 'monitoring.manage';
+  | 'monitoring.manage'
+  // Content of the code (release / window diff patches): 'read' only gives
+  // the file names and stats. Code access = files.manage (the SFTP / explorer
+  // right); staff sites.manage too (it publishes and approves, it reviews code),
+  // and a client releases.approve (an approver reviews the code it lets through,
+  // without the staging WRITE access that files.manage also gives).
+  | 'code.read';
 
 export type HostingActor =
   | {
@@ -86,10 +92,11 @@ const STAFF_CAPS: Record<HostingNeed, readonly string[]> = {
   'apps.console': ['apps.console'],
   'proxy.manage': ['proxy.manage'],
   'monitoring.manage': ['monitoring.manage'],
+  'code.read': ['files.manage', 'sites.manage'],
 };
 
-/** Client capability granting each need (null = never for a client). */
-const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
+/** Client capability granting each need (null = never for a client; a list = any of them). */
+const CLIENT_CAP: Record<HostingNeed, ClientCapability | readonly ClientCapability[] | 'member' | null> = {
   read: 'member',
   'plans.manage': null,
   'accounts.manage': null,
@@ -105,7 +112,17 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | 'member' | null> = {
   'apps.console': 'apps.console',
   'proxy.manage': 'proxy.manage',
   'monitoring.manage': 'monitoring.manage',
+  'code.read': ['files.manage', 'releases.approve'],
 };
+
+/** Do the capabilities of ONE client account grant `need`? */
+function clientCapsGrant(caps: ReadonlySet<ClientCapability>, need: HostingNeed): boolean {
+  const required = CLIENT_CAP[need];
+  if (required === null) return false;
+  if (required === 'member') return true;
+  if (typeof required === 'string') return caps.has(required);
+  return required.some((c) => caps.has(c));
+}
 
 /**
  * Staff capability equivalent to each CLIENT capability (releases.* ←
@@ -211,9 +228,7 @@ export function actorCan(actor: HostingActor, need: HostingNeed, target: { tenan
   if (target.tenantId !== actor.tenantId || target.accountId === null) return false;
   const caps = actor.accounts.get(target.accountId);
   if (!caps) return false;
-  const required = CLIENT_CAP[need];
-  if (required === null) return false;
-  return required === 'member' || caps.has(required);
+  return clientCapsGrant(caps, need);
 }
 
 /** Visible at all (read)? */
@@ -229,9 +244,7 @@ export function actorHasNeedSomewhere(actor: HostingActor, need: HostingNeed): b
     const caps = actor.caps;
     return STAFF_CAPS[need].some((c) => caps.has(c));
   }
-  const required = CLIENT_CAP[need];
-  if (required === null) return false;
-  for (const caps of actor.accounts.values()) if (required === 'member' || caps.has(required)) return true;
+  for (const caps of actor.accounts.values()) if (clientCapsGrant(caps, need)) return true;
   return false;
 }
 
@@ -296,6 +309,18 @@ export async function loadSite(actor: HostingActor, siteId: number, need: Hostin
   if (!row || !actorSees(actor, { tenantId: row.tenant_id, accountId: row.account_id })) throw notFound('Site');
   if (!actorCan(actor, need, { tenantId: row.tenant_id, accountId: row.account_id })) throw forbidden();
   return row;
+}
+
+/** May the actor read the CONTENT of the site's code (diff patches), not only names and stats? */
+export function actorReadsCode(actor: HostingActor, site: Pick<SiteRow, 'tenant_id' | 'account_id'>): boolean {
+  return actorCan(actor, 'code.read', { tenantId: site.tenant_id, accountId: site.account_id });
+}
+
+/** 403 codeReadForbidden unless actorReadsCode (the site itself was loaded with 'read'). */
+export function assertReadsCode(actor: HostingActor, site: Pick<SiteRow, 'tenant_id' | 'account_id'>): void {
+  if (!actorReadsCode(actor, site)) {
+    throw new AppError(403, 'Reading the content of the files needs the right to manage the files or to approve the releases', 'codeReadForbidden');
+  }
 }
 
 /** One domain visible to the actor, with `need` granted (joined: account_username). */

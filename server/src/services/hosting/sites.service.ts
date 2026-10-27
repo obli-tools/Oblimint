@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 import type { AppProfileId, PhpSettings, PlanLimits, Site, SiteBaseId, SiteDataPath, SiteRoute, SiteRuntime } from '@oblimint/shared';
-import { HostingSocketEvents, appProfileDef } from '@oblimint/shared';
+import { APP_PROFILES, HostingSocketEvents, appProfileDef, isSiteBaseId, normalizePathPrefix, normalizeRelPath } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
@@ -97,6 +97,39 @@ function assertBaseAllowed(plan: PlanLimits, base: SiteBaseId): void {
   if (plan.allowedBases && !plan.allowedBases.includes(base)) {
     throw new AppError(409, `The plan does not allow the base ${base}`, 'baseNotAllowed', { base, allowedBases: plan.allowedBases });
   }
+}
+
+/**
+ * The fields of a site creation / update the services rely on, checked again
+ * here whatever the caller validated (routes, /api/v1, MCP, migrations): an
+ * unknown base or profile would leave a site stuck in 'provisioning', a
+ * docroot such as "./public" would slip past dataPathContainsDocroot.
+ * Returns the normalized docroot / basePath (undefined when not given).
+ */
+function checkedSiteFields(body: { base?: unknown; appProfile?: unknown; docroot?: unknown; basePath?: unknown; publishMode?: unknown }): { docroot?: string; basePath?: string } {
+  const invalid = (field: string, message: string) => new AppError(400, `Validation failed — ${field}: ${message}`, 'validation', { [field]: [message] });
+  if (body.base !== undefined && !isSiteBaseId(body.base)) throw invalid('base', 'Unknown site base');
+  if (body.appProfile !== undefined && body.appProfile !== null && !APP_PROFILES.some((p) => p.id === body.appProfile)) {
+    throw invalid('appProfile', 'Unknown application profile');
+  }
+  if (body.publishMode !== undefined && !['auto', 'manual', 'approval'].includes(String(body.publishMode))) throw invalid('publishMode', 'auto, manual or approval');
+  const out: { docroot?: string; basePath?: string } = {};
+  if (body.docroot !== undefined) {
+    const n = typeof body.docroot === 'string' ? normalizeRelPath(body.docroot, true) : null;
+    if (n === null) throw invalid('docroot', 'Relative path of [A-Za-z0-9._@+-] segments, without "..", "." or empty segments');
+    out.docroot = n;
+  }
+  if (body.basePath !== undefined) {
+    const n = typeof body.basePath === 'string' ? normalizePathPrefix(body.basePath) : null;
+    if (n === null) throw invalid('basePath', 'Path prefix such as / or /shop/');
+    out.basePath = n;
+  }
+  return out;
+}
+
+/** M6: 'auto' publishes every staging change without anyone clicking: it takes releases.publish (a key: its scope). */
+function publishRequired(): AppError {
+  return new AppError(403, 'Automatic publication requires the right to publish releases', 'publishRequired');
 }
 
 async function audit(req: Request, site: { id: number; tenant_id: number; slug: string; account_id: number }, action: string, details: Record<string, unknown> = {}): Promise<void> {
@@ -200,6 +233,11 @@ export const sitesService = {
   /** POST /sites — sites.manage on the ACCOUNT (a client with the capability may create). */
   async create(req: Request, actor: HostingActor, body: SiteCreateBody): Promise<Site> {
     const account = await loadAccount(actor, body.accountId, 'sites.manage');
+    const fields = checkedSiteFields(body);
+    // Without releases.publish the site starts in manual (an explicit 'auto' is refused).
+    const canPublish = actorCan(actor, 'releases.publish', { tenantId: account.tenant_id, accountId: account.id });
+    if (body.publishMode === 'auto' && !canPublish) throw publishRequired();
+    const publishMode = body.publishMode ?? (canPublish ? 'auto' : 'manual');
     if (account.status === 'deleting') throw accountDeleting();
     if (await db('sites').where({ account_id: account.id, slug: body.slug }).first('id')) {
       throw new AppError(409, 'This slug is already used by another site of the account', 'slugTaken');
@@ -209,8 +247,8 @@ export const sitesService = {
     await envelopeService.assertRoomFor('sites', account); // early answer, re-checked under the lock
 
     const profile = body.appProfile ?? null;
-    const docroot = body.docroot ?? (profile ? appProfileDef(profile).docroot : '');
-    const basePath = body.basePath ?? '/';
+    const docroot = fields.docroot ?? (profile ? appProfileDef(profile).docroot : '');
+    const basePath = fields.basePath ?? '/';
     let siteId: number;
     try {
       // Limits re-checked and the row inserted under the tenant lock: two
@@ -229,7 +267,7 @@ export const sitesService = {
           app_profile: profile,
           docroot,
           base_path: basePath,
-          publish_mode: body.publishMode ?? 'auto',
+          publish_mode: publishMode,
           publish_debounce_sec: body.publishDebounceSec ?? 30,
           healthcheck_path: body.healthcheckPath ?? basePath,
           status: 'provisioning',
@@ -253,18 +291,19 @@ export const sitesService = {
 
   async update(req: Request, actor: HostingActor, siteId: number, body: SiteUpdateBody): Promise<Site> {
     const row = await loadSite(actor, siteId, 'sites.manage');
+    const fields = checkedSiteFields({ appProfile: body.appProfile, docroot: body.docroot, basePath: body.basePath, publishMode: body.publishMode });
     const patch: Record<string, unknown> = {};
     if (body.name !== undefined && body.name !== row.name) patch.name = body.name;
     if (body.appProfile !== undefined && body.appProfile !== row.app_profile) patch.app_profile = body.appProfile;
-    if (body.docroot !== undefined && body.docroot !== row.docroot) {
-      const docroot = body.docroot;
+    if (fields.docroot !== undefined && fields.docroot !== row.docroot) {
+      const docroot = fields.docroot;
       const clash = (await dataPathRows(row.id)).find((p) => dataPathContainsDocroot(p.path, docroot));
       if (clash) {
         throw new AppError(400, `The document root may not be inside the data path ${clash.path}`, 'docrootInDataPath', { path: clash.path });
       }
       patch.docroot = docroot;
     }
-    if (body.basePath !== undefined && body.basePath !== row.base_path) patch.base_path = body.basePath;
+    if (fields.basePath !== undefined && fields.basePath !== row.base_path) patch.base_path = fields.basePath;
     if (body.publishMode !== undefined && body.publishMode !== row.publish_mode) {
       // The approval gate is the approvers' control: leaving 'approval' takes
       // releases.approve (a client given sites.manage + releases.publish but
@@ -272,6 +311,7 @@ export const sitesService = {
       if (row.publish_mode === 'approval' && !actorCan(actor, 'releases.approve', { tenantId: row.tenant_id, accountId: row.account_id })) {
         throw new AppError(403, 'Leaving approval mode requires the right to approve releases', 'approvalRequired');
       }
+      if (body.publishMode === 'auto' && !actorCan(actor, 'releases.publish', { tenantId: row.tenant_id, accountId: row.account_id })) throw publishRequired();
       patch.publish_mode = body.publishMode;
     }
     if (body.publishDebounceSec !== undefined && body.publishDebounceSec !== row.publish_debounce_sec) patch.publish_debounce_sec = body.publishDebounceSec;

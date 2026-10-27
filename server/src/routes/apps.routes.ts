@@ -35,7 +35,7 @@ import { idParam, resolveActor } from '../services/hosting/access';
 //   POST   /stacks/:id/wake                                    → AppDeployment (202)             (apps.manage)
 //   POST   /stacks/:id/containers/:service/:action  (start|stop|restart) → AppServiceInfo       (apps.manage)
 //   GET    /stacks/:id/containers/:service/logs?tail&since     → AppLogsResponse                 (read)
-//   GET    /stacks/:id/containers/:service/inspect             → AppContainerInspect             (read; secret env masked)
+//   GET    /stacks/:id/containers/:service/inspect             → AppContainerInspect             (read; env values: apps.manage, secrets masked)
 //   POST   /validate                   ComposeValidateRequest  → ComposeValidationResult         (apps.manage on accountId; heavyOpLimiter)
 //   GET    /resources?accountId                                → AppResourceSummary              (read)
 //   GET    /catalog?category&search                            → AppTemplate[]                   (read: any member)
@@ -53,7 +53,7 @@ import { idParam, resolveActor } from '../services/hosting/access';
 // Codes: planLimit (409, details.dimension ∈ appStacks | appContainers | appsCpu | appsMemory), appsDisabled (409),
 // stackNameTaken (409), composeInvalid (400, details.issues: ComposeIssue[]), imageNotAllowed (400), buildNotAllowed (403),
 // sourceTypeMismatch (409), stackBusy (409: an action is running), zipTooLarge (413), zipInvalid (400), gitUnreachable (502),
-// gitAuthFailed (502), registryAuthFailed (502), deploymentNotFound (404), nothingToRollback (409), serviceNotFound (404),
+// gitAuthFailed (502), gitTokenRequired (400: new repository URL without its token), registryAuthFailed (502), deploymentNotFound (404), nothingToRollback (409), serviceNotFound (404),
 // consoleDisabled (403), accountSuspended (409), confirmMismatch (400), templateNotFound (404), templateBuiltin (409),
 // backendUnavailable (502, A6: Docker / hostd errors never detailed to a client).
 //

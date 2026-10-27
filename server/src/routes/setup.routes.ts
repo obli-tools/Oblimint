@@ -17,14 +17,14 @@ import { canStart, getProgress, setupApplySchema, startApply } from '../services
 
 /** Normal mode: only /status answers ({ mode: 'normal' }); everything else 404. */
 export function normalModeSetupRouter(): Router {
-  const router = Router();
+  const router = Router({ caseSensitive: true });
   router.get('/status', (_req, res) => { res.json({ success: true, data: { mode: 'normal' } }); });
   router.use((_req, res) => { res.status(404).json({ success: false, error: 'Not found' }); });
   return router;
 }
 
 export function setupModeRouter(token: string): Router {
-  const router = Router();
+  const router = Router({ caseSensitive: true });
 
   const tokenLimiter = rateLimit({
     windowMs: 5 * 60 * 1000,

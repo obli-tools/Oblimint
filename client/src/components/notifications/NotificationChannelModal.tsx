@@ -97,6 +97,12 @@ export function NotificationChannelModal({ open, channel, onClose, onSaved }: {
 
   const required = t('common.requiredField') || 'This field is required';
   const httpsOnly = t('notifications.errors.httpsOnly') || 'A public https:// URL is required.';
+  const secretAgain = t('notifications.errors.secretAgain') || 'The destination changed: enter the secret again (the stored one is only sent where it was given), or remove it.';
+  // A stored secret only goes to the destination it was given for (server: L8): SMTP host / port, webhook URL.
+  const stored = (channel?.config ?? {}) as unknown as Record<string, unknown>;
+  const destinationMoved = editing && (f.type === 'smtp'
+    ? f.host.trim().toLowerCase() !== String(stored.host ?? '').toLowerCase() || Number(f.port) !== Number(stored.port)
+    : f.type === 'webhook' && f.url.trim() !== String(stored.url ?? ''));
 
   const buildConfig = (): NotificationChannelConfig | string => {
     switch (f.type) {
@@ -104,10 +110,12 @@ export function NotificationChannelModal({ open, channel, onClose, onSaved }: {
         const port = Number(f.port);
         if (!f.host.trim() || !f.from.trim() || f.to.length === 0) return required;
         if (!Number.isInteger(port) || port < 1 || port > 65535) return t('notifications.errors.port') || 'Invalid port.';
+        if (destinationMoved && isSet('password') && !f.clearPassword && !f.password) return secretAgain;
         return { type: 'smtp', host: f.host.trim(), port, secure: f.secure, username: f.username.trim() || null, password: f.clearPassword ? '' : secret(f.password), from: f.from.trim(), to: f.to };
       }
       case 'webhook':
         if (!/^https:\/\/\S+$/i.test(f.url.trim())) return httpsOnly;
+        if (destinationMoved && f.headerName.trim() && isSet('headerValue') && !f.headerValue) return secretAgain;
         return { type: 'webhook', url: f.url.trim(), method: f.method, headerName: f.headerName.trim() || null, headerValue: f.headerName.trim() ? secret(f.headerValue) : null };
       case 'discord':
         if (!f.webhookUrl.trim() && !isSet('webhookUrl')) return required;

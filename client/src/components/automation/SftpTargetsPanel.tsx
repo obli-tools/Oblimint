@@ -198,6 +198,9 @@ function SftpTargetModal({ target, accountId, accounts, onClose, onSaved }: {
     return () => { cancelled = true; };
   }, [account]);
 
+  // The stored password only goes to the server it was given for: another host or port needs it again (server: L8).
+  const passwordAgain = !!target?.hasPassword && (host.trim().toLowerCase() !== target.host || Number(port) !== target.port);
+
   const submit = async () => {
     setError('');
     if (!target && !account) { setError(t('apps.scope.pickAccount') || 'Choose an account…'); return; }
@@ -206,6 +209,10 @@ function SftpTargetModal({ target, accountId, accounts, onClose, onSaved }: {
     if (!Number.isInteger(p) || p < 1 || p > 65535) { setError(t('network.portInvalid') || 'Invalid port (1–65535).'); return; }
     if (authMethod === 'key' && !sshKeyId) { setError(t('automation.sftp.keyRequired') || 'Choose an SSH key.'); return; }
     if (authMethod === 'password' && !target?.hasPassword && !password) { setError(t('automation.sftp.passwordRequired') || 'The password is required.'); return; }
+    if (authMethod === 'password' && passwordAgain && !password) {
+      setError(t('automation.sftp.passwordAgain') || 'The server changed: enter the password again (the stored one is only sent to the server it was given for).');
+      return;
+    }
     const body = {
       name: name.trim(), host: host.trim(), port: p, username: username.trim(), authMethod,
       sshKeyId: authMethod === 'key' ? Number(sshKeyId) : null,
@@ -293,7 +300,8 @@ function SftpTargetModal({ target, accountId, accounts, onClose, onSaved }: {
         ) : (
           <div>
             <label className={labelCls} htmlFor="sftp-pass">{t('automation.sftp.password') || 'Password'}</label>
-            <input id="sftp-pass" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder={target?.hasPassword ? (t('apps.registries.passwordKeep') || 'Leave empty to keep the current one') : ''} className={cn(inputCls, 'font-mono')} />
+            <input id="sftp-pass" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder={target?.hasPassword && !passwordAgain ? (t('apps.registries.passwordKeep') || 'Leave empty to keep the current one') : ''} className={cn(inputCls, 'font-mono')} />
+            {passwordAgain && <p className="mt-1 text-[11px] text-text-muted">{t('automation.sftp.passwordAgain') || 'The server changed: enter the password again (the stored one is only sent to the server it was given for).'}</p>}
           </div>
         )}
         <p className="text-xs text-text-muted">{t('automation.sftp.hint') || 'The host key of the server is pinned at the first successful test: any later change is refused until you re-pin it.'}</p>

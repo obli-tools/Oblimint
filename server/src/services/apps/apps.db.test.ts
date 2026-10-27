@@ -192,6 +192,9 @@ test('apps-core on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestCon
     environment:
       API_TOKEN: \${API_TOKEN:?}
       MODE: prod
+    labels:
+      x.token: "t=\${API_TOKEN}"
+      x.mode: prod
     volumes: ["html:/usr/share/nginx/html"]
 volumes:
   html: {}
@@ -284,11 +287,24 @@ volumes:
   const allAudit = await db('audit_logs').where('action', 'like', 'apps.%').select('details');
   assert.ok(!JSON.stringify(allAudit).includes(SECRET), 'no secret in any audit row');
 
-  // ── inspect masks secrets; logs ────────────────────────────────────────────
+  // ── inspect masks secrets (values: apps.manage only, M9); logs ──────────────
   r = await call('GET', `/apps/stacks/${stackId}/containers/web/inspect`, asReader);
   assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.envValuesHidden, true, 'a reader gets the names only');
+  assert.deepEqual(r.body.data.env.find((e: { key: string }) => e.key === 'API_TOKEN'), { key: 'API_TOKEN', value: null });
+  assert.deepEqual(r.body.data.env.find((e: { key: string }) => e.key === 'MODE'), { key: 'MODE', value: null });
+  assert.equal(r.body.data.labels['x.token'], null, 'a label interpolating a .env secret is masked for a reader');
+  assert.equal(r.body.data.labels['x.mode'], 'prod');
+  assert.equal(r.body.data.labelValuesHidden, false);
+  assert.ok(!JSON.stringify(r.body).includes(SECRET), 'no .env secret in the inspect for a reader');
+  r = await call('GET', `/apps/stacks/${stackId}/containers/web/inspect`, asManager);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.envValuesHidden, false);
   assert.deepEqual(r.body.data.env.find((e: { key: string }) => e.key === 'API_TOKEN'), { key: 'API_TOKEN', value: null });
   assert.deepEqual(r.body.data.env.find((e: { key: string }) => e.key === 'MODE'), { key: 'MODE', value: 'prod' });
+  assert.equal(r.body.data.labels['x.token'], null, 'masked for a manager too');
+  assert.equal(r.body.data.labels['x.mode'], 'prod');
+  assert.ok(!JSON.stringify(r.body).includes(SECRET));
   docker.logsText = '2024-01-01T00:00:00.000000000Z hello\n';
   r = await call('GET', `/apps/stacks/${stackId}/containers/web/logs?tail=10`, asReader);
   assert.equal(r.status, 200, JSON.stringify(r.body));
@@ -624,6 +640,20 @@ volumes:
   assert.equal(await db('app_stacks').where({ account_id: other, name: 'bad-git' }).first(), undefined, 'nothing kept');
   r = await call('POST', '/apps/stacks', asOther, { accountId: other, name: 'bad-url', sourceType: 'git', git: { repoUrl: 'http://git.example.com/x' } });
   assert.equal(r.status, 400);
+  // The stored token never follows the stack to another repository (M2): the new URL comes with its token, or drops it.
+  r = await call('PUT', `/apps/stacks/${fromGit}`, asOther, { git: { repoUrl: 'https://attacker.example.net/x.git' } });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'gitTokenRequired');
+  assert.equal((await db('app_stacks').where({ id: fromGit }).first()).git_repo_url, 'https://git.example.com/acme/app', 'nothing changed');
+  r = await call('PUT', `/apps/stacks/${fromGit}`, asOther, { git: { repoUrl: 'https://GIT.example.com/acme/app/', branch: 'main' } });
+  assert.equal(r.status, 200, 'same repository (normalized): the token is kept');
+  assert.equal(r.body.data.git.hasToken, true);
+  r = await call('PUT', `/apps/stacks/${fromGit}`, asOther, { git: { repoUrl: 'https://git.example.com/acme/other', token: null } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.git.hasToken, false, 'explicitly dropped');
+  r = await call('PUT', `/apps/stacks/${fromGit}`, asOther, { git: { repoUrl: 'https://git.example.com/acme/app', token: TOKEN } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.git.hasToken, true, 'given again with the URL');
 
   // ── apps never run on an account whose network is not segmented (SG1) ──────
   const legacy = await mkAccount('legacy', 'legacy');

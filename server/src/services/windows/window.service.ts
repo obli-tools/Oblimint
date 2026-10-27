@@ -10,7 +10,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { clientIp } from '../../utils/clientIp';
 import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
-import { actorCan, loadSite, scopeToActor, type HostingActor } from '../hosting/access';
+import { actorCan, assertNeedSomewhere, assertReadsCode, loadSite, scopeToActor, type HostingActor } from '../hosting/access';
 import { siteUpstream } from '../hosting/naming';
 import { healthcheckHost, releaseService } from '../releases/release.service';
 import { windowDeps } from './deps';
@@ -349,6 +349,8 @@ export const windowService = {
   },
 
   async listAll(actor: HostingActor, f: MaintenanceListFilters): Promise<{ items: MaintenanceWindowListItem[]; total: number }> {
+    // The tenant filter alone is not a right: a staff member without read (users.manage only…) gets 403 (M8).
+    if (actor.kind === 'staff') assertNeedSomewhere(actor, 'read');
     const scoped = (qb: ReturnType<typeof db>) => {
       scopeToActor(actor, qb, { tenant: 'w.tenant_id', account: 'w.account_id' }, f.tenantId ?? null);
       statusFilter(qb, 'w.status', f.status ?? null);
@@ -464,8 +466,10 @@ export const windowService = {
     return { items: rows.map(toWindowFile), total: Number(count[0]?.n ?? 0) };
   },
 
+  /** The patch is the code itself: code.read (files.manage or client releases.approve, staff sites.manage too), 'read' only lists files(). */
   async fileDiff(actor: HostingActor, siteId: number, windowId: number, path: string): Promise<WindowFileDiff> {
     const site = await loadSite(actor, siteId, 'read');
+    assertReadsCode(actor, site);
     const row = await windowOfSite(site.id, windowId);
     if (!row.candidate_commit || !row.base_commit) throw new AppError(409, 'This window has not been analysed yet', 'windowNotAnalyzed');
     const file = await db('window_files').where({ window_id: row.id, path }).first() as WindowFileRow | undefined;

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, ChevronDown, ChevronRight, Cog, FileWarning, Folder, FolderOpen, Loader2, Search } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Cog, FileWarning, Folder, FolderOpen, Loader2, Lock, Search } from 'lucide-react';
 import type { ChangeKind, WindowFile, WindowFileDiff } from '@oblimint/shared';
 import { windowsApi } from '@/api/maintenance.api';
 import { Button } from '@/components/common/Button';
@@ -23,8 +23,12 @@ const FILES_PER_DIR = 200;
 
 const MIN_RISK = [0, 1, 30, 70] as const;
 
-/** Filterable tree of the changed paths + detail pane (findings, diff). */
-export function ChangesBrowser({ siteId, windowId, tick }: { siteId: number; windowId: number; tick: number }) {
+/**
+ * Filterable tree of the changed paths + detail pane (findings, diff).
+ * canReadCode false (no files.manage nor releases.approve; staff: nor sites.manage): the diffs are
+ * not requested (the server refuses them, codeReadForbidden), a notice instead.
+ */
+export function ChangesBrowser({ siteId, windowId, tick, canReadCode = true }: { siteId: number; windowId: number; tick: number; canReadCode?: boolean }) {
   const { t } = useTranslation();
   const changeLabel = useChangeKindLabel();
   const [change, setChange] = useState<ChangeKind | ''>('');
@@ -167,7 +171,7 @@ export function ChangesBrowser({ siteId, windowId, tick }: { siteId: number; win
   return (
     <MasterDetail
       master={master}
-      detail={selected ? <FileDetail siteId={siteId} windowId={windowId} file={selected} /> : null}
+      detail={selected ? <FileDetail siteId={siteId} windowId={windowId} file={selected} canReadCode={canReadCode} /> : null}
       detailTitle={selected ? fileName(selected.path) : undefined}
       onBack={() => setSelected(null)}
       narrowMode="drawer"
@@ -263,7 +267,7 @@ const FileRow = memo(function FileRow({ file, depth, selected, onSelect }: { fil
 type DiffState = { loading: boolean; diff: WindowFileDiff | null; error: string | null };
 
 /** Detail of a changed file: metadata, findings (engine, rule, severity, line), diff. */
-function FileDetail({ siteId, windowId, file }: { siteId: number; windowId: number; file: WindowFile }) {
+function FileDetail({ siteId, windowId, file, canReadCode }: { siteId: number; windowId: number; file: WindowFile; canReadCode: boolean }) {
   const { t } = useTranslation();
   const engineLabel = useEngineLabel();
   const changeLabel = useChangeKindLabel();
@@ -273,13 +277,13 @@ function FileDetail({ siteId, windowId, file }: { siteId: number; windowId: numb
   useEffect(() => {
     let cancelled = false;
     setState({ loading: true, diff: null, error: null });
-    if (file.type === 'dir') { setState({ loading: false, diff: null, error: null }); return undefined; }
+    if (file.type === 'dir' || !canReadCode) { setState({ loading: false, diff: null, error: null }); return undefined; }
     windowsApi.diff(siteId, windowId, file.path)
       .then((diff) => { if (!cancelled) setState({ loading: false, diff, error: null }); })
       .catch((err) => { if (!cancelled) setState({ loading: false, diff: null, error: maintenanceErrorMessage(err, t) }); });
     return () => { cancelled = true; };
   // `file` (not only its path): a reanalysis hands a fresh entry → findings of the diff refetched too.
-  }, [siteId, windowId, file, t]);
+  }, [siteId, windowId, file, canReadCode, t]);
 
   const d = state.diff;
   return (
@@ -332,7 +336,12 @@ function FileDetail({ siteId, windowId, file }: { siteId: number; windowId: numb
       <section>
         <div className={sectionLabelCls}>{t('windowReview.diff') || 'Diff'}</div>
         <div className="overflow-hidden rounded-lg border border-border/60 bg-bg-primary/60">
-          {state.loading ? (
+          {!canReadCode ? (
+            <p className="flex items-start gap-2 px-3 py-3 text-xs text-text-muted">
+              <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {t('windowReview.diffHidden') || 'The content of the changed files needs the right to manage the files or to approve the releases.'}
+            </p>
+          ) : state.loading ? (
             <div className="flex justify-center py-6"><Loader2 className="h-4 w-4 animate-spin text-text-muted" /></div>
           ) : state.error ? (
             <p className="px-3 py-3 text-xs text-red-400">{state.error}</p>

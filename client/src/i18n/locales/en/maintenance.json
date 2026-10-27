@@ -601,6 +601,7 @@
     },
     "decidedBy": "decided {{date}} by {{name}}",
     "diff": "Diff",
+    "diffHidden": "The content of the changed files needs the right to manage the files or to approve the releases.",
     "expandAll": "Expand all",
     "filesFailed": "Failed to load the changed files",
     "filter": {

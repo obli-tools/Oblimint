@@ -11,10 +11,12 @@ export interface PublishModeFieldProps {
   debounce: string;
   onDebounceChange: (v: string) => void;
   disabled?: boolean;
+  /** No releases.publish: 'auto' cannot be chosen (it publishes every upload; the server refuses it, publishRequired). */
+  autoDisabled?: boolean;
 }
 
 /** Publish mode picker (auto + debounce / manual / approval), each mode explained. */
-export function PublishModeField({ mode, onModeChange, debounce, onDebounceChange, disabled = false }: PublishModeFieldProps) {
+export function PublishModeField({ mode, onModeChange, debounce, onDebounceChange, disabled = false, autoDisabled = false }: PublishModeFieldProps) {
   const { t } = useTranslation();
   const help: Record<PublishMode, string> = {
     auto: t('sites.publishMode.autoHint') || 'A release is published automatically once uploads to the staging folder have stopped for the delay below.',
@@ -30,12 +32,15 @@ export function PublishModeField({ mode, onModeChange, debounce, onDebounceChang
         onChange={(m) => { if (!disabled) onModeChange(m); }}
         ariaLabel={t('sites.fields.publishMode') || 'Publication'}
         tabs={[
-          { id: 'auto', label: t('sites.publishMode.auto') || 'Automatic', icon: <Zap size={14} />, disabled },
+          { id: 'auto', label: t('sites.publishMode.auto') || 'Automatic', icon: <Zap size={14} />, disabled: disabled || autoDisabled },
           { id: 'manual', label: t('sites.publishMode.manual') || 'Manual', icon: <Hand size={14} />, disabled },
           { id: 'approval', label: t('sites.publishMode.approval') || 'With approval', icon: <ShieldCheck size={14} />, disabled },
         ]}
       />
       <p className="mt-2 text-xs text-text-muted">{help[mode]}</p>
+      {autoDisabled && mode !== 'auto' && (
+        <p className="mt-1 text-xs text-text-muted">{t('sites.publishMode.autoNeedsPublish') || 'Automatic publication needs the right to publish releases.'}</p>
+      )}
       {mode === 'auto' && (
         <div className="mt-2 max-w-[14rem]">
           <label className={labelCls} htmlFor="site-debounce">{t('sites.fields.debounce') || 'Delay after the last upload (s)'}</label>

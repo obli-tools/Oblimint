@@ -247,6 +247,21 @@ test('force_2fa: a session without TOTP only reaches the sign-in, profile and 2F
   }
 });
 
+test('force_2fa: a case variant of an API path is still an API path, and never on the allow-list (H1)', () => {
+  // POST /API/... used to be "not an API path" while Express routed it case-insensitively.
+  for (const [m, p] of [['POST', '/API/accounts/12/api-keys'], ['PUT', '/API/admin/config/force_2fa'], ['POST', '/Api/accounts/1/api-keys'],
+    ['GET', '/aPI/users'], ['POST', '/API'], ['GET', '/api'],
+    // Exact allow-list: a variant of an allowed path is refused as well.
+    ['GET', '/API/auth/me'], ['POST', '/api/AUTH/logout'], ['POST', '/api/profile/2FA/totp/setup'], ['GET', '/api/Profile'],
+    ['PUT', '/api/profile/PASSWORD'], ['GET', '/API/tenants'], ['GET', '/api/SETUP/status']] as const) {
+    assert.equal(allowedDuringTwoFactorSetup(m, p), false, `${m} ${p}`);
+  }
+  // Non-API paths (SPA shell, SSO redirects, the MCP / OAuth endpoints: no session there) stay open.
+  for (const [m, p] of [['GET', '/apix'], ['GET', '/settings/api'], ['GET', '/AUTH/callback'], ['POST', '/mcp'], ['POST', '/oauth/token']] as const) {
+    assert.equal(allowedDuringTwoFactorSetup(m, p), true, `${m} ${p}`);
+  }
+});
+
 // ── Obligate trust anchor / config redaction ─────────────────────────────────
 
 test('Obligate URL: https anywhere, plain http only on local / private addresses', () => {

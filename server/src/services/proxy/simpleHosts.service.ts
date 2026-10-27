@@ -95,13 +95,17 @@ interface RedirState {
   ssl: RedirSsl;
 }
 
-/** Target checks + a trivial self-loop refusal (same name, no path). */
-async function checkRedirection(s: RedirState): Promise<RedirState> {
+/**
+ * Target checks + a trivial self-loop refusal (same name, no path). Only the
+ * domains of `accountId` are read (L4): a foreign id never reveals its name
+ * through the loop answer; bindDomains then refuses it (404 domainNotInAccount).
+ */
+async function checkRedirection(accountId: number, s: RedirState): Promise<RedirState> {
   const domain = s.targetDomain.trim().toLowerCase().replace(/\.$/, '');
   const ip = normalizeIp(domain);
   if (!ip && !isValidServerName(domain)) throw new AppError(400, 'Invalid target domain', 'targetInvalid');
   if (s.targetPath !== null && !isValidTargetPath(s.targetPath)) throw new AppError(400, 'Invalid target path', 'targetInvalid');
-  const own = await db('domains').whereIn('id', s.domainIds).select('name', 'include_www', 'wildcard') as
+  const own = await db('domains').where({ account_id: accountId }).whereIn('id', s.domainIds).select('name', 'include_www', 'wildcard') as
     Array<{ name: string; include_www: boolean; wildcard: boolean }>;
   const names = own.flatMap((d) => domainServerNames(d, { wildcard: false }));
   if (names.includes(domain) && (s.targetPath === null || s.targetPath === '/') && s.preservePath) {
@@ -135,7 +139,7 @@ export const redirectionsService = {
     const account = await loadAccount(actor, body.accountId, 'proxy.manage');
     const domainIds = uniq(body.domainIds.map(Number));
     checkDomainCount(domainIds);
-    const state = await checkRedirection({
+    const state = await checkRedirection(account.id, {
       enabled: body.enabled ?? true, domainIds, targetScheme: body.targetScheme ?? 'auto', targetDomain: body.targetDomain,
       targetPath: body.targetPath ?? null, preservePath: body.preservePath ?? true, statusCode: body.statusCode ?? 301,
       ssl: { ...redirSsl({}), ...(body.ssl ?? {}) },
@@ -145,7 +149,7 @@ export const redirectionsService = {
       await assertPlanRoom(trx, account.id, locked.limits, 'redirections');
       const [row] = await trx('proxy_redirections').insert({ tenant_id: account.tenant_id, account_id: account.id, ...redirValues(state) })
         .returning('id') as Array<{ id: number }>;
-      await bindDomains(trx, account.id, 'redirect', Number(row.id), domainIds);
+      await bindDomains(trx, actor, account.id, 'redirect', Number(row.id), domainIds);
       return Number(row.id);
     });
     await auditProxy(req, account.tenant_id, 'proxy.redirection.create', 'proxy_redirection', id, { accountId: account.id, domainIds, target: state.targetDomain });
@@ -160,7 +164,7 @@ export const redirectionsService = {
     const current = (await mapRedirections([row], actor))[0];
     const domainIds = body.domainIds ? uniq(body.domainIds.map(Number)) : current.domains.map((d) => d.domainId);
     checkDomainCount(domainIds);
-    const state = await checkRedirection({
+    const state = await checkRedirection(Number(row.account_id), {
       enabled: body.enabled ?? current.enabled, domainIds, targetScheme: body.targetScheme ?? current.targetScheme,
       targetDomain: body.targetDomain ?? current.targetDomain, targetPath: body.targetPath === undefined ? current.targetPath : body.targetPath,
       preservePath: body.preservePath ?? current.preservePath, statusCode: body.statusCode ?? current.statusCode, ssl: { ...current.ssl, ...(body.ssl ?? {}) },
@@ -169,7 +173,7 @@ export const redirectionsService = {
     await db.transaction(async (trx) => {
       await lockAccount(trx, accountId);
       await trx('proxy_redirections').where({ id, tenant_id: row.tenant_id }).update({ ...redirValues(state), updated_at: trx.fn.now() });
-      await bindDomains(trx, accountId, 'redirect', id, domainIds);
+      await bindDomains(trx, actor, accountId, 'redirect', id, domainIds);
     });
     await auditProxy(req, Number(row.tenant_id), 'proxy.redirection.update', 'proxy_redirection', id, { accountId, fields: Object.keys(body) });
     emitProxy('redirection', id, { tenantId: Number(row.tenant_id), accountId }, 'updated');
@@ -219,7 +223,7 @@ export const deadHostsService = {
       const [row] = await trx('proxy_dead_hosts').insert({
         tenant_id: account.tenant_id, account_id: account.id, enabled: body.enabled ?? true, ssl: JSON.stringify(ssl), custom_page_id: pageId,
       }).returning('id') as Array<{ id: number }>;
-      await bindDomains(trx, account.id, 'dead', Number(row.id), domainIds);
+      await bindDomains(trx, actor, account.id, 'dead', Number(row.id), domainIds);
       return Number(row.id);
     });
     await auditProxy(req, account.tenant_id, 'proxy.deadHost.create', 'proxy_dead_host', id, { accountId: account.id, domainIds });
@@ -243,7 +247,7 @@ export const deadHostsService = {
       await trx('proxy_dead_hosts').where({ id, tenant_id: row.tenant_id }).update({
         enabled: body.enabled ?? current.enabled, ssl: JSON.stringify(ssl), custom_page_id: pageId, updated_at: trx.fn.now(),
       });
-      await bindDomains(trx, accountId, 'dead', id, domainIds);
+      await bindDomains(trx, actor, accountId, 'dead', id, domainIds);
     });
     await auditProxy(req, Number(row.tenant_id), 'proxy.deadHost.update', 'proxy_dead_host', id, { accountId, fields: Object.keys(body) });
     emitProxy('deadHost', id, { tenantId: Number(row.tenant_id), accountId }, 'updated');

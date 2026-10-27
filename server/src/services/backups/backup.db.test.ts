@@ -64,6 +64,10 @@ test('external backups', { timeout: 300_000 }, async (t: TestContext) => {
   const [r] = await db('users').insert({ username: `br-${suffix}`, kind: 'client', role: 'user', is_active: true }).returning('id');
   const owner = Number(u.id ?? u);
   const reader = Number(r.id ?? r);
+  const [sm] = await db('users').insert({ username: `bs-${suffix}`, kind: 'client', role: 'user', is_active: true }).returning('id');
+  const [ou] = await db('users').insert({ username: `bx-${suffix}`, kind: 'client', role: 'user', is_active: true }).returning('id');
+  const sitesOnly = Number(sm.id ?? sm);
+  const outsider = Number(ou.id ?? ou);
   const node = (await db('nodes').where({ is_local: true }).first('id')) as { id: number } | undefined;
   const nodeId = node?.id ?? Number((await db('nodes').insert({ name: `n-${suffix}`, is_local: true }).returning('id'))[0].id);
   const [plan] = await db('plans').insert({ tenant_id: tA, name: `p-${suffix}`, limits: JSON.stringify({}) }).returning('id');
@@ -81,10 +85,13 @@ test('external backups', { timeout: 300_000 }, async (t: TestContext) => {
   await db('account_users').insert([
     { user_id: owner, account_id: accountId, capabilities: JSON.stringify(['sites.manage', 'files.manage', 'databases.manage']) },
     { user_id: reader, account_id: accountId, capabilities: JSON.stringify([]) },
+    { user_id: sitesOnly, account_id: accountId, capabilities: JSON.stringify(['sites.manage']) },
   ]);
   const req = { headers: {}, session: { userId: owner, currentTenantId: tA }, socket: { remoteAddress: '203.0.113.9' } } as never;
   const actor = await actorForUser(owner, tA);
   const readerActor = await actorForUser(reader, tA);
+  const sitesOnlyActor = await actorForUser(sitesOnly, tA);
+  const outsiderActor = await actorForUser(outsider, tA); // a client of the tenant without this account
 
   // Not ready: no destination / passphrase.
   await assert.rejects(backupService.updateSettings(req, { enabled: true }), (e: { code: string }) => e.code === 'backupNotReady');
@@ -125,6 +132,9 @@ test('external backups', { timeout: 300_000 }, async (t: TestContext) => {
 
   // Restore: rights, then code + data back into the same folders, emptied first.
   await assert.rejects(backupService.restore(req, readerActor, accountId, runId, [{ kind: 'code', siteId }]), (e: { statusCode: number }) => e.statusCode === 403);
+  // The code overwrites the staging: sites.manage alone is not enough (L2).
+  await assert.rejects(backupService.restore(req, sitesOnlyActor, accountId, runId, [{ kind: 'code', siteId }]), (e: { statusCode: number }) => e.statusCode === 403);
+  assert.equal(untarred.length, 0, 'nothing restored by the refused calls');
   const res = await backupService.restore(req, actor, accountId, runId, [{ kind: 'code', siteId }, { kind: 'data', siteId }, { kind: 'db', databaseId: 999999 }]);
   assert.deepEqual(res.restored.map((x) => x.ok), [true, true, false]);
   assert.deepEqual(untarred.map((x) => [x.to, x.clear]), [['staging/shop', true], ['data/shop', true]]);
@@ -151,6 +161,9 @@ test('external backups', { timeout: 300_000 }, async (t: TestContext) => {
   assert.equal(after.find((x) => x.id === run2)!.purgedAt, null);
   assert.equal(fs.existsSync(path.join(LOCAL_BACKUP_ROOT, suffix, ...codeObj.key.split('/'))), false);
   await assert.rejects(backupService.restore(req, actor, accountId, runId, [{ kind: 'code', siteId }]), (e: { code: string }) => e.code === 'backupPurged');
+  // The state of a backup is never answered for an account the caller does not see (L3): 404, not 409.
+  await assert.rejects(backupService.restore(req, outsiderActor, accountId, runId, [{ kind: 'code', siteId }]),
+    (e: { statusCode: number; code?: string }) => e.statusCode === 404 && e.code !== 'backupPurged');
 
   // The destination in use by the schedule cannot be deleted.
   await assert.rejects(backupService.removeDestination(req, dest.id), (e: { code: string }) => e.code === 'conflict');

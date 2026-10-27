@@ -16,7 +16,7 @@ import { Card, inputCls, labelCls, selectCls } from '@/components/hosting/hostin
 import { cn } from '@/utils/cn';
 import { appsErrorMessage, toastAppsError } from '../appsErrors';
 import { formatDateTime, shortSha } from '../appsFormat';
-import { GitSourceForm, gitDraftFrom, gitDraftOut, gitDraftProblem, type GitDraft } from '../GitSourceForm';
+import { GitSourceForm, gitDraftFrom, gitDraftOut, gitDraftProblem, gitTokenMissing, type GitDraft } from '../GitSourceForm';
 import { RegistryPicker } from '../RegistryPicker';
 import { TemplateFieldsForm, fieldValuesOut, firstFieldProblem, initialFieldValues, type FieldValues } from '../TemplateFieldsForm';
 
@@ -241,7 +241,8 @@ function GitSettings({ stack, buildAllowed, save, onStarted }: { stack: AppStack
   const [saving, setSaving] = useState(false);
   const [pulling, setPulling] = useState(false);
   const submit = async () => {
-    const p = gitDraftProblem(t, draft);
+    const p = gitDraftProblem(t, draft)
+      ?? (gitTokenMissing(draft, stack.git) ? (t('apps.git.tokenRequired') || 'The repository changed: the stored token is not sent to another repository. Enter its access token again, or remove the stored token.') : null);
     if (p) { toast.error(p); return; }
     setSaving(true);
     await save({ git: gitDraftOut(draft) });
@@ -274,7 +275,7 @@ function GitSettings({ stack, buildAllowed, save, onStarted }: { stack: AppStack
         </div>
       )}
       {stack.git?.lastError && <p className="text-xs text-status-down">{stack.git.lastError}</p>}
-      <GitSourceForm value={draft} onChange={setDraft} buildAllowed={buildAllowed} hasToken={stack.git?.hasToken ?? false} idPrefix="set-git" />
+      <GitSourceForm value={draft} onChange={setDraft} buildAllowed={buildAllowed} hasToken={stack.git?.hasToken ?? false} stored={stack.git} idPrefix="set-git" />
       <SaveBar dirty={dirty} saving={saving} onSave={() => { void submit(); }} onReset={() => setDraft(gitDraftFrom(stack.git))} />
     </div>
   );

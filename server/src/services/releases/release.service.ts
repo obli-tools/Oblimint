@@ -1235,8 +1235,14 @@ export const releaseService = {
     return toReleaseDetail(await fetchRelease(siteId, releaseId));
   },
 
-  /** against: a release id, 'previous' (default) or 'empty'; file: one file's full patch. */
-  async diff(siteId: number, releaseId: number, against: number | 'previous' | 'empty', file?: string | null): Promise<ReleaseDiff> {
+  /**
+   * against: a release id, 'previous' (default) or 'empty'; file: one file's full patch.
+   * opts.content false (caller without the code right, access.actorReadsCode): names
+   * and stats only, no patch, and a ?file= request is a 403 codeReadForbidden.
+   */
+  async diff(siteId: number, releaseId: number, against: number | 'previous' | 'empty', file?: string | null, opts: { content?: boolean } = {}): Promise<ReleaseDiff> {
+    const content = opts.content !== false;
+    if (file && !content) throw new AppError(403, 'Reading the content of the files needs the right to manage the files or to approve the releases', 'codeReadForbidden');
     const ctx = await loadContext(siteId);
     const to = await fetchRelease(siteId, releaseId);
     if (!to.commit_sha) throw new AppError(409, 'This release has no commit yet', 'releaseNotReady');
@@ -1278,7 +1284,7 @@ export const releaseService = {
         target.patch = p.patch;
         target.patchTruncated = p.truncated;
       }
-    } else if (files.length <= AUTO_PATCH_MAX_FILES) {
+    } else if (content && files.length <= AUTO_PATCH_MAX_FILES) {
       for (const f of files) {
         if (f.binary) continue;
         const p = await filePatch(repo, fromRef, to.commit_sha, f.path, f.oldPath, AUTO_PATCH_MAX_BYTES + 1);
@@ -1286,7 +1292,7 @@ export const releaseService = {
         else f.patchTruncated = true;
       }
     }
-    return { fromReleaseId: fromId, toReleaseId: to.id, fromCommit, toCommit: to.commit_sha, files, totalFiles, truncated };
+    return { fromReleaseId: fromId, toReleaseId: to.id, fromCommit, toCommit: to.commit_sha, files, totalFiles, truncated, contentHidden: !content };
   },
 
   async stagingStatus(siteId: number): Promise<StagingStatus> {

@@ -14,6 +14,8 @@
     "nameReserved": "Reserved by the platform",
     "nameDuplicate": "Duplicate name",
     "valueRequired": "A secret needs a value",
+    "unsecretValueRequired": "Type a new value to make it visible (the stored one stays hidden)",
+    "newValue": "new value",
     "importTitle": "Import a .env",
     "importHint": "Paste KEY=VALUE lines: existing names are replaced, the others added.",
     "importEmpty": "No KEY=VALUE line found",

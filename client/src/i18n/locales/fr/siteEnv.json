@@ -14,6 +14,8 @@
     "nameReserved": "Réservé par la plateforme",
     "nameDuplicate": "Nom en double",
     "valueRequired": "Un secret a besoin d'une valeur",
+    "unsecretValueRequired": "Saisissez une nouvelle valeur pour la rendre visible (l'actuelle reste cachée)",
+    "newValue": "nouvelle valeur",
     "importTitle": "Importer un .env",
     "importHint": "Collez des lignes CLÉ=VALEUR : les noms existants sont remplacés, les autres ajoutés.",
     "importEmpty": "Aucune ligne CLÉ=VALEUR trouvée",

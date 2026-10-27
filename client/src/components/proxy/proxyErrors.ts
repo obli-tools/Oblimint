@@ -19,6 +19,7 @@ const PROXY_ERRORS = {
   domainNotVerified: 'The ownership of this domain is not verified yet: verify it first (Domains page).',
   domainInUse: 'This domain is already served by something else (site routes or another proxy object).',
   domainNotInAccount: 'This domain does not belong to the hosting account.',
+  domainsManageRequired: 'Adding a domain needs the right to manage the domains of the account.',
   targetInvalid: 'Invalid target (host, port or scheme).',
   targetNotAllowed: 'This target is not allowed: external targets are off for the plan or the workspace, or a private address needs the platform staff.',
   targetPortNotExposed: 'This port is not exposed by the application service.',

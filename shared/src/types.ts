@@ -90,6 +90,8 @@ export interface PermissionSet {
   slug: string;
   capabilities: string[];
   isDefault: boolean;
+  /** Capabilities fixed by the server ('admin': everything, 'client': nothing). */
+  locked: boolean;
   createdAt: string;
   updatedAt: string;
 }

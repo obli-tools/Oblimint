@@ -41,6 +41,7 @@ export const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: reqIpKey,
+  // Exact paths, like the routing (app.ts): a case variant is counted, and no route answers it.
   skip: (req) =>
     !!req.session?.userId ||
     req.path === '/health' ||

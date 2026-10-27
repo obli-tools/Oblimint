@@ -2,6 +2,7 @@ import type { Request } from 'express';
 import { db } from '../db';
 import { AppError } from '../middleware/errorHandler';
 import { staffEquivalentOf } from './hosting/access';
+import { CLIENT_MEMBERSHIP_ROLE, membershipRoleRefusal } from './permission.service';
 
 // ── Scope of `users.manage` (P1, docs/mobile/device-bound-2fa.md §6.0) ─────
 //
@@ -47,15 +48,22 @@ type Caps = { all: true } | { all: false; set: Set<string> };
 
 async function capsOfRole(role: string): Promise<Caps | null> {
   if (role === 'admin') return { all: true };
+  // The client set is locked empty (M12; permissionSet.service), whatever the row says.
+  if (role === CLIENT_MEMBERSHIP_ROLE) return { all: false, set: new Set() };
   const row = await db('permission_sets').where({ slug: role }).first('capabilities') as { capabilities: unknown } | undefined;
   if (!row) return null; // unknown slug: no capability (userHasTenantCapability)
   const raw = typeof row.capabilities === 'string' ? JSON.parse(row.capabilities) : row.capabilities;
   return { all: false, set: new Set(Array.isArray(raw) ? raw.map(String) : []) };
 }
 
+/** The CALLER's role in `tenantId`; a client login counts as 'client' (no
+ *  tenant capability, M12) whatever its membership row says. */
 async function membershipRole(userId: number, tenantId: number): Promise<string | null> {
-  const row = await db('user_tenants').where({ user_id: userId, tenant_id: tenantId }).first('role') as { role: string } | undefined;
-  return row ? normaliseTenantRole(row.role) : null;
+  const row = await db('user_tenants as ut').join('users as u', 'u.id', 'ut.user_id')
+    .where({ 'ut.user_id': userId, 'ut.tenant_id': tenantId })
+    .first('ut.role', 'u.kind') as { role: string; kind: string } | undefined;
+  if (!row) return null;
+  return row.kind === 'client' ? CLIENT_MEMBERSHIP_ROLE : normaliseTenantRole(row.role);
 }
 
 /**
@@ -159,8 +167,11 @@ export const userScope = {
     // known permission set ('admin' included), whoever asks.
     const target = await db('users').where({ id: targetId }).first('kind') as { kind: string } | undefined;
     for (const w of wanted) {
-      // A client account never administers a workspace.
+      // A client account never administers a workspace, nor holds any tenant
+      // capability: the 'client' role only (and that role is a client's, M12).
       if (target?.kind === 'client' && w.role === 'admin') throw new AppError(400, 'A client account cannot be a workspace administrator');
+      const kindRefusal = membershipRoleRefusal(target?.kind, w.role);
+      if (kindRefusal) throw new AppError(400, kindRefusal);
       if (!(await db('tenants').where({ id: w.tenantId }).first('id'))) throw new AppError(400, `Unknown tenant: ${w.tenantId}`);
       if (!(await capsOfRole(w.role))) throw new AppError(400, `Unknown role: ${w.role}`);
     }
@@ -192,6 +203,21 @@ export const userScope = {
       }
     }
     return next ? [...kept, next] : kept;
+  },
+
+  /**
+   * H3: the membership role a manager that is not a platform admin gives an
+   * account it creates in `tenantId` (users.manage): a known permission set
+   * whose every capability the manager holds there ('admin': tenant
+   * administrators only), and the role of the account's kind (M12).
+   */
+  async assertGrantableRole(actor: ScopeActor, tenantId: number, role: string, kind: string): Promise<void> {
+    const kindRefusal = membershipRoleRefusal(kind, role);
+    if (kindRefusal) throw new AppError(400, kindRefusal);
+    if (!(await capsOfRole(role))) throw new AppError(400, `Unknown role: ${role}`);
+    if (actor.isPlatformAdmin) return;
+    const refusal = await refusalFor(actor, tenantId, role);
+    if (refusal) throw new AppError(403, 'You can only grant a role whose permissions you hold');
   },
 
 };

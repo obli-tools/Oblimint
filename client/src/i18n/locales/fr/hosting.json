@@ -408,6 +408,7 @@
       "invalidKeyName": "Nom de clé invalide.",
       "invalidSshKey": "Cette clé publique SSH n'est pas valide.",
       "keyExists": "Cette clé SSH est déjà enregistrée.",
+      "keyNotOwned": "Cette clé a été créée par quelqu'un d'autre et a des droits que vous n'avez pas : seul son créateur, ou un membre qui a tous ses droits, peut la modifier, la révoquer ou la déconnecter.",
       "noNode": "Aucun nœud local n'est enregistré.",
       "nodeNotSupported": "Les nœuds distants ne sont pas encore pris en charge.",
       "notImplemented": "Cette fonction n'est pas encore disponible sur ce serveur.",

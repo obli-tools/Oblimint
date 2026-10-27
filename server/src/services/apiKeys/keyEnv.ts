@@ -25,7 +25,16 @@ export const keyEnv = {
     const touched = new Set([...set.map((v) => v.name), ...remove]);
     const kept: SiteEnvVarInput[] = current.filter((v) => !touched.has(v.name)).map((v) => ({ name: v.name, secret: v.secret, value: v.secret ? null : v.value }));
     // A secret re-sent without a value keeps its stored one (same rule as the panel form).
-    const merged = [...kept, ...set.map((v) => ({ name: v.name, secret: v.secret ?? current.find((c) => c.name === v.name)?.secret ?? false, value: v.value ?? null }))];
+    // Without a value the flag is never guessed as false: an omitted secret
+    // keeps the stored flag (a new variable without value is refused anyway),
+    // and an explicit secret:false on a secret is refused by replace()
+    // (envValueRequired): the stored value would otherwise be read back.
+    const merged = [...kept, ...set.map((v) => {
+      const value = v.value ?? null;
+      const stored = current.find((c) => c.name === v.name)?.secret;
+      const secret = v.secret ?? (value === null ? stored ?? true : stored ?? false);
+      return { name: v.name, secret, value };
+    })];
     return siteEnvService.replace(req, ctx.actor, site.id, merged);
   },
 };

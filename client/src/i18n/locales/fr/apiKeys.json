@@ -73,7 +73,7 @@
       "domains": {
         "subdomain": {
           "label": "Sous-domaines",
-          "hint": "Rattacher à ses sites des sous-domaines d'un domaine déjà présent sur le compte (jamais un nouveau domaine), retirer ceux qu'elle a créés."
+          "hint": "Rattacher à ses sites des sous-domaines d'un domaine déjà présent sur le compte (jamais un nouveau domaine) : seulement sous les domaines donnés à la clé ou, pour une clé limitée à certains sites, sous les domaines qui ne servent que ses sites. Ne retire que ceux qu'elle a créés, et pas un qui sert aussi un site hors de la clé."
         }
       },
       "logs": {
@@ -97,7 +97,7 @@
       "routes": {
         "manage": {
           "label": "Routes",
-          "hint": "Choisir lequel de ses sites (ou runtime d'un site) sert un chemin d'un domaine, ex. exemple.com/uploads/ ; seulement sur les domaines qui ne servent que ses sites."
+          "hint": "Choisir lequel de ses sites (ou runtime d'un site) sert un chemin d'un domaine, ex. exemple.com/uploads/ ; seulement sur les domaines donnés à la clé ou, pour une clé limitée à certains sites, sur les domaines qui ne servent que ses sites. Une route vers un site hors de la clé n'est jamais modifiée ni supprimée."
         }
       }
     },
@@ -139,7 +139,45 @@
     "allDomains": "Tous les domaines du compte",
     "selectedDomains": "Seulement les domaines ci-dessous",
     "noDomains": "Aucun domaine dans ce compte.",
-    "domainsHint": "Avec le droit Routes, la clé peut choisir lequel de ses sites sert ces domaines (ou un chemin de ces domaines), même un domaine qui ne sert encore rien. Sans domaine ici, elle ne route que les domaines qui servent déjà ses sites. Donner des domaines demande le droit de gérer les domaines."
+    "domainsHint": "Avec le droit Routes, la clé peut choisir lequel de ses sites sert ces domaines (ou un chemin de ces domaines), même un domaine qui ne sert encore rien ; avec le droit Sous-domaines, elle y rattache des sous-domaines. Une clé valable sur tous les sites ne travaille que sur les domaines donnés ici. Sans domaine ici, une clé limitée à certains sites ne travaille que sur les domaines qui ne servent que ses sites (sous-domaines sous ces mêmes domaines). Une route vers un site hors de la clé n'est jamais modifiée ni supprimée. Donner des domaines demande le droit de gérer les domaines.",
+    "notHeld": "non détenu",
+    "notHeldHint": "Tu n'as pas ce droit sur le compte : tu ne peux pas l'accorder.",
+    "domainsNotHeld": "Tu n'as pas le droit de gérer les domaines du compte : tu ne peux pas donner de domaines à une clé.",
+    "presets": {
+      "label": "Préréglage",
+      "readonly": {
+        "label": "Lecture seule",
+        "hint": "Lit les fichiers et les journaux des sites choisis ; n'écrit rien."
+      },
+      "update": {
+        "label": "Mise à jour seulement",
+        "hint": "Pour une CI : écrit les fichiers et les publie. Aucun réglage de site (mode de publication, environnement, chemins de données), ni tâche cron, base de données, route ou sous-domaine. Sur un site en publication automatique, les écritures partent aussitôt en ligne, comme les fichiers écrits dans la zone data."
+      },
+      "site": {
+        "label": "Gestion d'un site",
+        "hint": "Tout sur un seul site : fichiers, publication, réglages, journaux, bases de données, tâches cron, routes des domaines qui ne servent que lui. Pas de création de site, pas de sous-domaine, aucun domaine donné."
+      },
+      "multisite": {
+        "label": "Gestion multisite",
+        "hint": "Les mêmes droits sur plusieurs sites, ou sur tous. Aucun domaine donné par défaut : n'en donne ci-dessous que si la clé doit les router."
+      },
+      "autonomous": {
+        "label": "Création autonome",
+        "hint": "Crée ses propres sites et ne travaille que sur eux (aucun site existant) : fichiers, publication, réglages, journaux, bases de données, sous-domaines rattachés à ses sites. Les domaines donnés ci-dessous ne servent que de parents à ses sous-domaines. Pas de route de chemin (elle routerait aussi les domaines donnés, par-dessus les sites qu'ils servent) ; les tâches cron (elles exécutent du code) sont à cocher à part."
+      },
+      "all": {
+        "label": "Tout",
+        "hint": "Tous les droits que tu peux accorder, sur tous les sites, et tous les domaines si tu peux en donner. Jamais : supprimer un site, ajouter un domaine racine, les utilisateurs, les autres clés."
+      },
+      "custom": {
+        "label": "Personnalisé",
+        "hint": "Droits, sites et domaines choisis un par un."
+      },
+      "pickOneSite": "Choisis son site ci-dessous.",
+      "pickSites": "Choisis au moins deux sites ci-dessous, ou tous les sites.",
+      "pickSite": "Choisis au moins un site ci-dessous.",
+      "pickParents": "Choisis ci-dessous les domaines sous lesquels elle créera ses sous-domaines."
+    }
   },
   "oauth": {
     "title": "Connecter une application",

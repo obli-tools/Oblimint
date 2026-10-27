@@ -287,6 +287,7 @@
     "empty": "Aucun jeu de permissions. Cliquez sur « Nouveau » pour en créer un.",
     "loadFailed": "Impossible de charger les jeux de permissions",
     "loading": "Chargement des jeux de permissions…",
+    "locked": "Jeu fixe : ses capacités ne sont pas modifiables",
     "namePlaceholder": "Nom du jeu (ex. Support N1)",
     "newTitle": "Nouveau jeu de permissions",
     "noCapabilities": "Aucune capacité définie.",
@@ -692,6 +693,8 @@
       "saved": "Affectations aux workspaces enregistrées",
       "title": "Workspaces"
     },
+    "tenantRoleHint": "Jeu de permissions du compte dans ce workspace. Vous ne pouvez donner qu'un jeu dont vous détenez les permissions.",
+    "tenantRoleLabel": "Rôle dans le workspace",
     "title": "Utilisateurs",
     "updated": "Utilisateur mis à jour",
     "usernameLabel": "Nom d'utilisateur"

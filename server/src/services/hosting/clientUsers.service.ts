@@ -8,6 +8,7 @@ import { hashPassword } from '../../utils/crypto';
 import { logger } from '../../utils/logger';
 import type { ClientUserAddBody, ClientUserCreateBody } from '../../validators/hosting.schema';
 import { auditService } from '../audit.service';
+import { CLIENT_MEMBERSHIP_ROLE } from '../permission.service';
 import { assertCanGrantClientCapabilities, resolveActor } from './access';
 import { emitHosting } from './events';
 import { isUniqueViolation } from './hostingValidation.service';
@@ -22,7 +23,7 @@ import { clientCapabilities, iso, type AccountRow } from './rows';
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Permission set of client memberships (seeded by migration 002). */
-export const CLIENT_MEMBERSHIP_ROLE = 'client';
+export { CLIENT_MEMBERSHIP_ROLE };
 
 interface ClientUserRow {
   id: number; username: string; display_name: string | null; email: string | null; is_active: boolean;

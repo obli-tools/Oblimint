@@ -14,7 +14,7 @@ import { seal } from '../../utils/secretBox';
 import { auditService } from '../audit.service';
 import { errText } from '../setup/docker';
 import { containerState, listByLabel, restartContainer, startContainer, stopContainer, removeContainer, removeNetwork } from '../docker/dockerOps';
-import { loadAccount, type HostingActor } from '../hosting/access';
+import { actorCan, loadAccount, type HostingActor } from '../hosting/access';
 import { appContainer, appServiceAlias, LABELS, P4B_LABELS } from '../hosting/naming';
 import { assertUsable, scopeOwned } from '../hosting/p4bAccess';
 import { iso, json } from '../hosting/rows';
@@ -25,8 +25,8 @@ import { loadStack } from './access';
 import { removeVolume, unpauseContainer } from './appDocker';
 import { catalogService } from './catalog.service';
 import { renderFieldValues } from './catalog/render';
-import { ENV_MAX_BYTES, looksSecret, stringifyDotenv } from './compose/dotenv';
-import { validateCompose } from './compose/validate';
+import { ENV_MAX_BYTES, stringifyDotenv } from './compose/dotenv';
+import { inspectEnvValue, inspectLabels, secretValues, validateCompose } from './compose/validate';
 import { accountPlan, composeContext, envMap, openEnv, otherStacksUsage } from './context';
 import { appsDeps } from './deps';
 import {
@@ -104,6 +104,15 @@ const backend = (label: string, err: unknown) => new AppError(502, `${label}: ${
 
 async function stackFor(actor: HostingActor, id: number, need: 'read' | 'apps.manage' | 'apps.console' = 'read'): Promise<StackRow> {
   return await loadStack(actor, id, need) as StackRow;
+}
+
+/** Secret values of the stack .env (inspect masking); null when the .env cannot be read. */
+function inspectSecrets(stack: StackRow): string[] | null {
+  try {
+    return secretValues(envMap(openEnv(stack.env_sealed)));
+  } catch {
+    return null;
+  }
 }
 
 function assertAccountUsable(status: string): void {
@@ -561,6 +570,11 @@ export const appsService = {
       if (g.branch !== undefined) patch.git_branch = assertBranch(g.branch);
       if (g.composePath !== undefined) patch.git_compose_path = normalizeComposePath(g.composePath);
       if (g.token !== undefined) patch.git_token_sealed = g.token === null || g.token === '' ? null : seal('apps', g.token);
+      // The stored token goes to the repository host (Authorization: Basic): another repository never
+      // inherits it (M2). A new URL comes with its token, or with token null / '' to drop the stored one.
+      if (patch.git_repo_url !== undefined && patch.git_repo_url !== stack.git_repo_url && g.token === undefined && stack.git_token_sealed) {
+        throw new AppError(400, 'The repository changed: enter its access token again, or remove the stored token', 'gitTokenRequired');
+      }
       if (g.build !== undefined) patch.git_build = g.build;
       if (g.pollIntervalSec !== undefined) patch.git_poll_interval_sec = g.pollIntervalSec === null ? null : Math.max(settings.gitPollMinSec, Math.round(g.pollIntervalSec));
       if (g.autoDeploy !== undefined) patch.git_auto_deploy = g.autoDeploy;
@@ -867,6 +881,12 @@ export const appsService = {
 
   async containerInspect(actor: HostingActor, id: number, service: string): Promise<AppContainerInspect> {
     const stack = await stackFor(actor, id, 'read');
+    // Values of the environment: apps.manage only (the right that reads the .env, getEnv); a reader
+    // gets the names (M9). Secret values of the .env masked wherever they appear; an unreadable .env
+    // (rotated panel secret) gives the names only too. Labels are interpolated from the .env as well:
+    // their values are masked by the same rule for every caller, hidden when the .env cannot be read.
+    const labelSecrets = inspectSecrets(stack);
+    const secrets = actorCan(actor, 'apps.manage', { tenantId: stack.tenant_id, accountId: stack.account_id }) ? labelSecrets : null;
     if (!effectiveOf(stack)?.services.some((s) => s.name === service)) throw new AppError(404, `Service ${service} not found`, 'serviceNotFound');
     let info: Docker.ContainerInspectInfo;
     try {
@@ -891,8 +911,9 @@ export const appsService = {
       env: (info.Config?.Env ?? []).map((e) => {
         const eq = e.indexOf('=');
         const key = eq < 0 ? e : e.slice(0, eq);
-        return { key, value: looksSecret(key) ? null : eq < 0 ? '' : e.slice(eq + 1) };
+        return { key, value: secrets === null ? null : inspectEnvValue(key, eq < 0 ? '' : e.slice(eq + 1), secrets) };
       }),
+      envValuesHidden: secrets === null,
       mounts: (info.Mounts ?? []).map((m) => ({
         kind: m.Type === 'bind' ? 'bind' as const : m.Type === 'tmpfs' ? 'tmpfs' as const : 'volume' as const,
         // Host paths are never shown to a client (A6): only the stack-relative part.
@@ -903,7 +924,8 @@ export const appsService = {
       networks: Object.entries(info.NetworkSettings?.Networks ?? {}).map(([name, ep]) => ({
         name, ip: (ep as { IPAddress?: string }).IPAddress || null, aliases: (ep as { Aliases?: string[] | null }).Aliases ?? [],
       })),
-      labels: { ...(info.Config?.Labels ?? {}) },
+      labels: inspectLabels(info.Config?.Labels ?? {}, labelSecrets),
+      labelValuesHidden: labelSecrets === null,
       limits: {
         cpus: hc.NanoCpus ? hc.NanoCpus / 1e9 : null,
         memoryMb: hc.Memory ? Math.round(hc.Memory / 1048576) : null,

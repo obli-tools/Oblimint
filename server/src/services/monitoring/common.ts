@@ -67,7 +67,7 @@ export interface ListFilter {
   tenantId?: number;
 }
 
-/** Scopes a list query of a monitoring table (alias `alias`) to the actor; staff see the platform rows too. */
+/** Scopes a list query of a monitoring table (alias `alias`) to the actor; staff see the platform rows too (403 without the read need: scopeOwned). */
 export function scopeList<T extends Knex.QueryBuilder>(actor: HostingActor, qb: T, alias: string, filter: ListFilter): T {
   scopeOwned(actor, qb, alias, { filterTenantId: filter.tenantId ?? null, includePlatform: actor.kind === 'staff' });
   if (filter.accountId) qb.where(`${alias}.account_id`, filter.accountId);

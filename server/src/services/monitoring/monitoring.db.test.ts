@@ -604,6 +604,15 @@ test('monitoring-automation on PostgreSQL (PGlite)', { timeout: 300_000 }, async
   const pwTarget = r.body.data;
   r = await call('PUT', `/automation/sftp-targets/${pwTarget.id}`, asManager, { name: 'Pw2' });
   assert.equal(r.status, 200, 'password kept when absent');
+  // The stored password only goes to the server it was given for (L8): another host or port needs it again.
+  r = await call('PUT', `/automation/sftp-targets/${pwTarget.id}`, asManager, { port: 2222 });
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'validation');
+  assert.equal(Number((await db('sftp_targets').where({ id: pwTarget.id }).first()).port), pwTarget.port, 'nothing changed');
+  r = await call('PUT', `/automation/sftp-targets/${pwTarget.id}`, asManager, { port: 2222, password: 'n3w-s3cret!' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.port, 2222);
+  assert.equal(r.body.data.hasPassword, true);
   r = await call('DELETE', `/automation/ssh-keys/${key.id}`, asManager);
   assert.equal(r.status, 409);
   assert.equal(r.body.code, 'sshKeyInUse');

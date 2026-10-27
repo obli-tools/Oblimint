@@ -82,7 +82,8 @@ import migrationPlansRoutes from './migrationPlans.routes';         // planner (
 import migrationRunsRoutes from './migrationRuns.routes';           // executor-web-db (runs, events, reports)
 import migrationCutoverRoutes from './migrationCutover.routes';     // executor-mail-dns (cutover checklist)
 
-const router = Router();
+// Case-sensitive (H1, app.ts): /api/SITES is not /api/sites.
+const router = Router({ caseSensitive: true });
 
 // ── Public / auth ────────────────────────────────────────────────────────────
 router.use('/setup', normalModeSetupRouter());     // { mode: 'normal' }, the rest 404
@@ -117,7 +118,7 @@ router.use('/tenants', requireAuth, tenantRoutes);
 router.use('/tenant', requireAuth, tenantRoutes);
 
 // ── Authenticated + tenant scoped ────────────────────────────────────────────
-const tenantRouter = Router();
+const tenantRouter = Router({ caseSensitive: true });
 tenantRouter.use(requireAuth, requireTenant);
 tenantRouter.use('/users', usersRoutes);
 tenantRouter.use('/permission-sets', permissionSetsRoutes);

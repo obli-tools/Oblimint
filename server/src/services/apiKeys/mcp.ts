@@ -5,9 +5,9 @@ import { APP_PROFILES, CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, SITE_BASE_IDS, 
 import { serverVersion } from '../../utils/version';
 import { AppError } from '../../middleware/errorHandler';
 import { keyApi, type SiteArea } from './keyApi';
-import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from './middleware';
+import { apiKeyAuthLimiter, apiKeyLimiter, countKeyRequest, mcpAuth } from './middleware';
 import type { ApiKeyContext } from './apiKeys.service';
-import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, siteUpdateSchema } from '../../validators/hosting.schema';
+import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, siteCreateSchema, siteUpdateSchema } from '../../validators/hosting.schema';
 import { keyDatabases } from './keyDatabases';
 import { keyEnv } from './keyEnv';
 import { parseBody } from '../docker/parseBody';
@@ -24,6 +24,9 @@ import { parseBody } from '../docker/parseBody';
 
 export const MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
 const MAX_TEXT_RESULT = 200_000;
+/** JSON-RPC batch (older protocol versions): at most this many messages, run this many at a time (M5). */
+export const MAX_BATCH = 20;
+const BATCH_CONCURRENCY = 4;
 
 interface ToolDef {
   name: string;
@@ -82,6 +85,8 @@ const toCron = (a: { name?: string; schedule?: string; command?: string; timeout
   ...(a.name !== undefined ? { name: a.name } : {}), ...(a.schedule !== undefined ? { schedule: a.schedule } : {}), ...(a.command !== undefined ? { command: a.command } : {}),
   ...(a.timeout_sec !== undefined ? { timeoutSec: a.timeout_sec } : {}), ...(a.enabled !== undefined ? { enabled: a.enabled } : {}),
 });
+/** Same validation as POST /api/v1/sites (known base and profile, normalized docroot / base path, slug pattern). */
+const siteCreateArgs = siteCreateSchema.omit({ accountId: true });
 const siteUpdateArgs = siteUpdateSchema.pick({ name: true, docroot: true, publishMode: true, publishDebounceSec: true, healthcheckPath: true, php: true });
 
 const TOOLS: ToolDef[] = [
@@ -112,7 +117,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'create_site', title: 'Create a site',
-    description: 'Creates a site in the account (scope sites.create). The new site joins this key\'s sites. Upload its code with write_file / upload, then publish. A domain is attached from the panel.',
+    description: 'Creates a site in the account (scope sites.create). The new site joins this key\'s sites. Upload its code with write_file / upload, then publish. A domain is attached from the panel. Without the releases.publish scope the site starts in publish mode "manual" ("auto" is refused).',
     inputSchema: obj({
       name: { type: 'string', description: 'Display name.' },
       slug: { type: 'string', description: 'Lower-case letters, digits and dashes (1-40): folder name /staging/<slug>.' },
@@ -123,14 +128,14 @@ const TOOLS: ToolDef[] = [
       publish_mode: publishMode,
     }, ['name', 'slug', 'base']),
     args: z.object({ name: z.string(), slug: z.string(), base: z.string(), app_profile: z.string().optional(), docroot: z.string().optional(), base_path: z.string().optional(), publish_mode: zPublishMode.optional() }),
-    run: (ctx, req, a) => keyApi.createSite(ctx, req, {
+    run: (ctx, req, a) => keyApi.createSite(ctx, req, parseBody(siteCreateArgs, {
       name: a.name, slug: a.slug, base: a.base, ...(a.app_profile ? { appProfile: a.app_profile } : {}), ...(a.docroot !== undefined ? { docroot: a.docroot } : {}),
-      ...(a.publish_mode ? { publishMode: a.publish_mode } : {}), ...(a.base_path ? { basePath: routePrefixOf(a.base_path) } : {}),
-    } as never),
+      ...(a.publish_mode ? { publishMode: a.publish_mode } : {}), ...(a.base_path ? { basePath: a.base_path } : {}),
+    })),
   },
   {
     name: 'update_site', title: 'Change site settings',
-    description: 'Changes settings of a site (scope sites.manage). Switch publish_mode to "manual" before developing on a live site so nothing goes live until publish; put it back afterwards if the human wants.',
+    description: 'Changes settings of a site (scope sites.manage). Switch publish_mode to "manual" before developing on a live site so nothing goes live until publish; put it back afterwards if the human wants. Switching publish_mode to "auto" requires the releases.publish scope: without it, leave the site in the mode the human set, or ask the human to switch it back.',
     inputSchema: obj({
       site_id: siteId,
       name: { type: 'string', description: 'Display name.' },
@@ -181,12 +186,12 @@ const TOOLS: ToolDef[] = [
       content_base64: { type: 'string', description: 'Binary content, base64.' }, overwrite: { type: 'boolean', description: 'Replace an existing file (default true).' }, area,
     }, ['site_id', 'path']),
     args: z.object({ site_id: zSite, path: zPath, content: z.string().optional(), content_base64: z.string().optional(), overwrite: z.boolean().optional(), area: zArea }),
-    run: async (ctx, _r, a) => {
+    run: async (ctx, req, a) => {
       if ((a.content === undefined) === (a.content_base64 === undefined)) throw new AppError(400, 'Give content or content_base64', 'validation');
       const buf = a.content !== undefined ? Buffer.from(a.content, 'utf8') : Buffer.from(a.content_base64, 'base64');
       const ar = (a.area ?? 'staging') as SiteArea;
-      await ensureParents(ctx, a.site_id, ar, a.path);
-      const p = await keyApi.putFile(ctx, a.site_id, ar, a.path, buf.length, Readable.from([buf]), a.overwrite !== false);
+      await ensureParents(ctx, req, a.site_id, ar, a.path);
+      const p = await keyApi.putFile(ctx, req, a.site_id, ar, a.path, buf.length, Readable.from([buf]), a.overwrite !== false);
       return { path: p, bytes: buf.length };
     },
   },
@@ -195,9 +200,9 @@ const TOOLS: ToolDef[] = [
     description: 'Creates a folder (and its missing parents). Scope files.write.',
     inputSchema: obj({ site_id: siteId, path: relPath('Folder path.'), area }, ['site_id', 'path']),
     args: z.object({ site_id: zSite, path: zPath, area: zArea }),
-    run: async (ctx, _r, a) => {
+    run: async (ctx, req, a) => {
       const ar = (a.area ?? 'staging') as SiteArea;
-      await ensureParents(ctx, a.site_id, ar, `${a.path.replace(/\/+$/, '')}/x`);
+      await ensureParents(ctx, req, a.site_id, ar, `${a.path.replace(/\/+$/, '')}/x`);
       return { path: a.path };
     },
   },
@@ -206,28 +211,28 @@ const TOOLS: ToolDef[] = [
     description: 'Deletes files or whole folders (scope files.write). Cannot be undone in staging until the next publish; the live release is not affected.',
     inputSchema: obj({ site_id: siteId, paths: { type: 'array', items: { type: 'string' }, description: 'Paths to delete.' }, area }, ['site_id', 'paths']),
     args: z.object({ site_id: zSite, paths: z.array(zPath).min(1).max(1000), area: zArea }),
-    run: (ctx, _r, a) => keyApi.remove(ctx, a.site_id, (a.area ?? 'staging') as SiteArea, a.paths),
+    run: (ctx, req, a) => keyApi.remove(ctx, req, a.site_id, (a.area ?? 'staging') as SiteArea, a.paths),
   },
   {
     name: 'move_path', title: 'Move or rename',
     description: 'Moves / renames a file or folder (scope files.write).',
     inputSchema: obj({ site_id: siteId, from: relPath('Source.'), to: relPath('Destination (full path).'), overwrite: { type: 'boolean' }, area }, ['site_id', 'from', 'to']),
     args: z.object({ site_id: zSite, from: zPath, to: zPath, overwrite: z.boolean().optional(), area: zArea }),
-    run: (ctx, _r, a) => keyApi.move(ctx, a.site_id, (a.area ?? 'staging') as SiteArea, [{ from: a.from, to: a.to }], a.overwrite === true),
+    run: (ctx, req, a) => keyApi.move(ctx, req, a.site_id, (a.area ?? 'staging') as SiteArea, [{ from: a.from, to: a.to }], a.overwrite === true),
   },
   {
     name: 'copy_path', title: 'Copy',
     description: 'Copies a file or a folder to a new path (scope files.write).',
     inputSchema: obj({ site_id: siteId, from: relPath('Source.'), to: relPath('Destination (must not exist).'), area }, ['site_id', 'from', 'to']),
     args: z.object({ site_id: zSite, from: zPath, to: zPath, area: zArea }),
-    run: (ctx, _r, a) => keyApi.move(ctx, a.site_id, (a.area ?? 'staging') as SiteArea, [{ from: a.from, to: a.to }], false, true),
+    run: (ctx, req, a) => keyApi.move(ctx, req, a.site_id, (a.area ?? 'staging') as SiteArea, [{ from: a.from, to: a.to }], false, true),
   },
   {
     name: 'extract_archive', title: 'Extract an archive',
     description: 'Extracts a .zip / .tar / .tar.gz already in the site into a folder (default: its own folder). Existing files are kept unless overwrite. Scope files.write.',
     inputSchema: obj({ site_id: siteId, path: relPath('Archive path.'), to: relPath('Target folder.'), overwrite: { type: 'boolean' }, area }, ['site_id', 'path']),
     args: z.object({ site_id: zSite, path: zPath, to: zPath.optional(), overwrite: z.boolean().optional(), area: zArea }),
-    run: (ctx, _r, a) => keyApi.extract(ctx, a.site_id, (a.area ?? 'staging') as SiteArea, a.path, a.to, a.overwrite === true),
+    run: (ctx, req, a) => keyApi.extract(ctx, req, a.site_id, (a.area ?? 'staging') as SiteArea, a.path, a.to, a.overwrite === true),
   },
   {
     name: 'staging_changes', title: 'Unpublished changes', readOnly: true,
@@ -258,7 +263,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'list_parent_domains', title: 'Domains for subdomains', readOnly: true,
-    description: 'Domains of the account under which add_subdomain can create a subdomain (scope domains.subdomain). A verified parent gives an immediately verified subdomain (HTTPS certificate issued automatically).',
+    description: 'Domains of the account under which add_subdomain can create a subdomain (scope domains.subdomain): the ones given to the key in the panel, or serving only its sites. A verified parent gives an immediately verified subdomain (HTTPS certificate issued automatically).',
     inputSchema: obj({}, []), args: z.object({}).passthrough(),
     run: (ctx) => keyApi.parentDomains(ctx),
   },
@@ -270,14 +275,14 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'add_subdomain', title: 'Attach a subdomain',
-    description: 'Creates a subdomain of a domain ALREADY in the account (e.g. "blog.example.com" under "example.com") and routes it to one of the sites of the key (scope domains.subdomain). Its DNS records go into the parent zone; HTTPS follows automatically. A new root domain cannot be added here (ask a human to add it in the panel).',
+    description: 'Creates a subdomain of a domain ALREADY in the account and listed by list_parent_domains (e.g. "blog.example.com" under "example.com") and routes it to one of the sites of the key (scope domains.subdomain). Its DNS records go into the parent zone; HTTPS follows automatically. A new root domain cannot be added here (ask a human to add it in the panel).',
     inputSchema: obj({ site_id: siteId, name: { type: 'string', description: 'Full name, e.g. "blog.example.com".' } }, ['site_id', 'name']),
     args: z.object({ site_id: zSite, name: z.string().min(4).max(253) }),
     run: (ctx, req, a) => keyApi.addSubdomain(ctx, req, a.site_id, a.name),
   },
   {
     name: 'remove_subdomain', title: 'Remove a subdomain', destructive: true,
-    description: 'Removes a subdomain THIS key created (list_subdomains). Other domains are never touched.',
+    description: 'Removes a subdomain THIS key created (list_subdomains), unless a route of it leads to a site outside the key (keyRouteOutside). Other domains are never touched.',
     inputSchema: obj({ name: { type: 'string', description: 'Full name of the subdomain.' } }, ['name']),
     args: z.object({ name: z.string().min(4).max(253) }),
     run: async (ctx, req, a) => { await keyApi.removeSubdomain(ctx, req, a.name); return { deleted: true }; },
@@ -285,7 +290,7 @@ const TOOLS: ToolDef[] = [
   // ── path routes (routes.manage), secondary runtimes (sites.manage) ──
   {
     name: 'list_routes', title: 'Domains and routes', readOnly: true,
-    description: 'Domains of the account with their path routes (which site — and which runtime of it — serves https://domain/prefix/…; longest prefix wins). manageable: the key may change that domain\'s routes (scope routes.manage): a domain given to the key in the panel (even one serving nothing yet), or one whose routes all lead to its sites. Routes always lead to the key\'s own sites.',
+    description: 'Domains of the account with their path routes (which site — and which runtime of it — serves https://domain/prefix/…; longest prefix wins). manageable: the key may change that domain\'s routes (scope routes.manage): a domain given to the key in the panel (even one serving nothing yet), or one whose routes all lead to its sites (a key limited to some sites). Routes always lead to the key\'s own sites; a route towards a site outside the key (site_id 0) is never changed nor removed.',
     inputSchema: obj({}, []), args: z.object({}).passthrough(),
     run: (ctx) => keyApi.routes(ctx),
   },
@@ -532,13 +537,13 @@ const TOOLS: ToolDef[] = [
 ];
 
 /** mkdir -p of the parents of `path` (existing folders are fine). */
-async function ensureParents(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string): Promise<void> {
+async function ensureParents(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string): Promise<void> {
   const segs = path.split('/').filter(Boolean).slice(0, -1);
   let cur = '';
   for (const s of segs) {
     cur += `/${s}`;
     try {
-      await keyApi.mkdir(ctx, siteId, area, cur);
+      await keyApi.mkdir(ctx, req, siteId, area, cur);
     } catch (err) {
       if (!(err instanceof AppError) || err.code !== 'fileExists') throw err;
     }
@@ -572,6 +577,20 @@ export function toolList() {
     name: t.name, title: t.title, description: t.description, inputSchema: t.inputSchema,
     annotations: { title: t.title, readOnlyHint: t.readOnly === true, destructiveHint: t.destructive === true, openWorldHint: false },
   }));
+}
+
+/** Answers of `items`, in order, at most `limit` running at once. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
 
 /** One JSON-RPC message → its answer (null for a notification). */
@@ -613,15 +632,34 @@ export async function handleRpc(ctx: ApiKeyContext, req: Request, msg: RpcMessag
   }
 }
 
-export const mcpRouter = Router();
-mcpRouter.use(apiKeyAuthLimiter, apiKeyAuth, apiKeyLimiter);
+export const mcpRouter = Router({ caseSensitive: true });
+mcpRouter.use(apiKeyAuthLimiter, mcpAuth, apiKeyLimiter);
 
 mcpRouter.post('/', async (req: Request, res: Response) => {
   const ctx = req.apiKey!;
   const body = req.body as RpcMessage | RpcMessage[] | undefined;
   if (!body || typeof body !== 'object') { res.status(400).json(rpcError(null, -32700, 'Parse error')); return; }
   const batch = Array.isArray(body);
-  const answers = (await Promise.all((batch ? body : [body]).map((m) => handleRpc(ctx, req, m)))).filter((a) => a !== null);
+  if (batch && (!body.length || body.length > MAX_BATCH)) {
+    res.status(400).json(rpcError(null, -32600, body.length ? `Invalid request: at most ${MAX_BATCH} messages per batch` : 'Invalid request: empty batch'));
+    return;
+  }
+  // The HTTP request counted once (apiKeyLimiter); each tools/call of a batch counts on top,
+  // one after the other before anything runs (the store's counter is read right after each hit).
+  const msgs = batch ? body : [body];
+  const refused = new Set<number>();
+  if (batch) {
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
+      if (m && typeof m === 'object' && m.method === 'tools/call' && !(await countKeyRequest(req))) refused.add(i);
+    }
+  }
+  const run = async (i: number): Promise<unknown | null> => {
+    const m = msgs[i];
+    if (refused.has(i)) return m.id === undefined ? null : rpcError(m.id, -32000, 'Too many requests for this API key, slow down (rateLimited)');
+    return handleRpc(ctx, req, m);
+  };
+  const answers = (await mapLimit(msgs.map((_, i) => i), BATCH_CONCURRENCY, run)).filter((a) => a !== null);
   if (!answers.length) { res.status(202).end(); return; }
   res.json(batch ? answers : answers[0]);
 });

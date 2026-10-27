@@ -4,7 +4,7 @@ import { parseDotenv, stringifyDotenv } from './dotenv';
 import { digestFromRepoDigests, formatImageRef, imageDenied, parseImageRef, registryAllowed } from './image';
 import { interpolate, InterpolationError } from './interpolate';
 import { parseDurationMs, parseSize, splitCommand } from './units';
-import { validateCompose, type ComposeContext, type SourceInspector } from './validate';
+import { inspectEnvValue, inspectLabels, secretValues, validateCompose, type ComposeContext, type SourceInspector } from './validate';
 
 // Compose validation / rewrite (docs/P4b-PLAN.md §5.2): every refusal, every rewrite, line numbers,
 // hostile paths, interpolation, limit sums across stacks, profiles, replicas.
@@ -499,4 +499,23 @@ test('published host ports (any form) are accepted, rewritten to exposed ports a
   const y = out.result.effectiveYaml!;
   for (const hostPort of ['8088', '8089', '8090', '8091', '127.0.0.1', '0.0.0.0', '::1']) assert.ok(!y.includes(hostPort), `${hostPort} absent from the effective model`);
   assert.doesNotMatch(y, /^\s+ports:/m, 'no ports: key in the effective model');
+});
+
+test('inspect env values: secret names, .env secret values (equal or contained) and URL credentials are masked (M9)', () => {
+  const secrets = secretValues(new Map([['DB_PASSWORD', 'hunter22'], ['APP_NAME', 'shop'], ['API_KEY', 'abc']]));
+  assert.deepEqual(secrets, ['hunter22'], 'only secret-looking keys, 4 characters at least');
+  assert.equal(inspectEnvValue('DB_PASSWORD', 'hunter22', secrets), null);
+  assert.equal(inspectEnvValue('MYSQL_ROOT', 'hunter22', secrets), null, 'same value under a harmless name');
+  assert.equal(inspectEnvValue('CONN', 'mysql://app:hunter22@db:3306/shop', secrets), null, 'secret embedded');
+  assert.equal(inspectEnvValue('UPSTREAM', 'https://bob:pa55@api.example.com/v1', secrets), 'https://********@api.example.com/v1');
+  assert.equal(inspectEnvValue('REPO', 'https://ghp_tokenonly@github.com/acme/x.git', secrets), 'https://********@github.com/acme/x.git');
+  assert.equal(inspectEnvValue('HOME_URL', 'https://example.com/a@b', secrets), 'https://example.com/a@b', 'an @ in the path is not a credential');
+  assert.equal(inspectEnvValue('APP_NAME', 'shop', secrets), 'shop');
+  assert.equal(inspectEnvValue('EMPTY', '', secrets), '');
+  // Labels are interpolated from the .env too (M9): same masking, all hidden when the .env is unreadable.
+  const labels = { 'x.conn': 'pg://app:hunter22@db/x', 'x.plain': 'hunter22', 'traefik.http.middlewares.a.basicauth.users': 'bob:hash', 'oblimint.app': '7', 'x.upstream': 'https://bob:pa55@api.example.com' };
+  assert.deepEqual(inspectLabels(labels, secrets), {
+    'x.conn': null, 'x.plain': null, 'traefik.http.middlewares.a.basicauth.users': null, 'oblimint.app': '7', 'x.upstream': 'https://********@api.example.com',
+  });
+  assert.deepEqual(inspectLabels({ 'oblimint.app': '7' }, null), { 'oblimint.app': null });
 });

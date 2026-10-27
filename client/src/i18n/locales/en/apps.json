@@ -191,6 +191,8 @@
       "inspectFailed": "Failed to inspect the container",
       "labels": "Labels",
       "masked": "•••• (secret)",
+      "envValuesHidden": "Only the names are shown: the values are visible to the users who manage the applications.",
+      "hiddenValue": "••••",
       "mounts": "Mounts",
       "networks": "Networks",
       "restarts": "{{count}} restart(s)",
@@ -344,6 +346,7 @@
       "containerNotRunning": "The container is not running.",
       "deploymentNotFound": "This deployment does not exist anymore.",
       "gitAuthFailed": "The git repository refused the credentials.",
+      "gitTokenRequired": "The repository changed: enter its access token again, or remove the stored token.",
       "gitUnreachable": "The git repository is unreachable.",
       "imageNotAllowed": "This image is not allowed (registry not allowed or image refused).",
       "notFound": "This item does not exist anymore or is not visible to you.",
@@ -419,6 +422,7 @@
       "tokenHint": "Stored encrypted, never written in the URL nor in the logs.",
       "tokenKeep": "A token is stored: leave empty to keep it",
       "tokenNone": "None (public repository)",
+      "tokenRequired": "The repository changed: the stored token is not sent to another repository. Enter its access token again, or remove the stored token.",
       "urlInvalid": "Invalid URL."
     },
     "history": {
@@ -851,6 +855,7 @@
       "notPinned": "pinned at the first test",
       "password": "Password",
       "passwordRequired": "The password is required.",
+      "passwordAgain": "The server changed: enter the password again (the stored one is only sent to the server it was given for).",
       "pickKey": "Choose a key…",
       "repin": "Re-pin",
       "repinAction": "Re-pin the host key",

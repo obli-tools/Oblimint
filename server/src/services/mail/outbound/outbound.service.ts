@@ -9,7 +9,7 @@ import { logger } from '../../../utils/logger';
 import { appConfigService } from '../../appConfig.service';
 import { auditService } from '../../audit.service';
 import { engineFor, localNodeId } from '../../docker/engine';
-import { assertStaff, loadAccount, type HostingActor } from '../../hosting/access';
+import { actorCan, assertNeedSomewhere, assertStaff, loadAccount, type HostingActor } from '../../hosting/access';
 import { MAIL_RELAY_CONTAINER } from '../../hosting/naming';
 import { iso, planLimits } from '../../hosting/rows';
 import { platformSettings } from '../../platformSettings';
@@ -446,16 +446,23 @@ async function outboundInfo(account: { id: number; status: string; plan_limits?:
   };
 }
 
-function scopeIds(actor: HostingActor, rows: Array<{ id: number; tenant_id: number }>): Set<number> {
+/** Accounts of `rows` whose mail the actor manages (queue / logs need mail.manage, M8). */
+function mailManagedIds(actor: HostingActor, rows: Array<{ id: number; tenant_id: number }>): Set<number> {
   const out = new Set<number>();
   for (const r of rows) {
-    if (actor.kind === 'staff') {
-      if (actor.globalView || r.tenant_id === actor.tenantId) out.add(Number(r.id));
-    } else if (r.tenant_id === actor.tenantId && actor.accounts.has(Number(r.id))) {
-      out.add(Number(r.id));
-    }
+    if (actorCan(actor, 'mail.manage', { tenantId: Number(r.tenant_id), accountId: Number(r.id) })) out.add(Number(r.id));
   }
   return out;
+}
+
+/**
+ * Queue and logs show the senders and recipients of every mail of an account:
+ * mail.manage, not the bare read (a staff member with users.manage or
+ * audit.read only, a client member without the mail right). 403 otherwise.
+ */
+async function assertMailListAccess(actor: HostingActor, accountId: number | null | undefined): Promise<void> {
+  assertNeedSomewhere(actor, 'mail.manage');
+  if (accountId) await loadAccount(actor, accountId, 'mail.manage');
 }
 
 /**
@@ -558,7 +565,7 @@ export const outboundService = {
 
   /** Engine queue filtered to the actor's accounts (strict attribution: queueOwner). */
   async queue(actor: HostingActor, q: { accountId?: number | null; tenantId?: number | null; limit: number; offset: number }): Promise<{ items: MailQueueItem[]; total: number }> {
-    if (q.accountId) await loadAccount(actor, q.accountId, 'read');
+    await assertMailListAccess(actor, q.accountId);
     let entries: MailQueueEntry[];
     try {
       entries = await (await backends.driver()).queue({ limit: QUEUE_SCAN_LIMIT });
@@ -569,7 +576,7 @@ export const outboundService = {
     const owners = entries.map((e) => queueOwner(e, index));
     const accountIds = [...new Set(owners.filter((o): o is Owner => !!o).map((o) => o.accountId))];
     const accounts = accountIds.length ? await db('hosting_accounts').whereIn('id', accountIds).select('id', 'tenant_id') as Array<{ id: number; tenant_id: number }> : [];
-    const visible = scopeIds(actor, accounts);
+    const visible = mailManagedIds(actor, accounts);
     const platformAdmin = actor.kind === 'staff' && actor.globalView;
     const items: MailQueueItem[] = [];
     entries.forEach((e, i) => {
@@ -637,14 +644,15 @@ export const outboundService = {
   },
 
   async logs(actor: HostingActor, q: MailLogQuery): Promise<{ items: MailLogEntry[]; total: number }> {
-    if (q.accountId) await loadAccount(actor, q.accountId, 'read');
+    await assertMailListAccess(actor, q.accountId);
     const base = db('mail_log as l');
-    // Same rule as scopeToActor, plus: rows without an account (unattributed) are never visible to a client (MA5).
+    // Same rule as scopeToActor, restricted to the accounts whose mail the actor manages, plus:
+    // rows without an account (unattributed) are never visible to a client (MA5).
     if (actor.kind === 'staff') {
       if (!actor.globalView) base.where('l.tenant_id', actor.tenantId);
       else if (q.tenantId) base.where('l.tenant_id', q.tenantId);
     } else {
-      const ids = [...actor.accounts.keys()];
+      const ids = [...actor.accounts.keys()].filter((id) => actorCan(actor, 'mail.manage', { tenantId: actor.tenantId, accountId: id }));
       base.where('l.tenant_id', actor.tenantId);
       if (ids.length) base.whereIn('l.account_id', ids);
       else base.whereRaw('false');

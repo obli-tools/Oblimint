@@ -206,6 +206,70 @@ test('server-app security fixes on PostgreSQL (PGlite)', { timeout: 300_000 }, a
       assert.equal((await sitesService.update(fakeReq(bob, tenantA), await actorOf(fakeReq(bob, tenantA)), siteId, { publishMode: 'approval' })).publishMode, 'approval');
     });
 
+    await t.test('publish mode auto needs releases.publish; a creation without it starts in manual (M6)', async () => {
+      const dave = Number((await clientUsersService.add(asStaffA(), await db('hosting_accounts').where({ id: shop.id }).first(),
+        schema.clientUserAddSchema.parse({ mode: 'create', username: 'dave', password: 'correct horse battery', capabilities: ['sites.manage'] }))).userId);
+      const daveReq = () => fakeReq(dave, tenantA);
+      await rejectsWith(sitesService.create(daveReq(), await actorOf(daveReq()), schema.siteCreateSchema.parse({
+        accountId: shop.id, name: 'Dave auto', slug: 'dave-auto', base: 'nginx-static', publishMode: 'auto',
+      })), 403, 'publishRequired');
+      const made = await sitesService.create(daveReq(), await actorOf(daveReq()), schema.siteCreateSchema.parse({
+        accountId: shop.id, name: 'Dave', slug: 'dave', base: 'nginx-static',
+      }));
+      assert.equal(made.publishMode, 'manual');
+      await rejectsWith(sitesService.update(daveReq(), await actorOf(daveReq()), made.id, { publishMode: 'auto' }), 403, 'publishRequired');
+      assert.equal((await db('sites').where({ id: made.id }).first('publish_mode')).publish_mode, 'manual');
+      // Approval and the other settings stay with sites.manage; a publisher (client or staff) may switch to auto.
+      assert.equal((await sitesService.update(daveReq(), await actorOf(daveReq()), made.id, { publishMode: 'approval', name: 'Dave 2' })).publishMode, 'approval');
+      await db('sites').where({ id: made.id }).update({ publish_mode: 'manual' });
+      assert.equal((await sitesService.update(fakeReq(alice, tenantA), await actorOf(fakeReq(alice, tenantA)), made.id, { publishMode: 'auto' })).publishMode, 'auto');
+      // Already auto: re-sending the same mode is no switch.
+      assert.equal((await sitesService.update(daveReq(), await actorOf(daveReq()), made.id, { publishMode: 'auto', name: 'Dave 3' })).name, 'Dave 3');
+      // A publisher creating without a mode keeps the auto default.
+      const opsSite = await sitesService.create(fakeReq(ops, tenantA), await actorOf(fakeReq(ops, tenantA)), schema.siteCreateSchema.parse({
+        accountId: other.id, name: 'Ops', slug: 'ops', base: 'nginx-static',
+      }));
+      assert.equal(opsSite.publishMode, 'auto');
+    });
+
+    await t.test('sitesService.create / update re-validate base, profile, docroot and base path before writing (M7)', async () => {
+      const staff = await actorOf(asStaffA());
+      const body = (extra: Record<string, unknown>) => ({ accountId: other.id, name: 'Bad', slug: 'bad', base: 'nginx-static', ...extra }) as never;
+      await rejectsWith(sitesService.create(asStaffA(), staff, body({ docroot: './public' })), 400, 'validation');
+      await rejectsWith(sitesService.create(asStaffA(), staff, body({ docroot: '../up' })), 400, 'validation');
+      await rejectsWith(sitesService.create(asStaffA(), staff, body({ appProfile: 'nope' })), 400, 'validation');
+      await rejectsWith(sitesService.create(asStaffA(), staff, body({ base: 'php-from-mars' })), 400, 'validation');
+      await rejectsWith(sitesService.create(asStaffA(), staff, body({ basePath: 'a/../b' })), 400, 'validation');
+      await rejectsWith(sitesService.create(asStaffA(), staff, body({ publishMode: 'yolo' })), 400, 'validation');
+      assert.equal(await db('sites').where({ account_id: other.id, slug: 'bad' }).first('id'), undefined, 'no orphan row');
+      // Normalized on the way in.
+      const ok = await sitesService.create(asStaffA(), staff, body({ docroot: '/public/', basePath: 'shop' }));
+      assert.equal(ok.docroot, 'public');
+      assert.equal(ok.basePath, '/shop/');
+      await rejectsWith(sitesService.update(asStaffA(), staff, ok.id, { docroot: './x' } as never), 400, 'validation');
+      await rejectsWith(sitesService.update(asStaffA(), staff, ok.id, { appProfile: 'nope' } as never), 400, 'validation');
+      assert.equal((await db('sites').where({ id: ok.id }).first('docroot')).docroot, 'public');
+    });
+
+    await t.test('window diff content needs the code right, \'read\' is not enough (M1)', async () => {
+      const { windowService } = await import('../windows/window.service');
+      const bob = Number((await db('users').where({ username: 'bob' }).first('id')).id);
+      // Helpdesk (overview.read) and accounts.manage see the site but not its code; a client without files.manage neither.
+      for (const userId of [helpdesk, accountsOnly, bob]) {
+        await rejectsWith(windowService.fileDiff(await actorOf(fakeReq(userId, tenantA)), siteId, 999_999, 'index.php'), 403, 'codeReadForbidden');
+      }
+      // An approver (client releases.approve, without files.manage nor its staging write access) reviews the code too.
+      const erin = Number((await clientUsersService.add(asStaffA(), await db('hosting_accounts').where({ id: shop.id }).first(),
+        schema.clientUserAddSchema.parse({ mode: 'create', username: 'erin', password: 'correct horse battery', capabilities: ['releases.approve'] }))).userId);
+      assert.equal((await actorOf(fakeReq(erin, tenantA))).kind, 'client');
+      // files.manage (client), releases.approve (client), sites.manage / files.manage (staff): past the gate (no such window → 404).
+      for (const userId of [alice, erin, ops, staffA]) {
+        await rejectsWith(windowService.fileDiff(await actorOf(fakeReq(userId, tenantA)), siteId, 999_999, 'index.php'), 404, 'notFound');
+      }
+      // Another tenant: invisible (404 before any right check).
+      await rejectsWith(windowService.fileDiff(await actorOf(fakeReq(staffB, tenantB)), siteId, 999_999, 'index.php'), 404, 'notFound');
+    });
+
     await t.test('secondary runtimes per site are capped (each one is a full-plan container)', async () => {
       const req = fakeReq(alice, tenantA);
       const actor = await actorOf(req);

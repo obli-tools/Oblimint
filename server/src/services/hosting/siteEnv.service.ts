@@ -68,7 +68,9 @@ export const siteEnvService = {
 
   /**
    * Replaces the whole set (the form sends every variable). A secret sent
-   * without a value keeps its stored one; a new secret needs a value.
+   * without a value keeps its stored one; a new secret needs a value, and so
+   * does a secret turned visible (its stored value is never revealed: it
+   * would come back in clear from list()).
    * Returns true when something changed (the site containers are recreated).
    */
   async replace(req: Request, actor: HostingActor, siteId: number, vars: SiteEnvVarInput[]): Promise<{ vars: SiteEnvVar[]; changed: boolean }> {
@@ -86,6 +88,7 @@ export const siteEnvService = {
         const secret = v.secret === true;
         if (v.value === undefined || v.value === null) {
           if (!prev) throw new AppError(400, `${v.name}: a value is required`, 'envValueRequired', { name: v.name });
+          if (prev.secret && !secret) throw new AppError(400, `${v.name}: a new value is required to make a secret visible`, 'envValueRequired', { name: v.name });
           if (prev.secret !== secret) { await trx('site_env_vars').where({ id: prev.id }).update({ secret, updated_at: trx.fn.now() }); dirty = true; }
           continue;
         }

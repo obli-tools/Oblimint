@@ -148,6 +148,7 @@ test('proxy-hosts on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestC
   const clientRead = await user('cr', 'client', 'user', tA);
   const clientManage = await user('cm', 'client', 'user', tA);
   const clientOther = await user('co', 'client', 'user', tA);
+  const clientProxyOnly = await user('cpo', 'client', 'user', tA);
   const platformAdmin = await user('pa', 'staff', 'admin', 1);
 
   const limits = { ...DEFAULT_PLAN_LIMITS, maxProxyHosts: 3, maxRedirections: 2, proxyExternalTargets: true };
@@ -174,7 +175,9 @@ test('proxy-hosts on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestC
   await db('site_routes').insert({ account_id: acct, domain_id: dRouted, path_prefix: '/', site_id: siteId, runtime_id: null });
   await db('account_users').insert([
     { user_id: clientRead, account_id: acct, capabilities: JSON.stringify([]) },
-    { user_id: clientManage, account_id: acct, capabilities: JSON.stringify(['proxy.manage']) },
+    // Binding a domain takes it from the sites: proxy.manage + domains.manage (L1); clientProxyOnly has proxy.manage alone.
+    { user_id: clientManage, account_id: acct, capabilities: JSON.stringify(['proxy.manage', 'domains.manage']) },
+    { user_id: clientProxyOnly, account_id: acct, capabilities: JSON.stringify(['proxy.manage']) },
     { user_id: clientOther, account_id: other, capabilities: JSON.stringify(['proxy.manage']) },
   ]);
   // Stack ids unique per run (the harness database may be reused).
@@ -215,6 +218,7 @@ test('proxy-hosts on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestC
   const asReader: Who = { user: clientRead, tenant: tA };
   const asManager: Who = { user: clientManage, tenant: tA };
   const asOther: Who = { user: clientOther, tenant: tA };
+  const asProxyOnly: Who = { user: clientProxyOnly, tenant: tA };
   const asAdmin: Who = { user: platformAdmin, tenant: 1 };
   const asStaffB: Who = { user: staffB, tenant: tB };
   const servedBy = async (id: number) => ((await db('domains').where({ id }).first('served_by')) as { served_by: string }).served_by;
@@ -276,6 +280,20 @@ test('proxy-hosts on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestC
   assert.equal(r.status, 409);
   assert.equal(r.body.code, 'domainInUse');
   assert.equal(r.body.details.servedBy, 'proxy');
+  // proxy.manage alone: never binds a domain (L1), but edits a host whose domains stay the same.
+  r = await call('POST', '/proxy/hosts', asProxyOnly, hostBody([d2], { name: 'two' }));
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'domainsManageRequired');
+  assert.equal(await servedBy(d2), 'sites');
+  r = await call('POST', '/proxy/redirections', asProxyOnly, { accountId: acct, domainIds: [d2], targetDomain: 'example.org' });
+  assert.equal(r.body.code, 'domainsManageRequired');
+  r = await call('PUT', `/proxy/hosts/${h1.id}`, asProxyOnly, { domainIds: [d1, d2] });
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, 'domainsManageRequired');
+  r = await call('PUT', `/proxy/hosts/${h1.id}`, asProxyOnly, { name: 'vault' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(await servedBy(d2), 'sites');
+  assert.equal(Number(((await db('proxy_hosts').where({ account_id: acct }).count('* as c').first()) as { c: unknown }).c), 1);
   r = await call('POST', '/proxy/redirections', asManager, { accountId: acct, domainIds: [d1], targetDomain: 'example.org' });
   assert.equal(r.status, 409, 'one consumer per domain');
 
@@ -372,10 +390,9 @@ test('proxy-hosts on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestC
   hooks.length = 0;
   // Turning Let's Encrypt on goes through the domain module: domains.manage is needed too, checked before the host exists.
   const hostsBefore = Number(((await db('proxy_hosts').where({ account_id: acct }).count('* as n').first()) as { n: string | number }).n);
-  r = await call('POST', '/proxy/hosts/quick-setup', asManager, { stackId: S1, service: 'web', port: 8080, domainIds: [d3] });
+  r = await call('POST', '/proxy/hosts/quick-setup', asProxyOnly, { stackId: S1, service: 'web', port: 8080, domainIds: [d3] });
   assert.equal(r.status, 403, 'quick setup switching TLS needs domains.manage');
   assert.equal(Number(((await db('proxy_hosts').where({ account_id: acct }).count('* as n').first()) as { n: string | number }).n), hostsBefore);
-  await db('account_users').where({ user_id: clientManage, account_id: acct }).update({ capabilities: JSON.stringify(['proxy.manage', 'domains.manage']) });
   r = await call('POST', '/proxy/hosts/quick-setup', asManager, { stackId: S1, service: 'web', port: 8080, domainIds: [d3] });
   assert.equal(r.status, 201, JSON.stringify(r.body));
   const hq = r.body.data;
@@ -395,6 +412,10 @@ test('proxy-hosts on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestC
   assert.equal(await servedBy(d4), 'redirect');
   r = await call('POST', '/proxy/redirections', asManager, { accountId: acct, domainIds: [d5], targetDomain: `five-${suffix}.fr` });
   assert.equal(r.status, 400, 'self loop refused');
+  // The domain of another account is never read for the loop check (L4: no id → name oracle).
+  r = await call('POST', '/proxy/redirections', asManager, { accountId: acct, domainIds: [dOther], targetDomain: `other-${suffix}.fr` });
+  assert.equal(r.status, 404, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'domainNotInAccount');
   r = await call('POST', '/proxy/dead-hosts', asManager, { accountId: acct, domainIds: [d5] });
   assert.equal(r.status, 201);
   const dh = r.body.data;

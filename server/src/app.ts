@@ -30,6 +30,13 @@ export function getSessionMiddleware(): express.RequestHandler | null {
 function baseApp(): express.Express {
   const app = express();
   app.disable('x-powered-by');
+  // Case-sensitive routing (H1): set before the first app.use, which creates the
+  // app router with it. Path checks done BEFORE routing (twoFactorPolicyGuard,
+  // originGuard, the limiters, the SPA fallback below) compare exact paths:
+  // /API/... must never reach the /api routers while those checks see "not an
+  // API path". The routers mounted on /api, /mcp, /oauth and /auth are
+  // case-sensitive as well (Router({ caseSensitive: true })).
+  app.set('case sensitive routing', true);
   // req.ip (rate-limit key) is the socket peer unless that peer is a TRUSTED
   // proxy: the edge container (addresses read from Docker,
   // services/proxyTrust.ts) or TRUSTED_PROXIES. Never a bare hop count: port
@@ -87,6 +94,7 @@ function serveClient(app: express.Express): void {
     },
   }));
   app.get('*', (req, res, next) => {
+    // Exact case, like the routing: /API/... is no API path and gets the shell.
     if (/^\/(api|auth|socket\.io|health|mcp)(\/|$)/.test(req.path)) return next();
     res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(indexHtml);
