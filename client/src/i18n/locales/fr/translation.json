@@ -41,7 +41,7 @@
       "action": "Action",
       "ip": "IP",
       "resource": "Ressource",
-      "tenant": "Workspace",
+      "tenant": "Espace de travail",
       "user": "Utilisateur",
       "when": "Date"
     },
@@ -65,7 +65,7 @@
     "domains": "Gérez les domaines principaux, additionnels et alias, les sous-domaines et leurs zones DNS, avec des certificats TLS automatiques.",
     "files": "Parcourez et modifiez les fichiers d'un compte, et ouvrez à la demande un serveur SFTP/FTPS dédié.",
     "mail": "Gérez les boîtes mail, alias, redirections, quotas et clés DKIM sur le moteur mail choisi à l'installation.",
-    "plans": "Définissez des plans d'hébergement (disque, trafic, sites, boîtes mail, bases de données…) dans les limites de l'enveloppe du workspace.",
+    "plans": "Définissez des plans d'hébergement (disque, trafic, sites, boîtes mail, bases de données…) dans les limites de l'enveloppe de l'espace de travail.",
     "sites": "Déployez chaque site dans son propre conteneur avec la base de votre choix (PHP, Node.js, statique…), un code immuable et une fenêtre de mise à jour maîtrisée."
   },
   "common": {
@@ -108,12 +108,12 @@
     "sites": "Sites",
     "title": "Tableau de bord",
     "users": "Utilisateurs",
-    "workspaces": "Workspaces",
+    "workspaces": "Espaces de travail",
     "overview": {
       "attention": "À surveiller",
       "allGood": "Tout va bien : rien ne vous attend.",
       "sitesInError": "site(s) en erreur",
-      "monitorsDown": "supervision(s) en panne",
+      "monitorsDown": "sonde(s) en panne",
       "certsFailed": "certificat(s) en échec",
       "failedReleases": "publication(s) en échec (24 h)",
       "approvals": "release(s) à approuver",
@@ -130,8 +130,8 @@
       "error": "en erreur",
       "releases": "Dernières publications",
       "noRelease": "Aucune publication pour l'instant.",
-      "monitoring": "Supervision & certificats",
-      "noMonitor": "Aucune supervision configurée.",
+      "monitoring": "Disponibilité & certificats",
+      "noMonitor": "Aucune sonde configurée.",
       "expiresOn": "expire le {{date}}",
       "activity": "Activité récente",
       "noActivity": "Aucune activité récente.",
@@ -147,7 +147,7 @@
     }
   },
   "fanOut": {
-    "tenantFallback": "Workspace {{id}}"
+    "tenantFallback": "Espace de travail {{id}}"
   },
   "header": {
     "accountMenu": "Menu du compte",
@@ -164,7 +164,7 @@
     "clientVersion": "Client v{{version}}",
     "invalidCredentials": "Nom d'utilisateur ou mot de passe incorrect",
     "loginFailed": "Échec de la connexion",
-    "noTenantAccess": "Votre compte n'a accès à aucun workspace sur ce serveur. Demandez à un administrateur de vous y donner accès.",
+    "noTenantAccess": "Votre compte n'a accès à aucun espace de travail sur ce serveur. Demandez à un administrateur de vous y donner accès.",
     "password": "Mot de passe",
     "passwordPlaceholder": "Saisissez votre mot de passe",
     "serverUnreachable": "Impossible de joindre le serveur",
@@ -232,7 +232,7 @@
     "signOut": "Se déconnecter",
     "sites": "Sites",
     "users": "Utilisateurs",
-    "workspaces": "Workspaces",
+    "workspaces": "Espaces de travail",
     "usage": "Consommation",
     "maintenance": "Maintenance",
     "apps": "Applications",
@@ -241,9 +241,8 @@
     "uptime": "Disponibilité",
     "automation": "Automatisation",
     "bans": "Bannissements",
-    "traffic": "Trafic",
+    "traffic": "Requêtes HTTP",
     "edge": "Edge",
-    "apps_section": "Applications & proxy",
     "migration": "Migration CWP"
   },
   "nodes": {
@@ -352,7 +351,7 @@
     "usernameLabel": "Nom d'utilisateur"
   },
   "settings": {
-    "globalDesc": "Réglages de toute la plateforme de ce serveur Oblimint.",
+    "globalDesc": "Paramètres de toute la plateforme de ce serveur Oblimint.",
     "obligate": {
       "apiKey": "Clé API",
       "apiKeyHint": "Générez cette clé dans Obligate → Applications connectées → Ajouter une application (type d'application : oblimint).",
@@ -538,7 +537,7 @@
       "migrate": "Migrations de la base de données",
       "network": "Réseau Docker « oblimint »",
       "postgres": "Base de données PostgreSQL",
-      "settings": "Réglages"
+      "settings": "Paramètres"
     },
     "subtitle": "Configurez ce serveur en quelques étapes.",
     "title": "Configuration initiale",
@@ -555,25 +554,25 @@
     }
   },
   "tenant": {
-    "confirmDelete": "Supprimer le workspace « {{name}} » ? Cette action est irréversible.",
-    "create": "Nouveau workspace",
-    "created": "Workspace créé",
+    "confirmDelete": "Supprimer l'espace de travail « {{name}} » ? Cette action est irréversible.",
+    "create": "Nouvel espace de travail",
+    "created": "Espace de travail créé",
     "createdAt": "Créé le",
     "default": "Par défaut",
-    "deleted": "Workspace supprimé",
-    "label": "Workspace",
+    "deleted": "Espace de travail supprimé",
+    "label": "Espace de travail",
     "limits": {
       "accounts": "Comptes d'hébergement",
       "accountsShort": "comptes",
       "allowOversell": "Autoriser la survente",
-      "allowOversellHint": "Les plans de ce workspace peuvent dépasser au total son enveloppe ; l'usage réel reste plafonné.",
+      "allowOversellHint": "Les plans de cet espace de travail peuvent dépasser au total son enveloppe ; l'usage réel reste plafonné.",
       "cpu": "CPU",
       "databases": "Bases de données",
       "databasesShort": "bases",
       "disk": "Disque",
       "domains": "Domaines",
       "domainsShort": "domaines",
-      "hint": "Ressources maximales que ce workspace peut attribuer à ses plans et comptes. Laissez un champ vide pour illimité.",
+      "hint": "Ressources maximales que cet espace de travail peut attribuer à ses plans et comptes. Laissez un champ vide pour illimité.",
       "invalid": "Les limites doivent être des nombres positifs (laissez vide pour illimité).",
       "mailboxes": "Boîtes mail",
       "mailboxesShort": "boîtes mail",
@@ -586,24 +585,24 @@
       "traffic": "Trafic",
       "unlimited": "Illimité"
     },
-    "loadFailed": "Impossible de charger les workspaces",
+    "loadFailed": "Impossible de charger les espaces de travail",
     "name": "Nom",
     "namePlaceholder": "Nom du revendeur",
-    "noTenants": "Aucun workspace.",
+    "noTenants": "Aucun espace de travail.",
     "pageDesc": "Les revendeurs et leurs enveloppes de ressources.",
-    "pageTitle": "Workspaces",
+    "pageTitle": "Espaces de travail",
     "roleAdmin": "Admin",
     "slug": "Identifiant",
     "slugPlaceholder": "mon-revendeur",
-    "switchWorkspace": "Changer de workspace",
-    "updated": "Workspace mis à jour"
+    "switchWorkspace": "Changer d'espace de travail",
+    "updated": "Espace de travail mis à jour"
   },
   "tenantBadge": {
-    "title": "Workspace : {{name}}"
+    "title": "Espace de travail : {{name}}"
   },
   "tenantFilter": {
     "clear": "Effacer",
-    "label": "Workspace",
+    "label": "Espace de travail",
     "masterName": "{{name}} (maître)"
   },
   "twoFactorPrompt": {
@@ -646,7 +645,7 @@
   "users": {
     "actions": {
       "password": "Changer le mot de passe",
-      "tenants": "Gérer l'accès aux workspaces"
+      "tenants": "Gérer l'accès aux espaces de travail"
     },
     "changePassword": "Changer le mot de passe",
     "changePasswordTitle": "Changer le mot de passe de {{username}}",
@@ -684,19 +683,23 @@
     "tabPermissionSets": "Jeux de permissions",
     "tabUsers": "Utilisateurs",
     "tenantPanel": {
-      "adminNotice": "Les administrateurs de la plateforme accèdent automatiquement à tous les workspaces. Aucune affectation n'est nécessaire.",
-      "failedLoad": "Impossible de charger les affectations aux workspaces",
-      "failedSave": "Impossible d'enregistrer les affectations aux workspaces",
+      "adminNotice": "Les administrateurs de la plateforme accèdent automatiquement à tous les espaces de travail. Aucune affectation n'est nécessaire.",
+      "failedLoad": "Impossible de charger les affectations aux espaces de travail",
+      "failedSave": "Impossible d'enregistrer les affectations aux espaces de travail",
       "member": "Membre",
-      "none": "Aucun workspace disponible",
+      "none": "Aucun espace de travail disponible",
       "role": "Rôle :",
-      "saved": "Affectations aux workspaces enregistrées",
-      "title": "Workspaces"
+      "saved": "Affectations aux espaces de travail enregistrées",
+      "title": "Espaces de travail"
     },
-    "tenantRoleHint": "Jeu de permissions du compte dans ce workspace. Vous ne pouvez donner qu'un jeu dont vous détenez les permissions.",
-    "tenantRoleLabel": "Rôle dans le workspace",
+    "tenantRoleHint": "Jeu de permissions du compte dans cet espace de travail. Vous ne pouvez donner qu'un jeu dont vous détenez les permissions.",
+    "tenantRoleLabel": "Rôle dans l'espace de travail",
     "title": "Utilisateurs",
     "updated": "Utilisateur mis à jour",
-    "usernameLabel": "Nom d'utilisateur"
+    "usernameLabel": "Nom d'utilisateur",
+    "openClientAccount": "Ouvrir le compte d'hébergement",
+    "clientNoAccount": "Ce client n'est rattaché à aucun compte d'hébergement visible dans cet espace de travail.",
+    "clientSeveralAccounts": "Membre de {{count}} comptes : {{username}} est ouvert.",
+    "clientAccountFailed": "Impossible de trouver le compte de ce client"
   }
 }

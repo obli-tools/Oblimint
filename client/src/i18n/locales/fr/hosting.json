@@ -4,7 +4,7 @@
     "capabilities": {
       "domains_manage": "Gérer les domaines",
       "domains_manage_hint": "Ajouter des domaines et modifier leurs routes.",
-      "files_manage": "Gérer l'accès fichiers",
+      "files_manage": "Gérer les fichiers",
       "files_manage_hint": "Ouvrir l'accès SFTP, définir son mot de passe et ses clés SSH, et la liste blanche d'accès.",
       "releases_approve": "Approuver les releases",
       "releases_approve_hint": "Approuver ou rejeter les releases en attente de validation.",
@@ -24,8 +24,8 @@
       "apps_console_hint": "Ouvrir une console interactive dans les conteneurs d’application (si le plan l’autorise).",
       "proxy_manage": "Gérer les hôtes proxy",
       "proxy_manage_hint": "Créer des hôtes proxy, redirections, hôtes morts, listes d’accès, pages d’erreur et gérer les bannissements du compte.",
-      "monitoring_manage": "Gérer la supervision",
-      "monitoring_manage_hint": "Créer des sondes de disponibilité, pages de statut, workflows, cibles SFTP et fenêtres de maintenance."
+      "monitoring_manage": "Gérer la disponibilité et l'automatisation",
+      "monitoring_manage_hint": "Créer des sondes de disponibilité, pages de statut, workflows, cibles SFTP et créneaux de mise à jour."
     },
     "changePlan": "Changer de plan",
     "changePlanFailed": "Échec du changement de plan",
@@ -124,7 +124,7 @@
     "suspendedBanner": "Ce compte est suspendu : ses sites affichent une page de suspension et le SFTP est refusé.",
     "tabs": {
       "domains": "Domaines",
-      "files": "Accès fichiers",
+      "files": "Fichiers",
       "overview": "Vue d'ensemble",
       "sites": "Sites",
       "users": "Utilisateurs"
@@ -279,7 +279,7 @@
     "saveFailed": "Échec de l'enregistrement du domaine",
     "saved": "Domaine enregistré",
     "searchPlaceholder": "Rechercher un domaine ou un compte…",
-    "settings": "Réglages",
+    "settings": "Paramètres",
     "title": "Domaines",
     "tls": {
       "letsencrypt": "Let's Encrypt",
@@ -292,7 +292,7 @@
       "example": "Exemple",
       "host": "Hôte",
       "noHost": "non configuré",
-      "noHostHint": "Renseignez le nom d'hôte du panel ou l'IPv4 publique dans les réglages pour afficher l'hôte de connexion.",
+      "noHostHint": "Renseignez le nom d'hôte du panel ou l'IPv4 publique dans les paramètres pour afficher l'hôte de connexion.",
       "port": "Port",
       "protocol": "Protocole",
       "title": "Connexion SFTP",
@@ -320,7 +320,7 @@
       "namePlaceholder": "Mon portable",
       "oneLine": "Collez une seule ligne de clé.",
       "publicKey": "Clé publique",
-      "title": "Clés SSH"
+      "title": "Clés SSH de connexion"
     },
     "layout": {
       "dataHint": "Les chemins de données du site (uploads, cache…) : les seuls dossiers où l'application peut écrire. PHP n'y est jamais exécuté.",

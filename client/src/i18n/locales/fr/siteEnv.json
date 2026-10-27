@@ -24,6 +24,6 @@
     "unchanged": "Rien n'a changé",
     "loadFailed": "Les variables n'ont pas pu être chargées",
     "saveFailed": "Les variables n'ont pas pu être enregistrées",
-    "noRight": "Gérer les variables demande le droit de réglage des sites."
+    "noRight": "Gérer les variables demande le droit de paramétrer les sites."
   }
 }

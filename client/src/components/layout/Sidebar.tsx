@@ -72,15 +72,31 @@ interface NavItem {
   icon: React.ReactNode;
   /** Optional red pill showing a pending-work count next to the label. */
   badgeCount?: number;
+  /**
+   * Other pages of this entry living outside its path (a prefix such as
+   * '/dns', or a pattern for a nested page such as /sites/:id/windows/:wid).
+   */
+  activePrefixes?: Array<string | RegExp>;
+  /** Pages under `path` that belong to another entry. */
+  inactivePatterns?: RegExp[];
 }
+
+/** /sites/:id/windows/:windowId — the window review belongs to Maintenance, not Sites. */
+const WINDOW_REVIEW_RE = /^\/sites\/\d+\/windows\/\d+\/?$/;
 
 function isPathActive(pathname: string, path: string): boolean {
   return pathname === path || (path !== '/' && pathname.startsWith(path + '/'));
 }
 
+function isItemActive(pathname: string, item: NavItem): boolean {
+  if (item.inactivePatterns?.some((re) => re.test(pathname))) return false;
+  return isPathActive(pathname, item.path)
+    || (item.activePrefixes ?? []).some((p) => (typeof p === 'string' ? isPathActive(pathname, p) : p.test(pathname)));
+}
+
 function NavLink({ item }: { item: NavItem }) {
   const location = useLocation();
-  const isActive = isPathActive(location.pathname, item.path);
+  const isActive = isItemActive(location.pathname, item);
   return (
     <Link
       to={item.path}
@@ -152,15 +168,16 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
   const navItems: NavItem[] = [
     { label: t('nav.dashboard') || 'Dashboard',          path: '/',          icon: <LayoutDashboard size={18} /> },
     { label: t('nav.accounts') || 'Accounts',            path: '/accounts',  icon: <UserSquare size={18} /> },
-    { label: t('nav.sites') || 'Sites',                  path: '/sites',     icon: <Globe size={18} /> },
-    { label: t('nav.domains') || 'Domains & DNS',        path: '/domains',   icon: <AtSign size={18} /> },
+    { label: t('nav.sites') || 'Sites',                  path: '/sites',     icon: <Globe size={18} />, inactivePatterns: [WINDOW_REVIEW_RE] },
+    // The zone editor lives under /dns/zones/:id.
+    { label: t('nav.domains') || 'Domains & DNS',        path: '/domains',   icon: <AtSign size={18} />, activePrefixes: ['/dns'] },
     // Web file explorer — client space too (files.manage per account, the server scopes).
     { label: t('nav.files') || 'Files',                path: '/files',     icon: <FolderOpen size={18} /> },
     // P2: databases and usage are part of the client space too (the server scopes every list).
     { label: t('nav.databases') || 'Databases',          path: '/databases', icon: <Database size={18} /> },
     { label: t('nav.usage') || 'Usage',                  path: '/usage',     icon: <BarChart3 size={18} /> },
     // P3: maintenance overview (windows to review, updates, quarantine) — client space too (server scopes).
-    { label: t('nav.maintenance') || 'Maintenance',      path: '/maintenance', icon: <Wrench size={18} /> },
+    { label: t('nav.maintenance') || 'Maintenance',      path: '/maintenance', icon: <Wrench size={18} />, activePrefixes: [WINDOW_REVIEW_RE] },
     // P4: mail — client space too (the server scopes every list).
     { label: t('nav.mail') || 'Mail',                    path: '/mail',      icon: <Mail size={18} /> },
     // P4b: apps + proxy — client space too (the server scopes every list; capabilities gate the actions).
@@ -212,7 +229,7 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
 
         <nav className="flex-1 overflow-y-auto px-2 pt-3 space-y-1">
           {allItems.map((item, i) => {
-            const isActive = isPathActive(location.pathname, item.path);
+            const isActive = isItemActive(location.pathname, item);
             return (
               <div key={item.path}>
                 {i === navItems.length && adminNavItems.length > 0 && (

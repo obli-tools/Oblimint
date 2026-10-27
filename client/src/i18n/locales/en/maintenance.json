@@ -27,7 +27,7 @@
       "patch": "patch",
       "unknown": "?"
     },
-    "loadFailed": "Failed to load the application updates",
+    "loadFailed": "Failed to load the site updates",
     "name": {
       "composer": "Composer",
       "drupal": "Drupal (drush)",
@@ -107,7 +107,7 @@
       "running": "Running",
       "succeeded": "Succeeded"
     },
-    "title": "Application updates",
+    "title": "Site updates (CMS)",
     "update": "Update",
     "updateExplain": "The update runs on a COPY of the live release in a disposable container, is analyzed like a window, then published through the normal pipeline (health check, automatic rollback). The databases are snapshotted first.",
     "updatesCount": "{{count}} update(s)",
@@ -165,14 +165,14 @@
     "notAvailable": "Not available on this server yet.",
     "notAvailableLong": "Modification windows are not available on this server yet.",
     "page": {
-      "description": "Modification windows waiting for a review, application updates and quarantined files.",
+      "description": "Modification windows waiting for a review, site updates (CMS) and quarantined files.",
       "noReview": "No window waits for a review.",
       "noWindow": "No window in progress.",
       "tabs": {
-        "quarantine": "Quarantine",
+        "quarantine": "File quarantine",
         "reviews": "Reviews",
-        "updates": "Updates",
-        "windows": "Windows in progress"
+        "updates": "Site updates",
+        "windows": "Modification windows"
       }
     },
     "schedule": {
@@ -452,7 +452,7 @@
     "createdBy": "by {{name}}, {{date}}",
     "createdTitle": "Token created",
     "createFailed": "Failed to create the token",
-    "createTitle": "New API token",
+    "createTitle": "New window token",
     "curlHint": "Other calls: GET /api/site-api/window (status), POST /api/site-api/window/extend {\"minutes\": 30}, POST /api/site-api/window/close.",
     "curlTitle": "Open a 30-minute window from a script:",
     "days": "{{count}} days",
@@ -463,7 +463,7 @@
     "expiry": "Expiry",
     "explain": "A token lets a script or a CI pipeline open, extend and close a window of this site (never validate nor reject it). Up to 10 tokens per site.",
     "lastUsed": "last used: {{date}}",
-    "loadFailed": "Failed to load the API tokens",
+    "loadFailed": "Failed to load the window tokens",
     "name": "Name",
     "namePlaceholder": "deploy-ci",
     "never": "never",
@@ -474,7 +474,7 @@
     "revoked": "Token revoked",
     "revokeFailed": "Failed to revoke the token",
     "revokeTitle": "Revoke the token",
-    "title": "API tokens"
+    "title": "Window tokens (CI)"
   },
   "snapshots": {
     "col": {

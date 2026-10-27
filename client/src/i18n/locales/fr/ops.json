@@ -11,7 +11,7 @@
       "empty": "Aucune adresse bannie.",
       "failures": "{{count}} échec(s)",
       "hint": "Des échecs d'authentification répétés (SFTP, SQL externe) bannissent l'adresse pour un temps. Une adresse des règles n'est jamais bannie.",
-      "title": "Adresses bannies",
+      "title": "Bans SFTP / SQL",
       "unban": "Débannir",
       "unbanFailed": "Échec du débannissement",
       "unbanned": "Adresse débannie",
@@ -40,7 +40,7 @@
       "sourceSession": "session",
       "title": "Autorisations automatiques (2FA)"
     },
-    "loadFailed": "Échec du chargement des réglages d'accès",
+    "loadFailed": "Échec du chargement des paramètres d'accès",
     "lockout": {
       "confirm": "Basculer quand même",
       "message": "La liste blanche est vide et aucune de vos adresses n'est autorisée : une fois ce mode appliqué, personne ne pourra joindre les ports SFTP / SQL de ce compte tant qu'une règle n'aura pas été ajoutée. Basculer quand même ?",
@@ -338,17 +338,17 @@
       "day": "Télécharger un jour",
       "failed": "Le téléchargement a échoué",
       "last24h": "Télécharger (24 h)",
-      "loadFailed": "Échec de la liste des fichiers de logs",
+      "loadFailed": "Échec de la liste des fichiers de journaux",
       "none": "Aucun jour conservé pour l'instant."
     },
     "empty": "Aucune ligne pour ces filtres.",
     "errors": {
       "backendUnavailable": "Le moteur de conteneurs est injoignable : les journaux ne peuvent pas être lus pour le moment. Réessayez dans un instant.",
       "logDateInvalid": "Date invalide.",
-      "logSourceInvalid": "Source de logs inconnue.",
-      "notFound": "Aucun log pour ce jour.",
-      "siteNotRunning": "Le site n'a aucun conteneur démarré : pas de log d'erreurs ni de moteur à afficher.",
-      "tooManySubscriptions": "Trop de suivis en direct ouverts dans cette fenêtre (4 au plus) : fermez un autre onglet de logs."
+      "logSourceInvalid": "Source de journaux inconnue.",
+      "notFound": "Aucun journal pour ce jour.",
+      "siteNotRunning": "Le site n'a aucun conteneur démarré : pas de journal d'erreurs ni de moteur à afficher.",
+      "tooManySubscriptions": "Trop de suivis en direct ouverts dans cette fenêtre (4 au plus) : fermez un autre onglet de journaux."
     },
     "filters": {
       "allStatus": "Tous",
@@ -369,15 +369,15 @@
       "toggle": "Suivi en direct",
       "waiting": "En attente de nouvelles lignes…"
     },
-    "loadFailed": "Échec du chargement des logs",
+    "loadFailed": "Échec du chargement des journaux",
     "source": {
       "access": "Accès",
       "app": "Moteur",
       "error": "Erreurs"
     },
     "tab": {
-      "subtitle": "Logs d'accès et d'erreurs de ce site.",
-      "title": "Logs"
+      "subtitle": "Journaux d'accès et d'erreurs de ce site.",
+      "title": "Journaux"
     },
     "toBottom": "Dernières lignes",
     "truncated": "seulement les {{limit}} dernières correspondances"
@@ -416,8 +416,8 @@
       "windowFailed": "Échec d’une fenêtre de modification",
       "scanThreat": "Menace détectée par l’analyse",
       "quarantineAdded": "Fichier mis en quarantaine",
-      "adapterCompleted": "Mise à jour applicative publiée",
-      "adapterFailed": "Échec d’une mise à jour applicative",
+      "adapterCompleted": "Mise à jour de site (CMS) publiée",
+      "adapterFailed": "Échec d’une mise à jour de site (CMS)",
       "supervisionDigest": "Résumé de supervision",
       "mailOutboundSuspended": "Envoi de mails suspendu",
       "mailServiceFailed": "Service mail en échec",
@@ -549,7 +549,7 @@
     "dnsServer": {
       "active": "{{count}} publiée(s)",
       "apiDown": "API injoignable",
-      "disabled": "Le serveur DNS est désactivé dans les réglages : chaque zone est hébergée ailleurs.",
+      "disabled": "Le serveur DNS est désactivé dans les paramètres : chaque zone est hébergée ailleurs.",
       "error": "{{count}} en erreur",
       "loadFailed": "Échec du chargement de l'état du serveur DNS",
       "pending": "{{count}} en attente",
@@ -580,13 +580,13 @@
     "hostingTitle": "Hébergement",
     "infra": {
       "dbadmin": "Administration BDD (phpMyAdmin + Adminer)",
-      "dbadminHint": "phpMyAdmin et Adminer partagés, ouverts depuis le panel en authentification unique, sur le nom d'hôte des réglages.",
+      "dbadminHint": "phpMyAdmin et Adminer partagés, ouverts depuis le panel en authentification unique, sur le nom d'hôte des paramètres.",
       "dns": "Serveur DNS (PowerDNS)",
       "dnsHint": "DNS faisant autorité des zones hébergées, sur le port 53 (TCP + UDP) de l'hôte. Son API reste sur le réseau interne.",
       "redeployDbAdminConfirm": "Les conteneurs phpMyAdmin et Adminer sont recréés : les sessions d'administration BDD ouvertes sont fermées.",
       "redeployDnsConfirm": "Le conteneur PowerDNS est recréé : les zones hébergées ne répondent plus pendant quelques secondes (les serveurs secondaires continuent de répondre)."
     },
-    "loadFailed": "Échec du chargement des réglages d'hébergement",
+    "loadFailed": "Échec du chargement des paramètres d'hébergement",
     "plan": {
       "allEngines": "Tous les moteurs",
       "cronIntervalRange": "Intervalle minimal du cron : entre {{min}} et {{max}} minutes.",
@@ -620,7 +620,7 @@
       "domainHint": "Vide : les préversions n'ont pas d'URL publique. Faites pointer *.<domaine> (A / AAAA) vers ce serveur.",
       "invalid": "Saisissez un nom de domaine (par ex. exemple-preview.net).",
       "placeholder": "exemple-preview.net",
-      "setupHint": "Les préversions blue/green sont servies sur <site>-<id>.<ce domaine>. Utilisez un domaine enregistrable distinct de celui du panel (jamais un sous-domaine), pour qu'une préversion ne puisse jamais lire les cookies du panel. Vide : les préversions n'ont pas d'URL publique tant qu'il n'est pas défini dans les Réglages.",
+      "setupHint": "Les préversions blue/green sont servies sur <site>-<id>.<ce domaine>. Utilisez un domaine enregistrable distinct de celui du panel (jamais un sous-domaine), pour qu'une préversion ne puisse jamais lire les cookies du panel. Vide : les préversions n'ont pas d'URL publique tant qu'il n'est pas défini dans les Paramètres.",
       "setupTitle": "Domaine de préversion (facultatif)",
       "title": "Préversions",
       "underPanel": "Le domaine de préversion doit être un domaine enregistrable distinct de celui du panel : ni l'hôte du panel, ni l'un de ses parents ou sous-domaines, ni un voisin sur le même domaine (ex. preview.example.com à côté de panel.example.com).",
@@ -629,11 +629,11 @@
       "wildcardHint": "Un seul certificat *.<domaine> par DNS-01 : la zone du domaine de préversion doit être hébergée sur notre serveur DNS. Désactivé : un certificat par hôte de préversion.",
       "sameSite": "Même domaine enregistrable que le panel : autorisé. Une préversion exécute le code d’un client à côté du panel ; le panel n’accepte que son propre cookie de session et absorbe une inondation de cookies, un domaine dédié reste le choix le plus propre."
     },
-    "saveFailed": "Échec de l'enregistrement des réglages",
-    "saved": "Réglages enregistrés",
+    "saveFailed": "Échec de l'enregistrement des paramètres",
+    "saved": "Paramètres enregistrés",
     "usage": {
       "description": "Alertes de quota et durée de conservation des mesures.",
-      "logRetention": "Logs d'accès conservés (jours)",
+      "logRetention": "Journaux d'accès conservés (jours)",
       "resourceRetention": "Échantillons de ressources conservés (jours)",
       "resourceRetentionHint": "Au-delà, seuls les agrégats horaires restent (90 jours).",
       "thresholds": "Seuils d'alerte (% d'un quota)",

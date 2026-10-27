@@ -32,8 +32,10 @@ import { SiteEnvTab } from '@/components/sites/tabs/SiteEnvTab';
 import { SiteCronTab } from '@/components/cron/SiteCronTab';
 import { SiteLogsTab } from '@/components/logs/SiteLogsTab';
 import { SiteMaintenanceTab } from '@/components/maintenance/SiteMaintenanceTab';
+import type { SiteTab } from '@/utils/links';
 
-type Tab = 'overview' | 'releases' | 'runtime' | 'routes' | 'data' | 'env' | 'files' | 'cron' | 'logs' | 'maintenance';
+// The tab ids are the deep-link contract of siteHref() (utils/links.ts).
+type Tab = SiteTab;
 const TAB_IDS: readonly Tab[] = ['overview', 'releases', 'runtime', 'routes', 'data', 'env', 'files', 'cron', 'logs', 'maintenance'];
 
 function isTab(v: string | null): v is Tab {

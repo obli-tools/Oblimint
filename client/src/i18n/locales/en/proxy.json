@@ -273,7 +273,7 @@
       "weakPassword": "The password of {{username}} is too short or too long."
     },
     "expert": {
-      "description": "Raw nginx directives added at the end of the server block. Platform staff only: checked against an allow-list, then tested in isolation; a refused version is quarantined and never breaks the other hosts.",
+      "description": "Raw nginx directives added at the end of the server block. Platform staff only: checked against an allow-list, then tested in isolation; a refused version is never served and never breaks the other hosts.",
       "line": "line {{line}}",
       "lint": "Check",
       "lintFailed": "The check failed",
@@ -317,7 +317,7 @@
       "saved": "Proxy host saved",
       "search": "Search a host or a domain…",
       "target": "Target",
-      "traffic": "Traffic"
+      "traffic": "HTTP requests"
     },
     "open": "Open",
     "pages": {
@@ -476,7 +476,7 @@
       "disabled": "Disabled",
       "pending": "Pending",
       "pendingHint": "Being validated and applied by the edge.",
-      "quarantined": "Quarantined",
+      "quarantined": "Refused",
       "quarantinedHint": "The last version was refused: the previous good version is still served.",
       "retry": "Retry now",
       "stub": "503 page",
@@ -577,7 +577,7 @@
       "offence": "offence {{n}}",
       "retention": "Keep lifted bans (days)",
       "saved": "Ban settings saved",
-      "title": "Web bans and honeypot",
+      "title": "Web bans (edge) and honeypot",
       "urlInvalid": "Invalid URL.",
       "window": "Escalation window (days)"
     },
@@ -650,7 +650,7 @@
     "canaryFailed": "{{count}} failure(s)",
     "canaryOk": "ok ({{count}})",
     "checked": "Checked / applied",
-    "description": "Each site domain, proxy host, redirection, dead host and stream is an independent unit: checked, probed and tested in isolation before going live. A refused unit is quarantined (its last good version is served) without touching the others.",
+    "description": "Each site domain, proxy host, redirection, dead host and stream is an independent unit: checked, probed and tested in isolation before going live. A refused unit keeps its last good version served, without touching the others.",
     "details": "Details",
     "duration": "Duration",
     "edgeStatus": "Web front end",
@@ -688,7 +688,7 @@
     "retried": "{{unit}} validated again",
     "retryFailed": "The new attempt failed",
     "rollback": "Roll back",
-    "rollbackConfirm": "The whole configuration of the edge goes back to the previous good snapshot and nginx is reloaded. The changes made since then are applied again at the next synchronisation (and quarantined if they still fail).",
+    "rollbackConfirm": "The whole configuration of the edge goes back to the previous good snapshot and nginx is reloaded. The changes made since then are applied again at the next synchronisation (and refused if they still fail).",
     "rollbackFailed": "The rollback failed",
     "rollbackTitle": "Roll the edge back",
     "rolledBack": "Edge rolled back",
@@ -728,7 +728,7 @@
     "startedAt": "Started",
     "status": "Status",
     "statusUnavailable": "Status unavailable.",
-    "stub": "Configuration units of the edge: validation status, quarantine, applies and rollback.",
+    "stub": "Configuration units of the edge: validation status, refused units, applies and rollback.",
     "tabs": {
       "applies": "Applies",
       "units": "Units"
@@ -736,7 +736,7 @@
     "total": "{{count}} unit(s)",
     "trigger": "Trigger",
     "unit": "Unit",
-    "unitsCol": "Units (changed / quarantined / total)",
+    "unitsCol": "Units (changed / refused / total)",
     "vhosts": "Server blocks"
   }
 }

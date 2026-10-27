@@ -241,9 +241,8 @@
     "uptime": "Uptime",
     "automation": "Automation",
     "bans": "Bans",
-    "traffic": "Traffic",
+    "traffic": "HTTP requests",
     "edge": "Edge",
-    "apps_section": "Apps & proxy",
     "migration": "CWP migration"
   },
   "nodes": {
@@ -697,6 +696,10 @@
     "tenantRoleLabel": "Workspace role",
     "title": "Users",
     "updated": "User updated",
-    "usernameLabel": "Username"
+    "usernameLabel": "Username",
+    "openClientAccount": "Open the hosting account",
+    "clientNoAccount": "This customer is attached to no hosting account visible in this workspace.",
+    "clientSeveralAccounts": "Member of {{count}} accounts: {{username}} is opened.",
+    "clientAccountFailed": "Failed to find the account of this customer"
   }
 }

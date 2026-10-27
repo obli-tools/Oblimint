@@ -1,7 +1,7 @@
 {
   "apiKeys": {
-    "tab": "Access keys",
-    "title": "Access keys",
+    "tab": "API access keys",
+    "title": "API access keys",
     "create": "New key",
     "createTitle": "New access key",
     "editTitle": "Key {{name}}",

@@ -330,7 +330,7 @@
       "envelopeExceeded": "L'enveloppe de ressources de l'espace serait dépassée.",
       "extensionsRequired": "Un chemin de données typé doit autoriser au moins une extension.",
       "invalidCustomNginx": "Règles nginx personnalisées invalides (16 Kio max, sans caractère NUL).",
-      "invalidPhpSettings": "Réglages PHP hors des plages autorisées (memory_limit est aussi plafonné par la mémoire du plan).",
+      "invalidPhpSettings": "Paramètres PHP hors des plages autorisées (memory_limit est aussi plafonné par la mémoire du plan).",
       "noChanges": "Rien n'a changé dans le dossier de staging depuis la release en ligne : il n'y a rien à publier.",
       "noPreview": "Ce site n'a pas de prévisualisation en cours.",
       "notFound": "Cet élément n'existe plus ou ne vous est pas visible.",
@@ -390,8 +390,8 @@
       "healthcheckInvalid": "Le chemin du contrôle de santé doit commencer par « / ».",
       "readOnly": "Lecture seule",
       "rootPlaceholder": "(racine)",
-      "saved": "Réglages enregistrés",
-      "title": "Réglages"
+      "saved": "Paramètres enregistrés",
+      "title": "Paramètres"
     },
     "loadFailed": "Impossible de charger les sites",
     "loadSiteFailed": "Impossible de charger le site",
@@ -408,7 +408,7 @@
       "memoryLimit": "memory_limit",
       "postBelowUpload": "{{post}} doit être supérieur ou égal à {{upload}}.",
       "postMax": "post_max_size",
-      "title": "Réglages PHP",
+      "title": "Paramètres PHP",
       "uploadMax": "upload_max_filesize"
     },
     "profile": {
@@ -447,7 +447,7 @@
     "subtitle": "Code immuable, publié depuis le dossier de staging SFTP.",
     "tabs": {
       "data": "Chemins de données",
-      "files": "Accès fichiers",
+      "files": "Fichiers",
       "overview": "Vue d'ensemble",
       "releases": "Releases",
       "routes": "Routes & domaines",

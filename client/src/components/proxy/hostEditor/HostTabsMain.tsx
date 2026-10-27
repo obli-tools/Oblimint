@@ -8,6 +8,7 @@ import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { ChipsInput } from '@/components/settings/ChipsInput';
 import { Pill, TlsBadge, inputCls, labelCls, selectCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
+import { accountHref, domainHref } from '@/utils/links';
 import { DomainPicker } from '../DomainPicker';
 import { EMPTY_TARGET, TargetEditor } from '../TargetEditor';
 import { AccountField, FormSection } from '../proxyUi';
@@ -65,6 +66,12 @@ export function GeneralTab({ form, set, readOnly, platformStaff, isNew, accounts
 
 // ── SSL ─────────────────────────────────────────────────────────────────────
 
+/** Where Let's Encrypt is turned on: the drawer of the one domain concerned, else the domains of the account. */
+function tlsOffHref(domains: Array<{ id: number }>, accountId: number | null): string {
+  if (domains.length === 1) return domainHref(domains[0].id, accountId);
+  return accountId != null ? accountHref(accountId, 'domains') : '/domains';
+}
+
 /** `enablesLetsEncrypt`: the save goes through the quick setup, which turns Let's Encrypt on for the domains. */
 export function SslTab({ form, set, refs, readOnly, enablesLetsEncrypt = false }: TabProps & { enablesLetsEncrypt?: boolean }) {
   const { t, i18n } = useTranslation();
@@ -114,7 +121,7 @@ export function SslTab({ form, set, refs, readOnly, enablesLetsEncrypt = false }
               {!enablesLetsEncrypt && selected.some((d) => d.tlsMode === 'none') && (
                 <li className="flex items-start gap-1.5 pt-1 text-[11px] text-amber-400"><AlertTriangle size={12} className="mt-0.5 shrink-0" />
                   <span>{t('proxy.ssl.tlsOffWarning') || 'Let’s Encrypt is off for some of these domains: no certificate will be requested for them and they stay HTTP only. Turn it on in'}{' '}
-                    <Link to="/domains" className="text-accent hover:underline">{t('nav.domains') || 'Domains'}</Link>.</span>
+                    <Link to={tlsOffHref(selected.filter((d) => d.tlsMode === 'none'), form.accountId)} target="_blank" rel="noopener" className="text-accent hover:underline">{t('nav.domains') || 'Domains'}</Link>.</span>
                 </li>
               )}
               <li className="flex items-start gap-1.5 pt-1 text-[11px] text-text-muted"><Info size={12} className="mt-0.5 shrink-0" />{enablesLetsEncrypt

@@ -17,6 +17,7 @@ import { IconButton } from '@/components/common/IconButton';
 import { Modal } from '@/components/common/Modal';
 import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
+import { siteHref } from '@/utils/links';
 import { BasePicker } from '../BasePicker';
 import { isBaseAllowed } from '../allowedBases';
 import { BaseBadge, PhpVersionBadge, Pill, useBaseLabel, type Tone } from '../SiteBadges';
@@ -445,7 +446,7 @@ function SecondaryRuntimes({ site, canManage, allowedBases }: { site: SiteTabPro
       </div>
       <p className="mb-4 text-xs text-text-muted">
         {t('runtime.secondary.explain') || 'A secondary runtime serves a path prefix of the SAME release with another engine (e.g. /legacy/ on PHP 7.4). Attach it to a prefix in the Routes tab or on the Domains page.'}{' '}
-        <Link to="/domains" className="text-accent hover:underline">{t('nav.domains') || 'Domains'}</Link>
+        <Link to={siteHref(site.id, 'routes')} className="text-accent hover:underline">{t('sites.tabs.routes') || 'Routes & domains'}</Link>
       </p>
 
       {loading ? (

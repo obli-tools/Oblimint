@@ -447,7 +447,7 @@
     "subtitle": "Immutable code, published from the SFTP staging folder.",
     "tabs": {
       "data": "Data paths",
-      "files": "File access",
+      "files": "Files",
       "overview": "Overview",
       "releases": "Releases",
       "routes": "Routes & domains",

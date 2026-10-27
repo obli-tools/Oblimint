@@ -3,8 +3,8 @@
     "loadFailed": "Les sauvegardes n'ont pas pu être chargées",
     "title": "Sauvegardes",
     "tab": "Sauvegardes",
-    "saved": "Réglages des sauvegardes enregistrés",
-    "saveFailed": "Les réglages n'ont pas pu être enregistrés",
+    "saved": "Paramètres des sauvegardes enregistrés",
+    "saveFailed": "Les paramètres n'ont pas pu être enregistrés",
     "testOk": "Destination joignable : écriture, lecture et suppression réussies",
     "testFailed": "Le test a échoué",
     "deleteDestination": "Supprimer la destination",
@@ -100,6 +100,7 @@
     "objCode": "Code du site {{site}}",
     "objData": "Données du site {{site}} (envois…)",
     "restoreTitle": "Restaurer la sauvegarde du {{date}}",
-    "restoreConfirm": "Tapez {{word}} pour confirmer"
+    "restoreConfirm": "Tapez {{word}} pour confirmer",
+    "restoreConfirmMessage": "Ces {{count}} élément(s) sont REMPLACÉS par leur état sauvegardé :"
   }
 }

@@ -83,7 +83,7 @@
       "openPma": "Ouvrir phpMyAdmin",
       "openAdminer": "Ouvrir Adminer",
       "failed": "Impossible d'ouvrir l'interface d'administration",
-      "unavailableHint": "L'interface d'administration des bases n'est pas disponible : un administrateur de la plateforme doit définir son nom d'hôte (Réglages → Admin BDD) et la démarrer."
+      "unavailableHint": "L'interface d'administration des bases n'est pas disponible : un administrateur de la plateforme doit définir son nom d'hôte (Paramètres → Admin BDD) et la démarrer."
     },
     "connection": {
       "title": "Connexion",
@@ -210,7 +210,7 @@
       "engineNotAllowed": "Le plan du compte n'autorise pas ce moteur.",
       "instanceNotRunning": "L'instance n'est pas démarrée : démarrez-la d'abord.",
       "instanceBusy": "Une opération est déjà en cours sur cette instance : attendez qu'elle se termine.",
-      "dbAdminUnavailable": "L'interface d'administration des bases n'est pas disponible : un administrateur de la plateforme doit définir son nom d'hôte (Réglages → Admin BDD) et la démarrer.",
+      "dbAdminUnavailable": "L'interface d'administration des bases n'est pas disponible : un administrateur de la plateforme doit définir son nom d'hôte (Paramètres → Admin BDD) et la démarrer.",
       "restoreFailed": "La restauration a échoué : le client SQL a rejeté le fichier.",
       "allocationExhausted": "Plus aucun port externe n'est disponible sur ce serveur.",
       "confirmMismatch": "La confirmation ne correspond pas au nom.",

@@ -4,7 +4,7 @@
     "capabilities": {
       "domains_manage": "Manage domains",
       "domains_manage_hint": "Add domains and edit their routes.",
-      "files_manage": "Manage file access",
+      "files_manage": "Manage files",
       "files_manage_hint": "Open the SFTP access, set its password and SSH keys, and the access allow-list.",
       "releases_approve": "Approve releases",
       "releases_approve_hint": "Approve or reject releases waiting for approval.",
@@ -25,7 +25,7 @@
       "proxy_manage": "Manage proxy hosts",
       "proxy_manage_hint": "Create proxy hosts, redirections, dead hosts, access lists, error pages and manage the bans of the account.",
       "monitoring_manage": "Manage monitoring",
-      "monitoring_manage_hint": "Create uptime monitors, status pages, workflows, SFTP targets and maintenance windows."
+      "monitoring_manage_hint": "Create uptime monitors, status pages, workflows, SFTP targets and update slots."
     },
     "changePlan": "Change plan",
     "changePlanFailed": "Failed to change the plan",
@@ -124,7 +124,7 @@
     "suspendedBanner": "This account is suspended: its sites show a suspension page and SFTP is refused.",
     "tabs": {
       "domains": "Domains",
-      "files": "File access",
+      "files": "Files",
       "overview": "Overview",
       "sites": "Sites",
       "users": "Users"
@@ -320,7 +320,7 @@
       "namePlaceholder": "My laptop",
       "oneLine": "Paste a single key line.",
       "publicKey": "Public key",
-      "title": "SSH keys"
+      "title": "SSH login keys"
     },
     "layout": {
       "dataHint": "The data paths of the site (uploads, cache…): the only folders the application can write to. PHP is never executed there.",

@@ -8,14 +8,17 @@ import { isStepUpHandled } from '@/api/client';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
-import { apiErrorCode, inputCls, labelCls } from '@/components/hosting/hostingUi';
-import { cn } from '@/utils/cn';
+import { useConfirm } from '@/components/common/ConfirmDialog';
+import { apiErrorCode } from '@/components/hosting/hostingUi';
 import { appsErrorMessage } from '../appsErrors';
 
-/** Delete an application: confirm = its name, optional volume removal, forced when proxy hosts target it (409 stackInUse). */
+/**
+ * Delete an application: optional volume removal, forced when proxy hosts
+ * target it (409 stackInUse), then the shared type-to-confirm dialog (its name).
+ */
 export function DeleteStackModal({ stack, onClose, onDeleted }: { stack: AppStackDetail; onClose: () => void; onDeleted: () => void }) {
   const { t } = useTranslation();
-  const [confirmText, setConfirmText] = useState('');
+  const confirm = useConfirm();
   const [removeVolumes, setRemoveVolumes] = useState(false);
   // Never pre-checked: forcing past the 409 stackInUse guard is an explicit choice.
   const [force, setForce] = useState(false);
@@ -24,11 +27,18 @@ export function DeleteStackModal({ stack, onClose, onDeleted }: { stack: AppStac
   const [error, setError] = useState('');
 
   const submit = async () => {
-    if (confirmText !== stack.name) return;
+    if (!(await confirm({
+      title: t('apps.delete.title', { name: stack.displayName, defaultValue: 'Delete {{name}}' }),
+      message: removeVolumes
+        ? t('apps.delete.confirmWithData', { name: stack.name, defaultValue: 'Delete {{name}} and its data (volumes) now? This cannot be undone.' })
+        : t('apps.delete.confirm', { name: stack.name, defaultValue: 'Delete {{name}}? Its volumes are kept 7 days.' }),
+      danger: true,
+      requireText: stack.name,
+    }))) return;
     setSaving(true);
     setError('');
     try {
-      await appsApi.deleteStack(stack.id, { confirm: confirmText, removeVolumes }, force);
+      await appsApi.deleteStack(stack.id, { confirm: stack.name, removeVolumes }, force);
       toast.success(t('apps.delete.done') || 'Application deleted');
       onDeleted();
     } catch (err) {
@@ -51,7 +61,7 @@ export function DeleteStackModal({ stack, onClose, onDeleted }: { stack: AppStac
       footer={
         <>
           <Button size="sm" variant="secondary" onClick={onClose}>{t('common.cancel') || 'Cancel'}</Button>
-          <Button size="sm" variant="danger" loading={saving} disabled={confirmText !== stack.name || (inUse && !force)} onClick={() => { void submit(); }}>{t('common.delete') || 'Delete'}</Button>
+          <Button size="sm" variant="danger" loading={saving} disabled={inUse && !force} onClick={() => { void submit(); }}>{t('common.delete') || 'Delete'}</Button>
         </>
       }
     >
@@ -75,10 +85,6 @@ export function DeleteStackModal({ stack, onClose, onDeleted }: { stack: AppStac
             <ToggleSwitch size="sm" checked={force} onChange={setForce} label={<span className="text-xs">{t('apps.delete.force') || 'Delete anyway (the proxy hosts lose their target)'}</span>} />
           </div>
         )}
-        <div>
-          <label className={labelCls} htmlFor="del-confirm">{t('apps.delete.typeName', { name: stack.name, defaultValue: 'Type "{{name}}" to confirm' })}</label>
-          <input id="del-confirm" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} className={cn(inputCls, 'font-mono')} autoCapitalize="off" autoCorrect="off" spellCheck={false} autoComplete="off" />
-        </div>
         {error && <p className="whitespace-pre-line text-xs text-status-down">{error}</p>}
       </div>
     </Modal>

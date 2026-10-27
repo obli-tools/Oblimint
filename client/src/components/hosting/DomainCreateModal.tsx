@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
 import type { TFunction } from 'i18next';
 import { Flag, Globe } from 'lucide-react';
 import type { DnsZoneKind, Domain, DomainClaim, DomainKind, HostingAccount, Site, TlsMode } from '@oblimint/shared';
@@ -278,5 +279,39 @@ export function DomainCreateModal({ open, onClose, onCreated, onClaimCreated, ac
         {error && <p className="whitespace-pre-line text-xs text-status-down">{error}</p>}
       </div>
     </Modal>
+  );
+}
+
+/**
+ * « Add a domain » text button that opens DomainCreateModal in place, with the
+ * account preset (instead of a bare link to /domains that leaves the form).
+ * Renders nothing when the caller may not add domains to this account.
+ */
+export function AddDomainInline({ accountId, onCreated, label, className }: {
+  accountId: number;
+  onCreated: (d: Domain) => void;
+  label?: string;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  const { can } = useHostingMe();
+  const [open, setOpen] = useState(false);
+  if (!can('domains.manage', accountId)) return null;
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className={cn('text-accent hover:underline', className)}>
+        {label ?? (t('domains.create') || 'Add a domain')}
+      </button>
+      <DomainCreateModal
+        open={open}
+        accountId={accountId}
+        onClose={() => setOpen(false)}
+        onCreated={(d) => {
+          setOpen(false);
+          toast.success(t('domains.created', { name: d.name, defaultValue: 'Domain {{name}} added' }));
+          onCreated(d);
+        }}
+      />
+    </>
   );
 }

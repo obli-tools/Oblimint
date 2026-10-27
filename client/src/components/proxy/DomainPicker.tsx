@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Check, Globe } from 'lucide-react';
 import type { Domain } from '@oblimint/shared';
 import { domainsApi } from '@/api/domains.api';
 import { proxyApi } from '@/api/proxy.api';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { AddDomainInline } from '@/components/hosting/DomainCreateModal';
 import { TlsBadge } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { bindingsOf, domainUnavailable, type DomainBinding, type DomainUnavailable } from './proxyFormat';
@@ -83,7 +83,8 @@ export function DomainPicker({ accountId, value, onChange, self, disabled, onDom
     return (
       <p className="text-xs text-text-muted">
         {t('proxy.domains.none') || 'This account has no domain yet.'}{' '}
-        <Link to="/domains" className="text-accent hover:underline">{t('proxy.domains.addLink') || 'Add a domain'}</Link>
+        {/* Added in place, account preset: the form being edited stays open. */}
+        <AddDomainInline accountId={accountId} label={t('proxy.domains.addLink') || 'Add a domain'} onCreated={(d) => { const next = [...domains, d]; setDomains(next); onDomains?.(next); }} />
       </p>
     );
   }

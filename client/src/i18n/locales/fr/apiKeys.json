@@ -1,7 +1,7 @@
 {
   "apiKeys": {
-    "tab": "Clés d'accès",
-    "title": "Clés d'accès",
+    "tab": "Clés d'accès API",
+    "title": "Clés d'accès API",
     "create": "Nouvelle clé",
     "createTitle": "Nouvelle clé d'accès",
     "editTitle": "Clé {{name}}",
@@ -42,7 +42,7 @@
     "shownOnce": "Cette clé n'est affichée qu'une fois : copiez-la en lieu sûr. Elle ne pourra plus être affichée (révoquez-la et créez-en une autre si elle est perdue).",
     "theKey": "Clé",
     "claudeCode": "Claude Code (MCP)",
-    "docHint": "API : /api/v1 (sites, fichiers, publication, releases, logs). MCP : les mêmes outils pour un agent IA. Chaque action est inscrite au journal d'audit avec le nom de la clé.",
+    "docHint": "API : /api/v1 (sites, fichiers, publication, releases, journaux). MCP : les mêmes outils pour un agent IA. Chaque action est inscrite au journal d'audit avec le nom de la clé.",
     "scopes": {
       "files": {
         "read": {
@@ -62,8 +62,8 @@
       },
       "sites": {
         "manage": {
-          "label": "Réglages des sites",
-          "hint": "Modifier les réglages de ses sites : nom, racine web, mode de publication, PHP, variables d'environnement, chemins de données, runtimes secondaires."
+          "label": "Paramètres des sites",
+          "hint": "Modifier les paramètres de ses sites : nom, racine web, mode de publication, PHP, variables d'environnement, chemins de données, runtimes secondaires."
         },
         "create": {
           "label": "Créer des sites",
@@ -78,8 +78,8 @@
       },
       "logs": {
         "read": {
-          "label": "Lire les logs",
-          "hint": "Logs d'accès, d'erreurs et applicatifs de ses sites."
+          "label": "Lire les journaux",
+          "hint": "Journaux d'accès, d'erreurs et applicatifs de ses sites."
         }
       },
       "cron": {
@@ -144,18 +144,18 @@
     "notHeldHint": "Tu n'as pas ce droit sur le compte : tu ne peux pas l'accorder.",
     "domainsNotHeld": "Tu n'as pas le droit de gérer les domaines du compte : tu ne peux pas donner de domaines à une clé.",
     "presets": {
-      "label": "Préréglage",
+      "label": "Modèle",
       "readonly": {
         "label": "Lecture seule",
         "hint": "Lit les fichiers et les journaux des sites choisis ; n'écrit rien."
       },
       "update": {
         "label": "Mise à jour seulement",
-        "hint": "Pour une CI : écrit les fichiers et les publie. Aucun réglage de site (mode de publication, environnement, chemins de données), ni tâche cron, base de données, route ou sous-domaine. Sur un site en publication automatique, les écritures partent aussitôt en ligne, comme les fichiers écrits dans la zone data."
+        "hint": "Pour une CI : écrit les fichiers et les publie. Aucun paramètre de site (mode de publication, environnement, chemins de données), ni tâche cron, base de données, route ou sous-domaine. Sur un site en publication automatique, les écritures partent aussitôt en ligne, comme les fichiers écrits dans la zone data."
       },
       "site": {
         "label": "Gestion d'un site",
-        "hint": "Tout sur un seul site : fichiers, publication, réglages, journaux, bases de données, tâches cron, routes des domaines qui ne servent que lui. Pas de création de site, pas de sous-domaine, aucun domaine donné."
+        "hint": "Tout sur un seul site : fichiers, publication, paramètres, journaux, bases de données, tâches cron, routes des domaines qui ne servent que lui. Pas de création de site, pas de sous-domaine, aucun domaine donné."
       },
       "multisite": {
         "label": "Gestion multisite",
@@ -163,7 +163,7 @@
       },
       "autonomous": {
         "label": "Création autonome",
-        "hint": "Crée ses propres sites et ne travaille que sur eux (aucun site existant) : fichiers, publication, réglages, journaux, bases de données, sous-domaines rattachés à ses sites. Les domaines donnés ci-dessous ne servent que de parents à ses sous-domaines. Pas de route de chemin (elle routerait aussi les domaines donnés, par-dessus les sites qu'ils servent) ; les tâches cron (elles exécutent du code) sont à cocher à part."
+        "hint": "Crée ses propres sites et ne travaille que sur eux (aucun site existant) : fichiers, publication, paramètres, journaux, bases de données, sous-domaines rattachés à ses sites. Les domaines donnés ci-dessous ne servent que de parents à ses sous-domaines. Pas de route de chemin (elle routerait aussi les domaines donnés, par-dessus les sites qu'ils servent) ; les tâches cron (elles exécutent du code) sont à cocher à part."
       },
       "all": {
         "label": "Tout",

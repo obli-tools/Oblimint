@@ -101,6 +101,7 @@ export function ProxyHostsPanel({ accountId, tenantId, showAccount, showTenant }
       title: t('proxy.hosts.deleteTitle') || 'Delete the proxy host',
       message: t('proxy.hosts.deleteConfirm', { name: h.name, defaultValue: 'Delete {{name}}? Its domains are released (they can be bound again or routed to a site).' }),
       danger: true,
+      requireText: h.name,
     }))) return;
     try {
       await proxyApi.deleteHost(h.id);

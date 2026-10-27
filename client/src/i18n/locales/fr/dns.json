@@ -26,7 +26,7 @@
       "template": "Modèle",
       "system": "Système",
       "manualHint": "Créé à la main : jamais modifié par le panel.",
-      "autoHint": "Généré à partir des domaines et des réglages, réécrit à chaque changement. Le modifier le transforme en enregistrement manuel.",
+      "autoHint": "Généré à partir des domaines et des paramètres, réécrit à chaque changement. Le modifier le transforme en enregistrement manuel.",
       "templateHint": "Copié depuis un modèle DNS, puis géré comme un enregistrement manuel.",
       "systemHint": "Défi de courte durée (certificat, propriété) : géré par le panel, en lecture seule."
     },
@@ -221,7 +221,7 @@
     },
     "reset": {
       "title": "Réinitialiser la zone",
-      "text": "Les enregistrements automatiques sont régénérés à partir des domaines et des réglages.",
+      "text": "Les enregistrements automatiques sont régénérés à partir des domaines et des paramètres.",
       "keepManual": "Conserver mes enregistrements manuels",
       "dropWarning": "Tous les enregistrements manuels sont également supprimés.",
       "confirm": "Réinitialiser",

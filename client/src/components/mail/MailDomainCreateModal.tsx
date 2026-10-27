@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, AtSign } from 'lucide-react';
 import type { Domain, HostingAccount, MailDomainDetail } from '@oblimint/shared';
@@ -8,6 +7,7 @@ import { mailApi } from '@/api/mail.api';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
+import { AddDomainInline } from '@/components/hosting/DomainCreateModal';
 import { inputCls, labelCls, selectCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { mailErrorMessage } from './mailErrors';
@@ -115,7 +115,10 @@ export function MailDomainCreateModal({ open, accounts, defaultAccountId, onClos
           {domains !== null && available.length === 0 && (
             <p className="mt-1.5 text-xs text-text-muted">
               {t('mail.domains.create.noDomain') || 'Every domain of this account already has mail, or it has no domain yet.'}{' '}
-              <Link to="/domains" className="text-accent hover:underline">{t('mail.domains.create.domainsLink') || 'Domains'}</Link>
+              {/* Added in place (account preset), then selected here. */}
+              {accountId != null && (
+                <AddDomainInline accountId={accountId} onCreated={(d) => { setDomains((cur) => [...(cur ?? []), d]); setDomainId(d.id); }} />
+              )}
             </p>
           )}
         </div>

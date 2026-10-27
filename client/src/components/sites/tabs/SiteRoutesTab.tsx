@@ -14,6 +14,8 @@ import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
 import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { useConfirm } from '@/components/common/ConfirmDialog';
+import { AddDomainInline } from '@/components/hosting/DomainCreateModal';
+import { accountHref } from '@/utils/links';
 import { BaseBadge, Pill } from '../SiteBadges';
 import { siteErrorMessage, toastSiteError } from '../siteErrors';
 import { useHostingEvent } from '../useHostingEvent';
@@ -102,7 +104,7 @@ export function SiteRoutesTab({ site, reloadSite }: SiteTabProps) {
           <p>{t('siteRoutes.explain') || 'A route sends a domain + path prefix to this site. When several prefixes match a request, the longest one wins.'}</p>
           <p>
             {t('siteRoutes.basePathNote', { basePath: site.basePath, defaultValue: 'A sub-site must know where it lives: the base path of this site is {{basePath}} (Overview tab).' })}{' '}
-            <Link to="/domains" className="text-accent hover:underline">{t('siteRoutes.manageDomains') || 'Manage domains'}</Link>
+            <Link to={accountHref(site.accountId, 'domains')} className="text-accent hover:underline">{t('siteRoutes.manageDomains') || 'Manage domains'}</Link>
           </p>
         </div>
       </div>
@@ -154,7 +156,16 @@ export function SiteRoutesTab({ site, reloadSite }: SiteTabProps) {
           {domains.length === 0 ? (
             <p className="text-sm text-text-muted">
               {t('siteRoutes.noDomain') || 'This account has no domain yet.'}{' '}
-              <Link to="/domains" className="text-accent hover:underline">{t('siteRoutes.manageDomains') || 'Manage domains'}</Link>
+              {/* Added in place (account preset), then chosen in the route form. */}
+              <AddDomainInline
+                accountId={site.accountId}
+                onCreated={(d) => {
+                  setDomains((cur) => [...cur, d]);
+                  setDomainId(d.id);
+                  // The create form may already route it to this site.
+                  void Promise.all([load(), reloadSite()]);
+                }}
+              />
             </p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] sm:items-end">

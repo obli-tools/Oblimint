@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  Plus, Pencil, Trash2, Key, Building2, Shield, ShieldOff, User as UserIcon, UserX,
+  Plus, Pencil, Trash2, Key, Building2, Shield, ShieldOff, User as UserIcon, UserX, ChevronRight, Loader2,
 } from 'lucide-react';
 import type { PermissionSet, User } from '@oblimint/shared';
 import { usersApi } from '@/api/users.api';
@@ -20,6 +20,7 @@ import { MasterDetail } from '@/components/common/MasterDetail';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { PermissionSetsTab } from '@/components/PermissionSetsTab';
+import { useOpenClientAccount } from '@/components/hosting/useOpenClientAccount';
 
 type Tab = 'users' | 'permissionSets';
 type UserFormMode = 'create' | 'edit' | 'password' | null;
@@ -46,6 +47,7 @@ export function AdminUsersPage() {
   const confirm = useConfirm();
   const { user: currentUser } = useAuthStore();
   const isPlatformAdmin = currentUser?.role === 'admin';
+  const { open: openClientAccount, busyUserId: clientBusyId } = useOpenClientAccount();
 
   // Active tab lives in the URL (?tab=) like every Obliance tabbed page.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -444,9 +446,17 @@ export function AdminUsersPage() {
                                 : (t('users.roleUser') || 'User')}
                             </span>
                             {user.kind === 'client' && (
-                              <span className="rounded-full bg-bg-tertiary px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                              // Customers are managed in their account (Users tab): the badge leads there.
+                              <button
+                                type="button"
+                                onClick={() => { void openClientAccount(user.id); }}
+                                disabled={clientBusyId !== null}
+                                title={t('users.openClientAccount') || 'Open the hosting account'}
+                                className="inline-flex items-center gap-0.5 rounded-full bg-bg-tertiary px-1.5 py-0.5 text-[10px] font-medium text-text-secondary transition-colors hover:bg-accent/10 hover:text-accent disabled:cursor-wait"
+                              >
                                 {t('users.kindClient') || 'Customer'}
-                              </span>
+                                {clientBusyId === user.id ? <Loader2 size={10} className="animate-spin" /> : <ChevronRight size={10} />}
+                              </button>
                             )}
                             {user.foreignSource === 'obligate' && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-[#D3AB52]/15 border border-[#D3AB52]/40 px-1.5 py-0.5 text-[10px] font-medium text-[#D3AB52]">

@@ -7,6 +7,7 @@ import { backupsApi } from '@/api/backups.api';
 import { isStepUpHandled } from '@/api/client';
 import { Button } from '@/components/common/Button';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Modal } from '@/components/common/Modal';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { RunRow } from '@/components/settings/BackupSettingsSections';
@@ -114,11 +115,11 @@ function RestoreModal({ accountId, run, can, fmt, onClose }: {
   accountId: number; run: BackupRun | null; can: { code: boolean; data: boolean; db: boolean }; fmt: (iso: string | null) => string; onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [confirmText, setConfirmText] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Array<BackupRestoreItem & { ok: boolean; error?: string; files?: number }> | null>(null);
-  useEffect(() => { setPicked(new Set()); setConfirmText(''); setResult(null); }, [run]);
+  useEffect(() => { setPicked(new Set()); setResult(null); }, [run]);
   if (!run) return null;
 
   const objects = run.objects.filter((o) => itemOf(o) && can[o.kind as 'code' | 'data' | 'db']);
@@ -126,9 +127,23 @@ function RestoreModal({ accountId, run, can, fmt, onClose }: {
   const word = t('backups.restoreWord') || 'RESTORE';
 
   const submit = async () => {
+    const chosen = objects.filter((o) => picked.has(keyOf(o)));
+    // Shared type-to-confirm dialog: what is replaced, then the word.
+    if (!(await confirm({
+      title: t('backups.restoreTitle', { date: fmt(run.startedAt), defaultValue: 'Restore the backup of {{date}}' }),
+      message: (
+        <>
+          {t('backups.restoreConfirmMessage', { count: chosen.length, defaultValue: 'These {{count}} element(s) are REPLACED by their backed-up state:' })}
+          <ul className="mt-1.5 list-disc pl-5">{chosen.map((o) => <li key={o.key}>{label(o)}</li>)}</ul>
+        </>
+      ),
+      confirmLabel: t('backups.restore') || 'Restore',
+      danger: true,
+      requireText: word,
+    }))) return;
     setBusy(true);
     try {
-      const items = objects.filter((o) => picked.has(keyOf(o))).map((o) => itemOf(o)!);
+      const items = chosen.map((o) => itemOf(o)!);
       const r = await backupsApi.restore(accountId, run.id, items);
       setResult(r.restored);
       const failed = r.restored.filter((x) => !x.ok).length;
@@ -155,7 +170,7 @@ function RestoreModal({ accountId, run, can, fmt, onClose }: {
       title={t('backups.restoreTitle', { date: fmt(run.startedAt), defaultValue: 'Restore the backup of {{date}}' })}
       footer={result ? <Button onClick={onClose}>{t('common.close') || 'Close'}</Button> : <>
         <Button variant="secondary" disabled={busy} onClick={onClose}>{t('common.cancel') || 'Cancel'}</Button>
-        <Button variant="danger" loading={busy} disabled={!picked.size || confirmText.trim().toUpperCase() !== word.toUpperCase()} onClick={() => { void submit(); }}>{t('backups.restore') || 'Restore'}</Button>
+        <Button variant="danger" loading={busy} disabled={!picked.size} onClick={() => { void submit(); }}>{t('backups.restore') || 'Restore'}</Button>
       </>}
     >
       {result ? (
@@ -192,10 +207,6 @@ function RestoreModal({ accountId, run, can, fmt, onClose }: {
               ))}
             </div>
           )}
-          <div>
-            <label htmlFor="bk-confirm" className="mb-1 block text-xs text-text-muted">{t('backups.restoreConfirm', { word, defaultValue: 'Type {{word}} to confirm' })}</label>
-            <input id="bk-confirm" className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 font-mono text-sm text-text-primary" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} autoComplete="off" />
-          </div>
         </div>
       )}
     </Modal>

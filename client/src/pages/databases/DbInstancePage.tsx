@@ -22,6 +22,7 @@ import { DbDatabasesCard } from '@/components/databases/DbDatabasesCard';
 import { DbUsersCard } from '@/components/databases/DbUsersCard';
 import { dbErrorMessage, formatBytes, toastDbError } from '@/components/databases/dbFormat';
 import { apiErrorStatus } from '@/components/dns/dnsErrors';
+import { accountHref } from '@/utils/links';
 
 /** /databases/:id — connection, databases, users and lifecycle of an instance. */
 export function DbInstancePage() {
@@ -182,7 +183,7 @@ export function DbInstancePage() {
     <PageContainer className="flex flex-col gap-5">
       <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
         <IconButton
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/databases'); }}
+          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(accountHref(inst.accountId, 'databases')); }}
           size="lg"
           variant="plain"
           className="mt-0.5 rounded-lg hover:bg-bg-secondary"
@@ -198,7 +199,7 @@ export function DbInstancePage() {
             <TenantBadge tenantId={inst.tenantId} size="md" />
           </div>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
-            <Link to={`/accounts/${inst.accountId}?tab=databases`} className="font-mono hover:text-accent">{inst.accountUsername}</Link>
+            <Link to={accountHref(inst.accountId, 'databases')} className="font-mono hover:text-accent">{inst.accountUsername}</Link>
             <span>·</span>
             <span className="font-mono">{inst.profile} · {formatMb(inst.memoryLimitMb, units)}</span>
             <span>·</span>

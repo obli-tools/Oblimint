@@ -24,6 +24,7 @@ import { ApplyTemplateModal, DelegationCard, ExpectedRecordsCard, ZoneResetModal
 import { RECORD_TYPES, compareRecords, fqdnOf } from '@/components/dns/dnsRecords';
 import { apiErrorStatus, dnsErrorMessage, toastDnsError } from '@/components/dns/dnsErrors';
 import { saveText } from '@/utils/download';
+import { accountHref } from '@/utils/links';
 import { cn } from '@/utils/cn';
 
 type TypeFilter = 'all' | DnsRecordType;
@@ -108,6 +109,8 @@ export function DnsZonePage() {
   const hosted = zone.kind === 'hosted';
   const manage = can('dns.manage', zone.accountId);
   const editable = manage && hosted;
+  // Back without history / after a deletion: the domains of the account, not the global list.
+  const fallbackHref = zone.accountId != null ? accountHref(zone.accountId, 'domains') : '/domains?tab=zones';
   const systemCount = zone.records.filter((r) => r.origin === 'system').length;
 
   const exportZone = async () => {
@@ -165,7 +168,7 @@ export function DnsZonePage() {
     try {
       await dnsApi.deleteZone(zone.id);
       toast.success(t('dns.zone.deleted') || 'Zone deleted');
-      navigate('/domains?tab=zones', { replace: true });
+      navigate(fallbackHref, { replace: true });
     } catch (err) {
       toastDnsError(t, err, t('dns.zone.deleteFailed') || 'Failed to delete the zone');
     }
@@ -201,7 +204,7 @@ export function DnsZonePage() {
       {/* Header */}
       <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
         <IconButton
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/domains?tab=zones'); }}
+          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(fallbackHref); }}
           size="lg"
           variant="plain"
           className="mt-0.5 rounded-lg hover:bg-bg-secondary"

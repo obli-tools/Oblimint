@@ -273,7 +273,7 @@
       "weakPassword": "Le mot de passe de {{username}} est trop court ou trop long."
     },
     "expert": {
-      "description": "Directives nginx brutes ajoutées à la fin du bloc server. Réservé au staff plateforme : vérifié par liste blanche, puis testé isolément ; une version refusée est mise en quarantaine et ne casse jamais les autres hôtes.",
+      "description": "Directives nginx brutes ajoutées à la fin du bloc server. Réservé au staff plateforme : vérifié par liste blanche, puis testé isolément ; une version refusée n’est jamais servie et ne casse jamais les autres hôtes.",
       "line": "ligne {{line}}",
       "lint": "Vérifier",
       "lintFailed": "La vérification a échoué",
@@ -317,7 +317,7 @@
       "saved": "Hôte proxy enregistré",
       "search": "Rechercher un hôte ou un domaine…",
       "target": "Cible",
-      "traffic": "Trafic"
+      "traffic": "Requêtes HTTP"
     },
     "open": "Ouvrir",
     "pages": {
@@ -429,7 +429,7 @@
       "loadFailed": "Impossible de charger les flux",
       "name": "Flux",
       "noPorts": "Aucun port n’est encore approuvé par la plateforme.",
-      "noPortsAdmin": "Aucun port n’est encore approuvé : Réglages → Edge.",
+      "noPortsAdmin": "Aucun port n’est encore approuvé : Paramètres → Edge.",
       "owner": "Propriétaire",
       "platformOwner": "Plateforme (sans compte)",
       "port": "Port entrant",
@@ -476,7 +476,7 @@
       "disabled": "Désactivé",
       "pending": "En attente",
       "pendingHint": "En cours de validation et d’application par l’edge.",
-      "quarantined": "En quarantaine",
+      "quarantined": "Refusée",
       "quarantinedHint": "La dernière version a été refusée : la version saine précédente est toujours servie.",
       "retry": "Réessayer",
       "stub": "Page 503",
@@ -576,8 +576,8 @@
       "obliguardUrlHint": "Vide = découverte via Obligate.",
       "offence": "infraction {{n}}",
       "retention": "Conserver les bannissements levés (jours)",
-      "saved": "Réglages des bannissements enregistrés",
-      "title": "Bannissements web et honeypot",
+      "saved": "Paramètres des bannissements enregistrés",
+      "title": "Bans web (edge) et honeypot",
       "urlInvalid": "URL invalide.",
       "window": "Fenêtre d’escalade (jours)"
     },
@@ -650,7 +650,7 @@
     "canaryFailed": "{{count}} échec(s)",
     "canaryOk": "ok ({{count}})",
     "checked": "Vérifiée / appliquée",
-    "description": "Chaque domaine de site, hôte proxy, redirection, hôte mort et flux est une unité indépendante : vérifiée, sondée et testée isolément avant d’être mise en ligne. Une unité refusée est mise en quarantaine (sa dernière version saine reste servie) sans toucher aux autres.",
+    "description": "Chaque domaine de site, hôte proxy, redirection, hôte mort et flux est une unité indépendante : vérifiée, sondée et testée isolément avant d’être mise en ligne. Une unité refusée garde sa dernière version saine en ligne, sans toucher aux autres.",
     "details": "Détails",
     "duration": "Durée",
     "edgeStatus": "Frontal web",
@@ -688,7 +688,7 @@
     "retried": "{{unit}} revalidée",
     "retryFailed": "La nouvelle tentative a échoué",
     "rollback": "Revenir en arrière",
-    "rollbackConfirm": "Toute la configuration de l’edge revient au dernier instantané sain précédent et nginx est rechargé. Les changements faits depuis sont réappliqués à la prochaine synchronisation (et mis en quarantaine s’ils échouent encore).",
+    "rollbackConfirm": "Toute la configuration de l’edge revient au dernier instantané sain précédent et nginx est rechargé. Les changements faits depuis sont réappliqués à la prochaine synchronisation (et refusés s’ils échouent encore).",
     "rollbackFailed": "Le retour arrière a échoué",
     "rollbackTitle": "Revenir en arrière sur l’edge",
     "rolledBack": "Edge revenu en arrière",
@@ -706,9 +706,9 @@
       "defaultErrorPage": "Page d’erreur par défaut",
       "defaultWakingPage": "Page d’attente par défaut",
       "edgeDescription": "Frontal web partagé : ports de flux, configuration avancée des hôtes proxy, tailles, validation avant mise en ligne.",
-      "edgeSaved": "Réglages de l’edge enregistrés",
+      "edgeSaved": "Paramètres de l’edge enregistrés",
       "edgeTitle": "Edge et hôtes proxy",
-      "loadFailed": "Impossible de charger les réglages",
+      "loadFailed": "Impossible de charger les paramètres",
       "maxBody": "Taille de corps maximale (Mio)",
       "noPort": "Aucun port de flux : les flux sont désactivés.",
       "port": "Port",
@@ -722,13 +722,13 @@
       "reservedHint": "Jamais : {{ports}}.",
       "reservedPorts": "Réservés par la plateforme : {{ports}}.",
       "sample": "Hôtes vérifiés par le canari",
-      "saveFailed": "Impossible d’enregistrer les réglages",
+      "saveFailed": "Impossible d’enregistrer les paramètres",
       "streamPorts": "Ports de flux (TCP / UDP)"
     },
     "startedAt": "Début",
     "status": "État",
     "statusUnavailable": "État indisponible.",
-    "stub": "Unités de configuration de l’edge : état de validation, quarantaine, applications et retour arrière.",
+    "stub": "Unités de configuration de l’edge : état de validation, unités refusées, applications et retour arrière.",
     "tabs": {
       "applies": "Applications",
       "units": "Unités"
@@ -736,7 +736,7 @@
     "total": "{{count}} unité(s)",
     "trigger": "Déclencheur",
     "unit": "Unité",
-    "unitsCol": "Unités (modifiées / en quarantaine / total)",
+    "unitsCol": "Unités (modifiées / refusées / total)",
     "vhosts": "Blocs server"
   }
 }

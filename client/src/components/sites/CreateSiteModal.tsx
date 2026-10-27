@@ -30,7 +30,7 @@ export interface CreateSiteModalProps {
   open: boolean;
   onClose: () => void;
   onCreated: (site: Site) => void;
-  /** Account preselected (e.g. `/sites?create=1&accountId=12` from the account page). */
+  /** Account preselected (the Sites tab of an account, or `/sites?create=1&account=12`). */
   initialAccountId?: number | null;
 }
 

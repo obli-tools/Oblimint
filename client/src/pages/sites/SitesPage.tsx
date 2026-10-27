@@ -38,20 +38,22 @@ export function SitesPage() {
   const [phpRuntime, setPhpRuntime] = useState<SitePhpRuntime[]>([]);
   const masterAdmin = useIsMasterTenant();
 
-  // Contract with ui-hosting: /sites?create=1&accountId=<id> opens the create
-  // modal with the account preselected; the params are cleared afterwards.
+  // URL convention of the global pages: /sites?create=1&account=<id> opens the
+  // create modal with the account preselected (`accountId` is kept as an alias
+  // of `account` for older links); the params are cleared afterwards.
   // Only honoured once /hosting/me is known and for callers who may create.
   const mayCreate = can('sites.manage');
   useEffect(() => {
     if (searchParams.get('create') !== '1') return;
     if (!me) return; // wait for /hosting/me (null before the first fetch)
     if (mayCreate) {
-      const acc = Number(searchParams.get('accountId'));
+      const acc = Number(searchParams.get('account') ?? searchParams.get('accountId'));
       setCreateAccountId(Number.isInteger(acc) && acc > 0 ? acc : null);
       setCreateOpen(true);
     }
     const next = new URLSearchParams(searchParams);
     next.delete('create');
+    next.delete('account');
     next.delete('accountId');
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams, me, mayCreate]);

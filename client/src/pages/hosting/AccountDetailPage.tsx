@@ -42,8 +42,11 @@ import {
   AccountStatusBadge, Card, DiskBar, EmptyState, ForceHttpsIcon, InfoRow, Pill, TlsBadge, headerBtnCls,
   hostingErrorMessage, isStepUpHandled, labelCls, payloadNumber, selectCls, toastHostingError, useHostingEvents,
 } from '@/components/hosting/hostingUi';
+import { CreateSiteModal } from '@/components/sites/CreateSiteModal';
+import { siteHref, type AccountTab } from '@/utils/links';
 
-type Tab = 'overview' | 'sites' | 'domains' | 'databases' | 'usage' | 'security' | 'users' | 'files' | 'keys' | 'backups';
+// The tab ids are the deep-link contract of accountHref() (utils/links.ts).
+type Tab = AccountTab;
 const TABS: Tab[] = ['overview', 'sites', 'domains', 'databases', 'usage', 'security', 'users', 'files', 'keys', 'backups'];
 
 export function AccountDetailPage() {
@@ -177,7 +180,7 @@ export function AccountDetailPage() {
   return (
     <PageContainer className="flex flex-col gap-5">
       <div className="flex items-center gap-3 max-sm:flex-wrap max-sm:gap-y-2">
-        <IconButton label={t('accounts.backToList') || 'Hosting accounts'} icon={<ArrowLeft size={16} />} onClick={() => navigate('/accounts')} />
+        <IconButton label={t('common.back') || 'Back'} icon={<ArrowLeft size={16} />} onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/accounts'); }} />
         <h1 className="min-w-0 truncate font-display text-2xl font-semibold tracking-wide text-text-primary">
           <span className="font-mono">{account.username}</span>
         </h1>
@@ -312,6 +315,7 @@ function SitesTab({ account }: { account: HostingAccount }) {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -329,8 +333,8 @@ function SitesTab({ account }: { account: HostingAccount }) {
   useHostingEvents([HostingSocketEvents.HOSTING_CHANGED], () => { void load(); }, (_e, p) => (p as { entity?: string } | null)?.entity === 'site' && payloadNumber(p, 'accountId') === account.id);
 
   const canCreate = can('sites.manage', account.id) && account.status !== 'suspended' && account.status !== 'deleting';
-  // Contract with ui-sites: SitesPage opens its create modal from these query params.
-  const createSite = () => navigate(`/sites?create=1&accountId=${account.id}`);
+  // Created in place (account preset); then the new site, whose back button returns here.
+  const createSite = () => setCreating(true);
   const statusLabel = (s: SiteStatus) => t(`hostingCommon.siteStatus.${s}`) || s;
 
   return (
@@ -388,6 +392,13 @@ function SitesTab({ account }: { account: HostingAccount }) {
           ]}
         />
       )}
+
+      <CreateSiteModal
+        open={creating}
+        initialAccountId={account.id}
+        onClose={() => setCreating(false)}
+        onCreated={(site) => { setCreating(false); navigate(siteHref(site.id)); }}
+      />
     </div>
   );
 }

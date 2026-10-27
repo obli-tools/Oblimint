@@ -119,7 +119,8 @@ export function MailboxPage() {
     <PageContainer className="flex flex-col gap-5">
       <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
         <IconButton
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/mail?tab=mailboxes'); }}
+          // Fallback: the mail domain of the mailbox, not the global list.
+          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(`/mail/domains/${box.mailDomainId}`); }}
           size="lg"
           variant="plain"
           className="mt-0.5 rounded-lg hover:bg-bg-secondary"

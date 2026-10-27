@@ -23,6 +23,7 @@ import { MailboxesPanel } from '@/components/mail/MailboxesPanel';
 import { MailAliasesPanel } from '@/components/mail/MailAliasesPanel';
 import { apiErrorStatus, mailErrorCode, mailLoadError, toastMailError } from '@/components/mail/mailErrors';
 import { dotsFromRecords, engineHasMailboxes } from '@/components/mail/mailFormat';
+import { domainHref } from '@/utils/links';
 
 type SubTab = 'mailboxes' | 'aliases';
 
@@ -169,7 +170,8 @@ export function MailDomainPage() {
     <PageContainer className="flex flex-col gap-5">
       <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
         <IconButton
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/mail'); }}
+          // Fallback: the mail of its account (no mail tab on the account page yet).
+          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(`/mail?account=${domain.accountId}`); }}
           size="lg"
           variant="plain"
           className="mt-0.5 rounded-lg hover:bg-bg-secondary"
@@ -194,7 +196,7 @@ export function MailDomainPage() {
               <AlertTriangle size={13} className="mt-0.5 shrink-0" />
               <span>
                 {t('mail.domains.pendingHint') || 'The ownership of this domain is not verified yet: the mail domain stays pending (no mail is received or sent) until the verification succeeds on the Domains page.'}{' '}
-                <Link to="/domains" className="font-medium underline">{t('mail.domains.create.domainsLink') || 'Domains'}</Link>
+                <Link to={domainHref(domain.domainId, domain.accountId)} className="font-medium underline">{t('mail.domains.create.domainsLink') || 'Domains'}</Link>
               </span>
             </p>
           )}

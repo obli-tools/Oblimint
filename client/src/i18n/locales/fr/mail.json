@@ -31,7 +31,7 @@
       "engine": "Moteur mail : {{engine}}",
       "webmail": "webmail {{kind}}",
       "external": "DNS seulement : le mail de cette plateforme est hébergé par un fournisseur externe (Google Workspace, Microsoft 365…). Le panel publie les enregistrements MX, SPF, DKIM et DMARC que vous saisissez pour chaque domaine ; les boîtes se gèrent chez votre fournisseur.",
-      "unsupported": "Le moteur mail de cette plateforme ({{engine}}) n'est pas pris en charge par cette version : le mail n'est pas servi. Un administrateur de la plateforme doit choisir un autre moteur (Réglages → Service mail).",
+      "unsupported": "Le moteur mail de cette plateforme ({{engine}}) n'est pas pris en charge par cette version : le mail n'est pas servi. Un administrateur de la plateforme doit choisir un autre moteur (Paramètres → Service mail).",
       "outboundSuspended": "L'envoi de ce compte est suspendu : ses boîtes et ses sites ne peuvent plus envoyer (la réception continue). Voir l'onglet Envoi."
     },
     "limits": {
@@ -81,7 +81,7 @@
     "domain": {
       "loadFailed": "Impossible de charger le domaine mail",
       "notFound": "Ce domaine mail n'existe pas ou ne vous est pas visible.",
-      "settings": "Réglages",
+      "settings": "Paramètres",
       "maxSize": "Taille maximale d'un message",
       "maxSizePlan": "plan : {{size}}",
       "maxSizeHint": "Vide : la valeur du plan ({{size}} Mo). Jamais au-delà des plafonds du plan et de la plateforme.",
@@ -94,7 +94,7 @@
       "deleteNotEmpty": "Supprimez d'abord ses boîtes et ses alias.",
       "deleted": "Mail désactivé sur le domaine",
       "deleteFailed": "Impossible de supprimer le domaine mail",
-      "engineUnknown": "Le moteur mail de la plateforme n'a pas pu être déterminé : les réglages propres au moteur sont masqués.",
+      "engineUnknown": "Le moteur mail de la plateforme n'a pas pu être déterminé : les paramètres propres au moteur sont masqués.",
       "retry": "Réessayer"
     },
     "dns": {
@@ -199,7 +199,7 @@
       "dmarcRua": "Rapports DMARC à",
       "spfExtra": "Mécanismes SPF supplémentaires",
       "spfExtraHint": "Autres serveurs autorisés à envoyer pour ce domaine (service de lettre d'information…) : include:, ip4:, ip6:, a, mx.",
-      "tlsRptHint": "Nécessite une adresse de rapports dans les réglages de la plateforme.",
+      "tlsRptHint": "Nécessite une adresse de rapports dans les paramètres de la plateforme.",
       "autoconfig": "Configuration automatique (Thunderbird, Outlook)",
       "srv": "Enregistrements SRV (IMAP, SMTP, POP)",
       "dkimEd25519": "Clé DKIM Ed25519 (double signature)",
@@ -333,7 +333,7 @@
       "saveFailed": "Impossible d'enregistrer le répondeur"
     },
     "client": {
-      "title": "Réglages du logiciel de messagerie",
+      "title": "Paramètres du logiciel de messagerie",
       "hint": "Thunderbird et Outlook se configurent en général seuls à partir de l'adresse. Sinon, saisissez ces valeurs (mot de passe = celui de la boîte).",
       "username": "Nom d'utilisateur",
       "server": "Serveur",
@@ -347,7 +347,7 @@
     "webmail": {
       "opened": "Le webmail s'ouvre dans un nouvel onglet.",
       "failed": "Impossible d'ouvrir le webmail",
-      "unavailableHint": "Le webmail n'est pas disponible : un administrateur de la plateforme doit le choisir et le déployer (Réglages → Service mail).",
+      "unavailableHint": "Le webmail n'est pas disponible : un administrateur de la plateforme doit le choisir et le déployer (Paramètres → Service mail).",
       "none": "Aucun webmail n'est configuré sur cette plateforme.",
       "disabledBox": "Cette boîte est désactivée.",
       "popupBlocked": "Votre navigateur a bloqué le nouvel onglet.",
@@ -499,7 +499,7 @@
       "outboundPerHour": "Envoi / heure (compte)",
       "siteOutboundPerHour": "Envoi / heure (par site)",
       "maxMessageSize": "Plus gros message",
-      "maxMessageSizeHint": "Plafonné aussi par le réglage de la plateforme.",
+      "maxMessageSizeHint": "Plafonné aussi par le paramètre de la plateforme.",
       "maxMessageSizeRange": "Plus gros message mail : entre {{min}} et {{max}} Mo.",
       "hint": "Le nombre de boîtes se règle avec les limites ci-dessus. Une boîte illimitée est refusée tant que le quota mail total est plafonné."
     },
@@ -564,9 +564,9 @@
   },
   "mailSettings": {
     "title": "Service mail",
-    "loadFailed": "Impossible de charger les réglages mail",
-    "saved": "Réglages mail enregistrés",
-    "saveFailed": "Impossible d'enregistrer les réglages mail",
+    "loadFailed": "Impossible de charger les paramètres mail",
+    "saved": "Paramètres mail enregistrés",
+    "saveFailed": "Impossible d'enregistrer les paramètres mail",
     "range": "Entre {{min}} et {{max}}.",
     "errors": {
       "hostname": "Saisissez un nom d'hôte complet.",
@@ -662,7 +662,7 @@
       "banHint": "Les bannissements ne portent que sur les ports mail (nftables de hostd, avant Docker) ; IPv6 par /64 ; les adresses internes ne sont jamais bannies."
     },
     "bans": {
-      "title": "Bannissements mail",
+      "title": "Bans mail",
       "loadFailed": "Impossible de charger les bannissements",
       "empty": "Aucune adresse n'est bannie.",
       "ip": "Adresse",

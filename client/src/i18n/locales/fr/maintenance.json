@@ -27,7 +27,7 @@
       "patch": "correctif",
       "unknown": "?"
     },
-    "loadFailed": "Échec du chargement des mises à jour applicatives",
+    "loadFailed": "Échec du chargement des mises à jour des sites",
     "name": {
       "composer": "Composer",
       "drupal": "Drupal (drush)",
@@ -107,7 +107,7 @@
       "running": "En cours",
       "succeeded": "Réussie"
     },
-    "title": "Mises à jour applicatives",
+    "title": "Mises à jour des sites (CMS)",
     "update": "Mettre à jour",
     "updateExplain": "La mise à jour s'exécute sur une COPIE de la release en ligne dans un conteneur jetable, est analysée comme une fenêtre, puis publiée par le pipeline normal (contrôle de santé, retour arrière automatique). Les bases sont d'abord sauvegardées par un cliché.",
     "updatesCount": "{{count}} mise(s) à jour",
@@ -125,7 +125,7 @@
       "accountSuspended": "Le compte d'hébergement est suspendu.",
       "adapterBusy": "Une mise à jour applicative est déjà en cours pour ce site.",
       "adapterNotDetected": "Cette application n'a pas été détectée dans la release en ligne.",
-      "adaptersDisabled": "Les mises à jour applicatives sont désactivées sur cette plateforme.",
+      "adaptersDisabled": "Les mises à jour des sites (CMS) sont désactivées sur cette plateforme.",
       "backendUnavailable": "Le moteur de conteneurs, le démon hôte ou le scanner est injoignable. Réessayez dans un instant.",
       "instanceBusy": "Une autre opération lourde est en cours sur cette instance de base de données.",
       "instanceNotRunning": "L'instance de base de données n'est pas démarrée : démarrez-la d'abord.",
@@ -157,22 +157,22 @@
       "windowNotPending": "Cette fenêtre n'attend plus de revue.",
       "windowsDisabled": "Les fenêtres de modification sont désactivées sur cette plateforme.",
       "windowTooLarge": "La fenêtre contient des fichiers trop gros pour être publiés : elle ne peut pas être validée.",
-      "adapterBusyNode": "Trop de mises à jour applicatives sont en cours sur ce serveur : réessayez dans quelques minutes.",
-      "adapterBusyAccount": "Trop de mises à jour applicatives sont en cours pour ce compte d'hébergement : réessayez quand l'une d'elles sera terminée.",
+      "adapterBusyNode": "Trop de mises à jour de sites (CMS) sont en cours sur ce serveur : réessayez dans quelques minutes.",
+      "adapterBusyAccount": "Trop de mises à jour de sites (CMS) sont en cours pour ce compte d'hébergement : réessayez quand l'une d'elles sera terminée.",
       "candidateNotFound": "Le commit candidat de ces changements n'est plus disponible : relancez l'analyse de la fenêtre."
     },
     "loadFailed": "Échec du chargement de l'état de maintenance",
     "notAvailable": "Pas encore disponible sur ce serveur.",
     "notAvailableLong": "Les fenêtres de modification ne sont pas encore disponibles sur ce serveur.",
     "page": {
-      "description": "Fenêtres de modification en attente de revue, mises à jour applicatives et fichiers en quarantaine.",
+      "description": "Fenêtres de modification en attente de revue, mises à jour des sites (CMS) et fichiers en quarantaine.",
       "noReview": "Aucune fenêtre n'attend de revue.",
       "noWindow": "Aucune fenêtre en cours.",
       "tabs": {
-        "quarantine": "Quarantaine",
+        "quarantine": "Quarantaine de fichiers",
         "reviews": "Revues",
-        "updates": "Mises à jour",
-        "windows": "Fenêtres en cours"
+        "updates": "Mises à jour des sites",
+        "windows": "Fenêtres de modification"
       }
     },
     "schedule": {
@@ -207,9 +207,9 @@
         "title": "Pendant qu'une revue est en attente"
       },
       "range": "Entre {{min}} et {{max}}.",
-      "readOnly": "Lecture seule : modifier ces réglages nécessite le droit de gérer le site.",
-      "saved": "Réglages de maintenance enregistrés",
-      "saveFailed": "Échec de l'enregistrement des réglages",
+      "readOnly": "Lecture seule : modifier ces paramètres nécessite le droit de gérer le site.",
+      "saved": "Paramètres de maintenance enregistrés",
+      "saveFailed": "Échec de l'enregistrement des paramètres",
       "schedule": {
         "duration": "Durée (minutes)",
         "enabled": "Fenêtre planifiée",
@@ -235,10 +235,10 @@
       "supervisedOffTitle": "Désactiver le mode supervisé",
       "supervisedOnConfirm": "Une fenêtre permanente est ouverte : l'application peut écrire son code à tout moment, les fichiers exécutables écrits hors fenêtre manuelle sont mis en quarantaine aussitôt, et un résumé des changements est envoyé périodiquement pour revue.",
       "supervisedOnTitle": "Activer le mode supervisé",
-      "title": "Réglages des fenêtres"
+      "title": "Paramètres des fenêtres"
     },
     "tab": {
-      "subtitle": "Fenêtres de modification, mises à jour applicatives et clichés des bases de ce site.",
+      "subtitle": "Fenêtres de modification, mises à jour des sites (CMS) et clichés des bases de ce site.",
       "title": "Maintenance"
     },
     "units": {
@@ -397,7 +397,7 @@
       "clamavHint": "Démon antivirus (≈ 1 Go de RAM avec les signatures complètes).",
       "enabled": "Utiliser le conteneur scanner",
       "enabledHint": "Déployé au démarrage quand activé. Désactivé : heuristiques seules (et jamais de validation automatique quand le scanner est attendu mais injoignable).",
-      "loadFailed": "Échec du chargement des réglages",
+      "loadFailed": "Échec du chargement des paramètres",
       "maintenanceDescription": "Fenêtres de modification, clichés des bases, adaptateurs applicatifs et surveillance des chemins de données typés.",
       "maintenanceTitle": "Fenêtres et mises à jour",
       "maxFileSizeMb": "Plus gros fichier analysé (Mo)",
@@ -408,9 +408,9 @@
       "requireChecksumsHint": "Chaque fichier exécutable modifié doit correspondre à une somme de contrôle officielle (cœur et extensions WordPress) pour être validé sans humain.",
       "reviewScore": "Seuil de revue",
       "reviewScoreHint": "À partir de ce score, un changement nécessite une revue humaine.",
-      "saved": "Réglages enregistrés",
-      "saveFailed": "Échec de l'enregistrement des réglages",
-      "scannerTitle": "Réglages du scanner",
+      "saved": "Paramètres enregistrés",
+      "saveFailed": "Échec de l'enregistrement des paramètres",
+      "scannerTitle": "Paramètres du scanner",
       "signatureChecksPerDay": "Vérifications de signatures par jour",
       "snapshotRetentionDays": "Conservation des clichés (jours)",
       "title": "Scanner et mises à jour",
@@ -452,7 +452,7 @@
     "createdBy": "par {{name}}, {{date}}",
     "createdTitle": "Jeton créé",
     "createFailed": "Échec de la création du jeton",
-    "createTitle": "Nouveau jeton d'API",
+    "createTitle": "Nouveau jeton de fenêtre",
     "curlHint": "Autres appels : GET /api/site-api/window (état), POST /api/site-api/window/extend {\"minutes\": 30}, POST /api/site-api/window/close.",
     "curlTitle": "Ouvrir une fenêtre de 30 minutes depuis un script :",
     "days": "{{count}} jours",
@@ -463,7 +463,7 @@
     "expiry": "Expiration",
     "explain": "Un jeton permet à un script ou à une chaîne d'intégration continue d'ouvrir, prolonger et fermer une fenêtre de ce site (jamais de la valider ni de la rejeter). Jusqu'à 10 jetons par site.",
     "lastUsed": "dernière utilisation : {{date}}",
-    "loadFailed": "Échec du chargement des jetons d'API",
+    "loadFailed": "Échec du chargement des jetons de fenêtre",
     "name": "Nom",
     "namePlaceholder": "deploy-ci",
     "never": "jamais",
@@ -474,7 +474,7 @@
     "revoked": "Jeton révoqué",
     "revokeFailed": "Échec de la révocation du jeton",
     "revokeTitle": "Révoquer le jeton",
-    "title": "Jetons d'API"
+    "title": "Jetons de fenêtre (CI)"
   },
   "snapshots": {
     "col": {

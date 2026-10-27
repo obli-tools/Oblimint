@@ -12,6 +12,7 @@ import { TableScroll } from '@/components/common/TableScroll';
 import { useConfirm, usePrompt } from '@/components/common/ConfirmDialog';
 import { CopyButton, Pill, headerBtnCls, inputCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
+import { domainHref } from '@/utils/links';
 import { formatDateTime, paramEntries } from '../migrationFormat';
 import { CutoverStatePill, LoadState, checkboxCls, loadErrorOf, toastMigrationError, type LoadError } from '../migrationUi';
 
@@ -181,7 +182,7 @@ function CutoverCard({ c, onChanged, picked, onPick }: {
         <CutoverStatePill state={c.state} />
         <Pill tone="muted">{c.mode === 'ns-delegation' ? (t('migration.cutover.modes.nsDelegation') || 'NS delegation') : (t('migration.cutover.modes.records') || 'Records')}</Pill>
         <span className="font-mono text-[11px] text-text-muted">{c.cwpUsername}</span>
-        {c.targetDomainId != null && <Link to="/domains" className="text-[11px] text-accent hover:underline">#{c.targetDomainId}</Link>}
+        {c.targetDomainId != null && <Link to={domainHref(c.targetDomainId)} className="text-[11px] text-accent hover:underline">#{c.targetDomainId}</Link>}
         {c.observedTtl != null && <Pill tone={c.observedTtl <= 300 ? 'green' : 'amber'}>{t('migration.cutover.observedTtl', { ttl: c.observedTtl, defaultValue: 'TTL seen {{ttl}} s' })}</Pill>}
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <Button size="sm" variant="secondary" loading={busy === 'check'} disabled={busy != null} onClick={() => { void act('check', () => migrationApi.checkCutover(c.id)); }}><Search size={13} className="mr-1.5" />{t('migration.cutover.check') || 'Check'}</Button>
