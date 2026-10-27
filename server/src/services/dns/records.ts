@@ -572,6 +572,8 @@ export function autoRecords(ctx: AutoContext, domains: AutoDomain[]): GeneratedR
 
 export interface PlatformHosts {
   panelHostname: string | null;
+  /** app_config client_panel_hostname (client space). */
+  clientPanelHostname?: string | null;
   previewDomain: string | null;
   dbAdminHostname: string | null;
   probeHostV4: string | null;
@@ -580,7 +582,7 @@ export interface PlatformHosts {
 
 /**
  * Auto records of a PLATFORM zone: the platform host names that fall in it
- * (panel, preview domain + its wildcard, DB admin host, IPv4-only / IPv6-only
+ * (panel, client space, preview domain + its wildcard, DB admin host, IPv4-only / IPv6-only
  * probe hosts) point to the node.
  */
 export function platformAutoRecords(ctx: AutoContext, hosts: PlatformHosts): GeneratedRecord[] {
@@ -597,6 +599,7 @@ export function platformAutoRecords(ctx: AutoContext, hosts: PlatformHosts): Gen
   };
   const both = { v4: true, v6: true };
   add(hosts.panelHostname, both);
+  add(hosts.clientPanelHostname ?? null, both);
   if (hosts.previewDomain) {
     add(hosts.previewDomain, both);
     add(`*.${hosts.previewDomain}`, both);

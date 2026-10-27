@@ -105,7 +105,7 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   const created = await apiKeysService.create(fakeReq(), ownerActor, acme, {
     name: 'claude', scopes: ['files.read', 'sites.create', 'releases.publish'], siteScope: 'selected', siteIds: [s1],
   });
-  assert.match(created.key, /^obk_\d+_[A-Za-z0-9_-]{43}$/);
+  assert.match(created.key!, /^obk_\d+_[A-Za-z0-9_-]{43}$/);
   assert.deepEqual(created.siteIds, [s1]);
   assert.deepEqual(created.inactiveScopes, []);
   await assert.rejects(apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'claude', scopes: [], siteScope: 'all' }),
@@ -113,12 +113,12 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   await assert.rejects(apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'bad', scopes: [], siteScope: 'selected', siteIds: [s3] }),
     (e: { statusCode: number }) => e.statusCode === 400, 'a site of another account cannot be selected');
   const stored = await db('api_keys').where({ id: created.id }).first('token_hash');
-  assert.notEqual(stored.token_hash, created.key, 'only the hash is stored');
+  assert.notEqual(stored.token_hash, created.key!, 'only the hash is stored');
 
   // ── verify ──
-  assert.equal(await apiKeysService.verify(`${created.key}x`, '203.0.113.7'), null);
-  assert.equal(await apiKeysService.verify(created.key.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')), '203.0.113.7'), null);
-  const ctx = await apiKeysService.verify(created.key, '203.0.113.7');
+  assert.equal(await apiKeysService.verify(`${created.key!}x`, '203.0.113.7'), null);
+  assert.equal(await apiKeysService.verify(created.key!.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')), '203.0.113.7'), null);
+  const ctx = await apiKeysService.verify(created.key!, '203.0.113.7');
   assert.ok(ctx);
   assert.deepEqual([...ctx.scopes].sort(), ['files.read', 'releases.publish', 'sites.create']);
   assert.deepEqual((await keyApi.listSites(ctx)).map((s) => s.id), [s1], 'only the selected site');
@@ -135,7 +135,7 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   const server = app.listen(0);
   t.after(() => server.close());
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
-  const call = (p: string, init: RequestInit = {}, key = created.key) => fetch(`${base}${p}`, {
+  const call = (p: string, init: RequestInit = {}, key = created.key!) => fetch(`${base}${p}`, {
     ...init, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', ...(init.headers ?? {}) },
   });
   assert.equal((await call('/me', {}, 'obk_1_nope')).status, 401);
@@ -154,7 +154,7 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   const rpc = async (method: string, params: unknown, id: number | null = 1) => {
     const r = await fetch(mcpUrl, {
       method: 'POST',
-      headers: { authorization: `Bearer ${created.key}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      headers: { authorization: `Bearer ${created.key!}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', ...(id === null ? {} : { id }), method, params }),
     });
     return { status: r.status, body: r.status === 202 ? null : await r.json() as { result?: any; error?: { code: number } } }; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -193,7 +193,7 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   const body = await res.json() as { data: { id: number; createdByKey: boolean }; error?: string };
   assert.equal(res.status, 201, body.error);
   assert.equal(body.data.createdByKey, true);
-  const ctx2 = (await apiKeysService.verify(created.key, '203.0.113.7'))!;
+  const ctx2 = (await apiKeysService.verify(created.key!, '203.0.113.7'))!;
   assert.deepEqual((await keyApi.listSites(ctx2)).map((s) => s.id).sort((a, b) => a - b), [s1, body.data.id].sort((a, b) => a - b));
   // Audited under the creator, with the key.
   const audit = await db('audit_logs').where({ action: 'site.create', tenant_id: tA }).orderBy('id', 'desc').first('user_id', 'details');
@@ -203,12 +203,12 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
 
   // ── the creator's rights bound the key ──
   await db('account_users').where({ user_id: owner, account_id: acme }).update({ capabilities: JSON.stringify(['files.manage']) });
-  const reduced = (await apiKeysService.verify(created.key, '203.0.113.7'))!;
+  const reduced = (await apiKeysService.verify(created.key!, '203.0.113.7'))!;
   assert.deepEqual([...reduced.scopes], ['files.read'], 'sites.create and releases.publish dropped');
   const listed = (await apiKeysService.list(await actorForUser(owner, tA), acme).catch(() => null));
   assert.equal(listed, null, 'managing keys needs sites.manage');
   await db('account_users').where({ user_id: owner, account_id: acme }).delete();
-  assert.equal(await apiKeysService.verify(created.key, '203.0.113.7'), null, 'creator removed: the key dies');
+  assert.equal(await apiKeysService.verify(created.key!, '203.0.113.7'), null, 'creator removed: the key dies');
   await db('account_users').insert({ user_id: owner, account_id: acme, capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish']) });
 
   // ── subdomains (scope domains.subdomain) ──
@@ -226,7 +226,7 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   await db('account_users').where({ user_id: owner, account_id: acme }).update({ capabilities: JSON.stringify(['sites.manage', 'files.manage', 'releases.publish', 'domains.manage']) });
   const k3 = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'subs', scopes: ['domains.subdomain'], siteScope: 'selected', siteIds: [s1] });
   void owner3;
-  const c3 = (await apiKeysService.verify(k3.key, '203.0.113.7'))!;
+  const c3 = (await apiKeysService.verify(k3.key!, '203.0.113.7'))!;
   assert.deepEqual((await keyApi.parentDomains(c3)).find((d) => d.name === parentName)?.verified, true);
   const sub = await keyApi.addSubdomain(c3, fakeReq(), s1, `Blog.${parentName}.`);
   assert.equal(sub.name, `blog.${parentName}`);
@@ -242,7 +242,7 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   await assert.rejects(keyApi.removeSubdomain(c3, fakeReq(), parentName), (e: { statusCode: number }) => e.statusCode === 404);
   await keyApi.removeSubdomain(c3, fakeReq(), `blog.${parentName}`);
   assert.equal(await db('domains').where({ id: sub.id }).first('id'), undefined);
-  const keyNoSub = (await apiKeysService.verify(created.key, '203.0.113.7'));
+  const keyNoSub = (await apiKeysService.verify(created.key!, '203.0.113.7'));
   if (keyNoSub) await assert.rejects(keyApi.addSubdomain(keyNoSub, fakeReq(), s1, `y.${parentName}`), (e: { code: string }) => e.code === 'keyScope');
 
   // ── routes (routes.manage), environment, cron, databases: a key limited to site one ──
@@ -253,7 +253,7 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   const k4 = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, {
     name: 'ops', scopes: ['sites.manage', 'routes.manage', 'cron.manage', 'databases.manage'], siteScope: 'selected', siteIds: [s1],
   });
-  const c4 = (await apiKeysService.verify(k4.key, '203.0.113.7'))!;
+  const c4 = (await apiKeysService.verify(k4.key!, '203.0.113.7'))!;
   const pdId = Number(pd.id ?? pd);
   await db('site_routes').insert({ account_id: acme, domain_id: pdId, path_prefix: '/', site_id: s1, runtime_id: null });
   const mixedName = `mixed-${suffix}.test`;
@@ -276,7 +276,7 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   await assert.rejects(keyApi.addRoute(c4, fakeReq(), mixedName, '/y/', s1), (e: { code: string }) => e.code === 'keyDomainNotManageable');
   await assert.rejects(keyApi.addRoute(c4, fakeReq(), parentName, '/z/', s2), (e: { statusCode: number }) => e.statusCode === 404, 'towards a site outside the key');
   await assert.rejects(keyApi.deleteRoute(c4, fakeReq(), mixed.routes.find((r) => r.pathPrefix === '/x/')!.id), (e: { code: string }) => e.code === 'keyDomainNotManageable');
-  const media = await call('/routes', { method: 'POST', body: JSON.stringify({ domain: parentName, pathPrefix: 'media', siteId: s1 }) }, k4.key);
+  const media = await call('/routes', { method: 'POST', body: JSON.stringify({ domain: parentName, pathPrefix: 'media', siteId: s1 }) }, k4.key!);
   assert.equal(media.status, 201);
   const mediaRoute = ((await media.json()) as { data: { id: number; pathPrefix: string } }).data;
   assert.equal(mediaRoute.pathPrefix, '/media/', 'prefix normalized');
@@ -319,19 +319,19 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
     (e: { statusCode: number }) => e.statusCode === 404, 'never a grant on a database it does not reach');
   await assert.rejects(keyDatabases.list(c3), (e: { code: string }) => e.code === 'keyScope');
   const kAll = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'dball', scopes: ['databases.manage'], siteScope: 'all' });
-  const cAll = (await apiKeysService.verify(kAll.key, '203.0.113.7'))!;
+  const cAll = (await apiKeysService.verify(kAll.key!, '203.0.113.7'))!;
   assert.deepEqual((await keyDatabases.get(cAll, instId)).databases.map((d) => [d.name, d.createdByKey]), [['app_main', false], ['other_site', false]], 'a key on every site sees them all');
   await assert.rejects(keyDatabases.deleteDatabase(cAll, fakeReq(), instId, theirDbId, 'other_site'), (e: { code: string }) => e.code === 'keyNotCreator');
 
   // ── allowed addresses, expiry, revocation ──
   const ownerAgain = await actorForUser(owner, tA);
   const k2 = await apiKeysService.create(fakeReq(), ownerAgain, acme, { name: 'ci', scopes: ['files.read'], siteScope: 'all', allowedIps: ['198.51.100.0/24'] });
-  assert.equal(await apiKeysService.verify(k2.key, '203.0.113.7'), null, 'address not allowed');
-  const ok2 = (await apiKeysService.verify(k2.key, '198.51.100.20'))!;
+  assert.equal(await apiKeysService.verify(k2.key!, '203.0.113.7'), null, 'address not allowed');
+  const ok2 = (await apiKeysService.verify(k2.key!, '198.51.100.20'))!;
   assert.deepEqual((await keyApi.listSites(ok2)).map((s) => s.id).includes(s2), true, 'siteScope all');
   assert.equal((await keyApi.listSites(ok2)).some((s) => s.id === s3), false, 'never another account');
   await db('api_keys').where({ id: k2.id }).update({ expires_at: new Date(Date.now() - 1000) });
-  assert.equal(await apiKeysService.verify(k2.key, '198.51.100.20'), null, 'expired');
+  assert.equal(await apiKeysService.verify(k2.key!, '198.51.100.20'), null, 'expired');
   await apiKeysService.remove(fakeReq(), ownerAgain, acme, created.id);
-  assert.equal(await apiKeysService.verify(created.key, '203.0.113.7'), null, 'revoked');
+  assert.equal(await apiKeysService.verify(created.key!, '203.0.113.7'), null, 'revoked');
 });

@@ -24,6 +24,10 @@ export interface SsoConfig {
   obligateEnabled: boolean;
   /** Obligate answered the server's reachability probe. */
   obligateReachable?: boolean;
+  /** Address the page was loaded from: 'client' = client space (no SSO), 'admin' = panel host, null = other (IP…). */
+  panelRole?: 'admin' | 'client' | null;
+  /** https://<client space host>, when one is configured. */
+  clientPanelUrl?: string | null;
 }
 
 /** GET /api/auth/connected-apps — Obli* apps registered on Obligate. */

@@ -266,7 +266,7 @@ test('Obligate URL: https anywhere, plain http only on local / private addresses
 test('GET /admin/config: non-administrators never see the ACME e-mail, mail engine or Obligate URL', () => {
   const cfg = {
     allow_2fa: 'true', force_2fa: 'false', app_name: 'Oblimint', default_language: 'en', obligate_url: 'https://sso.internal',
-    obligate_enabled: 'true', panel_hostname: 'panel.example.com', public_ipv4: '203.0.113.7', public_ipv6: null, nameservers: '["ns1.example.com"]',
+    obligate_enabled: 'true', panel_hostname: 'panel.example.com', client_panel_hostname: null, public_ipv4: '203.0.113.7', public_ipv6: null, nameservers: '["ns1.example.com"]',
     acme_email: 'ops@example.com', mail_engine: 'stalwart',
   };
   const client = appConfigForRole(cfg, false);

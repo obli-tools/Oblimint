@@ -141,6 +141,10 @@ export function createApp(): express.Express {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mailPublic = require('./routes/mailPublic.routes').default;
   app.use(mailPublic);
+  // OAuth of the Claude connectors (services/apiKeys/oauth.ts): metadata under
+  // /.well-known and the token endpoint, no session; before the SPA fallback.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  app.use(require('./services/apiKeys/oauth').oauthPublicRouter);
   // Static files and the SPA shell first: no session, never counted by the
   // API limiter (logged-out visitors sharing an address must not lock each
   // other out of the login page).
@@ -155,7 +159,7 @@ export function createApp(): express.Express {
   // P2 (hostd-firewall): sessions that passed 2FA refresh their auto-2fa grants. Never blocks.
   app.use(accessGrantTouch);
 
-  // MCP server of the API access keys (Bearer obk_…, no session): services/apiKeys/mcp.ts.
+  // MCP server of the API access keys (Bearer obk_… or a connector's OAuth token, no session): services/apiKeys/mcp.ts.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   app.use('/mcp', require('./services/apiKeys/mcp').mcpRouter);
 

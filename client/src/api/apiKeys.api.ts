@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyUpdate, ApiResponse } from '@oblimint/shared';
+import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyUpdate, ApiResponse, OAuthAuthorizeInfo } from '@oblimint/shared';
 
 // /api/accounts/:id/api-keys — access keys of an account (API /api/v1 and MCP server /mcp).
 export const apiKeysApi = {
@@ -20,5 +20,29 @@ export const apiKeysApi = {
 
   async remove(accountId: number, keyId: number): Promise<void> {
     await apiClient.delete(`/accounts/${accountId}/api-keys/${keyId}`);
+  },
+
+  /** Connector: new client secret (shown once). */
+  async rotateSecret(accountId: number, keyId: number): Promise<ApiKeyCreated> {
+    const res = await apiClient.post<ApiResponse<ApiKeyCreated>>(`/accounts/${accountId}/api-keys/${keyId}/rotate-secret`, {});
+    return res.data.data!;
+  },
+
+  /** Connector: ends one authorization (or all of them without `connectionId`). */
+  async disconnect(accountId: number, keyId: number, connectionId?: string): Promise<void> {
+    await apiClient.delete(`/accounts/${accountId}/api-keys/${keyId}/connections${connectionId ? `/${connectionId}` : ''}`);
+  },
+};
+
+// /api/oauth — consent page of the Claude connectors (OAuth authorization).
+export const oauthApi = {
+  async info(query: string): Promise<OAuthAuthorizeInfo> {
+    const res = await apiClient.get<ApiResponse<OAuthAuthorizeInfo>>(`/oauth/authorize${query}`);
+    return res.data.data!;
+  },
+
+  async decide(params: Record<string, string>, approve: boolean): Promise<string> {
+    const res = await apiClient.post<ApiResponse<{ redirectUrl: string }>>('/oauth/authorize', { ...params, approve });
+    return res.data.data!.redirectUrl;
   },
 };

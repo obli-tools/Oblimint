@@ -48,6 +48,10 @@ JSON answers \`{ "success": true, "data": … }\`. On error: \`{ "success": fals
 
 > **Never put the key in a site file, a commit or a log.** Keep it in an environment variable (\`OBK\`). If it leaks, revoke it from the panel (Access keys tab of the account).
 
+### Option C — Claude connector (claude.ai, Claude Desktop, mobile)
+
+For Claude without a terminal: on the Access keys tab, create a **Claude connector** (same rights and sites as a key). In Claude: Settings → Connectors → Add custom connector, URL \`${panel}/mcp\`, then paste the OAuth Client ID and Client Secret under « Advanced settings ». « Connect » opens the panel, where you approve. The tools are those of option A; the connection acts with the rights of whoever approved it and is ended from the Access keys tab.
+
 ---
 
 ## 2. How Oblimint works (important)
@@ -368,6 +372,10 @@ curl -H "Authorization: Bearer $OBK" ${panel}/api/v1/sites
 Réponses JSON \`{ "success": true, "data": … }\`. En cas d'erreur : \`{ "success": false, "error": "…", "code": "…" }\`. Ce guide est aussi servi par \`GET /api/v1/guide?lang=fr\` (Markdown).
 
 > **Ne mets jamais la clé dans un fichier du site, un commit ou un log.** Garde-la dans une variable d'environnement (\`OBK\`). Si elle fuit, révoque-la depuis le panel (onglet Clés d'accès du compte).
+
+### Option C — Connecteur Claude (claude.ai, Claude Desktop, mobile)
+
+Pour Claude sans terminal : dans l'onglet Clés d'accès, crée un **Connecteur Claude** (mêmes droits et sites qu'une clé). Dans Claude : Paramètres → Connecteurs → Ajouter un connecteur personnalisé, URL \`${panel}/mcp\`, puis colle l'OAuth Client ID et le Client Secret dans « Paramètres avancés ». « Connecter » ouvre le panel, où tu approuves. Les outils sont les mêmes que l'option A ; la connexion agit avec les droits de la personne qui l'a approuvée et se coupe depuis l'onglet Clés d'accès.
 
 ---
 

@@ -2,6 +2,7 @@ import { Navigate, Outlet } from 'react-router-dom';
 import { useAuthStore } from '@/store/authStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { pendingOAuthReturn } from '@/utils/oauthReturn';
 
 interface ProtectedRouteProps {
   /** Hard role gate — only users with this exact platform role pass. */
@@ -29,6 +30,10 @@ export function ProtectedRoute({ requiredRole, requiredCapabilities, requireMast
   if (!user) {
     return <Navigate to="/login" replace />;
   }
+
+  // Signed in from the consent page of a Claude connector: back to it.
+  const oauthReturn = pendingOAuthReturn();
+  if (oauthReturn) return <Navigate to={oauthReturn} replace />;
 
   if (requiredRole && user.role !== requiredRole) {
     return <Navigate to="/" replace />;

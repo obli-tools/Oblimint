@@ -155,7 +155,7 @@ export interface DnsContext {
 
 export async function loadContext(): Promise<DnsContext> {
   const all = await platformSettings.get();
-  const rows = await db('app_config').whereIn('key', ['public_ipv4', 'public_ipv6', 'panel_hostname', 'mail_engine']).select('key', 'value') as Array<{ key: string; value: string }>;
+  const rows = await db('app_config').whereIn('key', ['public_ipv4', 'public_ipv6', 'panel_hostname', 'client_panel_hostname', 'mail_engine']).select('key', 'value') as Array<{ key: string; value: string }>;
   const map = new Map(rows.map((r) => [r.key, (r.value ?? '').trim() || null]));
   const panelHostname = map.get('panel_hostname')?.toLowerCase() ?? null;
   return {
@@ -166,6 +166,7 @@ export async function loadContext(): Promise<DnsContext> {
     mailEngine: map.get('mail_engine') ?? null,
     hosts: {
       panelHostname,
+      clientPanelHostname: map.get('client_panel_hostname')?.toLowerCase() ?? null,
       previewDomain: all.preview.previewDomain,
       dbAdminHostname: all.dbAdmin.hostname,
       probeHostV4: all.access.probeHostV4,

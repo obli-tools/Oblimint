@@ -16,6 +16,7 @@ import { domainsService } from '../hosting/domains.service';
 import { sitesService } from '../hosting/sites.service';
 import { releaseForActor } from '../hosting/statusMessage';
 import { appConfigService } from '../appConfig.service';
+import { publicPanelOrigin } from '../panelHosts';
 import { cronService } from '../cron/cron.service';
 import type { DataPathInputBody, DataPathUpdateBody } from '../../validators/hosting.schema';
 import { assertSource, logsService } from '../logs/logs.service';
@@ -149,8 +150,7 @@ export const keyApi = {
 
   /** The API / agent guide (shared/src/apiGuide.ts), with this panel's address in the commands. */
   async guide(req: Request, lang: ApiGuideLang): Promise<string> {
-    const host = (await appConfigService.get('panel_hostname'))?.trim();
-    return apiKeyGuide(lang, host ? `https://${host}` : `${req.protocol}://${req.get('host') ?? 'localhost'}`);
+    return apiKeyGuide(lang, (await publicPanelOrigin(req)) ?? `${req.protocol}://${req.get('host') ?? 'localhost'}`);
   },
 
   listSites: (ctx: ApiKeyContext) => siteViews(ctx, null),

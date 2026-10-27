@@ -74,6 +74,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (status === 403 && axiosErr?.response?.data?.code === 'ssoLoginRequired') {
         throw Object.assign(new Error(serverMessage ?? 'This account signs in through Obligate (SSO).'), { code: 'ssoLoginRequired' });
       }
+      // Client space (client_panel_hostname): this user signs in at another address.
+      if (status === 403 && axiosErr?.response?.data?.code === 'wrongPanelHost') {
+        const data = axiosErr.response.data as { url?: string | null; expected?: 'admin' | 'client' };
+        throw Object.assign(new Error(serverMessage ?? 'Sign in at the other address.'), { code: 'wrongPanelHost', url: data.url ?? null, expected: data.expected ?? null });
+      }
       // The account belongs to no tenant: no session (the login page says why).
       if (status === 403 && axiosErr?.response?.data?.code === 'noTenantAccess') {
         throw Object.assign(new Error(serverMessage ?? 'This account has no access to any tenant.'), { code: 'noTenantAccess' });

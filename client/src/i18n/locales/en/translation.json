@@ -192,7 +192,18 @@
       "verify": "Verify"
     },
     "username": "Username",
-    "usernamePlaceholder": "Enter your username"
+    "usernamePlaceholder": "Enter your username",
+    "clientSpace": {
+      "title": "Client space",
+      "link": "Customer? Sign in on the client space"
+    },
+    "wrongPanelHost": {
+      "client": "Client accounts sign in on the client space.",
+      "admin": "This address is the client space: administrators sign in on the panel.",
+      "goClient": "Go to the client space",
+      "goAdmin": "Go to the panel",
+      "ssoOnClientSpace": "Single sign-on is not available on the client space."
+    }
   },
   "nav": {
     "accounts": "Accounts",

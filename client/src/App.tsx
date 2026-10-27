@@ -61,6 +61,7 @@ import { MigrationDiscoveryPage } from '@/pages/migration/MigrationDiscoveryPage
 import { MigrationPlanPage } from '@/pages/migration/MigrationPlanPage';           // ui-migration
 import { MigrationRunPage } from '@/pages/migration/MigrationRunPage';             // ui-migration
 import { TwoFactorGate } from '@/components/common/TwoFactorGate';
+import { OAuthAuthorizePage } from '@/pages/OAuthAuthorizePage';
 import { ConfirmProvider } from '@/components/common/ConfirmDialog';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import '@/i18n';
@@ -79,6 +80,8 @@ function NormalRoutes() {
       <Route path="/login" element={<LoginPage />} />
       {/* Client space: local accounts never go through Obligate → local form, no SSO redirect. */}
       <Route path="/client" element={<Navigate to="/login?local=1" replace />} />
+      {/* Consent page of the Claude connectors (OAuth): handles the signed-out case itself. */}
+      <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
       {/* P4b: public status pages (no session) */}
       <Route path="/status/:slug" element={<StatusPublicPage />} />
       {/* The wizard is gone once the server runs in normal mode. */}

@@ -265,6 +265,13 @@ test('platform zone auto records', () => {
   }), []);
 });
 
+test('platform zone auto records: client space host name', () => {
+  const r = platformAutoRecords({ ...actx, zone: 'host.net' }, {
+    panelHostname: 'panel.host.net', clientPanelHostname: 'espace.host.net', previewDomain: null, dbAdminHostname: null, probeHostV4: null, probeHostV6: null,
+  });
+  assert.deepEqual(r.map((x) => `${x.name} ${x.type}`), ['panel A', 'panel AAAA', 'espace A', 'espace AAAA']);
+});
+
 test('template placeholders and template validation', () => {
   const vars = { domain: 'example.com', ipv4: '192.0.2.1', ipv6: null, panel: 'panel.host.net' };
   assert.equal(substitute('v=spf1 a:{domain} include:{panel} -all', vars), 'v=spf1 a:example.com include:panel.host.net -all');

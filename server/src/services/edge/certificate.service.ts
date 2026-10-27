@@ -244,7 +244,7 @@ async function auxiliaryTargets(platform: PlatformHosts): Promise<{
       logger.warn({ panel: platform.panel }, "certificate: panel_hostname is a reserved / private name: no Let's Encrypt certificate for the panel");
     }
   }
-  for (const h of [platform.dbAdmin, platform.probeV4, platform.probeV6]) if (h) add([h]);
+  for (const h of [platform.clientPanel, platform.dbAdmin, platform.probeV4, platform.probeV6]) if (h) add([h]);
   // P4 (architect): mail host name + platform webmail host, then the contributed
   // wishes (mail certificates of the mail domains, edge/contributors.ts) — platform rows.
   for (const h of platform.extra ?? []) if (h) add([h]);

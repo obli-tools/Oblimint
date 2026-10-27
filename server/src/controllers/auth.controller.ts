@@ -12,6 +12,7 @@ import { AppError } from '../middleware/errorHandler';
 import { config, SESSION_COOKIE_NAME, sessionCookieSecure } from '../config';
 import { db } from '../db';
 import type { LoginInput } from '../validators/auth.schema';
+import { panelHostRefusal, requestPanelRole } from '../services/panelHosts';
 
 export const authController = {
   /** POST /api/auth/login → { user } or { requires2fa: true, methods: { totp, email:false } }. */
@@ -40,6 +41,31 @@ export const authController = {
           error: 'This account signs in through Obligate (SSO).',
           code: 'ssoLoginRequired',
           ssoLoginRequired: true,
+        });
+        return;
+      }
+
+      // Client space (client_panel_hostname): clients only there, and not on
+      // the panel host. Checked once the password is proven (no enumeration).
+      const { role: hostRole, hosts } = await requestPanelRole(req);
+      const wrongHost = panelHostRefusal(hostRole, user.kind, hosts);
+      if (wrongHost) {
+        const tenant = await tenantService.getFirstTenantForUser(user.id);
+        await auditService.log({
+          tenantId: tenant?.id ?? MASTER_TENANT_ID,
+          userId: user.id,
+          action: 'auth.login_refused',
+          resourceType: 'user',
+          resourcePath: String(user.id),
+          details: { username: user.username, reason: 'wrong_panel_host', via: 'password', host: hostRole },
+          ipAddress: clientIp(req) || undefined,
+        });
+        res.status(403).json({
+          success: false,
+          error: wrongHost.expected === 'client' ? 'Clients sign in on the client space' : 'This address is the client space: sign in on the panel',
+          code: 'wrongPanelHost',
+          url: wrongHost.url,
+          expected: wrongHost.expected,
         });
         return;
       }

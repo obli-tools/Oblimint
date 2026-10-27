@@ -13,7 +13,7 @@ import { logger } from '../utils/logger';
 // reads req.session).
 //   GET  /?nonce=<nonce>   → IpProbeResult (404 probeExpired for an unknown / expired nonce).
 //                            CORS: Access-Control-Allow-Origin = the request Origin when it is the
-//                            panel origin (https://<panel_hostname>, CLIENT_ORIGIN, ALLOWED_ORIGINS),
+//                            panel origin (https://<panel_hostname> / <client_panel_hostname>, CLIENT_ORIGIN, ALLOWED_ORIGINS),
 //                            never credentials. Records the caller address — clientAddress(req),
 //                            resolved by the trusted edge only (S4) — for the session that requested
 //                            the nonce (POST /api/access/probe). 422 probeNotPublic for a relay or a
@@ -32,8 +32,11 @@ export async function allowedProbeOrigins(): Promise<Set<string>> {
   if (panelOrigins && Date.now() - panelOrigins.at < PANEL_ORIGIN_TTL_MS) return panelOrigins.set;
   const set = new Set<string>([config.clientOrigin, ...config.allowedOrigins].filter(Boolean).map(normOrigin));
   try {
-    const host = (await appConfigService.get('panel_hostname'))?.trim();
-    if (host) set.add(normOrigin(`https://${host}`));
+    // The panel and its client space (same panel, second host name).
+    for (const key of ['panel_hostname', 'client_panel_hostname']) {
+      const host = (await appConfigService.get(key))?.trim();
+      if (host) set.add(normOrigin(`https://${host}`));
+    }
   } catch (err) {
     logger.debug({ err }, 'ip-probe: panel_hostname unavailable');
   }

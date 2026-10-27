@@ -126,7 +126,7 @@ export function isPlatformReservedDomain(
   // for everyone (the edge serves them itself, kind preview / dbadmin / probe).
   const preview = hostOf(hosts.previewDomain);
   if (preview && (n === preview || n.endsWith(`.${preview}`))) return true;
-  for (const h of [hosts.dbAdminHostname, ...(hosts.probeHosts ?? [])]) {
+  for (const h of [hosts.clientPanelHostname, hosts.dbAdminHostname, ...(hosts.probeHosts ?? [])]) {
     if (hostOf(h) === n) return true;
   }
   return false;
@@ -138,6 +138,8 @@ export function isPlatformReservedDomain(
  */
 export interface PlatformHostNames {
   panelHostname: string | null;
+  /** app_config client_panel_hostname (client space). */
+  clientPanelHostname?: string | null;
   /** settings preview.previewDomain */
   previewDomain?: string | null;
   /** settings dbAdmin.hostname */
@@ -154,7 +156,7 @@ function hostOf(v: string | null | undefined): string {
 
 /** Every platform host name (panel, dbadmin, probes, preview domain), lower case, no empty entry. */
 export function platformHostList(hosts: PlatformHostNames): string[] {
-  return [hosts.panelHostname, hosts.previewDomain, hosts.dbAdminHostname, ...(hosts.probeHosts ?? []), ...(hosts.extraHosts ?? [])]
+  return [hosts.panelHostname, hosts.clientPanelHostname, hosts.previewDomain, hosts.dbAdminHostname, ...(hosts.probeHosts ?? []), ...(hosts.extraHosts ?? [])]
     .map(hostOf).filter((h) => h.length > 0);
 }
 

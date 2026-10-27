@@ -15,6 +15,7 @@ import { dashboardService } from '../services/dashboard.service';
 import { forgetSessionUser } from '../middleware/sessionUserGuard';
 import { clientAddress } from '../utils/clientIp';
 import { logger } from '../utils/logger';
+import { requestPanelRole, type PanelHostRole } from '../services/panelHosts';
 
 // Ported from Obliance's obligateCallback.routes.ts (same paths, same
 // shapes), without the desktop SSO flow, the SSO re-authentication (lot O),
@@ -222,6 +223,8 @@ async function provisionObligateUser(assertion: ObligateUserAssertion, req: Requ
 /** GET /auth/callback?code=&state= — Obligate's redirect after authentication. */
 router.get('/callback', async (req, res) => {
   try {
+    // Client space: never through Obligate (clients are local accounts).
+    if ((await requestPanelRole(req)).role === 'client') { res.redirect('/login?error=wrong_panel_host'); return; }
     const { code, state } = req.query as { code?: string; state?: string };
     if (!code || typeof code !== 'string') {
       res.status(400).json({ success: false, error: 'Missing code' });
@@ -273,6 +276,7 @@ router.get('/callback', async (req, res) => {
 /** GET /auth/sso-redirect — server-side redirect to Obligate /authorize. */
 router.get('/sso-redirect', async (req, res) => {
   try {
+    if ((await requestPanelRole(req)).role === 'client') { res.redirect('/login'); return; }
     const requestedTenant = req.query.tenant;
     const tenantSlug = typeof requestedTenant === 'string' && /^[a-z0-9-]{1,64}$/.test(requestedTenant) ? requestedTenant : null;
 
@@ -353,12 +357,25 @@ router.get('/dashboard-stats', async (req, res) => {
   } catch { res.json({ success: true, data: null }); }
 });
 
-/** GET /api/auth/sso-config — public, for the login page. */
-router.get('/sso-config', async (_req, res) => {
+/**
+ * GET /api/auth/sso-config — public, for the login page. Also tells which
+ * address this is (panelRole: 'client' = client space, no SSO there) and the
+ * client space address, if any.
+ */
+router.get('/sso-config', async (req, res) => {
+  let host: { panelRole: PanelHostRole | null; clientPanelUrl: string | null } = { panelRole: null, clientPanelUrl: null };
   try {
-    res.json({ success: true, data: await obligateService.getSsoConfig() });
+    const { role, hosts } = await requestPanelRole(req);
+    host = { panelRole: role, clientPanelUrl: hosts.client ? `https://${hosts.client}` : null };
+  } catch { /* host names unreadable: plain panel */ }
+  if (host.panelRole === 'client') {
+    res.json({ success: true, data: { obligateUrl: null, obligateReachable: false, obligateEnabled: false, ...host } });
+    return;
+  }
+  try {
+    res.json({ success: true, data: { ...(await obligateService.getSsoConfig()), ...host } });
   } catch {
-    res.json({ success: true, data: { obligateUrl: null, obligateReachable: false, obligateEnabled: false } });
+    res.json({ success: true, data: { obligateUrl: null, obligateReachable: false, obligateEnabled: false, ...host } });
   }
 });
 

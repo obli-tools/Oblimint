@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, BookOpen, Bot, Check, Copy, Download, KeyRound, Pencil, Plus, Trash2 } from 'lucide-react';
-import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyScope, ApiKeySiteScope, Site } from '@oblimint/shared';
+import { AlertTriangle, BookOpen, Bot, Check, Copy, Download, KeyRound, Pencil, Plug, Plus, RefreshCw, Trash2, Unplug } from 'lucide-react';
+import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, Site } from '@oblimint/shared';
 import { API_KEY_SCOPES, apiKeyGuide, type ApiGuideLang } from '@oblimint/shared';
 import { apiKeysApi } from '@/api/apiKeys.api';
 import { sitesApi } from '@/api/sites.api';
@@ -21,8 +21,11 @@ import { Card, EmptyState, Pill, inputCls, labelCls, toastHostingError } from '.
 // /api/v1, MCP server /mcp). The secret is shown once, with the commands to
 // plug it into Claude Code or curl. The API / agent guide (shared/src/apiGuide.ts)
 // is readable here and downloadable as .md, to hand to an agent.
+// A « Connecteur Claude » (kind 'connector') is the same thing for claude.ai:
+// no bearer secret but an OAuth client id / secret pasted in the custom
+// connector; the user then approves it in the panel (OAuthAuthorizePage).
 
-const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
+export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'files.read': ['Read files', 'List and read the files of its sites (code and data).'],
   'files.write': ['Write files', 'Create, replace, move, delete, extract archives in its sites.'],
   'releases.publish': ['Publish', 'Publish the code as a new release (live) and roll back.'],
@@ -52,7 +55,7 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
   const confirm = useConfirm();
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
-  const [editing, setEditing] = useState<ApiKey | 'new' | null>(null);
+  const [editing, setEditing] = useState<ApiKey | ApiKeyKind | null>(null);
   const [created, setCreated] = useState<ApiKeyCreated | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
 
@@ -87,6 +90,34 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
     } catch (err) { toastHostingError(t, err, t('apiKeys.deleteFailed') || 'The key could not be revoked'); }
   };
 
+  const rotate = async (k: ApiKey) => {
+    if (!(await confirm({
+      title: t('apiKeys.connector.rotateTitle') || 'New client secret',
+      message: t('apiKeys.connector.rotateConfirm', { name: k.name, defaultValue: 'Generate a new client secret for "{{name}}"? The current one stops at once (to paste again in Claude if it reconnects); live connections stay.' }),
+      confirmLabel: t('apiKeys.connector.rotate') || 'New secret',
+    }))) return;
+    try {
+      setCreated(await apiKeysApi.rotateSecret(accountId, k.id));
+      await load();
+    } catch (err) { toastHostingError(t, err, t('apiKeys.saveFailed') || 'The key could not be saved'); }
+  };
+
+  const disconnect = async (k: ApiKey, connectionId?: string) => {
+    if (!(await confirm({
+      title: t('apiKeys.connector.disconnectTitle') || 'Disconnect',
+      message: connectionId
+        ? (t('apiKeys.connector.disconnectOne') || 'End this connection? Claude loses access until it is authorized again.')
+        : t('apiKeys.connector.disconnectAll', { name: k.name, defaultValue: 'End every connection of "{{name}}"? Claude loses access until it is authorized again.' }),
+      danger: true,
+      confirmLabel: t('apiKeys.connector.disconnect') || 'Disconnect',
+    }))) return;
+    try {
+      await apiKeysApi.disconnect(accountId, k.id, connectionId);
+      toast.success(t('apiKeys.connector.disconnected') || 'Disconnected');
+      await load();
+    } catch (err) { toastHostingError(t, err, t('apiKeys.saveFailed') || 'The key could not be saved'); }
+  };
+
   return (
     <div className="space-y-4">
       <Card
@@ -95,12 +126,16 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
         actions={(
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" onClick={() => setGuideOpen(true)}><BookOpen className="mr-1 h-3.5 w-3.5" />{t('apiKeys.guide') || 'API & AI agent guide'}</Button>
-            <Button size="sm" onClick={() => setEditing('new')}><Plus className="mr-1 h-3.5 w-3.5" />{t('apiKeys.create') || 'New key'}</Button>
+            <Button size="sm" variant="secondary" onClick={() => setEditing('connector')}><Plug className="mr-1 h-3.5 w-3.5" />{t('apiKeys.connector.create') || 'Claude connector'}</Button>
+            <Button size="sm" onClick={() => setEditing('key')}><Plus className="mr-1 h-3.5 w-3.5" />{t('apiKeys.create') || 'New key'}</Button>
           </div>
         )}
       >
         <p className="text-xs text-text-muted">
           {t('apiKeys.intro') || 'Give a script, a CI or an AI agent (Claude…) access to this account only, limited to the sites and rights you choose. A key never exceeds your own rights and stops working if you lose them.'}
+        </p>
+        <p className="mt-1.5 text-xs text-text-muted">
+          {t('apiKeys.connector.intro') || 'Claude connector: plug this account into Claude (claude.ai, Claude Desktop, mobile) as a custom connector, without pasting a key — you approve the connection here, and can end it at any time.'}
         </p>
       </Card>
 
@@ -116,7 +151,9 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-medium text-text-primary">{k.name}</span>
-                          <code className="font-mono text-[11px] text-text-muted">{k.prefix}…</code>
+                          {k.kind === 'connector'
+                            ? <><Pill tone="accent"><Plug className="mr-1 inline h-3 w-3" />{t('apiKeys.connector.badge') || 'Claude connector'}</Pill><code className="font-mono text-[11px] text-text-muted">{k.oauthClientId}</code></>
+                            : <code className="font-mono text-[11px] text-text-muted">{k.prefix}…</code>}
                           {expired && <Pill tone="red">{t('apiKeys.expired') || 'expired'}</Pill>}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1">
@@ -144,8 +181,28 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
                           <span>{t('apiKeys.expires') || 'expires'} {k.expiresAt ? fmt(k.expiresAt) : (t('apiKeys.never') || 'never')}</span>
                           {k.allowedIps.length > 0 && <span>IP {k.allowedIps.join(', ')}</span>}
                         </div>
+                        {k.kind === 'connector' && (
+                          <div className="mt-2 space-y-1">
+                            {!k.connections.length
+                              ? <p className="text-[11px] text-text-muted">{t('apiKeys.connector.noConnection') || 'Not connected yet: add it in Claude, then approve it here.'}</p>
+                              : k.connections.map((c) => (
+                                <div key={c.id} className="flex flex-wrap items-center gap-2 text-[11px] text-text-secondary">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-status-up" />
+                                  <span>{t('apiKeys.connector.connectedBy', { name: c.userName ?? '—', defaultValue: 'Connected by {{name}}' })} · {fmt(c.connectedAt)}</span>
+                                  <span className="font-mono text-text-muted">{t('apiKeys.lastUsed') || 'last used'} {fmt(c.lastUsedAt)}</span>
+                                  <button type="button" onClick={() => void disconnect(k, c.id)} className="text-red-400 hover:underline">{t('apiKeys.connector.disconnect') || 'Disconnect'}</button>
+                                </div>
+                              ))}
+                          </div>
+                        )}
                       </div>
                       <div className="flex gap-1">
+                        {k.kind === 'connector' && (
+                          <>
+                            <IconButton label={t('apiKeys.connector.rotate') || 'New secret'} icon={<RefreshCw className="h-4 w-4" />} onClick={() => void rotate(k)} />
+                            {k.connections.length > 0 && <IconButton label={t('apiKeys.connector.disconnectAllShort') || 'Disconnect everywhere'} icon={<Unplug className="h-4 w-4" />} onClick={() => void disconnect(k)} />}
+                          </>
+                        )}
                         <IconButton label={t('common.edit') || 'Edit'} icon={<Pencil className="h-4 w-4" />} onClick={() => setEditing(k)} />
                         <IconButton variant="danger" label={t('apiKeys.revoke') || 'Revoke'} icon={<Trash2 className="h-4 w-4" />} onClick={() => void remove(k)} />
                       </div>
@@ -160,9 +217,10 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
         <KeyModal
           accountId={accountId}
           sites={sites}
-          initial={editing === 'new' ? null : editing}
+          kind={typeof editing === 'string' ? editing : editing.kind}
+          initial={typeof editing === 'string' ? null : editing}
           onClose={() => setEditing(null)}
-          onSaved={(k) => { setEditing(null); if ('key' in k) setCreated(k as ApiKeyCreated); void load(); }}
+          onSaved={(k) => { setEditing(null); if ('clientSecret' in k) setCreated(k as ApiKeyCreated); void load(); }}
         />
       )}
       {created && <CreatedModal created={created} onClose={() => setCreated(null)} onGuide={() => setGuideOpen(true)} />}
@@ -171,9 +229,10 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
   );
 }
 
-function KeyModal({ accountId, sites, initial, onClose, onSaved }: {
+function KeyModal({ accountId, sites, kind, initial, onClose, onSaved }: {
   accountId: number;
   sites: Site[];
+  kind: ApiKeyKind;
   initial: ApiKey | null;
   onClose: () => void;
   onSaved: (k: ApiKey | ApiKeyCreated) => void;
@@ -191,11 +250,12 @@ function KeyModal({ accountId, sites, initial, onClose, onSaved }: {
   const save = async () => {
     const days = EXPIRY_OPTIONS.find((o) => o.id === expiry)?.days;
     const body: ApiKeyCreate = {
+      ...(initial ? {} : { kind }),
       name: name.trim(),
       scopes: API_KEY_SCOPES.filter((s) => scopes.has(s)),
       siteScope,
       siteIds: siteScope === 'selected' ? [...siteIds] : [],
-      allowedIps: ips.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
+      allowedIps: kind === 'connector' ? (initial?.allowedIps ?? []) : ips.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
     };
     if (expiry !== 'keep') body.expiresAt = days ? new Date(Date.now() + days * 86_400_000).toISOString() : null;
     setBusy(true);
@@ -209,18 +269,24 @@ function KeyModal({ accountId, sites, initial, onClose, onSaved }: {
   };
 
   return (
-    <Modal open onClose={onClose} size="lg" icon={<KeyRound className="h-4 w-4 text-accent" />}
-      title={initial ? (t('apiKeys.editTitle', { name: initial.name, defaultValue: 'Key {{name}}' })) : (t('apiKeys.createTitle') || 'New access key')}
+    <Modal open onClose={onClose} size="lg" icon={kind === 'connector' ? <Plug className="h-4 w-4 text-accent" /> : <KeyRound className="h-4 w-4 text-accent" />}
+      title={initial ? (t('apiKeys.editTitle', { name: initial.name, defaultValue: 'Key {{name}}' }))
+        : kind === 'connector' ? (t('apiKeys.connector.createTitle') || 'New Claude connector') : (t('apiKeys.createTitle') || 'New access key')}
       footer={(
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>{t('common.cancel') || 'Cancel'}</Button>
-          <Button loading={busy} disabled={!name.trim()} onClick={() => void save()}>{initial ? (t('common.save') || 'Save') : (t('apiKeys.create') || 'Create the key')}</Button>
+          <Button loading={busy} disabled={!name.trim()} onClick={() => void save()}>{initial ? (t('common.save') || 'Save') : kind === 'connector' ? (t('apiKeys.connector.createButton') || 'Create the connector') : (t('apiKeys.create') || 'Create the key')}</Button>
         </div>
       )}>
       <div className="space-y-4">
+        {kind === 'connector' && !initial && (
+          <p className="rounded-lg bg-accent/5 p-2.5 text-xs text-text-secondary">
+            {t('apiKeys.connector.formHint') || 'Choose what Claude may do. Whoever approves the connection lends their own rights, within these: a member without a right does not pass it on.'}
+          </p>
+        )}
         <div>
           <label className={labelCls}>{t('apiKeys.name') || 'Name'}</label>
-          <input className={inputCls} value={name} maxLength={100} onChange={(e) => setName(e.target.value)} placeholder="Claude — blog" />
+          <input className={inputCls} value={name} maxLength={100} onChange={(e) => setName(e.target.value)} placeholder={kind === 'connector' ? 'Claude' : 'Claude — blog'} />
         </div>
         <div>
           <label className={labelCls}>{t('apiKeys.rights') || 'Rights'}</label>
@@ -257,7 +323,7 @@ function KeyModal({ accountId, sites, initial, onClose, onSaved }: {
             </div>
           )}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className={cn('grid gap-3', kind !== 'connector' && 'sm:grid-cols-2')}>
           <div>
             <label className={labelCls}>{t('apiKeys.expiry') || 'Expiry'}</label>
             <select className={inputCls} value={expiry} onChange={(e) => setExpiry(e.target.value)}>
@@ -269,10 +335,12 @@ function KeyModal({ accountId, sites, initial, onClose, onSaved }: {
               <option value="never">{t('apiKeys.never') || 'never'}</option>
             </select>
           </div>
-          <div>
-            <label className={labelCls}>{t('apiKeys.allowedIps') || 'Allowed addresses (optional)'}</label>
-            <textarea className={cn(inputCls, 'h-[38px] min-h-[38px] resize-y font-mono text-xs')} value={ips} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.0/24" />
-          </div>
+          {kind !== 'connector' && (
+            <div>
+              <label className={labelCls}>{t('apiKeys.allowedIps') || 'Allowed addresses (optional)'}</label>
+              <textarea className={cn(inputCls, 'h-[38px] min-h-[38px] resize-y font-mono text-xs')} value={ips} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.0/24" />
+            </div>
+          )}
         </div>
       </div>
     </Modal>
@@ -295,6 +363,42 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
 }
 
 function CreatedModal({ created, onClose, onGuide }: { created: ApiKeyCreated; onClose: () => void; onGuide: () => void }) {
+  if (created.kind === 'connector') return <ConnectorCreatedModal created={created} onClose={onClose} />;
+  return <KeyCreatedModal created={created} onClose={onClose} onGuide={onGuide} />;
+}
+
+function ConnectorCreatedModal({ created, onClose }: { created: ApiKeyCreated; onClose: () => void }) {
+  const { t } = useTranslation();
+  const steps = [
+    t('apiKeys.connector.step1') || 'In Claude (claude.ai or the Desktop app): Settings → Connectors → Add custom connector.',
+    t('apiKeys.connector.step2') || 'Name: Oblimint. Remote MCP server URL: the address below.',
+    t('apiKeys.connector.step3') || 'Open « Advanced settings » and paste the OAuth Client ID and Client Secret.',
+    t('apiKeys.connector.step4') || 'Click Add, then Connect: this panel opens and asks you to approve. The connector then works in every Claude app of your Claude account.',
+  ];
+  return (
+    <Modal open onClose={onClose} size="lg" closeOnBackdrop={false} icon={<Plug className="h-4 w-4 text-accent" />}
+      title={t('apiKeys.connector.createdTitle', { name: created.name, defaultValue: 'Claude connector "{{name}}"' })}
+      footer={<div className="flex justify-end"><Button onClick={onClose}>{t('apiKeys.savedIt') || 'I saved it'}</Button></div>}>
+      <div className="space-y-4">
+        <p className="flex items-start gap-2 rounded-lg bg-amber-400/10 p-2.5 text-xs text-amber-400">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          {t('apiKeys.connector.secretOnce') || 'The client secret is shown only now. Lost? Generate a new one from the list (the connections in place stay).'}
+        </p>
+        <ol className="list-decimal space-y-1 pl-5 text-xs text-text-secondary">
+          {steps.map((s) => <li key={s}>{s}</li>)}
+        </ol>
+        <CopyBlock label={t('apiKeys.connector.url') || 'Remote MCP server URL'} text={`${panelOrigin()}/mcp`} />
+        <CopyBlock label="OAuth Client ID" text={created.oauthClientId ?? ''} />
+        <CopyBlock label="OAuth Client Secret" text={created.clientSecret ?? ''} />
+        <p className="text-[11px] text-text-muted">
+          {t('apiKeys.connector.teamHint') || 'Claude Team / Enterprise: an owner adds the connector for the organization, then each member connects with their own panel account.'}
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+function KeyCreatedModal({ created, onClose, onGuide }: { created: ApiKeyCreated; onClose: () => void; onGuide: () => void }) {
   const { t } = useTranslation();
   const origin = panelOrigin();
   const mcp = `claude mcp add --transport http oblimint ${origin}/mcp --header "Authorization: Bearer ${created.key}"`;
@@ -308,7 +412,7 @@ function CreatedModal({ created, onClose, onGuide }: { created: ApiKeyCreated; o
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           {t('apiKeys.shownOnce') || 'This key is shown only now: copy it somewhere safe. It cannot be displayed again (revoke it and create another one if lost).'}
         </p>
-        <CopyBlock label={t('apiKeys.theKey') || 'Key'} text={created.key} />
+        <CopyBlock label={t('apiKeys.theKey') || 'Key'} text={created.key ?? ''} />
         <CopyBlock label={t('apiKeys.claudeCode') || 'Claude Code (MCP)'} text={mcp} />
         <CopyBlock label="curl" text={curl} />
         <p className="text-[11px] text-text-muted">

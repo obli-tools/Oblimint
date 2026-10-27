@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { performance } from 'node:perf_hooks';
 import { db } from '../db';
 import { config } from '../config';
+import { panelHostRefusal, requestPanelRole } from '../services/panelHosts';
 
 // P6 (docs/mobile/device-bound-2fa.md §6.0) — the session's user is re-read.
 //
@@ -24,7 +25,10 @@ import { config } from '../config';
 //     one resurrected by a request in flight (migration 001 trigger bumps the
 //     version);
 //   - role changed → session.role follows the database (a demoted admin loses
-//     the admin bypasses on the next request, whatever resurrected the row).
+//     the admin bypasses on the next request, whatever resurrected the row);
+//   - client space (services/panelHosts.ts): a session of a user the host
+//     refuses (a client on the panel host, staff on the client space) is
+//     regenerated the same way — the login page then explains where to go.
 //
 // twoFactorPolicyGuard (same file) enforces force_2fa SERVER-side: a local
 // account without TOTP only reaches the 2FA setup routes until it enrolls.
@@ -40,6 +44,8 @@ type UserState = {
   totp: boolean;
   /** Obligate (SSO) account: its second factor is Obligate's. */
   sso: boolean;
+  /** users.kind: 'client' | 'staff'. */
+  kind: string;
 } | null;
 const cache = new Map<number, { at: number; state: UserState }>();
 
@@ -53,9 +59,9 @@ async function stateOf(userId: number): Promise<UserState> {
   const hit = cache.get(userId);
   if (hit && now - hit.at < TTL_MS) return hit.state;
   const row = await db('users').where({ id: userId })
-    .first('is_active', 'role', 'credential_version', 'totp_enabled', 'totp_secret', 'foreign_source') as {
+    .first('is_active', 'role', 'credential_version', 'totp_enabled', 'totp_secret', 'foreign_source', 'kind') as {
       is_active: boolean; role: string; credential_version: number | string | null; totp_enabled: boolean;
-      totp_secret: string | null; foreign_source: string | null;
+      totp_secret: string | null; foreign_source: string | null; kind: string | null;
     } | undefined;
   const state: UserState = row
     ? {
@@ -64,6 +70,7 @@ async function stateOf(userId: number): Promise<UserState> {
         credVersion: Number(row.credential_version ?? 0),
         totp: !!(row.totp_enabled && row.totp_secret),
         sso: row.foreign_source === 'obligate',
+        kind: row.kind === 'client' ? 'client' : 'staff',
       }
     : null;
   if (cache.size >= MAX_ENTRIES) cache.clear();
@@ -90,6 +97,12 @@ export async function sessionUserGuard(req: Request, _res: Response, next: NextF
   try {
     const state = await stateOf(userId);
     if (!state || !state.active || staleCredentials(req.session, state)) {
+      await new Promise<void>((resolve) => req.session.regenerate(() => resolve()));
+      next();
+      return;
+    }
+    const { role: hostRole, hosts } = await requestPanelRole(req);
+    if (panelHostRefusal(hostRole, state.kind, hosts)) {
       await new Promise<void>((resolve) => req.session.regenerate(() => resolve()));
       next();
       return;

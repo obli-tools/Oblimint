@@ -168,17 +168,21 @@ const validHost = (v: string | null | undefined): string | null => {
 };
 
 /**
- * Platform host names served by the edge: app_config panel_hostname +
+ * Platform host names served by the edge: app_config panel_hostname /
+ * client_panel_hostname +
  * platform settings (preview domain, DB admin host, IP probe hosts). Invalid
  * values read as null. Throws when the settings cannot be read (callers that
  * DELETE things on this basis must not run on a transient error).
  */
 export async function loadPlatformHosts(): Promise<PlatformHosts> {
-  const [panel, settings] = await Promise.all([appConfigService.get('panel_hostname'), platformSettings.get()]);
+  const [panel, clientPanel, settings] = await Promise.all([
+    appConfigService.get('panel_hostname'), appConfigService.get('client_panel_hostname'), platformSettings.get(),
+  ]);
   // P4 (architect): mail host name + platform webmail host are platform names too.
   const extra = [settings.mail.hostname, settings.mail.webmailHostname].map(validHost).filter((h): h is string => !!h);
   return {
     panel: validHost(panel),
+    clientPanel: validHost(clientPanel),
     previewDomain: validHost(settings.preview.previewDomain),
     dbAdmin: validHost(settings.dbAdmin.hostname),
     probeV4: validHost(settings.access.probeHostV4),
@@ -214,7 +218,7 @@ async function loadPlanInput(): Promise<EdgePlanInput> {
   const platform = await loadPlatformHosts();
   // HTTPS on every platform name, even without an ACME certificate (private name, issuance pending / failed).
   const selfSignedNames = await ensureSelfSignedFallback(localPaths.edgeCerts(),
-    [platform.panel, platform.dbAdmin, platform.probeV4, platform.probeV6]);
+    [platform.panel, platform.clientPanel ?? null, platform.dbAdmin, platform.probeV4, platform.probeV6]);
   return { domains, routes, sites, certificates, platform, panelUpstream: panelUpstream(), certFilesExist, selfSignedNames };
 }
 

@@ -192,7 +192,18 @@
       "verify": "Vérifier"
     },
     "username": "Nom d'utilisateur",
-    "usernamePlaceholder": "Saisissez votre nom d'utilisateur"
+    "usernamePlaceholder": "Saisissez votre nom d'utilisateur",
+    "clientSpace": {
+      "title": "Espace client",
+      "link": "Vous êtes client ? Connectez-vous sur l'espace client"
+    },
+    "wrongPanelHost": {
+      "client": "Les comptes clients se connectent sur l'espace client.",
+      "admin": "Cette adresse est l'espace client : les administrateurs se connectent sur le panel.",
+      "goClient": "Aller sur l'espace client",
+      "goAdmin": "Aller sur le panel",
+      "ssoOnClientSpace": "La connexion unique (SSO) n'est pas disponible sur l'espace client."
+    }
   },
   "nav": {
     "accounts": "Comptes",

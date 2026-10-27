@@ -102,6 +102,7 @@ export const appConfigService = {
       obligate_url: obligateUrl,
       obligate_enabled: map.obligate_enabled ?? 'false',
       panel_hostname: map.panel_hostname ?? null,
+      client_panel_hostname: map.client_panel_hostname || null,
       public_ipv4: map.public_ipv4 ?? null,
       public_ipv6: map.public_ipv6 ?? null,
       nameservers: map.nameservers ?? null,

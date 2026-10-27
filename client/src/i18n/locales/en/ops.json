@@ -561,7 +561,9 @@
       "email": "Invalid e-mail address.",
       "hostname": "Enter a fully qualified host name.",
       "range": "Between {{min}} and {{max}}.",
-      "panelHost": "This is the panel host name: choose another one."
+      "panelHost": "This is the panel host name: choose another one.",
+      "invalidClientPanelHostname": "Invalid client space host name.",
+      "clientPanelHostnameSame": "The client space needs its own host name, not the panel one."
     },
     "firewall": {
       "disabled": "inactive",
@@ -642,7 +644,10 @@
       "title": "Panel address",
       "description": "Host name of this panel and public addresses of the node. The edge serves the panel on this name and requests its certificate as soon as the DNS points here.",
       "host": "Panel host name",
-      "hostHint": "Create an A (and AAAA) record of this name to the public IP of the server. Customers sign in at https://<name>/client.",
+      "hostHint": "Create an A (and AAAA) record of this name to the public IP of the server. Customers sign in at https://<name>/client, or on the client space address below.",
+      "clientHost": "Client space host name (optional)",
+      "clientHostHint": "Same panel on a second name, with its own certificate: customers sign in there directly, without SSO. Once set, clients can no longer sign in on the panel host and administrators cannot sign in on the client space. Create an A (and AAAA) record of this name to the server. Empty = none.",
+      "clientHostSame": "The client space needs its own name, not the panel one.",
       "ipv4": "Public IPv4",
       "ipv6": "Public IPv6 (optional)",
       "acmeEmail": "Let's Encrypt e-mail"

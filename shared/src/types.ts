@@ -269,6 +269,8 @@ export interface AppConfigData {
   obligate_url: string | null;
   obligate_enabled: string;
   panel_hostname: string | null;
+  /** Optional client space host name (same panel, clients only, own certificate). */
+  client_panel_hostname: string | null;
   public_ipv4: string | null;
   public_ipv6: string | null;
   /** JSON array of nameserver host names, as a string. */

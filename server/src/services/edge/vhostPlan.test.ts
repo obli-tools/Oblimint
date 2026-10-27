@@ -284,3 +284,28 @@ test('platform vhosts without an ACME certificate: HTTPS with the self-signed fa
   assert.equal(acme.selfSigned, undefined);
   assert.match(renderVhost(acme), /Strict-Transport-Security/);
 });
+
+test('client space: second panel vhost on client_panel_hostname, own certificate, reserved for tenants', () => {
+  const certs = [...input().certificates, { domain_id: null, site_id: null, primary_name: 'espace.host.example', status: 'valid' as const }];
+  const vhosts = planVhosts(input({ platform: { ...PLATFORM, clientPanel: 'Espace.Host.Example.' }, certificates: certs }));
+  assert.deepEqual(vhosts.slice(0, 3).map((v) => v.id), ['panel', 'panel-client', 'dbadmin']);
+  const client = vhosts.find((v) => v.id === 'panel-client')!;
+  const panel = vhosts.find((v) => v.id === 'panel')!;
+  assert.equal(client.kind, 'panel');
+  assert.deepEqual(client.serverNames, ['espace.host.example']);
+  assert.deepEqual(client.locations, panel.locations);
+  assert.equal(client.clientMaxBodyMb, panel.clientMaxBodyMb);
+  assert.ok(client.tls && client.forceHttps);
+  // Same cookie filter as the panel (only the session cookie reaches it).
+  const conf = renderVhost(client);
+  assert.ok(conf.includes('large_client_header_buffers'));
+  assert.equal(conf.includes('proxy_set_header Cookie'), renderVhost(panel).includes('proxy_set_header Cookie'));
+  // Not set → no vhost; a tenant domain can never claim it.
+  assert.ok(!planVhosts(input()).some((v) => v.id === 'panel-client'));
+  assert.ok(isReservedPlatformName('espace.host.example', { ...PLATFORM, clientPanel: 'espace.host.example' }));
+  const taken = planVhosts(input({
+    platform: { ...PLATFORM, clientPanel: 'example.com' },
+  }));
+  assert.deepEqual(taken.find((v) => v.id === 'panel-client')?.serverNames, ['example.com']);
+  assert.ok(!(taken.find((v) => v.id === 'd-1')?.serverNames ?? []).includes('example.com'));
+});

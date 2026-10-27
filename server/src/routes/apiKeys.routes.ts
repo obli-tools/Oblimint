@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { API_KEY_SCOPES, type ApiKeyScope } from '@oblimint/shared';
+import { AppError } from '../middleware/errorHandler';
 import { apiKeysService } from '../services/apiKeys/apiKeys.service';
 import { parseBody } from '../services/docker/parseBody';
 import { idParam, resolveActor } from '../services/hosting/access';
@@ -12,6 +13,8 @@ import { idParam, resolveActor } from '../services/hosting/access';
 //   POST   /:id/api-keys            ApiKeyCreate → ApiKeyCreated (201; the key is shown ONCE)
 //   PUT    /:id/api-keys/:keyId     ApiKeyUpdate → ApiKey
 //   DELETE /:id/api-keys/:keyId     → { deleted: true } (the key stops working at once)
+//   POST   /:id/api-keys/:keyId/rotate-secret      connector → ApiKeyCreated (new client secret, shown ONCE)
+//   DELETE /:id/api-keys/:keyId/connections[/:family] connector → { revoked } (the client must authorize again)
 
 const router = Router();
 
@@ -25,6 +28,7 @@ const fields = {
   expiresAt: z.string().datetime({ offset: true }).nullable(),
 };
 const createSchema = z.object({
+  kind: z.enum(['key', 'connector']).optional(),
   name: fields.name, scopes: fields.scopes, siteScope: fields.siteScope,
   siteIds: fields.siteIds.optional(), allowedIps: fields.allowedIps.optional(), expiresAt: fields.expiresAt.optional(),
 }).strict();
@@ -55,6 +59,22 @@ router.put('/:id/api-keys/:keyId', async (req, res, next) => {
     const actor = await resolveActor(req);
     const body = parseBody(updateSchema, req.body);
     res.json({ success: true, data: await apiKeysService.update(req, actor, idParam(req), idParam(req, 'keyId'), body) });
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/api-keys/:keyId/rotate-secret', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, data: await apiKeysService.rotateSecret(req, await resolveActor(req), idParam(req), idParam(req, 'keyId')) });
+  } catch (err) { next(err); }
+});
+
+router.delete(['/:id/api-keys/:keyId/connections', '/:id/api-keys/:keyId/connections/:family'], async (req, res, next) => {
+  try {
+    const family = typeof req.params.family === 'string' ? req.params.family : null;
+    if (family !== null && !/^[0-9a-f-]{36}$/.test(family)) throw new AppError(400, 'Invalid connection id', 'validation');
+    const revoked = await apiKeysService.disconnect(req, await resolveActor(req), idParam(req), idParam(req, 'keyId'), family);
+    res.json({ success: true, data: { revoked } });
   } catch (err) { next(err); }
 });
 

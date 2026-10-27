@@ -30,6 +30,7 @@ import v1Routes from './v1.routes';                      // API access keys (/ap
 import siteEnvRoutes from './siteEnv.routes';            // site environment variables
 import { accountBackupsRouter, systemBackupsRouter } from './backups.routes'; // external backups
 import apiKeysRoutes from './apiKeys.routes';            // API access keys (management)
+import { oauthApiRouter } from '../services/apiKeys/oauth'; // Claude connectors: OAuth consent
 import infraRoutes from './infra.routes';                // orchestration
 import platformUpdatesRoutes from './platformUpdates.routes';  // platform updates (Nodes > Updates)
 import edgeRoutes from './edge.routes';                  // edge
@@ -111,6 +112,7 @@ router.use('/system', systemRoutes);               // platform admin, no tenant 
 // ── Authenticated, no tenant required ───────────────────────────────────────
 router.use('/profile/2fa', twoFactorRoutes);       // before /profile (auth handled inside)
 router.use('/profile', requireAuth, profileRoutes);
+router.use('/oauth', requireAuth, oauthApiRouter);  // consent page of the Claude connectors (services/apiKeys/oauth.ts)
 router.use('/tenants', requireAuth, tenantRoutes);
 router.use('/tenant', requireAuth, tenantRoutes);
 

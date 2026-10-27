@@ -446,16 +446,18 @@ function UsageSection({ value, save }: { value: HostingSettings['usage']; save: 
 // ── Panel address (identity from the setup wizard, editable afterwards) ─────
 function PanelAddressSection({ panel, onSaved }: { panel: AppConfigData | null; onSaved: (p: AppConfigData) => void }) {
   const { t } = useTranslation();
-  const initial = { host: panel?.panel_hostname ?? '', v4: panel?.public_ipv4 ?? '', v6: panel?.public_ipv6 ?? '', email: panel?.acme_email ?? '' };
+  const initial = { host: panel?.panel_hostname ?? '', clientHost: panel?.client_panel_hostname ?? '', v4: panel?.public_ipv4 ?? '', v6: panel?.public_ipv6 ?? '', email: panel?.acme_email ?? '' };
   const [draft, setDraft, dirty, reset] = useDraft(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const host = normalizeHostname(draft.host);
-  const invalid = !isHostname(host) || (!!draft.v4.trim() && !isIp(draft.v4.trim())) || (!!draft.v6.trim() && !isIp(draft.v6.trim())) || !isEmail(draft.email.trim());
+  const clientHost = normalizeHostname(draft.clientHost);
+  const clientInvalid = !!clientHost && (!isHostname(clientHost) || clientHost === host);
+  const invalid = !isHostname(host) || clientInvalid || (!!draft.v4.trim() && !isIp(draft.v4.trim())) || (!!draft.v6.trim() && !isIp(draft.v6.trim())) || !isEmail(draft.email.trim());
   const onSave = async () => {
     setSaving(true); setError(null);
     try {
-      const res = await apiClient.put<{ success: boolean; data: AppConfigData }>('/admin/config/platform', { panelHostname: host, publicIpv4: draft.v4.trim(), publicIpv6: draft.v6.trim(), acmeEmail: draft.email.trim() });
+      const res = await apiClient.put<{ success: boolean; data: AppConfigData }>('/admin/config/platform', { panelHostname: host, clientPanelHostname: clientHost, publicIpv4: draft.v4.trim(), publicIpv6: draft.v6.trim(), acmeEmail: draft.email.trim() });
       onSaved(res.data.data);
       toast.success(t('platformSettings.saved') || 'Settings saved');
     } catch (err) {
@@ -475,6 +477,15 @@ function PanelAddressSection({ panel, onSaved }: { panel: AppConfigData | null; 
     >
       <Field label={t('platformSettings.panel.host') || 'Panel host name'} htmlFor="panel-host" hint={t('platformSettings.panel.hostHint') || 'Create an A (and AAAA) record of this name to the public IP of the server. Customers sign in at https://<name>/client.'}>
         <input id="panel-host" value={draft.host} onChange={set('host')} placeholder="panel.example.com" autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
+      </Field>
+      <Field
+        label={t('platformSettings.panel.clientHost') || 'Client space host name (optional)'}
+        htmlFor="panel-client-host"
+        hint={clientHost && clientHost === host
+          ? (t('platformSettings.panel.clientHostSame') || 'The client space needs its own name, not the panel one.')
+          : (t('platformSettings.panel.clientHostHint') || 'Same panel on a second name, with its own certificate: customers sign in there directly, without SSO. Once set, clients can no longer sign in on the panel host and administrators cannot sign in on the client space. Create an A (and AAAA) record of this name to the server. Empty = none.')}
+      >
+        <input id="panel-client-host" value={draft.clientHost} onChange={set('clientHost')} placeholder="espace.example.com" autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono', clientInvalid && 'border-status-down')} />
       </Field>
       <Field label={t('platformSettings.panel.ipv4') || 'Public IPv4'} htmlFor="panel-v4">
         <input id="panel-v4" value={draft.v4} onChange={set('v4')} placeholder="203.0.113.10" className={cn(settingsInputCls, 'font-mono')} />

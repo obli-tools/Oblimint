@@ -106,6 +106,52 @@
     "guideIntro": "Donnez ce fichier à votre agent IA (ex. « lis ce guide, puis travaille sur mon site ») : il explique comment se connecter avec une clé, développer dans le staging, publier à la fin et revenir en arrière. Un agent connecté en MCP peut aussi le lire avec l'outil get_guide.",
     "guideDownload": "Télécharger (.md)",
     "guideDownloadFailed": "Le téléchargement a échoué",
-    "guideHint": "Lire le guide, ou le télécharger pour le donner à votre agent"
+    "guideHint": "Lire le guide, ou le télécharger pour le donner à votre agent",
+    "connector": {
+      "create": "Connecteur Claude",
+      "createTitle": "Nouveau connecteur Claude",
+      "createButton": "Créer le connecteur",
+      "badge": "Connecteur Claude",
+      "intro": "Connecteur Claude : branche ce compte dans Claude (claude.ai, Claude Desktop, mobile) comme connecteur personnalisé, sans coller de clé. Tu approuves la connexion ici et tu peux y mettre fin à tout moment.",
+      "formHint": "Choisis ce que Claude pourra faire. Celui qui approuve la connexion prête ses propres droits, dans cette limite : un membre qui n'a pas un droit ne le transmet pas.",
+      "createdTitle": "Connecteur Claude « {{name}} »",
+      "secretOnce": "Le secret client n'est affiché qu'une fois. Perdu ? Génère-en un nouveau depuis la liste (les connexions en place restent).",
+      "step1": "Dans Claude (claude.ai ou l'appli Desktop) : Paramètres → Connecteurs → Ajouter un connecteur personnalisé.",
+      "step2": "Nom : Oblimint. URL du serveur MCP distant : l'adresse ci-dessous.",
+      "step3": "Ouvre « Paramètres avancés » et colle l'OAuth Client ID et l'OAuth Client Secret.",
+      "step4": "Clique sur Ajouter, puis sur Connecter : ce panel s'ouvre et te demande d'approuver. Le connecteur marche ensuite dans toutes les applis Claude de ton compte Claude.",
+      "url": "URL du serveur MCP distant",
+      "teamHint": "Claude Team / Enterprise : un propriétaire ajoute le connecteur pour l'organisation, puis chaque membre se connecte avec son propre compte du panel.",
+      "noConnection": "Pas encore connecté : ajoute-le dans Claude, puis approuve-le ici.",
+      "connectedBy": "Connecté par {{name}}",
+      "rotate": "Nouveau secret",
+      "rotateTitle": "Nouveau secret client",
+      "rotateConfirm": "Générer un nouveau secret client pour « {{name}} » ? L'actuel cesse aussitôt de marcher (à recoller dans Claude s'il se reconnecte) ; les connexions en cours restent.",
+      "disconnect": "Déconnecter",
+      "disconnectTitle": "Déconnecter",
+      "disconnectAllShort": "Déconnecter partout",
+      "disconnectOne": "Mettre fin à cette connexion ? Claude perd l'accès jusqu'à une nouvelle autorisation.",
+      "disconnectAll": "Mettre fin à toutes les connexions de « {{name}} » ? Claude perd l'accès jusqu'à une nouvelle autorisation.",
+      "disconnected": "Déconnecté"
+    }
+  },
+  "oauth": {
+    "title": "Connecter une application",
+    "request": "{{client}} demande à utiliser le connecteur « {{name}} » sur le compte d'hébergement {{account}}.",
+    "rights": "Il pourra",
+    "readOnly": "Seulement consulter les sites (ton compte n'a aucun des droits du connecteur).",
+    "missing": "Laissés de côté, ton compte ne les a pas : {{list}}.",
+    "sites": "Sur",
+    "asUser": "Il agit en ton nom ({{user}}), jamais au-delà de tes propres droits ; chaque action est au journal d'audit. Tu peux y mettre fin à tout moment depuis Clés d'accès.",
+    "deny": "Refuser",
+    "approve": "Autoriser",
+    "loadFailed": "La demande d'autorisation n'a pas pu être lue.",
+    "failed": "L'autorisation a échoué.",
+    "errors": {
+      "oauthInvalidClient": "Ce connecteur n'existe plus, a expiré ou son compte est en cours de suppression.",
+      "oauthInvalidRedirect": "Cette application n'a pas le droit d'utiliser un connecteur Oblimint.",
+      "oauthInvalidRequest": "La demande d'autorisation est incomplète (PKCE manquant).",
+      "oauthNoAccess": "Ton compte n'a pas accès au compte d'hébergement de ce connecteur : connecte-toi avec un compte qui y a accès."
+    }
   }
 }

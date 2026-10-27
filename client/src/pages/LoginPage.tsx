@@ -31,6 +31,8 @@ export function LoginPage() {
     // SSO worked but the linked local account is disabled here.
     : errorParam === 'account_disabled' ? t('login.accountDisabled', 'Your account is disabled on this server. Ask an administrator to re-enable it.')
     : errorParam === 'no_tenant' ? noTenantMessage
+    // SSO attempted on the client space (clients are local accounts).
+    : errorParam === 'wrong_panel_host' ? t('login.wrongPanelHost.ssoOnClientSpace', 'Single sign-on is not available on the client space.')
     : errorParam ? t('login.ssoFailed', 'SSO authentication failed. Please try local login.')
     : '',
   );
@@ -38,6 +40,12 @@ export function LoginPage() {
   // The account is an SSO (Obligate) account without a local TOTP: it can
   // only sign in through Obligate (server answer 403 ssoLoginRequired).
   const [ssoLoginRequired, setSsoLoginRequired] = useState(false);
+  // Client space (server setting client_panel_hostname): which address this
+  // is, and where a refused user must sign in instead (403 wrongPanelHost).
+  const [panelRole, setPanelRole] = useState<'admin' | 'client' | null>(null);
+  const [clientPanelUrl, setClientPanelUrl] = useState<string | null>(null);
+  const [wrongHost, setWrongHost] = useState<{ url: string | null; expected: 'admin' | 'client' | null } | null>(null);
+  const isClientSpace = panelRole === 'client';
 
   // If we arrived here with ?error=…, don't auto-redirect to Obligate again.
   const ssoFailed = !!errorParam;
@@ -80,6 +88,9 @@ export function LoginPage() {
   };
 
   useEffect(() => {
+    authApi.ssoConfig()
+      .then((cfg) => { setPanelRole(cfg.panelRole ?? null); setClientPanelUrl(cfg.clientPanelUrl ?? null); })
+      .catch(() => {});
     fetch('/health')
       .then((r) => r.json())
       .then((data: { version?: string }) => setServerVersion(data.version ?? null))
@@ -111,6 +122,7 @@ export function LoginPage() {
     e.preventDefault();
     setError('');
     setSsoLoginRequired(false);
+    setWrongHost(null);
     try {
       const result = await login(username, password);
       if (result.requires2fa) {
@@ -124,6 +136,12 @@ export function LoginPage() {
       if (code === 'ssoLoginRequired') {
         setPassword('');
         setSsoLoginRequired(true);
+        return;
+      }
+      if (code === 'wrongPanelHost') {
+        const e = err as { url?: string | null; expected?: 'admin' | 'client' | null };
+        setPassword('');
+        setWrongHost({ url: e.url ?? null, expected: e.expected ?? null });
         return;
       }
       if (code === 'noTenantAccess') {
@@ -185,10 +203,11 @@ export function LoginPage() {
       <div className="w-full max-w-sm space-y-8 relative">
         <div className="text-center">
           <Logo className="mx-auto h-24 w-24 mb-3" />
+          {isClientSpace && <h1 className="text-lg font-semibold text-text-primary">{t('login.clientSpace.title', 'Client space')}</h1>}
           <p className="mt-2 text-sm text-text-secondary">{t('login.title', 'Sign in to your account')}</p>
         </div>
 
-        {ssoState === 'unavailable' && (
+        {ssoState === 'unavailable' && !isClientSpace && (
           <div className="bg-status-pending-bg border border-status-pending/30 rounded-lg p-3 text-sm text-status-pending">
             {t('login.ssoUnavailable', 'Centralized login (Obligate) is unavailable. Using local authentication.')}
           </div>
@@ -225,6 +244,22 @@ export function LoginPage() {
                 <p className="text-sm text-status-down">{error}</p>
               </div>
             )}
+            {wrongHost && (
+              <div role="alert" className="rounded-md bg-status-pending-bg border border-status-pending/30 p-3 space-y-3">
+                <p className="text-sm text-text-primary">
+                  {wrongHost.expected === 'client'
+                    ? t('login.wrongPanelHost.client', 'Client accounts sign in on the client space.')
+                    : t('login.wrongPanelHost.admin', 'This address is the client space: administrators sign in on the panel.')}
+                </p>
+                {wrongHost.url && (
+                  <Button type="button" variant="secondary" className="w-full" onClick={() => { window.location.href = `${wrongHost.url}/login`; }}>
+                    {wrongHost.expected === 'client'
+                      ? t('login.wrongPanelHost.goClient', 'Go to the client space')
+                      : t('login.wrongPanelHost.goAdmin', 'Go to the panel')}
+                  </Button>
+                )}
+              </div>
+            )}
             {ssoLoginRequired && (
               <div role="alert" className="rounded-md bg-status-pending-bg border border-status-pending/30 p-3 space-y-3">
                 <p className="text-sm font-medium text-text-primary">
@@ -241,6 +276,13 @@ export function LoginPage() {
             <Button type="submit" className="w-full" loading={isLoading}>
               {t('login.signIn', 'Sign in')}
             </Button>
+            {panelRole === 'admin' && clientPanelUrl && (
+              <p className="text-center text-xs text-text-muted">
+                <a href={`${clientPanelUrl}/login`} className="hover:text-text-primary underline-offset-2 hover:underline">
+                  {t('login.clientSpace.link', 'Customer? Sign in on the client space')}
+                </a>
+              </p>
+            )}
           </form>
         ) : (
           <form onSubmit={handleMfaSubmit} className="space-y-5 rounded-lg bg-bg-secondary p-6">

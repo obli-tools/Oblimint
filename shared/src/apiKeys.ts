@@ -47,9 +47,19 @@ export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
 
 export type ApiKeySiteScope = 'all' | 'selected';
 
+/**
+ * 'key': a bearer secret (obk_…) for scripts, CI and agents that take a header.
+ * 'connector': an OAuth client (« Connecteur Claude ») for claude.ai custom
+ * connectors and other OAuth MCP clients — no secret travels in a header the
+ * user pastes; the panel user who authorizes it in the panel lends his rights
+ * (within the connector's scopes and sites) and can disconnect it at any time.
+ */
+export type ApiKeyKind = 'key' | 'connector';
+
 export interface ApiKey {
   id: number;
   accountId: number;
+  kind: ApiKeyKind;
   name: string;
   /** First characters of the key (obk_<id>_xxxxxx), to recognize it. */
   prefix: string;
@@ -68,9 +78,23 @@ export interface ApiKey {
   expiresAt: string | null;
   /** Scopes the creator no longer holds (inactive until restored). */
   inactiveScopes: ApiKeyScope[];
+  /** Connector: OAuth client id (public). */
+  oauthClientId: string | null;
+  /** Connector: live authorizations (unexpired refresh tokens), with who authorized them. */
+  connections: ApiKeyConnection[];
+}
+
+export interface ApiKeyConnection {
+  /** Authorization family (disconnect target). */
+  id: string;
+  userName: string | null;
+  connectedAt: string;
+  lastUsedAt: string | null;
 }
 
 export interface ApiKeyCreate {
+  /** Default 'key'. Fixed at creation. */
+  kind?: ApiKeyKind;
   name: string;
   scopes: ApiKeyScope[];
   siteScope: ApiKeySiteScope;
@@ -80,11 +104,46 @@ export interface ApiKeyCreate {
   expiresAt?: string | null;
 }
 
-export type ApiKeyUpdate = Partial<ApiKeyCreate>;
+export type ApiKeyUpdate = Partial<Omit<ApiKeyCreate, 'kind'>>;
 
-/** Answer of a creation: the secret is shown once. */
+/** Answer of a creation (or a connector secret rotation): the secret is shown once. */
 export interface ApiKeyCreated extends ApiKey {
-  key: string;
+  /** Bearer key (kind 'key'); null for a connector. */
+  key: string | null;
+  /** OAuth client secret (kind 'connector'); null for a key. */
+  clientSecret: string | null;
+}
+
+/**
+ * OAuth redirect URIs a connector accepts: Claude's callbacks (claude.ai /
+ * claude.com, personal and organization connectors) and loopback addresses of
+ * native clients (Claude Desktop / Code, RFC 8252: any port, any path).
+ */
+export const CONNECTOR_REDIRECT_URIS: readonly string[] = [
+  'https://claude.ai/api/mcp/auth_callback',
+  'https://claude.com/api/mcp/auth_callback',
+  'https://claude.ai/api/organizations/custom-connectors/oauth/callback',
+  'https://claude.com/api/organizations/custom-connectors/oauth/callback',
+];
+
+export function connectorRedirectAllowed(uri: string): boolean {
+  if (CONNECTOR_REDIRECT_URIS.includes(uri)) return true;
+  let u: URL;
+  try { u = new URL(uri); } catch { return false; }
+  return u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]') && !u.username && !u.password && !u.hash;
+}
+
+/** GET /api/oauth/authorize: what the consent page shows. */
+export interface OAuthAuthorizeInfo {
+  connector: { id: number; name: string; accountId: number; accountUsername: string; primaryDomain: string | null };
+  /** Host of the client that will receive the authorization (claude.ai, localhost…). */
+  redirectHost: string;
+  /** The connector's scopes the signed-in user holds (what the client will get). */
+  scopes: ApiKeyScope[];
+  /** Scopes of the connector the user does not hold (left out). */
+  missingScopes: ApiKeyScope[];
+  siteScope: ApiKeySiteScope;
+  sites: Array<{ id: number; name: string }>;
 }
 
 export const MAX_API_KEYS_PER_ACCOUNT = 20;

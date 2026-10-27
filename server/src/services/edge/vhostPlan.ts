@@ -8,6 +8,7 @@ import { edgeCertPaths, isValidServerName, selfSignedCertPaths, type EdgeLocatio
 // (edge.service reads the rows, this file decides). OWNED BY MODULE
 // `edge-ownership` (P2). One vhost per:
 //   panel         the panel itself on panel_hostname (when set);
+//   panel-client  the same panel on client_panel_hostname (client space, when set);
 //   dbadmin       settings dbAdmin.hostname → /phpmyadmin/ and /adminer/;
 //   probe-v4/v6   settings access.probeHostV4 / V6 → only `= /api/ip-probe`;
 //   p-<siteId>    blue/green preview of a site (preview_base set), served on
@@ -92,6 +93,8 @@ export interface PlanCertificate {
 /** Platform host names of the edge (app_config panel_hostname + platform settings). */
 export interface PlatformHosts {
   panel: string | null;
+  /** app_config client_panel_hostname: the client space (same panel, second name, own certificate). */
+  clientPanel?: string | null;
   /** settings preview.previewDomain */
   previewDomain: string | null;
   /** settings dbAdmin.hostname */
@@ -112,6 +115,7 @@ export function platformHostNames(p: Partial<PlatformHosts> | string | null | un
   if (typeof p !== 'object' || p === null) return { panelHostname: p ?? null };
   return {
     panelHostname: p.panel ?? null,
+    clientPanelHostname: p.clientPanel ?? null,
     previewDomain: p.previewDomain ?? null,
     dbAdminHostname: p.dbAdmin ?? null,
     probeHosts: [p.probeV4 ?? null, p.probeV6 ?? null],
@@ -229,6 +233,11 @@ export function planVhosts(input: EdgePlanInput): EdgeVhost[] {
 
   // ── panel ──
   platformVhost('panel', 'panel', panelHost, [
+    { pathPrefix: '/', upstream: input.panelUpstream, kind: 'panel', siteId: null },
+    { pathPrefix: '/socket.io/', upstream: input.panelUpstream, kind: 'panel', siteId: null },
+  ], {}, PANEL_CLIENT_MAX_BODY_MB);
+  // ── client space: the same panel on its own name (own certificate, same cookie filter) ──
+  platformVhost('panel-client', 'panel', host(input.platform.clientPanel), [
     { pathPrefix: '/', upstream: input.panelUpstream, kind: 'panel', siteId: null },
     { pathPrefix: '/socket.io/', upstream: input.panelUpstream, kind: 'panel', siteId: null },
   ], {}, PANEL_CLIENT_MAX_BODY_MB);

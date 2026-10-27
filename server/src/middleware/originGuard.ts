@@ -121,9 +121,20 @@ export const PUBLIC_XML_PATHS: readonly RegExp[] = [
   /^\/autodiscover\/autodiscover\.xml$/i,
 ];
 
+/**
+ * OAuth token endpoint of the connectors (services/apiKeys/oauth.ts): called
+ * server to server by the OAuth client (claude.ai) with a form body
+ * (RFC 6749). No cookie is read there — the client secret, the single-use
+ * code and PKCE authenticate it: exempt from the origin and JSON rules.
+ */
+export const PUBLIC_OAUTH_PATHS: readonly RegExp[] = [
+  /^\/oauth\/token$/,
+];
+
 export function originGuard(req: Request, res: Response, next: NextFunction): void {
   if (SAFE_METHODS.has(req.method)) { next(); return; }
   if (req.method === 'POST' && PUBLIC_XML_PATHS.some((re) => re.test(req.path))) { next(); return; }
+  if (req.method === 'POST' && PUBLIC_OAUTH_PATHS.some((re) => re.test(req.path))) { next(); return; }
   if (isForeignBrowserRequest(req)) {
     res.status(403).json({ success: false, error: 'Cross-origin request refused', code: 'crossOriginRefused' });
     return;

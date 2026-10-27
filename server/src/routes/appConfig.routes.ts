@@ -12,6 +12,7 @@ import { auditService } from '../services/audit.service';
 import { checkFactorManagement, sendStepUpFailure } from '../services/stepUp';
 import { forgetTwoFactorPolicy } from '../middleware/sessionUserGuard';
 import type { AppConfigData } from '@oblimint/shared';
+import { forgetPanelHosts } from '../services/panelHosts';
 
 /**
  * What a non-administrator may read: the UI flags, and what a customer needs
@@ -82,17 +83,24 @@ router.put('/platform', requirePlatformAdminOnMaster, async (req, res, next) => 
     const str = (v: unknown) => (typeof v === 'string' ? v.trim() : v == null ? '' : null);
     const rawHost = str(b.panelHostname);
     const host = rawHost === null ? null : normalizePanelHost(rawHost);
+    // Optional client space host (same panel, clients only): absent = unchanged, "" = none.
+    const rawClient = 'clientPanelHostname' in b ? str(b.clientPanelHostname) : undefined;
+    const clientHost = rawClient === undefined || rawClient === null ? rawClient : normalizePanelHost(rawClient);
     const v4 = str(b.publicIpv4); const v6 = str(b.publicIpv6); const email = str(b.acmeEmail);
     if (host === null || !PANEL_HOST_RE.test(host)) throw new AppError(400, 'Invalid panel host name', 'invalidPanelHostname');
+    if (clientHost === null || (clientHost && !PANEL_HOST_RE.test(clientHost))) throw new AppError(400, 'Invalid client space host name', 'invalidClientPanelHostname');
+    if (clientHost && clientHost === host) throw new AppError(400, 'The client space needs its own host name, not the panel one', 'clientPanelHostnameSame');
     if (v4 === null || (v4 && !net.isIPv4(v4))) throw new AppError(400, 'Invalid IPv4 address', 'invalidIpv4');
     if (v6 === null || (v6 && !net.isIPv6(v6))) throw new AppError(400, 'Invalid IPv6 address', 'invalidIpv6');
     if (email === null || !ACME_EMAIL_RE.test(email)) throw new AppError(400, 'Invalid e-mail address', 'invalidEmail');
-    const before = { panel_hostname: await appConfigService.get('panel_hostname'), public_ipv4: await appConfigService.get('public_ipv4'), public_ipv6: await appConfigService.get('public_ipv6'), acme_email: await appConfigService.get('acme_email') };
+    const before = { panel_hostname: await appConfigService.get('panel_hostname'), client_panel_hostname: await appConfigService.get('client_panel_hostname') || null, public_ipv4: await appConfigService.get('public_ipv4'), public_ipv6: await appConfigService.get('public_ipv6'), acme_email: await appConfigService.get('acme_email') };
     await appConfigService.set('panel_hostname', host);
+    if (clientHost !== undefined) await appConfigService.set('client_panel_hostname', clientHost);
     await appConfigService.set('public_ipv4', v4);
     await appConfigService.set('public_ipv6', v6);
     await appConfigService.set('acme_email', email);
-    await auditService.logReq(req, 'settings.platform_changed', { resourceType: 'settings', details: { from: before, to: { panel_hostname: host, public_ipv4: v4, public_ipv6: v6, acme_email: email } } });
+    forgetPanelHosts();
+    await auditService.logReq(req, 'settings.platform_changed', { resourceType: 'settings', details: { from: before, to: { panel_hostname: host, client_panel_hostname: clientHost === undefined ? before.client_panel_hostname : clientHost || null, public_ipv4: v4, public_ipv6: v6, acme_email: email } } });
     try { edgeService.scheduleSync('panel identity changed'); } catch (err) { logger.warn({ err }, 'edge sync after panel identity change failed'); }
     try { certificateService.ensureAuxiliary(); } catch (err) { logger.warn({ err }, 'platform certificates after panel identity change failed'); }
     dnsService.syncAllNow('panel identity changed').catch((err) => logger.warn({ err }, 'DNS sync after panel identity change failed'));

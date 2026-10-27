@@ -561,7 +561,9 @@
       "email": "Adresse e-mail invalide.",
       "hostname": "Saisissez un nom d'hôte complet (FQDN).",
       "range": "Entre {{min}} et {{max}}.",
-      "panelHost": "C’est le nom d’hôte du panel : choisissez-en un autre."
+      "panelHost": "C’est le nom d’hôte du panel : choisissez-en un autre.",
+      "invalidClientPanelHostname": "Nom d'hôte de l'espace client invalide.",
+      "clientPanelHostnameSame": "L'espace client a besoin de son propre nom d'hôte, pas celui du panel."
     },
     "firewall": {
       "disabled": "inactif",
@@ -642,7 +644,10 @@
       "title": "Adresse du panel",
       "description": "Nom d'hôte de ce panel et adresses publiques du nœud. L'edge sert le panel sous ce nom et demande son certificat dès que le DNS pointe ici.",
       "host": "Nom d'hôte du panel",
-      "hostHint": "Créez un enregistrement A (et AAAA) de ce nom vers l'IP publique du serveur. Les clients se connectent sur https://<nom>/client.",
+      "hostHint": "Créez un enregistrement A (et AAAA) de ce nom vers l'IP publique du serveur. Les clients se connectent sur https://<nom>/client, ou sur l'adresse de l'espace client ci-dessous.",
+      "clientHost": "Nom d'hôte de l'espace client (facultatif)",
+      "clientHostHint": "Le même panel sous un second nom, avec son propre certificat : les clients s'y connectent directement, sans SSO. Une fois réglé, les clients ne peuvent plus se connecter sur l'adresse du panel, et les administrateurs pas sur l'espace client. Créez un enregistrement A (et AAAA) de ce nom vers le serveur. Vide = aucun.",
+      "clientHostSame": "L'espace client a besoin de son propre nom, pas celui du panel.",
       "ipv4": "IPv4 publique",
       "ipv6": "IPv6 publique (facultatif)",
       "acmeEmail": "E-mail Let's Encrypt"

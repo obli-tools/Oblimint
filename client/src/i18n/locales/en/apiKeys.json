@@ -106,6 +106,52 @@
     "guideIntro": "Give this file to your AI agent (e.g. \"read this guide, then work on my site\"): it explains how to connect with a key, develop in staging, publish at the end and roll back. Agents connected through MCP can also read it with the get_guide tool.",
     "guideDownload": "Download (.md)",
     "guideDownloadFailed": "The download failed",
-    "guideHint": "Read the guide, or download it to give it to your agent"
+    "guideHint": "Read the guide, or download it to give it to your agent",
+    "connector": {
+      "create": "Claude connector",
+      "createTitle": "New Claude connector",
+      "createButton": "Create the connector",
+      "badge": "Claude connector",
+      "intro": "Claude connector: plug this account into Claude (claude.ai, Claude Desktop, mobile) as a custom connector, without pasting a key — you approve the connection here, and can end it at any time.",
+      "formHint": "Choose what Claude may do. Whoever approves the connection lends their own rights, within these: a member without a right does not pass it on.",
+      "createdTitle": "Claude connector \"{{name}}\"",
+      "secretOnce": "The client secret is shown only now. Lost? Generate a new one from the list (the connections in place stay).",
+      "step1": "In Claude (claude.ai or the Desktop app): Settings → Connectors → Add custom connector.",
+      "step2": "Name: Oblimint. Remote MCP server URL: the address below.",
+      "step3": "Open « Advanced settings » and paste the OAuth Client ID and Client Secret.",
+      "step4": "Click Add, then Connect: this panel opens and asks you to approve. The connector then works in every Claude app of your Claude account.",
+      "url": "Remote MCP server URL",
+      "teamHint": "Claude Team / Enterprise: an owner adds the connector for the organization, then each member connects with their own panel account.",
+      "noConnection": "Not connected yet: add it in Claude, then approve it here.",
+      "connectedBy": "Connected by {{name}}",
+      "rotate": "New secret",
+      "rotateTitle": "New client secret",
+      "rotateConfirm": "Generate a new client secret for \"{{name}}\"? The current one stops at once (to paste again in Claude if it reconnects); live connections stay.",
+      "disconnect": "Disconnect",
+      "disconnectTitle": "Disconnect",
+      "disconnectAllShort": "Disconnect everywhere",
+      "disconnectOne": "End this connection? Claude loses access until it is authorized again.",
+      "disconnectAll": "End every connection of \"{{name}}\"? Claude loses access until it is authorized again.",
+      "disconnected": "Disconnected"
+    }
+  },
+  "oauth": {
+    "title": "Connect an application",
+    "request": "{{client}} asks to use the connector « {{name}} » on the hosting account {{account}}.",
+    "rights": "It will be able to",
+    "readOnly": "Only read the sites (no right of the connector is held by your account).",
+    "missing": "Left out, your account does not hold them: {{list}}.",
+    "sites": "On",
+    "asUser": "It acts as you ({{user}}), never beyond your own rights; every action is in the audit log. End it at any time from Access keys.",
+    "deny": "Deny",
+    "approve": "Authorize",
+    "loadFailed": "The authorization request could not be read.",
+    "failed": "The authorization failed.",
+    "errors": {
+      "oauthInvalidClient": "This connector does not exist any more, has expired or its account is being deleted.",
+      "oauthInvalidRedirect": "This application is not allowed to use an Oblimint connector.",
+      "oauthInvalidRequest": "The authorization request is incomplete (PKCE missing).",
+      "oauthNoAccess": "Your account has no access to the hosting account of this connector: sign in with an account that has."
+    }
   }
 }

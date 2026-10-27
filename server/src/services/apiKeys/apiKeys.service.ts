@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type { Request } from 'express';
-import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyScope, ApiKeySiteScope, ApiKeyUpdate, ClientCapability } from '@oblimint/shared';
+import type { ApiKey, ApiKeyConnection, ApiKeyCreate, ApiKeyCreated, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, ApiKeyUpdate, ClientCapability } from '@oblimint/shared';
 import { API_KEY_SCOPES, MAX_API_KEYS_PER_ACCOUNT } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -24,6 +24,11 @@ import { actorCan, actorForUser, loadAccount, type HostingActor, type HostingNee
 //     by the key API (routes/v1) on top of the services.
 // Managing the keys of an account needs sites.manage on it, and creating /
 // widening a key needs every scope's right (no one hands out rights he lacks).
+//
+// A key of kind 'connector' (« Connecteur Claude ») has no bearer secret: it
+// is an OAuth client (oauth.ts). Its access tokens (oba_…) resolve through
+// verifyAccessToken() into the same context, acting for the panel user who
+// authorized the connection instead of the creator.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ApiKeyContext {
@@ -102,7 +107,7 @@ function keyMatches(raw: string, storedHash: string): boolean {
 }
 
 interface KeyRow {
-  id: number; tenant_id: number; account_id: number; name: string; token_hash: string; prefix: string;
+  id: number; tenant_id: number; account_id: number; kind: ApiKeyKind; oauth_client_id: string | null; name: string; token_hash: string; prefix: string;
   scopes: unknown; site_scope: ApiKeySiteScope; allowed_ips: unknown; created_by: number | null;
   last_used_at: Date | string | null; last_used_ip: string | null; expires_at: Date | string | null;
   created_at: Date | string; updated_at: Date | string;
@@ -133,8 +138,22 @@ async function siteRows(keyIds: number[]): Promise<Array<{ key_id: number; site_
   return db('api_key_sites').whereIn('key_id', keyIds).select('key_id', 'site_id', 'created_by_key');
 }
 
+/** Live authorizations of connectors: one per family holding an unexpired, unused refresh token. */
+async function connectionRows(keyIds: number[]): Promise<Array<ApiKeyConnection & { key_id: number }>> {
+  if (!keyIds.length) return [];
+  const rows = await db('api_key_oauth_tokens as t')
+    .leftJoin('users as u', 'u.id', 't.user_id')
+    .whereIn('t.key_id', keyIds).where('t.kind', 'refresh').whereNull('t.used_at').where('t.expires_at', '>', db.fn.now())
+    .select('t.key_id', 't.family', db.raw('COALESCE(u.display_name, u.username) as user_name'),
+      db.raw('(SELECT MIN(f.created_at) FROM api_key_oauth_tokens f WHERE f.family = t.family) AS connected_at'),
+      db.raw("(SELECT MAX(f.created_at) FROM api_key_oauth_tokens f WHERE f.family = t.family AND f.kind = 'access') AS last_used_at")) as
+    Array<{ key_id: number; family: string; user_name: string | null; connected_at: Date | string; last_used_at: Date | string | null }>;
+  return rows.map((r) => ({ key_id: r.key_id, id: r.family, userName: r.user_name, connectedAt: iso(r.connected_at) as string, lastUsedAt: iso(r.last_used_at) }));
+}
+
 async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
   const sites = await siteRows(rows.map((r) => r.id));
+  const connections = await connectionRows(rows.filter((r) => r.kind === 'connector').map((r) => r.id));
   const out: ApiKey[] = [];
   for (const r of rows) {
     const scopes = scopesOf(r.scopes);
@@ -148,11 +167,13 @@ async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
     }
     const mine = sites.filter((s) => s.key_id === r.id);
     out.push({
-      id: r.id, accountId: r.account_id, name: r.name, prefix: r.prefix, scopes, siteScope: r.site_scope,
+      id: r.id, accountId: r.account_id, kind: r.kind ?? 'key', name: r.name, prefix: r.prefix, scopes, siteScope: r.site_scope,
       siteIds: mine.map((s) => s.site_id).sort((a, b) => a - b),
       createdSiteIds: mine.filter((s) => s.created_by_key).map((s) => s.site_id).sort((a, b) => a - b),
       allowedIps: ipsOf(r.allowed_ips), createdByName: r.created_by_name ?? null, createdAt: iso(r.created_at) as string,
       lastUsedAt: iso(r.last_used_at), lastUsedIp: r.last_used_ip, expiresAt: iso(r.expires_at), inactiveScopes: inactive,
+      oauthClientId: r.kind === 'connector' ? r.oauth_client_id : null,
+      connections: connections.filter((c) => c.key_id === r.id).map(({ key_id: _k, ...c }) => c).sort((a, b) => a.connectedAt.localeCompare(b.connectedAt)),
     });
   }
   return out;
@@ -222,6 +243,8 @@ export const apiKeysService = {
   async create(req: Request, actor: HostingActor, accountId: number, body: ApiKeyCreate): Promise<ApiKeyCreated> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
     if (account.status === 'deleting') throw new AppError(409, 'The account is being deleted', 'accountDeleting');
+    if (body.kind !== undefined && body.kind !== 'key' && body.kind !== 'connector') throw new AppError(400, 'kind is key or connector', 'validation');
+    const kind: ApiKeyKind = body.kind === 'connector' ? 'connector' : 'key';
     const n = await normalize(actor, account, body, true);
     const created = await db.transaction(async (trx) => {
       await trx('hosting_accounts').where({ id: account.id }).forUpdate().first('id');
@@ -232,24 +255,51 @@ export const apiKeysService = {
       if (await trx('api_keys').where({ account_id: account.id, name: n.name }).first('id')) {
         throw new AppError(409, 'A key of this account already has this name', 'keyNameTaken');
       }
+      const client = kind === 'connector' ? generateClient() : null;
       const [row] = await trx('api_keys').insert({
-        tenant_id: account.tenant_id, account_id: account.id, name: n.name,
-        token_hash: hashKey(crypto.randomBytes(32).toString('hex')), prefix: 'obk_',
+        tenant_id: account.tenant_id, account_id: account.id, name: n.name, kind,
+        oauth_client_id: client?.clientId ?? null, oauth_secret_hash: client?.secretHash ?? null,
+        token_hash: hashKey(crypto.randomBytes(32).toString('hex')), prefix: client ? client.clientId.slice(0, 32) : 'obk_',
         scopes: JSON.stringify(n.scopes ?? []), site_scope: n.siteScope ?? 'selected',
         allowed_ips: JSON.stringify(n.allowedIps ?? []), created_by: actor.userId, expires_at: n.expiresAt ?? null,
       }).returning('id');
       const id = Number(typeof row === 'object' ? row.id : row);
-      const g = generateKey(id);
-      await trx('api_keys').where({ id }).update({ token_hash: g.hash, prefix: g.prefix });
+      // A connector keeps its unusable random token_hash: it never works as a bearer key.
+      const g = client ? null : generateKey(id);
+      if (g) await trx('api_keys').where({ id }).update({ token_hash: g.hash, prefix: g.prefix });
       if (n.siteIds?.length) await trx('api_key_sites').insert(n.siteIds.map((s) => ({ key_id: id, account_id: account.id, site_id: s })));
-      return { id, key: g.key };
+      return { id, key: g?.key ?? null, clientSecret: client?.secret ?? null };
     });
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.create', {
       resourceType: 'account', resourcePath: String(account.id),
-      details: { keyId: created.id, name: n.name, scopes: n.scopes, siteScope: n.siteScope, siteIds: n.siteIds ?? [], allowedIps: n.allowedIps ?? [], expiresAt: n.expiresAt?.toISOString() ?? null },
+      details: { keyId: created.id, kind, name: n.name, scopes: n.scopes, siteScope: n.siteScope, siteIds: n.siteIds ?? [], allowedIps: n.allowedIps ?? [], expiresAt: n.expiresAt?.toISOString() ?? null },
     });
     const [key] = await toApiKeys(await keyQuery().where('k.id', created.id) as KeyRow[]);
-    return { ...key, key: created.key };
+    return { ...key, key: created.key, clientSecret: created.clientSecret };
+  },
+
+  /** Connector: new client secret (the old one stops at once; live connections stay). */
+  async rotateSecret(req: Request, actor: HostingActor, accountId: number, keyId: number): Promise<ApiKeyCreated> {
+    const account = await loadAccount(actor, accountId, 'sites.manage');
+    const row = await db('api_keys').where({ id: keyId, account_id: account.id, kind: 'connector' }).first('id', 'name') as { id: number; name: string } | undefined;
+    if (!row) throw new AppError(404, 'Connector not found', 'notFound');
+    const secret = generateClientSecret();
+    await db('api_keys').where({ id: row.id }).update({ oauth_secret_hash: hashKey(secret), updated_at: db.fn.now() });
+    await auditService.logReqAs(req, account.tenant_id, 'apiKey.rotateSecret', { resourceType: 'account', resourcePath: String(account.id), details: { keyId: row.id, name: row.name } });
+    const [key] = await toApiKeys(await keyQuery().where('k.id', row.id) as KeyRow[]);
+    return { ...key, key: null, clientSecret: secret };
+  },
+
+  /** Connector: ends one authorization (family) or all of them; the client must authorize again. */
+  async disconnect(req: Request, actor: HostingActor, accountId: number, keyId: number, family: string | null): Promise<number> {
+    const account = await loadAccount(actor, accountId, 'sites.manage');
+    const row = await db('api_keys').where({ id: keyId, account_id: account.id, kind: 'connector' }).first('id', 'name') as { id: number; name: string } | undefined;
+    if (!row) throw new AppError(404, 'Connector not found', 'notFound');
+    const q = db('api_key_oauth_tokens').where({ key_id: row.id });
+    if (family) q.andWhere({ family });
+    const n = Number(await q.del());
+    await auditService.logReqAs(req, account.tenant_id, 'apiKey.disconnect', { resourceType: 'account', resourcePath: String(account.id), details: { keyId: row.id, name: row.name, family, tokens: n } });
+    return n;
   },
 
   async update(req: Request, actor: HostingActor, accountId: number, keyId: number, body: ApiKeyUpdate): Promise<ApiKey> {
@@ -303,34 +353,22 @@ export const apiKeysService = {
   async verify(raw: string, ip: string): Promise<ApiKeyContext | null> {
     const id = parseKey(raw);
     if (id === null) return null;
-    const row = await db('api_keys as k')
-      .join('hosting_accounts as a', function joinAccount() { this.on('a.id', '=', 'k.account_id').andOn('a.tenant_id', '=', 'k.tenant_id'); })
-      .where('k.id', id)
-      .first('k.*', 'a.status as account_status') as (KeyRow & { account_status: string }) | undefined;
+    const row = await keyWithAccount().where('k.id', id).first() as KeyWithAccount | undefined;
     const ok = keyMatches(raw, row?.token_hash ?? ''); // same work whatever the id
-    if (!row || !ok) return null;
-    if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return null;
-    if (row.account_status === 'deleting') return null;
-    const ips = ipsOf(row.allowed_ips);
-    if (ips.length && !ips.some((c) => cidrContains(c, ip))) return null;
+    if (!row || !ok || row.kind === 'connector') return null;
     if (!row.created_by) return null;
-    let creator: HostingActor;
-    try { creator = await actorForUser(row.created_by, row.tenant_id); } catch { return null; }
-    const target = { tenantId: row.tenant_id, accountId: row.account_id };
-    if (!actorCan(creator, 'read', target)) return null;
-    const scopes = heldScopes(creator, target, scopesOf(row.scopes));
-    const caps = new Set<ClientCapability>();
-    for (const s of scopes) { const c = SCOPE_CAP[s]; if (c) caps.add(c); }
-    const sites = await db('api_key_sites').where({ key_id: row.id }).pluck('site_id') as number[];
-    if (!row.last_used_at || Date.now() - new Date(row.last_used_at).getTime() > LAST_USED_EVERY_MS || row.last_used_ip !== ip) {
-      db('api_keys').where({ id: row.id }).update({ last_used_at: db.fn.now(), last_used_ip: ip.slice(0, 64) })
-        .catch((err: unknown) => logger.warn({ err, keyId: row.id }, 'API key: last use not recorded'));
-    }
-    return {
-      id: row.id, name: row.name, tenantId: row.tenant_id, accountId: row.account_id, creatorId: row.created_by,
-      scopes: new Set(scopes), siteScope: row.site_scope, siteIds: new Set(sites.map(Number)),
-      actor: { kind: 'client', userId: row.created_by, tenantId: row.tenant_id, accounts: new Map([[row.account_id, caps]]) },
-    };
+    return contextFor(row, row.created_by, ip);
+  },
+
+  /** Resolves an OAuth access token of a connector (oba_…), acting for the user who authorized it. */
+  async verifyAccessToken(raw: string, ip: string): Promise<ApiKeyContext | null> {
+    if (!ACCESS_TOKEN_RE.test(raw)) return null;
+    const tok = await db('api_key_oauth_tokens').where({ token_hash: hashKey(raw), kind: 'access' }).first('key_id', 'user_id', 'expires_at') as
+      { key_id: number; user_id: number; expires_at: Date | string } | undefined;
+    if (!tok || new Date(tok.expires_at).getTime() <= Date.now()) return null;
+    const row = await keyWithAccount().where('k.id', tok.key_id).first() as KeyWithAccount | undefined;
+    if (!row || row.kind !== 'connector') return null;
+    return contextFor(row, tok.user_id, ip);
   },
 
   /** A site created through the key joins its selection. */
@@ -339,6 +377,72 @@ export const apiKeysService = {
       .onConflict(['key_id', 'site_id']).merge({ created_by_key: true });
   },
 };
+
+/** OAuth access token of a connector: oba_<43 chars base64url>. */
+export const ACCESS_TOKEN_RE = /^oba_[A-Za-z0-9_-]{43}$/;
+
+type KeyWithAccount = KeyRow & { account_status: string };
+
+function keyWithAccount() {
+  return db('api_keys as k')
+    .join('hosting_accounts as a', function joinAccount() { this.on('a.id', '=', 'k.account_id').andOn('a.tenant_id', '=', 'k.tenant_id'); })
+    .select('k.*', 'a.status as account_status');
+}
+
+/**
+ * Context of a key (or connector) acting for `userId` (the creator of a key,
+ * the authorizing user of a connector): expiry, account, allowed addresses,
+ * the user's CURRENT rights on the account (scopes he no longer holds drop).
+ */
+async function contextFor(row: KeyWithAccount, userId: number, ip: string): Promise<ApiKeyContext | null> {
+  if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return null;
+  if (row.account_status === 'deleting') return null;
+  const ips = ipsOf(row.allowed_ips);
+  if (ips.length && !ips.some((c) => cidrContains(c, ip))) return null;
+  let user: HostingActor;
+  try { user = await actorForUser(userId, row.tenant_id); } catch { return null; }
+  const target = { tenantId: row.tenant_id, accountId: row.account_id };
+  if (!actorCan(user, 'read', target)) return null;
+  const scopes = heldScopes(user, target, scopesOf(row.scopes));
+  const caps = new Set<ClientCapability>();
+  for (const s of scopes) { const c = SCOPE_CAP[s]; if (c) caps.add(c); }
+  const sites = await db('api_key_sites').where({ key_id: row.id }).pluck('site_id') as number[];
+  if (!row.last_used_at || Date.now() - new Date(row.last_used_at).getTime() > LAST_USED_EVERY_MS || row.last_used_ip !== ip) {
+    db('api_keys').where({ id: row.id }).update({ last_used_at: db.fn.now(), last_used_ip: ip.slice(0, 64) })
+      .catch((err: unknown) => logger.warn({ err, keyId: row.id }, 'API key: last use not recorded'));
+  }
+  return {
+    id: row.id, name: row.name, tenantId: row.tenant_id, accountId: row.account_id, creatorId: userId,
+    scopes: new Set(scopes), siteScope: row.site_scope, siteIds: new Set(sites.map(Number)),
+    actor: { kind: 'client', userId, tenantId: row.tenant_id, accounts: new Map([[row.account_id, caps]]) },
+  };
+}
+
+/** Scopes of a connector `userId` holds / lacks on its account (consent page); null: no access to the account. */
+export async function scopesHeldBy(userId: number, key: { tenant_id: number; account_id: number; scopes: unknown }): Promise<{ held: ApiKeyScope[]; missing: ApiKeyScope[] } | null> {
+  let user: HostingActor;
+  try { user = await actorForUser(userId, key.tenant_id); } catch { return null; }
+  const target = { tenantId: key.tenant_id, accountId: key.account_id };
+  if (!actorCan(user, 'read', target)) return null;
+  const all = scopesOf(key.scopes);
+  const held = heldScopes(user, target, all);
+  return { held, missing: all.filter((s) => !held.includes(s)) };
+}
+
+/** Connector client id (public) + secret (shown once, sha256 stored). */
+export function generateClient(): { clientId: string; secret: string; secretHash: string } {
+  const secret = generateClientSecret();
+  return { clientId: `oblimint-${crypto.randomBytes(12).toString('base64url')}`, secret, secretHash: hashKey(secret) };
+}
+
+export function generateClientSecret(): string {
+  return `obs_${crypto.randomBytes(32).toString('base64url')}`;
+}
+
+/** Constant-time check of a connector's client secret. */
+export function clientSecretMatches(raw: string, storedHash: string | null): boolean {
+  return keyMatches(raw, storedHash ?? '');
+}
 
 export function keyAllowsSite(ctx: ApiKeyContext, siteId: number): boolean {
   return ctx.siteScope === 'all' || ctx.siteIds.has(siteId);
