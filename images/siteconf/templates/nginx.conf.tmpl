@@ -117,6 +117,15 @@ http {
         # Site owner's custom rules (validated by siteconf, then `nginx -t`).
         include {{ns (join .Out "custom.conf")}};
 {{end}}
+        # Platform 404 page for the 404s nginx produces itself (missing file).
+        # After the custom rules: their own error_page 404 is matched first;
+        # the 404 pages of the application (PHP, no fastcgi_intercept_errors) pass.
+        error_page 404 /__oblimint/404.html;
+        location = /__oblimint/404.html {
+            internal;
+            default_type text/html;
+            alias {{ns (print .ShareDir "/404.html")}};
+        }
 {{- if .AppLocationOverridden}}
         # location {{.BasePath}} is defined by the custom rules.
 {{- else}}

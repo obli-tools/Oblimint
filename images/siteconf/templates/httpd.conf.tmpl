@@ -99,6 +99,10 @@ Header always set Cache-Control "no-store" "expr=%{REQUEST_STATUS} == 503"
     Options FollowSymLinks
     Require all granted
 </Directory>
+# Platform 404 page for the 404s Apache produces itself (missing file); a
+# site's own ErrorDocument (.htaccess) and the 404 pages of its application
+# (PHP) win.
+ErrorDocument 404 /__oblimint/404.html
 {{if eq .BasePath "/"}}
 DocumentRoot {{aq .Docroot}}
 {{else}}

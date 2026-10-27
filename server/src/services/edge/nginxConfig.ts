@@ -280,8 +280,12 @@ function acmeLocation(v: EdgeVhost): string {
   ].join('\n');
 }
 
+// 404: the paths no route serves (domain without a route at /, unrouted
+// sub-path) get the platform page; a site's own 404 passes through untouched
+// (proxy_intercept_errors stays off).
 function errorPagesBlock(): string {
   return [
+    `${I1}error_page 404 ${ERROR_PAGES_PREFIX}404.html;`,
     `${I1}error_page 502 504 ${ERROR_PAGES_PREFIX}502.html;`,
     `${I1}error_page 503 ${ERROR_PAGES_PREFIX}503.html;`,
     `${I1}location ^~ ${ERROR_PAGES_PREFIX} {`,

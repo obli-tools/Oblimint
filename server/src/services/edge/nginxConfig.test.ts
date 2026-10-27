@@ -97,6 +97,8 @@ test('locations: longest prefix first, variable proxy_pass, `= /prefix` redirect
   }
   assert.match(conf, /proxy_http_version 1\.1;/);
   assert.match(conf, /error_page 502 504 \/__oblimint_edge\/502\.html;/);
+  assert.match(conf, /error_page 404 \/__oblimint_edge\/404\.html;/, 'the platform 404 page for what no route serves');
+  assert.doesNotMatch(conf, /proxy_intercept_errors/, "a site's own 404 passes through");
   assert.match(conf, /location \^~ \/__oblimint_edge\/ \{\n {8}internal;\n {8}alias \/usr\/share\/oblimint\/errors\/;/);
 });
 

@@ -100,7 +100,7 @@ COPY common/oblimint-entrypoint common/oblimint-reload /usr/local/bin/
 COPY common/lib.sh /usr/local/lib/oblimint/lib.sh
 COPY common/guard.php /opt/oblimint/guard.php
 COPY common/php.ini /usr/local/etc/php/php.ini
-COPY common/placeholder.html common/ping /usr/share/oblimint/
+COPY common/placeholder.html common/404.html common/ping /usr/share/oblimint/
 
 # Permissions for an arbitrary uid on a read-only root: everything readable,
 # scripts executable, nothing writable. Mount points exist (empty).
