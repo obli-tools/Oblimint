@@ -38,7 +38,7 @@ export interface GridEdit {
 }
 
 export function DataGrid({
-  columns, rows, columnInfo, sort, onSort, selected, onToggleRow, onToggleAll, onEdit, rowOffset = 0, emptyText,
+  columns, rows, columnInfo, sort, onSort, selected, onToggleRow, onToggleAll, onEdit, rowOffset = 0, emptyText, renderExtra,
 }: {
   columns: string[];
   rows: DbxCell[][];
@@ -53,6 +53,8 @@ export function DataGrid({
   onEdit?: (row: number, column: string, value: string | null) => Promise<boolean>;
   rowOffset?: number;
   emptyText?: ReactNode;
+  /** Extra content after a cell value (e.g. follow a foreign key). */
+  renderExtra?: (row: number, column: string) => ReactNode;
 }) {
   const [editing, setEditing] = useState<GridEdit | null>(null);
   const [draft, setDraft] = useState('');
@@ -144,7 +146,7 @@ export function DataGrid({
                           <button type="button" onClick={() => setEditing(null)} className="rounded px-2 py-0.5 text-text-muted hover:text-text-primary">Esc</button>
                         </div>
                       </div>
-                    ) : <CellView value={r[j]} />}
+                    ) : <>{renderExtra?.(i, c)}<CellView value={r[j]} /></>}
                   </td>
                 );
               })}

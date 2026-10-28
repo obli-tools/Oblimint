@@ -523,7 +523,10 @@
       "hostname": "Host name",
       "title": "Database administration",
       "underPanel": "Never on the panel registrable domain (nor a sibling of the panel host): use a host of the preview domain.",
-      "sameSite": "Same registrable domain as the panel: allowed. The panel only accepts its own session cookie, so cookies set by this host can neither replace it nor block the panel."
+      "sameSite": "Same registrable domain as the panel: allowed. The panel only accepts its own session cookie, so cookies set by this host can neither replace it nor block the panel.",
+      "explorerImportMaxMb": "SQL explorer: largest import (MiB)",
+      "explorerExportMaxMb": "SQL explorer: largest export (MiB)",
+      "explorerHint": "The integrated SQL explorer works without phpMyAdmin / Adminer: these caps bound its file imports (gzip counted compressed) and exports."
     },
     "dns": {
       "alsoNotify": "Servers notified of changes (NOTIFY)",

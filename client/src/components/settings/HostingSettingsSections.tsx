@@ -310,13 +310,18 @@ function ReleasePreviewsSection({ value, previewDomain, save }: { value: Hosting
 
 function DbAdminSection({ value, panelHost, previewDomain, save }: { value: HostingSettings['dbAdmin']; panelHost: string | null; previewDomain: string | null; save: SaveFn }) {
   const { t } = useTranslation();
-  const [draft, setDraft, dirty, reset] = useDraft({ hostname: value.hostname ?? '' });
+  const [draft, setDraft, dirty, reset] = useDraft({
+    hostname: value.hostname ?? '', explorerImportMaxMb: String(value.explorerImportMaxMb ?? 256), explorerExportMaxMb: String(value.explorerExportMaxMb ?? 4096),
+  });
   const { saving, error, setError, run } = useSaver(save);
   const host = normalizeHostname(draft.hostname);
   const invalid = !!host && !isHostname(host);
   const panelItself = !invalid && isPanelHost(host, panelHost);
   const sameSite = !invalid && !panelItself && dbAdminConflictsWithPanel(host, panelHost);
-  const valid = !invalid && !panelItself;
+  const importMax = intInRange(draft.explorerImportMaxMb, 1, 16384);
+  const exportMax = intInRange(draft.explorerExportMaxMb, 1, 65536);
+  const valid = !invalid && !panelItself && importMax !== null && exportMax !== null;
+  const range = (min: number, max: number) => t('platformSettings.errors.range', { min, max, defaultValue: 'Between {{min}} and {{max}}.' });
   const suggestion = previewDomain ? `db.${previewDomain}` : null;
 
   return (
@@ -326,7 +331,7 @@ function DbAdminSection({ value, panelHost, previewDomain, save }: { value: Host
       title={t('platformSettings.dbAdmin.title') || 'Database administration'}
       description={t('platformSettings.dbAdmin.description') || 'phpMyAdmin and Adminer are opened from the panel with single sign-on, on their own host name.'}
       dirty={dirty} saving={saving} canSave={valid}
-      onSave={() => { void run('dbAdmin', { hostname: host || null }); }}
+      onSave={() => { if (valid) void run('dbAdmin', { hostname: host || null, explorerImportMaxMb: importMax!, explorerExportMaxMb: exportMax! }); }}
       onReset={reset} error={error}
     >
       <Field
@@ -338,8 +343,17 @@ function DbAdminSection({ value, panelHost, previewDomain, save }: { value: Host
           : (t('platformSettings.dbAdmin.hint') || 'For instance db.<preview domain>. Empty: the admin tools are off.')}
       >
         {sameSite && <SameSiteNote text={t('platformSettings.dbAdmin.sameSite') || 'Same registrable domain as the panel: allowed. A flaw in phpMyAdmin / Adminer could then flood the panel domain with cookies (clear them to recover); a separate domain avoids it.'} />}
-        <input id="dbadmin-host" value={draft.hostname} onChange={(e) => { setDraft({ hostname: e.target.value }); setError(null); }} placeholder={suggestion ?? 'db.example-preview.net'} autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
+        <input id="dbadmin-host" value={draft.hostname} onChange={(e) => { setDraft({ ...draft, hostname: e.target.value }); setError(null); }} placeholder={suggestion ?? 'db.example-preview.net'} autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
       </Field>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label={t('platformSettings.dbAdmin.explorerImportMaxMb') || 'SQL explorer: largest import (MiB)'} htmlFor="dbadmin-import" error={importMax === null ? range(1, 16384) : null}>
+          <NumberInput id="dbadmin-import" value={draft.explorerImportMaxMb} onChange={(v) => { setDraft({ ...draft, explorerImportMaxMb: v }); setError(null); }} min={1} max={16384} invalid={importMax === null} />
+        </Field>
+        <Field label={t('platformSettings.dbAdmin.explorerExportMaxMb') || 'SQL explorer: largest export (MiB)'} htmlFor="dbadmin-export" error={exportMax === null ? range(1, 65536) : null}>
+          <NumberInput id="dbadmin-export" value={draft.explorerExportMaxMb} onChange={(v) => { setDraft({ ...draft, explorerExportMaxMb: v }); setError(null); }} min={1} max={65536} invalid={exportMax === null} />
+        </Field>
+      </div>
+      <p className="text-xs text-text-muted">{t('platformSettings.dbAdmin.explorerHint') || 'The integrated SQL explorer works without phpMyAdmin / Adminer: these caps bound its file imports (gzip counted compressed) and exports.'}</p>
     </SettingsBlock>
   );
 }

@@ -17,7 +17,10 @@
       "filter": "Tables",
       "console": "Console SQL",
       "empty": "Aucune table dans cette base pour l'instant.",
-      "count": "{{count}} table(s)"
+      "count": "{{count}} table(s)",
+      "rows": "Lignes (≈)",
+      "size": "Taille",
+      "engine": "Moteur"
     },
     "data": {
       "unchanged": "Aucune ligne modifiée (valeur identique, ou ligne modifiée ailleurs).",
@@ -36,7 +39,9 @@
       "noMatch": "Aucune ligne ne correspond aux filtres.",
       "empty": "Cette table est vide.",
       "modeValue": "Valeur",
-      "modeDefault": "Défaut"
+      "modeDefault": "Défaut",
+      "referencing": "Lignes qui référencent cette ligne",
+      "follow": "Ouvrir la ligne dans {{table}}"
     },
     "structure": {
       "columns": "Colonnes",
@@ -48,7 +53,10 @@
       "indexes": "Index",
       "kind": "Nature",
       "foreignKeys": "Clés étrangères",
-      "ddl": "Instruction CREATE"
+      "ddl": "Instruction CREATE",
+      "autoIncrement": "Auto",
+      "primaryKey": "Clé primaire",
+      "incoming": "Référencée par"
     },
     "console": {
       "run": "Exécuter",
@@ -56,12 +64,191 @@
       "history": "Historique",
       "rows": "{{count}} ligne(s)",
       "affected": "{{count}} ligne(s) affectée(s)",
-      "truncated": "Seules les {{rows}} premières lignes sont affichées (ajoutez un LIMIT).",
+      "truncated": "Seules les {{rows}} premières lignes sont affichées (ajoutez un LIMIT, ou exportez le résultat).",
       "noRows": "Aucune ligne.",
       "stopped": "Exécution arrêtée à la première erreur : les requêtes suivantes n'ont pas été lancées.",
       "dangerTitle": "Requêtes destructrices",
       "dangerMessage": "Ces requêtes suppriment des données ou de la structure. Les exécuter ?",
-      "noWhere": "sans WHERE : toutes les lignes"
+      "noWhere": "sans WHERE : toutes les lignes",
+      "runAll": "Tout exécuter",
+      "cancel": "Annuler",
+      "nothingToCancel": "Rien à annuler (l'instruction vient peut-être de se terminer).",
+      "timeoutHint": "Délai maximal de chaque instruction",
+      "keys": "Ctrl+Entrée : sélection ou instruction courante · Ctrl+Maj+Entrée : tout",
+      "limitRows": "{{rows}} lignes max par résultat",
+      "templates": "Modèles",
+      "clearHistory": "Effacer l'historique",
+      "empty": "Écrivez une instruction et appuyez sur Ctrl+Entrée.",
+      "statements": "{{count}} instruction(s) exécutée(s)"
+    },
+    "views": {
+      "overview": "Tables",
+      "search": "Recherche",
+      "objects": "Vues et routines"
+    },
+    "table": {
+      "create": "Nouvelle table",
+      "createTitle": "Nouvelle table",
+      "rename": "Renommer",
+      "drop": "Supprimer",
+      "truncate": "Vider",
+      "dropTitle": "Supprimer la table",
+      "truncateTitle": "Vider la table",
+      "dropConfirm": "La table {{name}} et toutes ses lignes seront supprimées. Saisissez son nom pour confirmer.",
+      "truncateConfirm": "Toutes les lignes de {{name}} seront supprimées. Saisissez son nom pour confirmer."
+    },
+    "column": {
+      "add": "Colonne",
+      "addTitle": "Ajouter une colonne",
+      "editTitle": "Modifier la colonne {{name}}",
+      "drop": "Supprimer la colonne",
+      "dropTitle": "Supprimer la colonne {{name}}",
+      "noDefault": "Pas de défaut",
+      "literal": "Valeur",
+      "expression": "Expression",
+      "position": "Position",
+      "last": "À la fin",
+      "first": "En premier",
+      "after": "Après {{name}}"
+    },
+    "index": {
+      "add": "Index",
+      "addTitle": "Nouvel index",
+      "drop": "Supprimer l'index",
+      "dropTitle": "Supprimer l'index {{name}}",
+      "columnsHint": "Colonnes (dans l'ordre des clics)",
+      "pkHint": "Colonnes séparées par des virgules (vide : pas de clé primaire)."
+    },
+    "fk": {
+      "add": "Clé étrangère",
+      "addTitle": "Nouvelle clé étrangère",
+      "drop": "Supprimer la clé étrangère",
+      "dropTitle": "Supprimer la clé étrangère {{name}}",
+      "refTable": "Table référencée",
+      "addPair": "Une autre colonne"
+    },
+    "ddl": {
+      "preview": "Aperçu du DDL",
+      "previewHint": "Généré par le panel à partir de vos choix. Relisez-le avant de l'exécuter ; vous pouvez l'ajuster.",
+      "run": "Exécuter",
+      "done": "Structure mise à jour",
+      "nothing": "Rien à changer.",
+      "editedTitle": "DDL modifié",
+      "editedMessage": "Vous avez modifié les instructions générées : elles s'exécutent comme des instructions de la console, telles qu'écrites.",
+      "editedPill": "modifié : exécuté comme instruction de console",
+      "warn": {
+        "dataLoss": "Des données sont perdues. Il n'y a pas d'annulation — exportez d'abord en cas de doute.",
+        "rewrite": "La table est réécrite (verrouillée pendant ce temps sur une grosse table).",
+        "fullRedefinition": "Toute la colonne est redéfinie : les attributs non affichés ici sont réinitialisés (la collation et ON UPDATE sont conservés).",
+        "autoIncrementKey": "Une colonne auto-incrémentée doit être (la première colonne d')une clé.",
+        "definer": "Sur MySQL / MariaDB, un objet créé ici a pour DEFINER l'utilisateur SQL temporaire de la session : préférez SQL SECURITY INVOKER."
+      }
+    },
+    "saved": {
+      "title": "Requêtes enregistrées",
+      "saveCurrent": "Enregistrer la requête courante…",
+      "saveTitle": "Enregistrer la requête",
+      "namePlaceholder": "Nom",
+      "saved": "Requête enregistrée",
+      "manage": "Gérer…",
+      "rename": "Renommer",
+      "deleteConfirm": "Supprimer la requête enregistrée {{name}} ?"
+    },
+    "objects": {
+      "new": "Nouveau",
+      "empty": "Aucune vue, routine ni trigger.",
+      "pick": "Choisissez une vue, une routine ou un trigger.",
+      "editInConsole": "Modifier dans la console",
+      "drop": "Supprimer",
+      "dropTitle": "Supprimer {{name}}",
+      "dropConfirm": "Saisissez {{name}} pour confirmer.",
+      "recreateHint": "Pour le modifier : supprimez-le, puis exécutez cette instruction (modifiée).",
+      "ephemeralDefiner": "un utilisateur de session temporaire du panel : cet objet cessera de fonctionner quand cet utilisateur sera supprimé. Recréez-le en SQL SECURITY INVOKER, ou depuis le site.",
+      "kind": {
+        "view": "Vue",
+        "procedure": "Procédure",
+        "function": "Fonction",
+        "trigger": "Trigger",
+        "event": "Événement"
+      },
+      "kinds": {
+        "view": "Vues",
+        "procedure": "Procédures",
+        "function": "Fonctions",
+        "trigger": "Triggers",
+        "event": "Événements"
+      }
+    },
+    "search": {
+      "placeholder": "Texte à chercher dans toutes les tables",
+      "contains": "Contient",
+      "exact": "Valeur exacte",
+      "go": "Rechercher",
+      "none": "Rien trouvé.",
+      "timedOut": "(budget de temps atteint : affinez la recherche)",
+      "limits": "Colonnes texte, {{tables}} tables et {{rows}} lignes par table au plus",
+      "summary": "{{hits}} table(s) avec résultats · {{searched}} parcourue(s) · {{skipped}} ignorée(s)"
+    },
+    "maintenance": {
+      "title": "Maintenance",
+      "failed": "échec",
+      "lockWarning": "S'exécute sur {{count}} table(s). Les tables peuvent être verrouillées pendant ce temps (grosse table : plusieurs minutes).",
+      "hint": {
+        "optimize": "Reconstruit la table, libère l'espace inutilisé",
+        "analyze": "Rafraîchit les statistiques de l'optimiseur",
+        "check": "Recherche les erreurs",
+        "repair": "Répare une table endommagée (MyISAM, Aria)",
+        "vacuum": "Libère l'espace des lignes supprimées",
+        "vacuumAnalyze": "VACUUM, puis les statistiques de l'optimiseur",
+        "reindex": "Reconstruit les index"
+      }
+    },
+    "export": {
+      "title": "Exporter",
+      "download": "Télécharger",
+      "database": "Exporter la base",
+      "selectedTables": "Exporter {{count}} table(s)",
+      "result": "Exporter tout le résultat",
+      "resultHint": "Toutes les lignes, réexécuté en lecture seule",
+      "started": "Téléchargement lancé : {{name}}",
+      "sqlHint": "Dump produit par l'outil du moteur, réimportable ici ou avec n'importe quel client. Exécuté sous l'utilisateur SQL temporaire de cette session.",
+      "structure": "Structure",
+      "data": "Données",
+      "routines": "Routines, triggers, événements",
+      "tables": "Tables",
+      "whole": "toute la base",
+      "selected": "{{count}} sélectionnée(s)",
+      "all": "Toutes",
+      "table": "Table",
+      "rowsHint": "Toutes les lignes, en flux. Les valeurs binaires sont écrites en 0x… (hexadécimal), relues de la même façon par l'import CSV."
+    },
+    "import": {
+      "title": "Importer",
+      "start": "Importer",
+      "stop": "Arrêter",
+      "file": "Fichier",
+      "max": "{{size}} au plus (gzip accepté).",
+      "tooBig": "Trop gros : découpez le fichier, ou demandez à l'administrateur de la plateforme.",
+      "sqlHint": "Les instructions s'exécutent une à une sous l'utilisateur SQL temporaire de cette session (fichiers DELIMITER, mysqldump et pg_dump compris). Sauvegardez la base d'abord : il n'y a pas d'annulation.",
+      "csvHint": "Une seule transaction : en cas d'erreur, rien n'est conservé (sauf avec « continuer », où les lignes fautives sont ignorées et listées).",
+      "continue": "Continuer après une erreur (erreurs listées)",
+      "ok": "Import terminé",
+      "counts": "{{statements}} instruction(s) · {{rows}} ligne(s)",
+      "errors": "{{count}} erreur(s)",
+      "line": "ligne {{line}}",
+      "state": {
+        "running": "en cours",
+        "done": "terminé",
+        "failed": "échec",
+        "cancelled": "arrêté"
+      }
+    },
+    "csv": {
+      "delimiter": "Séparateur",
+      "header": "Noms des colonnes en première ligne",
+      "emptyNull": "Champ vide = NULL",
+      "mapping": "Colonnes",
+      "skip": "(ignorer)"
     }
   }
 }

@@ -35,8 +35,14 @@ function markerExtension(markers: LineMarker[]): Extension {
 
 export type CodeLanguage = 'yaml' | 'text' | 'php' | 'javascript' | 'typescript' | 'css' | 'html' | 'json' | 'markdown' | 'xml' | 'sql';
 
+/** SQL editing: dialect and schema (tables → columns) for the autocomplete. */
+export interface SqlEditorConfig {
+  dialect: 'mysql' | 'mariadb' | 'postgresql';
+  schema?: Record<string, string[]>;
+}
+
 /** Language support loaded on demand (separate chunks: only YAML ships with the main bundle). */
-async function loadLanguage(language: CodeLanguage): Promise<Extension | null> {
+async function loadLanguage(language: CodeLanguage, sqlConfig?: SqlEditorConfig): Promise<Extension | null> {
   switch (language) {
     case 'yaml': return yaml();
     case 'php': return (await import('@codemirror/lang-php')).php();
@@ -47,7 +53,12 @@ async function loadLanguage(language: CodeLanguage): Promise<Extension | null> {
     case 'json': return (await import('@codemirror/lang-json')).json();
     case 'markdown': return (await import('@codemirror/lang-markdown')).markdown();
     case 'xml': return (await import('@codemirror/lang-xml')).xml();
-    case 'sql': return (await import('@codemirror/lang-sql')).sql();
+    case 'sql': {
+      const m = await import('@codemirror/lang-sql');
+      if (!sqlConfig) return m.sql();
+      const dialect = sqlConfig.dialect === 'postgresql' ? m.PostgreSQL : sqlConfig.dialect === 'mariadb' ? m.MariaSQL : m.MySQL;
+      return m.sql({ dialect, schema: sqlConfig.schema, upperCaseKeywords: true });
+    }
     default: return null;
   }
 }
@@ -77,7 +88,7 @@ export function revealLine(view: EditorView | null, line: number): void {
  * compose / .env / template editors (docs/P4b-PLAN.md §13). OWNED BY MODULE `ui-apps`.
  */
 export function CodeEditor({
-  value, onChange, language = 'yaml', readOnly = false, markers, height, minHeight = '240px', maxHeight, ariaLabel, placeholder, onCreateEditor, className,
+  value, onChange, language = 'yaml', readOnly = false, markers, height, minHeight = '240px', maxHeight, ariaLabel, placeholder, onCreateEditor, className, sqlConfig, extraExtensions,
 }: {
   value: string;
   onChange?: (v: string) => void;
@@ -91,22 +102,28 @@ export function CodeEditor({
   placeholder?: string;
   onCreateEditor?: (view: EditorView) => void;
   className?: string;
+  /** language sql: dialect + schema autocomplete (turns the autocompletion on). */
+  sqlConfig?: SqlEditorConfig;
+  /** More CodeMirror extensions (key bindings…). */
+  extraExtensions?: Extension[];
 }) {
   const theme = useCurrentTheme();
   const markerKey = JSON.stringify(markers ?? []);
   const [lang, setLang] = useState<{ id: CodeLanguage; ext: Extension | null }>(() => ({ id: language, ext: language === 'yaml' ? yaml() : null }));
+  const sqlKey = sqlConfig ? JSON.stringify(sqlConfig) : '';
   useEffect(() => {
     let live = true;
-    loadLanguage(language).then((ext) => { if (live) setLang({ id: language, ext }); }).catch(() => { if (live) setLang({ id: language, ext: null }); });
+    loadLanguage(language, sqlConfig).then((ext) => { if (live) setLang({ id: language, ext }); }).catch(() => { if (live) setLang({ id: language, ext: null }); });
     return () => { live = false; };
-  }, [language]);
+  }, [language, sqlKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const extensions = useMemo<Extension[]>(() => {
     const ext: Extension[] = [obliTheme, EditorView.lineWrapping];
     if (lang.ext && lang.id === language) ext.push(lang.ext);
     if (markers?.length) ext.push(markerExtension(markers));
     if (ariaLabel) ext.push(EditorView.contentAttributes.of({ 'aria-label': ariaLabel }));
+    if (extraExtensions) ext.push(...extraExtensions);
     return ext;
-  }, [language, lang, markerKey, ariaLabel]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [language, lang, markerKey, ariaLabel, extraExtensions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div
@@ -130,7 +147,7 @@ export function CodeEditor({
         maxHeight={maxHeight}
         placeholder={placeholder}
         onCreateEditor={onCreateEditor}
-        basicSetup={{ foldGutter: true, highlightActiveLine: !readOnly, highlightActiveLineGutter: !readOnly, autocompletion: false }}
+        basicSetup={{ foldGutter: true, highlightActiveLine: !readOnly, highlightActiveLineGutter: !readOnly, autocompletion: !!sqlConfig && !readOnly }}
       />
     </div>
   );

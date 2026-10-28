@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import axios from 'axios';
-import { ChevronLeft, ChevronRight, Download, Filter, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, Filter, Link2, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import type { DbxCell, DbxFilter, DbxFilterOp, DbxRowKey, DbxRows, DbxTableInfo } from '@oblimint/shared';
 import { dbExplorerApi } from '@/api/dbExplorer.api';
 import { Button } from '@/components/common/Button';
@@ -10,7 +10,8 @@ import { IconButton } from '@/components/common/IconButton';
 import { Modal } from '@/components/common/Modal';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { DataGrid, downloadText, isBinary, isLong, toCsv } from './DataGrid';
+import { ActionMenu } from '@/components/common/ActionMenu';
+import { DataGrid, cellText, isBinary, isLong } from './DataGrid';
 
 const OPS: DbxFilterOp[] = ['=', '!=', '<', '<=', '>', '>=', 'like', 'not like', 'null', 'not null'];
 const PAGE_SIZES = [25, 50, 100, 250, 500];
@@ -25,18 +26,24 @@ function readLimit(): number {
 }
 
 /** Data of a table: filters, sort, pages, in-place editing, insert, delete (tables with a primary key). */
-export function TableDataTab({ instanceId, dbId, info, onChanged }: {
+export function TableDataTab({ instanceId, dbId, info, onChanged, initialFilters, onOpen, onExport, onImport }: {
   instanceId: number;
   dbId: number;
   info: DbxTableInfo;
   onChanged?: () => void;
+  /** Filters given by the URL (a followed foreign key). */
+  initialFilters?: DbxFilter[];
+  /** Opens another table filtered (follow a foreign key, rows referencing a row). */
+  onOpen?: (table: string, filters: DbxFilter[]) => void;
+  onExport?: () => void;
+  onImport?: () => void;
 }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
   const [offset, setOffset] = useState(0);
   const [limit, setLimit] = useState(readLimit);
   const [sort, setSort] = useState<{ column: string; dir: 'asc' | 'desc' } | null>(null);
-  const [filters, setFilters] = useState<DbxFilter[]>([]);
+  const [filters, setFilters] = useState<DbxFilter[]>(initialFilters ?? []);
   const [draft, setDraft] = useState<DbxFilter>({ column: info.columns[0]?.name ?? '', op: '=', value: '' });
   const [showFilter, setShowFilter] = useState(false);
   const [data, setData] = useState<DbxRows | null>(null);
@@ -62,7 +69,7 @@ export function TableDataTab({ instanceId, dbId, info, onChanged }: {
   }, [instanceId, dbId, name, offset, limit, sort, filters]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setOffset(0); setSort(null); setFilters([]); setDraft({ column: info.columns[0]?.name ?? '', op: '=', value: '' }); }, [name]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setOffset(0); setSort(null); setFilters(initialFilters ?? []); setDraft({ column: info.columns[0]?.name ?? '', op: '=', value: '' }); }, [name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const keyOf = (row: DbxCell[]): DbxRowKey | null => {
     if (!data) return null;
@@ -135,8 +142,20 @@ export function TableDataTab({ instanceId, dbId, info, onChanged }: {
         <IconButton size="sm" label={t('dbx.data.filter') || 'Filter'} icon={<Filter className="h-4 w-4" />} active={showFilter || filters.length > 0} onClick={() => setShowFilter((v) => !v)} />
         {editable && <IconButton size="sm" label={t('dbx.data.insert') || 'Insert a row'} icon={<Plus className="h-4 w-4" />} onClick={() => setInserting(true)} />}
         {editable && <IconButton size="sm" variant="danger" label={t('dbx.data.deleteSelected') || 'Delete the selected rows'} icon={<Trash2 className="h-4 w-4" />} onClick={() => void removeSelected()} disabled={!selected.size} />}
-        <IconButton size="sm" label={t('dbx.exportCsv') || 'Export the page as CSV'} icon={<Download className="h-4 w-4" />} disabled={!data?.rows.length}
-          onClick={() => data && downloadText(`${info.table.name}-${offset + 1}.csv`, toCsv(data.columns, data.rows))} />
+        {onExport && <IconButton size="sm" label={t('dbx.export.title') || 'Export'} icon={<Download className="h-4 w-4" />} onClick={onExport} />}
+        {onImport && info.table.kind === 'table' && <IconButton size="sm" label={t('dbx.import.title') || 'Import'} icon={<Upload className="h-4 w-4" />} onClick={onImport} />}
+        {onOpen && (info.incoming?.length ?? 0) > 0 && (
+          <ActionMenu label={t('dbx.data.referencing') || 'Rows referencing this row'} menuClassName="w-72"
+            trigger={(p) => <IconButton {...p} size="sm" label={t('dbx.data.referencing') || 'Rows referencing this row'} icon={<Link2 className="h-4 w-4 rotate-180" />} disabled={selected.size !== 1} />}
+            items={(info.incoming ?? []).map((k) => ({
+              key: `${k.table}:${k.name}`, label: k.table, description: `${k.columns.join(', ')} → ${k.refColumns.join(', ')}`,
+              onClick: () => {
+                const row = data?.rows[[...selected][0]];
+                if (!row || !data) return;
+                onOpen(k.table, k.columns.map((c, n) => ({ column: c, op: '=' as const, value: cellText(row[data.columns.indexOf(k.refColumns[n])]) })));
+              },
+            }))} />
+        )}
         {filters.map((f, i) => (
           <span key={i} className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 font-mono text-[11px] text-accent">
             {f.column} {f.op}{f.value !== undefined ? ` '${f.value}'` : ''}
@@ -190,6 +209,16 @@ export function TableDataTab({ instanceId, dbId, info, onChanged }: {
               onToggleRow={editable ? toggleRow : undefined}
               onToggleAll={() => setSelected(selected.size === data.rows.length ? new Set() : new Set(data.rows.map((_, i) => i)))}
               onEdit={editable ? onEdit : undefined}
+              renderExtra={onOpen && info.foreignKeys.length ? (i, c) => {
+                const fk = info.foreignKeys.find((f) => f.columns.includes(c));
+                const v = data.rows[i][data.columns.indexOf(c)];
+                if (!fk || v === null || isBinary(v)) return null;
+                const filters2 = fk.columns.map((col, n) => ({ column: fk.refColumns[n], op: '=' as const, value: cellText(data.rows[i][data.columns.indexOf(col)]) }));
+                return (
+                  <button type="button" title={t('dbx.data.follow', { table: fk.refTable, defaultValue: 'Open the row in {{table}}' })} onClick={() => onOpen(fk.refTable, filters2)}
+                    className="mr-1 inline-flex align-middle text-sky-400 hover:text-accent"><Link2 className="h-3 w-3" /></button>
+                );
+              } : undefined}
               emptyText={filters.length ? (t('dbx.data.noMatch') || 'No row matches the filters.') : (t('dbx.data.empty') || 'This table is empty.')}
             />
           )}

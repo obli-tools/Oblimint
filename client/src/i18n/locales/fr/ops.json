@@ -523,7 +523,10 @@
       "hostname": "Nom d'hôte",
       "title": "Administration BDD",
       "underPanel": "Jamais sur le domaine enregistrable du panel (ni un voisin de l'hôte du panel) : utilisez un hôte du domaine de préversion.",
-      "sameSite": "Même domaine enregistrable que le panel : autorisé. Le panel n’accepte que son propre cookie de session : les cookies posés par cet hôte ne peuvent ni le remplacer ni bloquer le panel."
+      "sameSite": "Même domaine enregistrable que le panel : autorisé. Le panel n’accepte que son propre cookie de session : les cookies posés par cet hôte ne peuvent ni le remplacer ni bloquer le panel.",
+      "explorerImportMaxMb": "Explorateur SQL : import maximal (Mio)",
+      "explorerExportMaxMb": "Explorateur SQL : export maximal (Mio)",
+      "explorerHint": "L'explorateur SQL intégré fonctionne sans phpMyAdmin / Adminer : ces plafonds bornent ses imports de fichiers (gzip compté compressé) et ses exports."
     },
     "dns": {
       "alsoNotify": "Serveurs prévenus des changements (NOTIFY)",
