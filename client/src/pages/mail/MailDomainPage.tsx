@@ -23,7 +23,7 @@ import { MailboxesPanel } from '@/components/mail/MailboxesPanel';
 import { MailAliasesPanel } from '@/components/mail/MailAliasesPanel';
 import { apiErrorStatus, mailErrorCode, mailLoadError, toastMailError } from '@/components/mail/mailErrors';
 import { dotsFromRecords, engineHasMailboxes } from '@/components/mail/mailFormat';
-import { domainHref } from '@/utils/links';
+import { accountHref, domainHref } from '@/utils/links';
 
 type SubTab = 'mailboxes' | 'aliases';
 
@@ -157,7 +157,7 @@ export function MailDomainPage() {
     try {
       await mailApi.deleteDomain(domain.id, domain.name, force);
       toast.success(t('mail.domain.deleted') || 'Mail disabled on the domain');
-      navigate(`/mail?account=${domain.accountId}`, { replace: true });
+      navigate(accountHref(domain.accountId, 'mail'), { replace: true });
     } catch (err) {
       toastMailError(t, err, t('mail.domain.deleteFailed') || 'Failed to delete the mail domain');
       setBusy(false);
@@ -169,7 +169,7 @@ export function MailDomainPage() {
   return (
     <PageContainer className="flex flex-col gap-5">
       <DetailHeader
-        backTo={`/mail?account=${domain.accountId}`}
+        backTo={accountHref(domain.accountId, 'mail')}
         title={domain.name}
         badges={(
           <>
@@ -179,7 +179,7 @@ export function MailDomainPage() {
         )}
         subtitle={(
           <>
-            <AccountLink accountId={domain.accountId} username={domain.accountUsername} to={`/mail?account=${domain.accountId}`} />
+            <AccountLink accountId={domain.accountId} username={domain.accountUsername} tab="mail" />
             <span>·</span>
             <span>{t('mail.domains.counts', { mailboxes: domain.mailboxCount, aliases: domain.aliasCount, defaultValue: '{{mailboxes}} mailbox(es) · {{aliases}} alias(es)' })}</span>
             {domain.usedBytes != null && <><span>·</span><span>{formatBytes(t, domain.usedBytes)}</span></>}

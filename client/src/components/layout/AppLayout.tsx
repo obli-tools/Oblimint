@@ -7,6 +7,7 @@ import { Drawer } from '@/components/common/Drawer';
 import { useUiStore, useEffectiveSidebar } from '@/store/uiStore';
 import { useTenantStore } from '@/store/tenantStore';
 import { TransferDock } from '@/components/files/TransferDock';
+import { GlobalDomainDrawer } from '@/components/hosting/DomainDrawer';
 import { cn } from '@/utils/cn';
 
 export function AppLayout() {
@@ -210,6 +211,8 @@ export function AppLayout() {
         </main>
         {/* Upload queue of the file explorer (follows the user across pages). */}
         <TransferDock />
+        {/* The domain drawer opens on any page from ?domain=<id> (coherence plan 1.4). */}
+        <GlobalDomainDrawer />
 
       </div>
 

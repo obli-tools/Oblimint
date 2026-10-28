@@ -126,7 +126,11 @@
       "files": "Files",
       "overview": "Overview",
       "sites": "Sites",
-      "users": "Users"
+      "users": "Users",
+      "access": "Access & security",
+      "apps": "Applications",
+      "domainsDns": "Domains & DNS",
+      "mail": "Mail"
     },
     "title": "Hosting accounts",
     "unsuspend": "Resume",
@@ -246,7 +250,8 @@
       "noSite": "No route for now",
       "normalized": "Stored as {{name}}",
       "site": "Route \"/\" to a site (optional)",
-      "tls": "TLS"
+      "tls": "TLS",
+      "siteFixedHint": "The domain is routed to this site at \"/\". Other paths can be added afterwards in the Domains tab of the site."
     },
     "kind": {
       "addon": "Add-on",
@@ -278,7 +283,9 @@
       "deleted": "Route removed",
       "siteHint": "A route sends a domain + path prefix to this site (or one of its secondary runtimes). When several prefixes match a request, the longest one wins.",
       "siteEmpty": "No domain points to this site yet.",
-      "noDomain": "This account has no domain yet."
+      "noDomain": "This account has no domain yet.",
+      "openDomain": "Open the domain",
+      "visit": "Visit"
     },
     "routesCount": "{{count}} route(s)",
     "saveFailed": "Failed to save the domain",
@@ -290,7 +297,19 @@
       "letsencrypt": "Let's Encrypt",
       "none": "None (HTTP only)"
     },
-    "searchOnePlaceholder": "Search a domain…"
+    "searchOnePlaceholder": "Search a domain…",
+    "usage": {
+      "enableMail": "Enable mail",
+      "mail": "Mail",
+      "mailEnabled": "Mail enabled",
+      "mailOff": "disabled",
+      "mailboxes": "{{count}} mailbox(es)",
+      "noMail": "No mail",
+      "noProxy": "No proxy host",
+      "proxy": "Proxy",
+      "servedByProxy": "No site route: the domain is served by the proxy host(s) below.",
+      "title": "Used by"
+    }
   },
   "fileAccess": {
     "activated": "SFTP access opened",
@@ -373,7 +392,9 @@
       "running": "running",
       "stopped": "stopped",
       "title": "File server"
-    }
+    },
+    "manageAccount": "Manage the SFTP access of the account",
+    "siteHint": "The SFTP access is the one of the account: it reaches every site of the account."
   },
   "hostingCommon": {
     "all": "All",

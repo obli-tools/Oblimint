@@ -432,7 +432,9 @@
       "rotateTitle": "Régénérer les identifiants du relais",
       "rotateConfirm": "De nouveaux identifiants de relais sont écrits dans le site {{site}} (msmtp) ; les anciens cessent de fonctionner aussitôt.",
       "rotated": "Identifiants du relais régénérés",
-      "rotateFailed": "Impossible de régénérer les identifiants"
+      "rotateFailed": "Impossible de régénérer les identifiants",
+      "siteEmpty": "Pas encore de relais pour ce site.",
+      "siteTitle": "Envoi d'e-mails (PHP mail())"
     },
     "queue": {
       "title": "File d'attente",

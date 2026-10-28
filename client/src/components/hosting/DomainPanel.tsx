@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { Asterisk, Network, RefreshCw, ShieldCheck, Trash2, Settings2 } from 'lucide-react';
+import { Asterisk, AtSign, Link2, Network, RefreshCw, Shuffle, ShieldCheck, Trash2, Settings2 } from 'lucide-react';
 import type {
-  CertificateDetail, Domain, DomainKind, DomainUpdate, TlsMode,
+  CertificateDetail, Domain, DomainKind, DomainUpdate, MailDomain, ProxyHost, TlsMode,
 } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
 import { domainsApi } from '@/api/domains.api';
+import { mailApi } from '@/api/mail.api';
+import { proxyApi } from '@/api/proxy.api';
+import { MailDomainCreateModal } from '@/components/mail/MailDomainCreateModal';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
@@ -25,7 +28,32 @@ import { toastOwnershipError } from '@/components/dns/dnsErrors';
 import { domainRoutesSite, followServerValues } from './hostingFormat';
 import { RouteEditor } from './RouteEditor';
 
-/** Detail of a domain: route table, settings, certificate, deletion. */
+/**
+ * What the domain serves besides its routes (coherence plan 1.4): the proxy
+ * hosts bound to it and its mail domain, read from the lists of the account
+ * (null = not readable by the caller, the line is not shown).
+ */
+function useDomainUsage(domain: Domain | null): { proxyHosts: ProxyHost[] | null; mailDomain: MailDomain | null | undefined; reload: () => void } {
+  const [proxyHosts, setProxyHosts] = useState<ProxyHost[] | null>(null);
+  const [mailDomain, setMailDomain] = useState<MailDomain | null | undefined>(undefined);
+  const [tick, setTick] = useState(0);
+  const domainId = domain?.id ?? null;
+  const accountId = domain?.accountId ?? null;
+  useEffect(() => {
+    if (domainId == null || accountId == null) return;
+    let cancelled = false;
+    proxyApi.listHosts({ accountId })
+      .then((l) => { if (!cancelled) setProxyHosts(l.filter((h) => h.domains.some((d) => d.domainId === domainId))); })
+      .catch(() => { if (!cancelled) setProxyHosts(null); });
+    mailApi.listDomains({ accountId })
+      .then((l) => { if (!cancelled) setMailDomain(l.find((m) => m.domainId === domainId) ?? null); })
+      .catch(() => { if (!cancelled) setMailDomain(undefined); });
+    return () => { cancelled = true; };
+  }, [domainId, accountId, tick]);
+  return { proxyHosts, mailDomain, reload: () => setTick((n) => n + 1) };
+}
+
+/** Detail of a domain: what it serves (routes, proxy, mail), settings, certificate, deletion. */
 export function DomainPanel({ domainId, onChanged, onDeleted }: {
   domainId: number;
   /** The domain changed (row refresh in the parent list). */
@@ -50,6 +78,7 @@ export function DomainPanel({ domainId, onChanged, onDeleted }: {
   }, [domainId, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { setDomain(null); void load(); }, [load]);
+  const usage = useDomainUsage(domain);
   // CERTIFICATE_UPDATED too: the TLS badge of the header comes from domain.certificate.
   // P2: the verification badge and the zone link come from the domain row too.
   useHostingEvents([
@@ -112,7 +141,16 @@ export function DomainPanel({ domainId, onChanged, onDeleted }: {
       </div>
 
       <DomainOwnershipCard domain={domain} onVerified={() => { void load(); }} />
-      <RouteEditor domain={domain} manage={manage} onChanged={() => { void load(); }} />
+      <RouteEditor
+        domain={domain}
+        manage={manage}
+        onChanged={() => { void load(); }}
+        // A domain bound to a proxy host does not answer 404 without a route.
+        emptyText={usage.proxyHosts && usage.proxyHosts.length > 0
+          ? (t('domains.usage.servedByProxy') || 'No site route: the domain is served by the proxy host(s) below.')
+          : undefined}
+      />
+      <UsedByCard domain={domain} proxyHosts={usage.proxyHosts} mailDomain={usage.mailDomain} onMailCreated={usage.reload} />
       <SettingsCard domain={domain} manage={manage} onSaved={(d) => { setDomain(d); onChanged?.(d); }} />
       <CertificateCard domain={domain} manage={manage} />
 
@@ -124,6 +162,72 @@ export function DomainPanel({ domainId, onChanged, onDeleted }: {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Used by (proxy, mail) ───────────────────────────────────────────────────
+
+function UsedByCard({ domain, proxyHosts, mailDomain, onMailCreated }: {
+  domain: Domain;
+  proxyHosts: ProxyHost[] | null;
+  /** undefined = not readable; null = no mail on this domain. */
+  mailDomain: MailDomain | null | undefined;
+  onMailCreated: () => void;
+}) {
+  const { t } = useTranslation();
+  const { can } = useHostingMe();
+  const [creatingMail, setCreatingMail] = useState(false);
+  if (proxyHosts === null && mailDomain === undefined) return null;
+  const canMail = can('mail.manage', domain.accountId);
+
+  return (
+    <Card title={t('domains.usage.title') || 'Used by'} icon={<Link2 size={14} className="text-accent" />}>
+      <ul className="divide-y divide-border text-sm">
+        {proxyHosts !== null && (
+          <li className="flex flex-wrap items-center gap-2 py-2">
+            <Shuffle size={14} className="shrink-0 text-text-muted" />
+            <span className="w-28 shrink-0 text-xs text-text-muted">{t('domains.usage.proxy') || 'Proxy'}</span>
+            {proxyHosts.length === 0 ? (
+              <span className="text-xs text-text-muted">{t('domains.usage.noProxy') || 'No proxy host'}</span>
+            ) : (
+              <span className="flex min-w-0 flex-1 flex-wrap gap-x-3 gap-y-1">
+                {proxyHosts.map((h) => (
+                  <Link key={h.id} to={`/proxy/hosts/${h.id}`} className="text-text-primary hover:text-accent">
+                    {h.name} <span className="font-mono text-[11px] text-text-muted">→ {h.targetLabel}</span>
+                  </Link>
+                ))}
+              </span>
+            )}
+          </li>
+        )}
+        {mailDomain !== undefined && (
+          <li className="flex flex-wrap items-center gap-2 py-2">
+            <AtSign size={14} className="shrink-0 text-text-muted" />
+            <span className="w-28 shrink-0 text-xs text-text-muted">{t('domains.usage.mail') || 'Mail'}</span>
+            {mailDomain ? (
+              <Link to={`/mail/domains/${mailDomain.id}`} className="text-text-primary hover:text-accent">
+                {t('domains.usage.mailboxes', { count: mailDomain.mailboxCount, defaultValue: '{{count}} mailbox(es)' })}
+                {!mailDomain.enabled && <span className="ml-1.5 text-xs text-text-muted">({t('domains.usage.mailOff') || 'disabled'})</span>}
+              </Link>
+            ) : canMail ? (
+              <button type="button" onClick={() => setCreatingMail(true)} className="text-accent hover:underline">{t('domains.usage.enableMail') || 'Enable mail'}</button>
+            ) : (
+              <span className="text-xs text-text-muted">{t('domains.usage.noMail') || 'No mail'}</span>
+            )}
+          </li>
+        )}
+      </ul>
+      {canMail && (
+        <MailDomainCreateModal
+          open={creatingMail}
+          accounts={[]}
+          defaultAccountId={domain.accountId}
+          defaultDomainId={domain.id}
+          onClose={() => setCreatingMail(false)}
+          onCreated={() => { setCreatingMail(false); toast.success(t('domains.usage.mailEnabled') || 'Mail enabled'); onMailCreated(); }}
+        />
+      )}
+    </Card>
   );
 }
 

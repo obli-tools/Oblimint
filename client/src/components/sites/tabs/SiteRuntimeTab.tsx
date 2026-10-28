@@ -451,8 +451,8 @@ function SecondaryRuntimes({ site, canManage, allowedBases }: { site: SiteTabPro
         <h2 className="text-sm font-semibold text-text-primary">{t('runtime.secondary.title') || 'Secondary runtimes'}</h2>
       </div>
       <p className="mb-4 text-xs text-text-muted">
-        {t('runtime.secondary.explain') || 'A secondary runtime serves a path prefix of the SAME release with another engine (e.g. /legacy/ on PHP 7.4). Attach it to a prefix in the Routes tab or on the Domains page.'}{' '}
-        <Link to={siteHref(site.id, 'routes')} className="text-accent hover:underline">{t('sites.tabs.routes') || 'Routes & domains'}</Link>
+        {t('runtime.secondary.explain') || 'A secondary runtime serves a path prefix of the SAME release with another engine (e.g. /legacy/ on PHP 7.4). Attach it to a prefix in the Domains tab or on the Domains & DNS page.'}{' '}
+        <Link to={siteHref(site.id, 'domains')} className="text-accent hover:underline">{t('sites.tabs.domains') || 'Domains'}</Link>
       </p>
 
       {loading ? (

@@ -27,7 +27,7 @@
       "source": "Origine"
     },
     "nextPublication": "Les modifications prennent effet à la prochaine publication.",
-    "noProfile": "Choisissez d'abord un profil applicatif dans l'onglet Vue d'ensemble.",
+    "noProfile": "Choisissez d'abord un profil applicatif dans les réglages ci-dessus.",
     "overlapWith": "Chevauche {{path}}/",
     "pathHint": "Relatif à la racine de la release (pas à la racine web).",
     "pathImmutable": "Le chemin ne peut pas être modifié : supprimez-le puis ajoutez-le de nouveau.",
@@ -211,7 +211,7 @@
       "added": "Runtime secondaire ajouté",
       "deleteConfirm": "Supprimer le runtime secondaire {{base}} ?",
       "deleted": "Runtime secondaire supprimé",
-      "explain": "Un runtime secondaire sert un préfixe de chemin de la MÊME release avec un autre moteur (ex. /legacy/ en PHP 7.4). Rattachez-le à un préfixe dans l'onglet Routes ou sur la page Domaines.",
+      "explain": "Un runtime secondaire sert un préfixe de chemin de la MÊME release avec un autre moteur (ex. /legacy/ en PHP 7.4). Rattachez-le à un préfixe dans l'onglet Domaines ou sur la page Domaines & DNS.",
       "noRoute": "aucune route",
       "none": "Aucun runtime secondaire.",
       "note": "Le préfixe le plus long l’emporte ; le runtime principal sert tout le reste.",
@@ -263,8 +263,9 @@
     "phpRunning": "Version de PHP exécutée dans le conteneur"
   },
   "siteRoutes": {
-    "basePathNote": "Un sous-site doit savoir où il vit : le chemin de base de ce site est {{basePath}} (onglet Vue d'ensemble).",
-    "manageDomains": "Gérer les domaines"
+    "basePathNote": "Un sous-site doit savoir où il vit : le chemin de base de ce site est {{basePath}} (onglet Configuration).",
+    "manageDomains": "Gérer les domaines",
+    "drawerHint": "Cliquez sur un domaine pour ouvrir sa propriété, son certificat et ses réglages."
   },
   "sites": {
     "actions": {
@@ -393,7 +394,9 @@
     },
     "files": {
       "data": "Les données inscriptibles du site (envois, caches…), un dossier par chemin de données. Les modifications y sont immédiatement en ligne, mais le PHP n'y est jamais exécuté.",
-      "staging": "Le code du site. Déposez-le ici : rien n'est en ligne tant qu'il n'est pas publié en release (automatiquement ou avec le bouton « Publier »). Le code en ligne ne peut jamais être modifié sur place."
+      "staging": "Le code du site. Déposez-le ici : rien n'est en ligne tant qu'il n'est pas publié en release (automatiquement ou avec le bouton « Publier »). Le code en ligne ne peut jamais être modifié sur place.",
+      "dataTab": "Données",
+      "stagingTab": "Code (staging)"
     },
     "form": {
       "basePathHint": "Pour un sous-site servi sous un préfixe (ex. /blog/) : le chemin attendu par l'application. « / » sinon.",
@@ -476,7 +479,13 @@
       "overview": "Vue d'ensemble",
       "releases": "Releases",
       "routes": "Routes & domaines",
-      "runtime": "Runtime"
+      "runtime": "Runtime",
+      "config": "Configuration",
+      "domains": "Domaines",
+      "logs": "Journaux & observation",
+      "maintenance": "Maintenance & accès",
+      "releasesRestore": "Releases & restauration",
+      "runtimePhp": "Moteur & PHP"
     },
     "title": "Sites",
     "count": "{{count}} site(s)",

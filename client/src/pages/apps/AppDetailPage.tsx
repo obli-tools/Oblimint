@@ -33,6 +33,7 @@ import { AppUpdatesTab } from '@/components/apps/detail/AppUpdatesTab';
 import { AppResourcesTab } from '@/components/apps/detail/AppResourcesTab';
 import { AppProxyTab } from '@/components/apps/detail/AppProxyTab';
 import { AppSettingsTab } from '@/components/apps/detail/AppSettingsTab';
+import { accountHref } from '@/utils/links';
 
 type Tab = 'overview' | 'containers' | 'logs' | 'console' | 'history' | 'updates' | 'resources' | 'proxy' | 'settings';
 const TABS: readonly Tab[] = ['overview', 'containers', 'logs', 'console', 'history', 'updates', 'resources', 'proxy', 'settings'];
@@ -176,7 +177,7 @@ export function AppDetailPage() {
     <PageContainer className="flex flex-col gap-5">
       <DetailHeader
         // Fallback: the applications of its account (no apps tab on the account page yet).
-        backTo={`/apps?account=${stack.accountId}`}
+        backTo={accountHref(stack.accountId, 'apps')}
         leading={<CatalogIcon icon={stack.catalog?.icon ?? null} size={40} className="mt-0.5 max-sm:hidden" />}
         title={stack.displayName}
         badges={(
@@ -187,7 +188,7 @@ export function AppDetailPage() {
           </>
         )}
         subtitle={[
-          <AccountLink key="account" accountId={stack.accountId} username={stack.accountUsername} />,
+          <AccountLink key="account" accountId={stack.accountId} username={stack.accountUsername} tab="apps" />,
           <span key="name" className="font-mono">{stack.name}</span>,
           <span key="source" className="inline-flex items-center gap-1"><SourceTypeIcon type={stack.sourceType} size={13} />{stack.catalog ? stack.catalog.name : sourceTypeLabel(t, stack.sourceType)}</span>,
           <span key="services" className="font-mono">{t('apps.detail.servicesCount', { running: stack.runningCount, total: stack.serviceCount, defaultValue: '{{running}} / {{total}} services' })}</span>,

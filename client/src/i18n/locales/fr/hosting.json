@@ -126,7 +126,11 @@
       "files": "Fichiers",
       "overview": "Vue d'ensemble",
       "sites": "Sites",
-      "users": "Utilisateurs"
+      "users": "Utilisateurs",
+      "access": "Accès & sécurité",
+      "apps": "Applications",
+      "domainsDns": "Domaines & DNS",
+      "mail": "Mail"
     },
     "title": "Comptes d'hébergement",
     "unsuspend": "Réactiver",
@@ -246,7 +250,8 @@
       "noSite": "Pas de route pour l'instant",
       "normalized": "Enregistré sous {{name}}",
       "site": "Router « / » vers un site (facultatif)",
-      "tls": "TLS"
+      "tls": "TLS",
+      "siteFixedHint": "Le domaine est routé vers ce site sur « / ». D'autres chemins s'ajoutent ensuite dans l'onglet Domaines du site."
     },
     "kind": {
       "addon": "Additionnel",
@@ -278,7 +283,9 @@
       "deleted": "Route supprimée",
       "siteHint": "Une route envoie un domaine + un préfixe de chemin vers ce site (ou l’un de ses runtimes secondaires). Quand plusieurs préfixes correspondent à une requête, le plus long l’emporte.",
       "siteEmpty": "Aucun domaine ne pointe encore vers ce site.",
-      "noDomain": "Ce compte n’a encore aucun domaine."
+      "noDomain": "Ce compte n’a encore aucun domaine.",
+      "openDomain": "Ouvrir le domaine",
+      "visit": "Visiter"
     },
     "routesCount": "{{count}} route(s)",
     "saveFailed": "Échec de l'enregistrement du domaine",
@@ -290,7 +297,19 @@
       "letsencrypt": "Let's Encrypt",
       "none": "Aucun (HTTP seul)"
     },
-    "searchOnePlaceholder": "Rechercher un domaine…"
+    "searchOnePlaceholder": "Rechercher un domaine…",
+    "usage": {
+      "enableMail": "Activer le mail",
+      "mail": "Mail",
+      "mailEnabled": "Mail activé",
+      "mailOff": "désactivé",
+      "mailboxes": "{{count}} boîte(s)",
+      "noMail": "Pas de mail",
+      "noProxy": "Aucun hôte proxy",
+      "proxy": "Proxy",
+      "servedByProxy": "Pas de route de site : le domaine est servi par le ou les hôtes proxy ci-dessous.",
+      "title": "Utilisé par"
+    }
   },
   "fileAccess": {
     "activated": "Accès SFTP ouvert",
@@ -373,7 +392,9 @@
       "running": "actif",
       "stopped": "arrêté",
       "title": "Serveur de fichiers"
-    }
+    },
+    "manageAccount": "Gérer l'accès SFTP du compte",
+    "siteHint": "L'accès SFTP est celui du compte : il atteint tous les sites du compte."
   },
   "hostingCommon": {
     "all": "Tous",

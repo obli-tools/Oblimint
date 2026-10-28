@@ -12,18 +12,17 @@ import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { groupRowsByAccount, useAccountDirectory } from '@/components/common/accountGroups';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { EmptyState } from '@/components/common/EmptyState';
-import { Drawer } from '@/components/common/Drawer';
 import { VerificationBadge, ZoneKindBadge } from '@/components/dns/DnsBadges';
 import { DomainClaimsCard } from '@/components/dns/DomainClaims';
 import { ownershipErrorMessage } from '@/components/dns/dnsErrors';
 import { DomainCreateModal, domainKindLabel } from './DomainCreateModal';
-import { DomainPanel } from './DomainPanel';
+import { useDomainDrawerEvents, type DomainDrawerEvent } from './DomainDrawer';
 import { ForceHttpsIcon, TlsBadge, headerAccentBtnCls, headerBtnCls, useHostingEvents } from './hostingUi';
 
 /**
  * The ONE domain list (coherence plan D5): the Domains tab of an account and
  * the Domains & DNS page (every visible account, grouped by account). Search,
- * counters, claims in progress, the domain drawer (?domain=<id>) and the
+ * counters, claims in progress, the domain drawer (?domain=<id>, GlobalDomainDrawer) and the
  * creation in place (account preset when one is known).
  */
 export function DomainsList({ accountId = null, tenantId, createDisabled = false, filters }: {
@@ -67,6 +66,12 @@ export function DomainsList({ accountId = null, tenantId, createDisabled = false
     HostingSocketEvents.DOMAIN_VERIFICATION_UPDATED, HostingSocketEvents.DNS_ZONE_UPDATED,
   ], () => { void load(); });
 
+  // The drawer (GlobalDomainDrawer, ?domain=) is the layout's: its changes come back here.
+  useDomainDrawerEvents(useCallback((e: DomainDrawerEvent) => {
+    if (e.type === 'changed') setDomains((cur) => cur.map((x) => (x.id === e.domain.id ? e.domain : x)));
+    else { setDomains((cur) => cur.filter((x) => x.id !== e.id)); void load(); }
+  }, [load]));
+
   const select = (id: number | null) => {
     setParams((prev) => {
       const next = new URLSearchParams(prev);
@@ -84,7 +89,6 @@ export function DomainsList({ accountId = null, tenantId, createDisabled = false
 
   const accountDir = useAccountDirectory();
   const canCreate = can('domains.manage', accountId ?? undefined) && !createDisabled;
-  const selected = domains.find((d) => d.id === selectedId) ?? null;
   const pendingCount = inScope.filter((d) => d.verification?.status === 'pending').length;
   const createBtn = <button onClick={() => setCreating(true)} className={headerAccentBtnCls}><Plus size={14} />{t('domains.create') || 'Add a domain'}</button>;
 
@@ -184,24 +188,6 @@ export function DomainsList({ accountId = null, tenantId, createDisabled = false
           ]}
         />
       )}
-
-      <Drawer
-        open={selectedId != null}
-        onClose={() => select(null)}
-        side="right"
-        size="lg"
-        title={selected?.name ?? (t('domains.detailTitle') || 'Domain')}
-        icon={<Globe size={16} className="shrink-0 text-accent" />}
-        bodyClassName="p-4"
-      >
-        {selectedId != null && (
-          <DomainPanel
-            domainId={selectedId}
-            onChanged={(d) => setDomains((cur) => cur.map((x) => (x.id === d.id ? d : x)))}
-            onDeleted={() => { select(null); void load(); }}
-          />
-        )}
-      </Drawer>
 
       <DomainCreateModal
         open={creating}

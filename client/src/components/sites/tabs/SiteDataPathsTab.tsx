@@ -110,7 +110,7 @@ export function SiteDataPathsTab({ site, onPublish }: SiteTabProps) {
               onClick={() => void applyProfile()}
               loading={applying}
               disabled={!site.appProfile}
-              title={site.appProfile ? undefined : (t('dataPaths.noProfile') || 'Choose an application profile in the Overview tab first.')}
+              title={site.appProfile ? undefined : (t('dataPaths.noProfile') || 'Choose an application profile in the settings above first.')}
             >
               <Wand2 size={14} className="mr-1" />
               {profileName

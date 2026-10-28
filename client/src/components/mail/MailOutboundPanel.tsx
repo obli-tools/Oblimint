@@ -178,7 +178,8 @@ function OutboundStateCard({ accountId }: { accountId: number }) {
 
 // ── Site relays (PHP mail() → msmtp → oblimint-mail-relay) ─────────────────
 
-function RelaysCard({ accountId }: { accountId: number }) {
+/** Relays of the account's sites, or of one site (Site > Configuration, siteId). */
+export function RelaysCard({ accountId, siteId }: { accountId: number; siteId?: number }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
   const { can } = useHostingMe();
@@ -190,13 +191,14 @@ function RelaysCard({ accountId }: { accountId: number }) {
 
   const load = useCallback(async () => {
     try {
-      setRelays(await mailApi.relays(accountId));
+      const all = await mailApi.relays(accountId);
+      setRelays(siteId != null ? all.filter((r) => r.siteId === siteId) : all);
       setError(null);
     } catch (err) {
       setRelays(null);
       setError(mailLoadError(t, err, t('mail.relay.loadFailed') || 'Failed to load the site relays'));
     }
-  }, [accountId, t]);
+  }, [accountId, siteId, t]);
   useEffect(() => { void load(); }, [load]);
   useHostingEvents([HostingSocketEvents.MAIL_UPDATED], () => { void load(); }, (_e, p) => {
     const payload = p as MailUpdatedPayload | null;
@@ -234,14 +236,14 @@ function RelaysCard({ accountId }: { accountId: number }) {
   };
 
   return (
-    <Card title={t('mail.relay.title') || 'Site relay (PHP mail())'} icon={<Server size={14} className="text-accent" />}>
+    <Card title={siteId != null ? (t('mail.relay.siteTitle') || 'Sending e-mails (PHP mail())') : (t('mail.relay.title') || 'Site relay (PHP mail())')} icon={<Server size={14} className="text-accent" />}>
       <p className="mb-3 text-xs text-text-muted">{t('mail.relay.description') || 'The sites send their PHP mail() through the authenticated relay of the platform: the sender is forced to an address of the account and the volume is limited per site.'}</p>
       {error ? (
         <p className="flex items-start gap-2 text-sm text-text-muted"><AlertTriangle size={14} className="mt-0.5 shrink-0" />{error}</p>
       ) : relays === null ? (
         <div className="flex justify-center py-4"><LoadingSpinner /></div>
       ) : relays.length === 0 ? (
-        <p className="py-4 text-center text-xs text-text-muted">{t('mail.relay.empty') || 'This account has no site.'}</p>
+        <p className="py-4 text-center text-xs text-text-muted">{siteId != null ? (t('mail.relay.siteEmpty') || 'No relay for this site yet.') : (t('mail.relay.empty') || 'This account has no site.')}</p>
       ) : (
         <ul className="space-y-2">
           {relays.map((r) => (

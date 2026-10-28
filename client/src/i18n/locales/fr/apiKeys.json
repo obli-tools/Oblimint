@@ -183,7 +183,11 @@
       "pickSites": "Choisis au moins deux sites ci-dessous, ou tous les sites.",
       "pickSite": "Choisis au moins un site ci-dessous.",
       "pickParents": "Choisis ci-dessous les domaines sous lesquels elle créera ses sous-domaines."
-    }
+    },
+    "giveAccess": "Donner accès à un agent / une CI",
+    "siteEmpty": "Aucune clé d'accès ne couvre ce site.",
+    "siteIntro": "Les clés du compte qui atteignent ce site (tous les sites, ou celui-ci parmi d'autres). Elles se gèrent avec les autres clés du compte.",
+    "siteTitle": "Clés d'accès couvrant ce site"
   },
   "oauth": {
     "title": "Connecter une application",

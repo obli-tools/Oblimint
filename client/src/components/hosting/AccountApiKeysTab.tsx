@@ -21,13 +21,22 @@ import { ApiGuideModal, CreatedKeyModal, KeyModal, SCOPE_FALLBACK } from './KeyM
 // no bearer secret but an OAuth client id / secret pasted in the custom
 // connector; the user then approves it in the panel (OAuthAuthorizePage).
 
-export function AccountApiKeysTab({ accountId }: { accountId: number }) {
+export function AccountApiKeysTab({ accountId, siteId, presetSiteIds, openNew = false }: {
+  accountId: number;
+  /** Site page: only the keys covering this site; a new key starts with it ticked. */
+  siteId?: number;
+  /** New key: sites ticked from the start (deep link ?section=keys&site=<id>&new=1). */
+  presetSiteIds?: number[];
+  /** Open the new-key form at once (deep link &new=1). */
+  openNew?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [domains, setDomains] = useState<Domain[]>([]);
-  const [editing, setEditing] = useState<ApiKey | ApiKeyKind | null>(null);
+  const [editing, setEditing] = useState<ApiKey | ApiKeyKind | null>(openNew ? 'key' : null);
+  const newSiteIds = siteId != null ? [siteId] : presetSiteIds;
   const [created, setCreated] = useState<ApiKeyCreated | null>(null);
   const [guideOpen, setGuideOpen] = useState(false);
 
@@ -46,6 +55,8 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Site page: the keys reaching the site (every site of the account, or this one listed).
+  const shown = keys && siteId != null ? keys.filter((k) => k.siteScope === 'all' || k.siteIds.includes(siteId)) : keys;
   const scopeLabel = (s: ApiKeyScope) => t(`apiKeys.scopes.${s}.label`) || SCOPE_FALLBACK[s][0];
   const siteName = (id: number) => { const s = sites.find((x) => x.id === id); return s ? (s.primaryDomain || s.name) : `#${id}`; };
   const domainName = (id: number) => domains.find((d) => d.id === id)?.name ?? `#${id}`;
@@ -97,15 +108,18 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
     <div className="space-y-4">
       <Card
         icon={<KeyRound size={14} className="text-accent" />}
-        title={t('apiKeys.title') || 'Access keys'}
+        title={siteId != null ? (t('apiKeys.siteTitle') || 'Access keys covering this site') : (t('apiKeys.title') || 'Access keys')}
         actions={(
           <div className="flex gap-2">
             <Button size="sm" variant="secondary" onClick={() => setGuideOpen(true)}><BookOpen className="mr-1 h-3.5 w-3.5" />{t('apiKeys.guide') || 'API & AI agent guide'}</Button>
             <Button size="sm" variant="secondary" onClick={() => setEditing('connector')}><Plug className="mr-1 h-3.5 w-3.5" />{t('apiKeys.connector.create') || 'Claude connector'}</Button>
-            <Button size="sm" onClick={() => setEditing('key')}><Plus className="mr-1 h-3.5 w-3.5" />{t('apiKeys.create') || 'New key'}</Button>
+            <Button size="sm" onClick={() => setEditing('key')}><Plus className="mr-1 h-3.5 w-3.5" />{siteId != null ? (t('apiKeys.giveAccess') || 'Give access to an agent / a CI') : (t('apiKeys.create') || 'New key')}</Button>
           </div>
         )}
       >
+        {siteId != null && (
+          <p className="mb-1.5 text-xs text-text-muted">{t('apiKeys.siteIntro') || 'The keys of the account that reach this site (every site, or this one among others). They are managed with the other keys of the account.'}</p>
+        )}
         <p className="text-xs text-text-muted">
           {t('apiKeys.intro') || 'Give a script, a CI or an AI agent (Claude…) access to this account only, limited to the sites and rights you choose. A key never exceeds your own rights and stops working if you lose them.'}
         </p>
@@ -114,11 +128,11 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
         </p>
       </Card>
 
-      {keys === null ? <div className="flex justify-center p-8"><LoadingSpinner /></div>
-        : !keys.length ? <EmptyState icon={<KeyRound />} text={t('apiKeys.empty') || 'No access key yet.'} />
+      {shown === null ? <div className="flex justify-center p-8"><LoadingSpinner /></div>
+        : !shown.length ? <EmptyState icon={<KeyRound />} text={siteId != null ? (t('apiKeys.siteEmpty') || 'No access key covers this site.') : (t('apiKeys.empty') || 'No access key yet.')} />
           : (
             <div className="space-y-2">
-              {keys.map((k) => {
+              {shown.map((k) => {
                 const expired = k.expiresAt !== null && new Date(k.expiresAt).getTime() < Date.now();
                 return (
                   <div key={k.id} className="rounded-xl bg-bg-secondary p-4">
@@ -202,6 +216,7 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
           domains={domains}
           kind={typeof editing === 'string' ? editing : editing.kind}
           initial={typeof editing === 'string' ? null : editing}
+          initialSiteIds={typeof editing === 'string' ? newSiteIds : undefined}
           onClose={() => setEditing(null)}
           onSaved={(k) => { setEditing(null); if ('clientSecret' in k) setCreated(k as ApiKeyCreated); void load(); }}
         />

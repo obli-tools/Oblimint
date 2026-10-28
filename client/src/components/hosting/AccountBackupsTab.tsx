@@ -18,8 +18,13 @@ import { Card, EmptyState, toastHostingError } from './hostingUi';
 // schedule of the platform, or on demand), restore of a site's code / data or
 // of a database from one of them.
 
-export function AccountBackupsTab({ accountId, canRun, canManage, can }: {
+export function AccountBackupsTab({ accountId, siteId, canRun, canManage, can }: {
   accountId: number;
+  /**
+   * Site page (Releases & restore): only the backups holding this site, and
+   * only its code / data restorable (filtered here: the server lists the account).
+   */
+  siteId?: number;
   /** sites.manage: start a backup now. */
   canRun: boolean;
   /** accounts.manage (staff): exclude the account from the schedule. */
@@ -65,15 +70,20 @@ export function AccountBackupsTab({ accountId, canRun, canManage, can }: {
   };
 
   if (!state) return <div className="flex justify-center p-8"><LoadingSpinner /></div>;
-  const canRestore = can.code || can.data || can.db;
+  const siteCan = siteId != null ? { ...can, db: false } : can;
+  const canRestore = siteCan.code || siteCan.data || siteCan.db;
+  const runs = siteId != null ? state.runs.filter((r) => r.objects.some((o) => o.siteId === siteId)) : state.runs;
 
   return (
     <div className="space-y-4">
       <Card
         icon={<Archive size={14} className="text-accent" />}
-        title={t('backups.title') || 'Backups'}
-        actions={canRun ? <Button size="sm" loading={starting} onClick={() => { void runNow(); }}><Play className="mr-1 h-3.5 w-3.5" />{t('backups.runNow') || 'Back up now'}</Button> : undefined}
+        title={siteId != null ? (t('backups.siteTitle') || 'Backups of the site') : (t('backups.title') || 'Backups')}
+        actions={canRun ? <Button size="sm" loading={starting} onClick={() => { void runNow(); }}><Play className="mr-1 h-3.5 w-3.5" />{siteId != null ? (t('backups.runAccountNow') || 'Back up the account now') : (t('backups.runNow') || 'Back up now')}</Button> : undefined}
       >
+        {siteId != null && (
+          <p className="mb-1.5 text-xs text-text-muted">{t('backups.siteHint') || 'The backups of the account that hold this site: its code (back into the staging folder) and its data can be restored from here; the databases from the account.'}</p>
+        )}
         <p className="text-xs text-text-muted">
           {!state.scheduled
             ? (t('backups.accountNotScheduled') || 'The daily backups are not enabled on the platform (Settings > Backups).')
@@ -88,9 +98,9 @@ export function AccountBackupsTab({ accountId, canRun, canManage, can }: {
         )}
       </Card>
 
-      {!state.runs.length ? <EmptyState icon={<Archive />} text={t('backups.noRuns') || 'No backup yet.'} /> : (
+      {!runs.length ? <EmptyState icon={<Archive />} text={t('backups.noRuns') || 'No backup yet.'} /> : (
         <div className="divide-y divide-border rounded-xl bg-bg-secondary p-4">
-          {state.runs.map((r) => (
+          {runs.map((r) => (
             <RunRow key={r.id} run={r} fmt={fmt}>
               {canRestore && !r.purgedAt && (r.status === 'ok' || r.status === 'partial') && (
                 <Button size="sm" variant="secondary" onClick={() => setRestoring(r)}><RotateCcw className="mr-1 h-3.5 w-3.5" />{t('backups.restore') || 'Restore'}</Button>
@@ -100,7 +110,7 @@ export function AccountBackupsTab({ accountId, canRun, canManage, can }: {
         </div>
       )}
 
-      <RestoreModal accountId={accountId} run={restoring} can={can} fmt={fmt} onClose={() => setRestoring(null)} />
+      <RestoreModal accountId={accountId} siteId={siteId} run={restoring} can={siteCan} fmt={fmt} onClose={() => setRestoring(null)} />
     </div>
   );
 }
@@ -111,8 +121,8 @@ function itemOf(o: BackupObject): BackupRestoreItem | null {
   return null;
 }
 
-function RestoreModal({ accountId, run, can, fmt, onClose }: {
-  accountId: number; run: BackupRun | null; can: { code: boolean; data: boolean; db: boolean }; fmt: (iso: string | null) => string; onClose: () => void;
+function RestoreModal({ accountId, siteId, run, can, fmt, onClose }: {
+  accountId: number; siteId?: number; run: BackupRun | null; can: { code: boolean; data: boolean; db: boolean }; fmt: (iso: string | null) => string; onClose: () => void;
 }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
@@ -122,7 +132,7 @@ function RestoreModal({ accountId, run, can, fmt, onClose }: {
   useEffect(() => { setPicked(new Set()); setResult(null); }, [run]);
   if (!run) return null;
 
-  const objects = run.objects.filter((o) => itemOf(o) && can[o.kind as 'code' | 'data' | 'db']);
+  const objects = run.objects.filter((o) => itemOf(o) && can[o.kind as 'code' | 'data' | 'db'] && (siteId == null || o.siteId === siteId));
   const keyOf = (o: BackupObject) => o.key;
   const word = t('backups.restoreWord') || 'RESTORE';
 

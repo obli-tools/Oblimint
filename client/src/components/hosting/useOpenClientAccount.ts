@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { accountsApi } from '@/api/accounts.api';
-import { accountHref } from '@/utils/links';
+import { accountAccessHref } from '@/utils/links';
 import { useTenantStore } from '@/store/tenantStore';
 
 /** Accounts fetched in parallel at most while indexing the memberships. */
@@ -56,7 +56,7 @@ export function useOpenClientAccount() {
       if (found.length > 1) {
         toast(t('users.clientSeveralAccounts', { count: found.length, username: found[0].username, defaultValue: 'Member of {{count}} accounts: {{username}} is opened.' }));
       }
-      navigate(accountHref(found[0].id, 'users'));
+      navigate(accountAccessHref(found[0].id, 'users'));
     } catch {
       toast.error(t('users.clientAccountFailed') || 'Failed to find the account of this customer');
     } finally {

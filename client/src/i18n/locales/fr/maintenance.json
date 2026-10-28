@@ -238,7 +238,7 @@
       "title": "Paramètres des fenêtres"
     },
     "tab": {
-      "subtitle": "Fenêtres de modification, mises à jour des sites (CMS) et clichés des bases de ce site.",
+      "subtitle": "Fenêtres de modification, mises à jour des sites (CMS), mode supervisé et accès des agents et des CI à ce site.",
       "title": "Maintenance"
     },
     "units": {

@@ -36,7 +36,7 @@ type DnsZoneChoice = 'auto' | DnsZoneKind | 'none';
  * held by another account (409 domainTaken with details.claimable) offers to
  * start a claim (TXT proof) instead.
  */
-export function DomainCreateModal({ open, onClose, onCreated, onClaimCreated, accountId: fixedAccountId }: {
+export function DomainCreateModal({ open, onClose, onCreated, onClaimCreated, accountId: fixedAccountId, siteId: fixedSiteId }: {
   open: boolean;
   onClose: () => void;
   onCreated: (d: Domain) => void;
@@ -44,6 +44,8 @@ export function DomainCreateModal({ open, onClose, onCreated, onClaimCreated, ac
   onClaimCreated?: (c: DomainClaim) => void;
   /** Fixed account (account detail page); otherwise an account select is shown. */
   accountId?: number;
+  /** Site page: the '/' route goes to this site (select preset and locked). Needs accountId. */
+  siteId?: number;
 }) {
   const { t } = useTranslation();
   const { can } = useHostingMe();
@@ -86,9 +88,9 @@ export function DomainCreateModal({ open, onClose, onCreated, onClaimCreated, ac
     sitesApi.list({ accountId })
       .then((list) => { if (!cancelled) setSites(list); })
       .catch(() => { if (!cancelled) setSites([]); });
-    setSiteId('');
+    setSiteId(fixedSiteId != null && accountId === fixedAccountId ? fixedSiteId : '');
     return () => { cancelled = true; };
-  }, [open, accountId]);
+  }, [open, accountId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const normalized = normalizeDomainName(name);
   // A wildcard certificate goes through DNS-01: it needs a zone hosted here.
@@ -262,10 +264,13 @@ export function DomainCreateModal({ open, onClose, onCreated, onClaimCreated, ac
         </div>
         <div>
           <label className={labelCls} htmlFor="dom-site">{t('domains.form.site') || 'Route "/" to a site (optional)'}</label>
-          <select id="dom-site" value={siteId} disabled={accountId === ''} onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : '')} className={selectCls}>
+          <select id="dom-site" value={siteId} disabled={accountId === '' || fixedSiteId != null} onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : '')} className={selectCls}>
             <option value="">{t('domains.form.noSite') || 'No route for now'}</option>
             {sites.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.slug})</option>)}
           </select>
+          {fixedSiteId != null && (
+            <p className="mt-1 text-xs text-text-muted">{t('domains.form.siteFixedHint') || 'The domain is routed to this site at "/". Other paths can be added afterwards in the Domains tab of the site.'}</p>
+          )}
         </div>
         <p className="text-xs text-text-muted">
           {t('domainOwnership.createHint') || 'After creation, prove that you own the domain (TXT record or our name servers): until then visitors see a placeholder page and no certificate is issued.'}
@@ -287,8 +292,10 @@ export function DomainCreateModal({ open, onClose, onCreated, onClaimCreated, ac
  * account preset (instead of a bare link to /domains that leaves the form).
  * Renders nothing when the caller may not add domains to this account.
  */
-export function AddDomainInline({ accountId, onCreated, label, className }: {
+export function AddDomainInline({ accountId, siteId, onCreated, label, className }: {
   accountId: number;
+  /** Route the new domain to this site at "/" (site page). */
+  siteId?: number;
   onCreated: (d: Domain) => void;
   label?: string;
   className?: string;
@@ -305,6 +312,7 @@ export function AddDomainInline({ accountId, onCreated, label, className }: {
       <DomainCreateModal
         open={open}
         accountId={accountId}
+        siteId={siteId}
         onClose={() => setOpen(false)}
         onCreated={(d) => {
           setOpen(false);

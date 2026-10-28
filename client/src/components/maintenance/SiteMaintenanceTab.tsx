@@ -12,17 +12,19 @@ import { ActiveWindowCard } from './ActiveWindowCard';
 import { AdaptersPanel } from './AdaptersPanel';
 import { SiteMaintenanceSettingsCard, SupervisionCard } from './SiteMaintenanceSettingsCard';
 import { SiteTokensCard } from './SiteTokensCard';
-import { SnapshotsCard } from './SnapshotsCard';
+import { AccountApiKeysTab } from '@/components/hosting/AccountApiKeysTab';
 import { WindowsTable } from './WindowsTable';
 import { isNotImplemented, maintenanceErrorMessage } from './maintenanceErrors';
 
 const HISTORY_PAGE = 10;
 
 /**
- * Site tab "Maintenance" (?tab=maintenance): open / extend / close a window
- * with its countdown, schedule editor, policy, supervised mode, API tokens,
+ * Site tab "Maintenance & access" (?tab=maintenance): open / extend / close a
+ * window with its countdown, schedule editor, policy, supervised mode,
  * history of the windows, adapters panel (available updates, run now,
- * schedules), database snapshots (docs/P3-PLAN.md §13).
+ * schedules), window tokens (CI) and the access keys covering the site
+ * (docs/P3-PLAN.md §13, coherence plan 1.3). The database snapshots moved to
+ * « Releases & restore ».
  * OWNED BY MODULE `ui-maintenance`.
  */
 export function SiteMaintenanceTab({ site }: { site: Site }) {
@@ -68,7 +70,7 @@ export function SiteMaintenanceTab({ site }: { site: Site }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 basis-64 text-sm text-text-muted">
-          {t('maintenance.tab.subtitle') || 'Modification windows, application updates and database snapshots of this site.'}
+          {t('maintenance.tab.subtitle') || 'Modification windows, site updates (CMS), supervised mode and the access of agents and CIs to this site.'}
         </p>
         <IconButton label={t('common.refresh') || 'Refresh'} icon={<RefreshCw size={14} />} onClick={refresh} />
       </div>
@@ -86,11 +88,12 @@ export function SiteMaintenanceTab({ site }: { site: Site }) {
           {info.settings.supervised && <SupervisionCard site={site} tick={tick} />}
           <AdaptersPanel site={site} />
           <WindowHistoryCard site={site} tick={tick} />
-          <SnapshotsCard site={site} tick={tick} />
           <SiteMaintenanceSettingsCard site={site} info={info} onSaved={(next) => { setInfo(next); setTick((n) => n + 1); }} />
           {canManage && <SiteTokensCard site={site} />}
         </>
       )}
+      {/* Access keys reaching this site, and « Give access to an agent / a CI » with the site ticked (D7). */}
+      {canManage && <AccountApiKeysTab accountId={site.accountId} siteId={site.id} />}
     </div>
   );
 }

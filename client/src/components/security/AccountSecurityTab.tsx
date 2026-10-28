@@ -29,7 +29,7 @@ const TTL_MIN = 15;
 const TTL_MAX = 1440;
 
 /**
- * Security tab of the account detail page (?tab=security): who may reach the
+ * Firewall section of the account page (?tab=access&section=firewall, old ?tab=security): who may reach the
  * account's own ports (SFTP of the file server, external SQL ports). Mode
  * open / allow-list / auto after 2FA, rules, « my IPs » probes, automatic
  * grants, bans. Editing needs `files.manage`; the server stays the authority.

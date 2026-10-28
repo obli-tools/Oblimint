@@ -101,6 +101,9 @@
     "objData": "Données du site {{site}} (envois…)",
     "restoreTitle": "Restaurer la sauvegarde du {{date}}",
     "restoreConfirm": "Tapez {{word}} pour confirmer",
-    "restoreConfirmMessage": "Ces {{count}} élément(s) sont REMPLACÉS par leur état sauvegardé :"
+    "restoreConfirmMessage": "Ces {{count}} élément(s) sont REMPLACÉS par leur état sauvegardé :",
+    "runAccountNow": "Sauvegarder le compte maintenant",
+    "siteHint": "Les sauvegardes du compte qui contiennent ce site : son code (remis dans le dossier de staging) et ses données se restaurent d'ici ; les bases, depuis le compte.",
+    "siteTitle": "Sauvegardes du site"
   }
 }

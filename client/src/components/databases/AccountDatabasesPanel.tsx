@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { Database, Plus } from 'lucide-react';
@@ -15,11 +14,10 @@ import { dbErrorMessage } from './dbFormat';
 
 /**
  * Databases tab of the account detail page (mounted by ui-ops, ?tab=databases):
- * the account's instances, its plan limits and a create button.
+ * the account's instances, its plan limits and a create button (creation in place).
  */
 export function AccountDatabasesPanel({ accountId }: { accountId: number }) {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const { can } = useHostingMe();
   const [instances, setInstances] = useState<DbInstance[]>([]);
   const [catalog, setCatalog] = useState<DbCatalog | null>(null);
@@ -77,7 +75,8 @@ export function AccountDatabasesPanel({ accountId }: { accountId: number }) {
         onCreated={(i) => {
           setCreating(false);
           toast.success(t('databases.created', { name: i.name, defaultValue: 'Instance {{name}} created' }));
-          navigate(`/databases/${i.id}`);
+          // Created in place (coherence plan C6): the row follows its start-up, its page is one click away.
+          setInstances((cur) => [...cur.filter((x) => x.id !== i.id), i]);
         }}
       />
     </div>

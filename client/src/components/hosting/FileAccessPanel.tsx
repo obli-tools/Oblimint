@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
+import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, FolderOpen, HardDrive, KeyRound, Plus, Power, RefreshCw, Server, Terminal, Timer, Trash2, Upload,
+  AlertTriangle, ExternalLink, FolderOpen, HardDrive, KeyRound, Plus, Power, RefreshCw, Server, Terminal, Timer, Trash2, Upload,
 } from 'lucide-react';
 import type { AccountSshKey, FileAccessInfo, FileServerMode, FileServerStatus } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
@@ -19,6 +20,7 @@ import {
   Card, CopyButton, EmptyState, InfoRow, Pill, inputCls, labelCls, payloadNumber, hostingErrorMessage,
   toastHostingError, useHostingEvents,
 } from './hostingUi';
+import { accountHref } from '@/utils/links';
 import { formatCountdown, layoutMatchesSlug, looksLikeSshPublicKey, sftpCommand, sshKeyComment } from './hostingFormat';
 
 // Consumed by ui-sites (Site detail → "File access" tab) and by the account
@@ -30,6 +32,12 @@ export interface FileAccessPanelProps {
   accountId: number;
   /** Highlight the folders of this site. */
   siteSlug?: string;
+  /**
+   * 'site' (Site > Files): the connection only, read only, with a link to the
+   * account's Files tab — the SFTP access (password, keys, mode) is the
+   * account's, never changed from a site page.
+   */
+  variant?: 'full' | 'site';
 }
 
 /** On-demand activation durations offered (minutes; server accepts 15–1440). */
@@ -39,7 +47,7 @@ function mergeStatus(info: FileAccessInfo, s: FileServerStatus): FileAccessInfo 
   return { ...info, mode: s.mode, running: s.running, activeUntil: s.activeUntil, port: s.port ?? info.port };
 }
 
-export function FileAccessPanel({ accountId, siteSlug }: FileAccessPanelProps) {
+export function FileAccessPanel({ accountId, siteSlug, variant = 'full' }: FileAccessPanelProps) {
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
   const { can } = useHostingMe();
@@ -183,39 +191,67 @@ export function FileAccessPanel({ accountId, siteSlug }: FileAccessPanelProps) {
     off: t('fileAccess.mode.offHint') || 'No SFTP access: the server never starts.',
   }[info.mode];
 
+  const connectionCard = (
+    <Card title={t('fileAccess.connection.title') || 'SFTP connection'} icon={<Terminal size={14} className="text-accent" />}>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <InfoRow label={t('fileAccess.connection.host') || 'Host'} mono>
+          <span className="inline-flex items-center gap-1">
+            {info.host ?? <span className="text-text-muted">{t('fileAccess.connection.noHost') || 'not configured'}</span>}
+            {info.host && <CopyButton text={info.host} />}
+          </span>
+        </InfoRow>
+        <InfoRow label={t('fileAccess.connection.port') || 'Port'} mono>
+          <span className="inline-flex items-center gap-1">
+            {info.port ?? '—'}
+            {info.port != null && <CopyButton text={String(info.port)} />}
+          </span>
+        </InfoRow>
+        <InfoRow label={t('fileAccess.connection.username') || 'Username'} mono>
+          <span className="inline-flex items-center gap-1">{info.username}<CopyButton text={info.username} /></span>
+        </InfoRow>
+        <InfoRow label={t('fileAccess.connection.protocol') || 'Protocol'}>SFTP</InfoRow>
+      </div>
+      <div className="mt-3">
+        <div className={labelCls}>{t('fileAccess.connection.example') || 'Example'}</div>
+        <div className="flex items-center gap-2 rounded-md bg-bg-primary px-3 py-2 font-mono text-xs text-text-secondary">
+          <span className="min-w-0 flex-1 break-all">{command}</span>
+          <CopyButton text={command} />
+        </div>
+        {!info.host && (
+          <p className="mt-2 text-xs text-text-muted">{t('fileAccess.connection.noHostHint') || 'Set the panel host name or the public IPv4 in the settings to show the host to connect to.'}</p>
+        )}
+      </div>
+    </Card>
+  );
+
+  if (variant === 'site') {
+    return (
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {connectionCard}
+        <Card
+          title={t('fileAccess.server.title') || 'File server'}
+          icon={<Server size={14} className="text-accent" />}
+          actions={info.running
+            ? <Pill tone="green">{t('fileAccess.server.running') || 'running'}</Pill>
+            : <Pill tone="muted">{t('fileAccess.server.stopped') || 'stopped'}</Pill>}
+        >
+          <div className="text-sm text-text-primary">{modeTabs.find((m) => m.id === info.mode)?.label}</div>
+          <p className="mt-2 text-xs text-text-muted">{modeHint}</p>
+          {info.running && countdown && (
+            <p className="mt-2 flex items-center gap-2 text-xs text-text-secondary"><Timer size={13} className="text-accent" />{t('fileAccess.server.closesIn', { time: countdown, defaultValue: 'Closes in {{time}}' })}</p>
+          )}
+          <p className="mt-3 text-xs text-text-muted">{t('fileAccess.siteHint') || 'The SFTP access is the one of the account: it reaches every site of the account.'}</p>
+          <Link to={accountHref(accountId, 'files')} className="mt-2 inline-flex items-center gap-1 text-sm text-accent hover:underline">
+            <ExternalLink size={13} />{t('fileAccess.manageAccount') || 'Manage the SFTP access of the account'}
+          </Link>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      {/* ── Connection ── */}
-      <Card title={t('fileAccess.connection.title') || 'SFTP connection'} icon={<Terminal size={14} className="text-accent" />}>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <InfoRow label={t('fileAccess.connection.host') || 'Host'} mono>
-            <span className="inline-flex items-center gap-1">
-              {info.host ?? <span className="text-text-muted">{t('fileAccess.connection.noHost') || 'not configured'}</span>}
-              {info.host && <CopyButton text={info.host} />}
-            </span>
-          </InfoRow>
-          <InfoRow label={t('fileAccess.connection.port') || 'Port'} mono>
-            <span className="inline-flex items-center gap-1">
-              {info.port ?? '—'}
-              {info.port != null && <CopyButton text={String(info.port)} />}
-            </span>
-          </InfoRow>
-          <InfoRow label={t('fileAccess.connection.username') || 'Username'} mono>
-            <span className="inline-flex items-center gap-1">{info.username}<CopyButton text={info.username} /></span>
-          </InfoRow>
-          <InfoRow label={t('fileAccess.connection.protocol') || 'Protocol'}>SFTP</InfoRow>
-        </div>
-        <div className="mt-3">
-          <div className={labelCls}>{t('fileAccess.connection.example') || 'Example'}</div>
-          <div className="flex items-center gap-2 rounded-md bg-bg-primary px-3 py-2 font-mono text-xs text-text-secondary">
-            <span className="min-w-0 flex-1 break-all">{command}</span>
-            <CopyButton text={command} />
-          </div>
-          {!info.host && (
-            <p className="mt-2 text-xs text-text-muted">{t('fileAccess.connection.noHostHint') || 'Set the panel host name or the public IPv4 in the settings to show the host to connect to.'}</p>
-          )}
-        </div>
-      </Card>
+      {connectionCard}
 
       {/* ── File server state + mode ── */}
       <Card

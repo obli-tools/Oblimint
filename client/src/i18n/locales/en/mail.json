@@ -432,7 +432,9 @@
       "rotateTitle": "Regenerate the relay credentials",
       "rotateConfirm": "New relay credentials are written into the site {{site}} (msmtp); the old ones stop working at once.",
       "rotated": "Relay credentials regenerated",
-      "rotateFailed": "Failed to regenerate the credentials"
+      "rotateFailed": "Failed to regenerate the credentials",
+      "siteEmpty": "No relay for this site yet.",
+      "siteTitle": "Sending e-mails (PHP mail())"
     },
     "queue": {
       "title": "Queue",

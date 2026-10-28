@@ -238,7 +238,7 @@
       "title": "Window settings"
     },
     "tab": {
-      "subtitle": "Modification windows, application updates and database snapshots of this site.",
+      "subtitle": "Modification windows, site updates (CMS), supervised mode and the access of agents and CIs to this site.",
       "title": "Maintenance"
     },
     "units": {

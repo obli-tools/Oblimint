@@ -13,6 +13,7 @@ import { Card, inputCls, labelCls, selectCls } from '@/components/hosting/hostin
 import { formatMb } from '@/components/hosting/hostingFormat';
 import { CopyField } from '@/components/dns/DomainOwnershipCard';
 import { cn } from '@/utils/cn';
+import { accountAccessHref } from '@/utils/links';
 import { DB_INSTANCE_NAME_RE, DB_PROFILES, toastDbError } from './dbFormat';
 
 /** How the sites (and external clients) reach the instance. */
@@ -99,7 +100,7 @@ export function DbExternalCard({ instance, catalog, manage, onChanged }: {
             <ShieldAlert size={14} className="mt-0.5 shrink-0" />
             <span>
               {t('databases.external.allowListHint') || 'The account access list (allow-list, bans) filters this port.'}{' '}
-              <Link to={`/accounts/${instance.accountId}?tab=security`} className="underline hover:text-accent">
+              <Link to={accountAccessHref(instance.accountId, 'firewall')} className="underline hover:text-accent">
                 {t('databases.external.securityLink') || 'Security of the account'}
               </Link>
             </span>

@@ -17,8 +17,10 @@ import { appsErrorMessage } from '@/components/apps/appsErrors';
 const KINDS: UptimeMonitorKind[] = ['http', 'keyword', 'tcp'];
 
 /** Create / edit an uptime monitor (http, keyword, tcp). accountId null = platform monitor (staff). */
-export function MonitorModal({ monitor, accountId, accounts, onClose, onSaved }: {
+export function MonitorModal({ monitor, accountId, accounts, preset, onClose, onSaved }: {
   monitor: UptimeMonitor | null;
+  /** New monitor: name and URL prefilled (e.g. « Create a monitor for this site »). */
+  preset?: { name: string; url: string };
   accountId: number | null;
   accounts: HostingAccount[];
   onClose: () => void;
@@ -27,9 +29,9 @@ export function MonitorModal({ monitor, accountId, accounts, onClose, onSaved }:
   const { t } = useTranslation();
   const { isStaff, can } = useP4bAccess();
   const [account, setAccount] = useState<string>(monitor ? (monitor.accountId == null ? 'platform' : String(monitor.accountId)) : accountId != null ? String(accountId) : accounts.length === 1 ? String(accounts[0].id) : '');
-  const [name, setName] = useState(monitor?.name ?? '');
+  const [name, setName] = useState(monitor?.name ?? preset?.name ?? '');
   const [kind, setKind] = useState<UptimeMonitorKind>(monitor?.kind ?? 'http');
-  const [url, setUrl] = useState(monitor?.url ?? 'https://');
+  const [url, setUrl] = useState(monitor?.url ?? preset?.url ?? 'https://');
   const [host, setHost] = useState(monitor?.host ?? '');
   const [port, setPort] = useState(monitor?.port != null ? String(monitor.port) : '');
   const [keyword, setKeyword] = useState(monitor?.keyword ?? '');

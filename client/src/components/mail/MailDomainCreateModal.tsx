@@ -14,11 +14,13 @@ import { mailErrorMessage } from './mailErrors';
 import { isValidAddress, normalizeAddress } from './mailFormat';
 
 /** Enable mail on a domain of an account (POST /mail/domains). */
-export function MailDomainCreateModal({ open, accounts, defaultAccountId, onClose, onCreated }: {
+export function MailDomainCreateModal({ open, accounts, defaultAccountId, defaultDomainId, onClose, onCreated }: {
   open: boolean;
   /** Accounts the caller may manage mail on. */
   accounts: HostingAccount[];
   defaultAccountId: number | null;
+  /** Domain preselected (« Enable mail » from the domain drawer). */
+  defaultDomainId?: number | null;
   onClose: () => void;
   onCreated: (d: MailDomainDetail) => void;
 }) {
@@ -35,7 +37,7 @@ export function MailDomainCreateModal({ open, accounts, defaultAccountId, onClos
   useEffect(() => {
     if (!open) return;
     setAccountId(defaultAccountId ?? (accounts.length === 1 ? accounts[0].id : null));
-    setDomainId(null);
+    setDomainId(defaultDomainId ?? null);
     setEnabled(true);
     setCatchAll('');
     setError('');

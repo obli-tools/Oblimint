@@ -2,8 +2,8 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  CalendarClock, Cpu, Database, DoorOpen, Eye, FolderOpen, KeyRound, Globe, History, LayoutDashboard, Play, Rocket, Route,
-  ScrollText, Square, Trash2, ExternalLink, Wrench,
+  CalendarClock, Cpu, DoorOpen, Eye, FolderOpen, Globe, History, LayoutDashboard, Play, Rocket, ScrollText, Settings2,
+  Square, Trash2, ExternalLink, Wrench,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { HostingSocketEvents, type HostingChangedPayload, type MaintenanceWindow, type Site, type WindowUpdatedPayload } from '@oblimint/shared';
@@ -26,21 +26,20 @@ import { SiteOverviewTab } from '@/components/sites/tabs/SiteOverviewTab';
 import { SiteReleasesTab } from '@/components/sites/tabs/SiteReleasesTab';
 import { SiteRuntimeTab } from '@/components/sites/tabs/SiteRuntimeTab';
 import { SiteRoutesTab } from '@/components/sites/tabs/SiteRoutesTab';
-import { SiteDataPathsTab } from '@/components/sites/tabs/SiteDataPathsTab';
+import { SiteConfigTab } from '@/components/sites/tabs/SiteConfigTab';
 import { SiteFilesTab } from '@/components/sites/tabs/SiteFilesTab';
-import { SiteEnvTab } from '@/components/sites/tabs/SiteEnvTab';
+import { SiteMonitorsCard } from '@/components/sites/tabs/SiteMonitorsCard';
+import { SiteSettingsCard, siteHasPhp } from '@/components/sites/SiteSettingsCard';
 import { SiteCronTab } from '@/components/cron/SiteCronTab';
 import { SiteLogsTab } from '@/components/logs/SiteLogsTab';
 import { SiteMaintenanceTab } from '@/components/maintenance/SiteMaintenanceTab';
-import { accountHref, type SiteTab } from '@/utils/links';
+import { SnapshotsCard } from '@/components/maintenance/SnapshotsCard';
+import { AccountBackupsTab } from '@/components/hosting/AccountBackupsTab';
+import { accountHref, resolveSiteTab, type SiteTab } from '@/utils/links';
 
-// The tab ids are the deep-link contract of siteHref() (utils/links.ts).
+// The tab ids are the deep-link contract of siteHref() (utils/links.ts);
+// the old ids (routes, data, env) are aliases rewritten on arrival.
 type Tab = SiteTab;
-const TAB_IDS: readonly Tab[] = ['overview', 'releases', 'runtime', 'routes', 'data', 'env', 'files', 'cron', 'logs', 'maintenance'];
-
-function isTab(v: string | null): v is Tab {
-  return v !== null && (TAB_IDS as readonly string[]).includes(v);
-}
 
 export function SiteDetailPage() {
   const { t } = useTranslation();
@@ -49,8 +48,16 @@ export function SiteDetailPage() {
   const { id } = useParams<{ id: string }>();
   const siteId = Number(id);
   const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get('tab');
-  const tab: Tab = isTab(tabParam) ? tabParam : 'overview';
+  const resolvedTab = resolveSiteTab(searchParams.get('tab'));
+  const tab: Tab = resolvedTab.tab;
+  // An old tab id (?tab=routes|data|env) becomes the new one, with its section.
+  useEffect(() => {
+    if (!resolvedTab.alias) return;
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'overview') next.delete('tab'); else next.set('tab', tab);
+    for (const [k, v] of Object.entries(resolvedTab.alias.extra)) next.set(k, v);
+    setSearchParams(next, { replace: true });
+  }, [resolvedTab.alias, tab]); // eslint-disable-line react-hooks/exhaustive-deps
   const { can } = useHostingMe();
 
   const [site, setSite] = useState<Site | null>(null);
@@ -124,7 +131,10 @@ export function SiteDetailPage() {
   });
 
   const setTab = (next: Tab, extra: Record<string, string> = {}) => {
+    // The domain drawer (?domain=) stays open across tabs; the rest is per tab.
     const params = new URLSearchParams();
+    const domain = searchParams.get('domain');
+    if (domain) params.set('domain', domain);
     if (next !== 'overview') params.set('tab', next);
     for (const [k, v] of Object.entries(extra)) params.set(k, v);
     setSearchParams(params, { replace: true });
@@ -192,17 +202,17 @@ export function SiteDetailPage() {
     }
   };
 
+  // Coherence plan 1.3: the site page is self-sufficient, in 9 tabs.
   const tabs: SegmentedTab<Tab>[] = [
     { id: 'overview', label: t('sites.tabs.overview') || 'Overview', icon: <LayoutDashboard size={16} /> },
-    { id: 'releases', label: t('sites.tabs.releases') || 'Releases', icon: <History size={16} /> },
-    { id: 'runtime', label: t('sites.tabs.runtime') || 'Runtime', icon: <Cpu size={16} /> },
-    { id: 'routes', label: t('sites.tabs.routes') || 'Routes & domains', icon: <Route size={16} /> },
-    { id: 'data', label: t('sites.tabs.data') || 'Data paths', icon: <Database size={16} /> },
-    { id: 'env', label: t('siteEnv.tab') || 'Variables', icon: <KeyRound size={16} /> },
-    { id: 'files', label: t('sites.tabs.files') || 'File access', icon: <FolderOpen size={16} /> },
+    { id: 'releases', label: t('sites.tabs.releasesRestore') || 'Releases & restore', icon: <History size={16} /> },
+    { id: 'domains', label: t('sites.tabs.domains') || 'Domains', icon: <Globe size={16} /> },
+    { id: 'runtime', label: t('sites.tabs.runtimePhp') || 'Runtime & PHP', icon: <Cpu size={16} /> },
+    { id: 'config', label: t('sites.tabs.config') || 'Configuration', icon: <Settings2 size={16} /> },
+    { id: 'files', label: t('sites.tabs.files') || 'Files', icon: <FolderOpen size={16} /> },
     { id: 'cron', label: t('cron.tab.title') || 'Cron', icon: <CalendarClock size={16} /> },
-    { id: 'logs', label: t('logs.tab.title') || 'Logs', icon: <ScrollText size={16} /> },
-    { id: 'maintenance', label: t('maintenance.tab.title') || 'Maintenance', icon: <Wrench size={16} /> },
+    { id: 'logs', label: t('sites.tabs.logs') || 'Logs & observation', icon: <ScrollText size={16} /> },
+    { id: 'maintenance', label: t('sites.tabs.maintenance') || 'Maintenance & access', icon: <Wrench size={16} /> },
   ];
 
   const tabProps = {
@@ -288,20 +298,40 @@ export function SiteDetailPage() {
       {/* Keyed by site: no local tab state (dirty form, open drawer…) carries over to another site. */}
       <Fragment key={`tabs-${site.id}`}>
       {tab === 'overview' && <SiteOverviewTab {...tabProps} onGoTo={setTab} />}
-      {tab === 'releases' && <SiteReleasesTab {...tabProps} tick={releasesTick} />}
-      {tab === 'runtime' && (
-        <SiteRuntimeTab
-          {...tabProps}
-          switchTo={searchParams.get('switchTo')}
-          onSwitchHandled={() => setTab('runtime')}
-        />
+      {tab === 'releases' && (
+        <div className="space-y-4">
+          <SiteReleasesTab {...tabProps} tick={releasesTick} />
+          {/* D10: everything that puts the site back in a previous state, in one tab. */}
+          <SnapshotsCard site={site} tick={releasesTick} />
+          <AccountBackupsTab
+            accountId={site.accountId}
+            siteId={site.id}
+            canRun={canManage}
+            canManage={false}
+            can={{ code: canManage && can('files.manage', site.accountId), data: can('files.manage', site.accountId), db: false }}
+          />
+        </div>
       )}
-      {tab === 'routes' && <SiteRoutesTab {...tabProps} />}
-      {tab === 'data' && <SiteDataPathsTab {...tabProps} />}
-      {tab === 'env' && <SiteEnvTab {...tabProps} />}
+      {tab === 'domains' && <SiteRoutesTab {...tabProps} />}
+      {tab === 'runtime' && (
+        <div className="space-y-4">
+          <SiteRuntimeTab
+            {...tabProps}
+            switchTo={searchParams.get('switchTo')}
+            onSwitchHandled={() => setTab('runtime')}
+          />
+          {siteHasPhp(site) && <SiteSettingsCard site={site} onSiteChange={setSiteIfCurrent} part="php" />}
+        </div>
+      )}
+      {tab === 'config' && <SiteConfigTab {...tabProps} />}
       {tab === 'files' && <SiteFilesTab {...tabProps} />}
       {tab === 'cron' && <SiteCronTab site={site} />}
-      {tab === 'logs' && <SiteLogsTab site={site} />}
+      {tab === 'logs' && (
+        <div className="space-y-4">
+          <SiteMonitorsCard site={site} />
+          <SiteLogsTab site={site} />
+        </div>
+      )}
       {tab === 'maintenance' && <SiteMaintenanceTab site={site} />}
       </Fragment>
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
@@ -18,7 +18,8 @@ import { useHostingEvent } from '@/components/sites/useHostingEvent';
 import { isStepUpHandled } from '@/api/client';
 import { cn } from '@/utils/cn';
 import { siteHref } from '@/utils/links';
-import { Card, inputCls, labelCls, selectCls } from './hostingUi';
+import { VerificationBadge } from '@/components/dns/DnsBadges';
+import { Card, ForceHttpsIcon, TlsBadge, inputCls, labelCls, selectCls } from './hostingUi';
 import { AddDomainInline } from './DomainCreateModal';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,11 +33,17 @@ type Target = { domain: Domain; site?: never } | { site: Site; domain?: never };
 
 interface Draft { id: number | null; prefix: string; domainId: number | ''; siteId: number | ''; runtimeId: number | null }
 
-export function RouteEditor({ manage, onChanged, ...target }: Target & {
+export function RouteEditor({ manage, onChanged, emptyText, onOpenDomain, actions, ...target }: Target & {
   /** domains.manage on the account. */
   manage: boolean;
   /** A route was added, changed or removed (reload the owner). */
   onChanged: () => void;
+  /** Domain mode: text when the domain has no route (e.g. it is served by a proxy host, not « 404 »). */
+  emptyText?: ReactNode;
+  /** Site mode: the domain of a route was clicked (opens its drawer in place). */
+  onOpenDomain?: (domainId: number) => void;
+  /** Extra buttons of the card header (e.g. « Add a domain »). */
+  actions?: ReactNode;
 }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
@@ -76,8 +83,9 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
   });
 
   // Choices of the form: the sites (domain mode) or the domains (site mode) of the account.
+  // Site mode: the domains are loaded for reading too (badges of each route).
   useEffect(() => {
-    if (!manage) return;
+    if (!manage && domain) return;
     let cancelled = false;
     setChoicesLoaded(false);
     const done = () => { if (!cancelled) setChoicesLoaded(true); };
@@ -158,6 +166,7 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
   };
 
   const runtimeOptions = draftSite ? runtimes[draftSite.id] ?? [] : [];
+  const domainById = useMemo(() => new Map(domains.map((d) => [d.id, d])), [domains]);
   const editor = draft && (
     <div className="space-y-2 rounded-lg bg-bg-primary p-3">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -235,10 +244,15 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
     <Card
       title={t('domains.routes.title') || 'Routes'}
       icon={<RouteIcon size={14} className="text-accent" />}
-      actions={manage && !draft ? (
-        <Button size="sm" variant="secondary" onClick={startAdd} disabled={noChoice}>
-          <Plus size={13} className="mr-1" />{t('domains.routes.add') || 'Add a route'}
-        </Button>
+      actions={(manage && !draft) || actions ? (
+        <>
+          {actions}
+          {manage && !draft && (
+            <Button size="sm" variant="secondary" onClick={startAdd} disabled={noChoice}>
+              <Plus size={13} className="mr-1" />{t('domains.routes.add') || 'Add a route'}
+            </Button>
+          )}
+        </>
       ) : undefined}
     >
       <p className="mb-3 text-xs text-text-muted">
@@ -255,7 +269,7 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
           {domain
             ? (sites.length === 0 && manage && choicesLoaded
               ? (t('domains.routes.noSite') || 'The account has no site yet: create a site, then route the domain to it.')
-              : (t('domains.routes.empty') || 'No route: the domain answers 404.'))
+              : (emptyText ?? (t('domains.routes.empty') || 'No route: the domain answers 404.')))
             : (t('domains.routes.siteEmpty') || 'No domain points to this site yet.')}
         </p>
       ) : (
@@ -272,9 +286,25 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
                   </span>
                 </>
               ) : (
-                <a href={`https://${r.domainName}${r.pathPrefix}`} target="_blank" rel="noopener noreferrer" className="inline-flex min-w-0 flex-1 items-center gap-1 break-all font-mono text-sm text-text-primary hover:text-accent">
-                  {r.domainName}<span className="text-accent">{r.pathPrefix}</span><ExternalLink className="h-3 w-3 shrink-0" />
-                </a>
+                <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                  {onOpenDomain ? (
+                    <button type="button" onClick={() => onOpenDomain(r.domainId)} className="break-all text-left font-mono text-sm text-text-primary hover:text-accent" title={t('domains.routes.openDomain') || 'Open the domain'}>
+                      {r.domainName}<span className="text-accent">{r.pathPrefix}</span>
+                    </button>
+                  ) : (
+                    <span className="break-all font-mono text-sm text-text-primary">{r.domainName}<span className="text-accent">{r.pathPrefix}</span></span>
+                  )}
+                  <a href={`https://${r.domainName}${r.pathPrefix}`} target="_blank" rel="noopener noreferrer" className="text-text-muted hover:text-accent" aria-label={t('domains.routes.visit') || 'Visit'}>
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                  </a>
+                  {domainById.get(r.domainId) && (
+                    <>
+                      <VerificationBadge verification={domainById.get(r.domainId)!.verification} />
+                      <TlsBadge tlsMode={domainById.get(r.domainId)!.tlsMode} certificate={domainById.get(r.domainId)!.certificate} />
+                      {domainById.get(r.domainId)!.forceHttps && <ForceHttpsIcon on />}
+                    </>
+                  )}
+                </span>
               )}
               {runtimeCell(r)}
               {manage && !draft && (

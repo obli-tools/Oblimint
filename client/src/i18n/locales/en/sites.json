@@ -27,7 +27,7 @@
       "source": "Source"
     },
     "nextPublication": "Changes take effect at the next publication.",
-    "noProfile": "Choose an application profile in the Overview tab first.",
+    "noProfile": "Choose an application profile in the settings above first.",
     "overlapWith": "Overlaps {{path}}/",
     "pathHint": "Relative to the root of the release (not to the document root).",
     "pathImmutable": "The path cannot be changed: delete and add it again.",
@@ -211,7 +211,7 @@
       "added": "Secondary runtime added",
       "deleteConfirm": "Remove the secondary runtime {{base}}?",
       "deleted": "Secondary runtime removed",
-      "explain": "A secondary runtime serves a path prefix of the SAME release with another engine (e.g. /legacy/ on PHP 7.4). Attach it to a prefix in the Routes tab or on the Domains page.",
+      "explain": "A secondary runtime serves a path prefix of the SAME release with another engine (e.g. /legacy/ on PHP 7.4). Attach it to a prefix in the Domains tab or on the Domains & DNS page.",
       "noRoute": "no route yet",
       "none": "No secondary runtime.",
       "note": "The longest matching prefix wins; the primary runtime serves everything else.",
@@ -263,8 +263,9 @@
     "phpRunning": "PHP version running in the container"
   },
   "siteRoutes": {
-    "basePathNote": "A sub-site must know where it lives: the base path of this site is {{basePath}} (Overview tab).",
-    "manageDomains": "Manage domains"
+    "basePathNote": "A sub-site must know where it lives: the base path of this site is {{basePath}} (Configuration tab).",
+    "manageDomains": "Manage domains",
+    "drawerHint": "Click a domain to open its ownership, certificate and settings."
   },
   "sites": {
     "actions": {
@@ -393,7 +394,9 @@
     },
     "files": {
       "data": "The writable data of the site (uploads, caches…), one folder per data path. Changes here are live immediately, but PHP is never executed from it.",
-      "staging": "The code of the site. Upload it here: nothing is live until it is published as a release (automatically or with the \"Publish\" button). The live code can never be modified in place."
+      "staging": "The code of the site. Upload it here: nothing is live until it is published as a release (automatically or with the \"Publish\" button). The live code can never be modified in place.",
+      "dataTab": "Data",
+      "stagingTab": "Code (staging)"
     },
     "form": {
       "basePathHint": "For a sub-site served under a prefix (e.g. /blog/): the path the application expects. \"/\" otherwise.",
@@ -476,7 +479,13 @@
       "overview": "Overview",
       "releases": "Releases",
       "routes": "Routes & domains",
-      "runtime": "Runtime"
+      "runtime": "Runtime",
+      "config": "Configuration",
+      "domains": "Domains",
+      "logs": "Logs & observation",
+      "maintenance": "Maintenance & access",
+      "releasesRestore": "Releases & restore",
+      "runtimePhp": "Runtime & PHP"
     },
     "title": "Sites",
     "count": "{{count}} site(s)",

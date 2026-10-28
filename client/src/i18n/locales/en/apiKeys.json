@@ -183,7 +183,11 @@
       "pickSites": "Choose two sites or more below, or every site.",
       "pickSite": "Choose at least one site below.",
       "pickParents": "Choose below the domains it will create its subdomains under."
-    }
+    },
+    "giveAccess": "Give access to an agent / a CI",
+    "siteEmpty": "No access key covers this site.",
+    "siteIntro": "The keys of the account that reach this site (every site, or this one among others). They are managed with the other keys of the account.",
+    "siteTitle": "Access keys covering this site"
   },
   "oauth": {
     "title": "Connect an application",
