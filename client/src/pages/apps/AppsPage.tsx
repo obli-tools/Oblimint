@@ -11,6 +11,7 @@ import { AppStacksPanel } from '@/components/apps/AppStacksPanel';
 import { AppCatalogPanel } from '@/components/apps/AppCatalogPanel';
 import { AppRegistriesPanel } from '@/components/apps/AppRegistriesPanel';
 import { AppResourcesBar } from '@/components/apps/AppResourcesBar';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 type Tab = 'stacks' | 'catalog' | 'registries';
 const TABS: readonly Tab[] = ['stacks', 'catalog', 'registries'];
@@ -51,6 +52,7 @@ export function AppsPage() {
           {scopeSubtitle(scope, t('apps.scope.allAccountsShort') || 'all accounts')}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-apps" />
           <button onClick={() => setTick((n) => n + 1)} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
           {canCreate && <Link to={newHref} className={headerAccentBtnCls}><Plus size={14} />{t('apps.new') || 'New application'}</Link>}
         </div>

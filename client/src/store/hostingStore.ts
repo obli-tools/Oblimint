@@ -8,9 +8,10 @@ import { useSocketStore } from './socketStore';
 import { useTenantStore } from './tenantStore';
 
 /**
- * What the caller may do in the hosting area (GET /api/hosting/me), shared
- * by the hosting and sites UI modules. Mirrors server/src/services/hosting/
- * access.ts — the SERVER stays the authority: this only hides buttons.
+ * What the caller may do in the hosting area (GET /api/hosting/me): the ONE
+ * client-side check of every module (hosting, sites, mail, apps, proxy,
+ * monitoring, sidebar — coherence plan 1.1). Mirrors server/src/services/
+ * hosting/access.ts — the SERVER stays the authority: this only hides buttons.
  */
 export type HostingNeed =
   | 'read' | 'plans.manage' | 'accounts.manage' | 'sites.manage' | 'domains.manage' | 'files.manage'
@@ -19,12 +20,16 @@ export type HostingNeed =
   | 'databases.manage' | 'dns.manage'
   // P4: mail (domains, mailboxes, aliases, DKIM, relay, webmail SSO).
   | 'mail.manage'
+  // P4b: apps (stacks, catalog, registries, network links), app console, proxy objects,
+  // monitoring (uptime, status pages, workflows, SSH keys / SFTP targets, update slots).
+  | 'apps.manage' | 'apps.console' | 'proxy.manage' | 'monitoring.manage'
   // Content of the code (release / window diff patches); 'read' only lists the files.
   // Client: files.manage or releases.approve (an approver reviews the code).
   | 'code.read';
 
 const STAFF_CAPS: Record<HostingNeed, string[]> = {
-  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage', 'mail.manage'],
+  read: ['overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage', 'mail.manage',
+    'apps.manage', 'proxy.manage', 'monitoring.manage'],
   'plans.manage': ['plans.manage'],
   'accounts.manage': ['accounts.manage'],
   'sites.manage': ['sites.manage'],
@@ -35,6 +40,10 @@ const STAFF_CAPS: Record<HostingNeed, string[]> = {
   'databases.manage': ['databases.manage'],
   'dns.manage': ['dns.manage'],
   'mail.manage': ['mail.manage'],
+  'apps.manage': ['apps.manage'],
+  'apps.console': ['apps.console'],
+  'proxy.manage': ['proxy.manage'],
+  'monitoring.manage': ['monitoring.manage'],
   'code.read': ['files.manage', 'sites.manage'],
 };
 
@@ -51,10 +60,18 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | readonly ClientCapabili
   'databases.manage': 'databases.manage',
   'dns.manage': 'dns.manage',
   'mail.manage': 'mail.manage',
+  'apps.manage': 'apps.manage',
+  'apps.console': 'apps.console',
+  'proxy.manage': 'proxy.manage',
+  'monitoring.manage': 'monitoring.manage',
   'code.read': ['files.manage', 'releases.approve'],
 };
 
-/** Pure check (exported for tests / non-hook callers). accountId omitted = "on some account". */
+/**
+ * Pure check (exported for tests / non-hook callers). accountId omitted (or
+ * null) = "on some account"; for an object that may belong to no account
+ * (platform monitor, SSH key…), use hostingCanOn.
+ */
 export function hostingCan(me: HostingMe | null, need: HostingNeed, accountId?: number | null): boolean {
   if (!me) return false;
   if (me.kind === 'staff') {
@@ -67,6 +84,15 @@ export function hostingCan(me: HostingMe | null, need: HostingNeed, accountId?: 
   const entries = accountId != null ? [me.accounts[accountId]].filter(Boolean) : Object.values(me.accounts);
   return entries.some((caps) => required === 'member'
     || (typeof required === 'string' ? caps!.includes(required) : required.some((c) => caps!.includes(c))));
+}
+
+/**
+ * Check on an OBJECT: its account, or null for a platform object (no account),
+ * which only the staff may touch (P4b objects: monitors, workflows, keys…).
+ */
+export function hostingCanOn(me: HostingMe | null, need: HostingNeed, ownerAccountId: number | null): boolean {
+  if (ownerAccountId === null && me?.kind !== 'staff') return false;
+  return hostingCan(me, need, ownerAccountId);
 }
 
 interface HostingState {

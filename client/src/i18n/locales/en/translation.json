@@ -243,7 +243,8 @@
     "bans": "Bans",
     "traffic": "HTTP requests",
     "edge": "Edge",
-    "migration": "CWP migration"
+    "migration": "CWP migration",
+    "myAccount": "My account"
   },
   "nodes": {
     "col": {
@@ -431,7 +432,19 @@
       "warning": "When enabled, staff users sign in through the Obligate gateway. If the gateway becomes unreachable, local authentication is automatically restored as a fallback. Customer (client) accounts always sign in locally."
     },
     "title": "Settings",
-    "toggleSecretVisibility": "Show / hide"
+    "toggleSecretVisibility": "Show / hide",
+    "sectionLink": "Settings of this module",
+    "toc": {
+      "title": "On this page",
+      "hosting": "Hosting",
+      "scanner": "Scanner & maintenance",
+      "mail": "Mail",
+      "apps": "Applications & monitoring",
+      "edge": "Edge & bans",
+      "backups": "Backups",
+      "notifications": "Notifications",
+      "obligate": "Obligate SSO"
+    }
   },
   "setup": {
     "checkStatus": {

@@ -243,7 +243,8 @@
     "bans": "Bannissements",
     "traffic": "Requêtes HTTP",
     "edge": "Edge",
-    "migration": "Migration CWP"
+    "migration": "Migration CWP",
+    "myAccount": "Mon compte"
   },
   "nodes": {
     "col": {
@@ -431,7 +432,19 @@
       "warning": "Une fois activé, les utilisateurs du personnel se connectent via la passerelle Obligate. Si elle devient injoignable, l'authentification locale est automatiquement rétablie. Les comptes clients se connectent toujours localement."
     },
     "title": "Paramètres",
-    "toggleSecretVisibility": "Afficher / masquer"
+    "toggleSecretVisibility": "Afficher / masquer",
+    "sectionLink": "Paramètres de ce module",
+    "toc": {
+      "title": "Sur cette page",
+      "hosting": "Hébergement",
+      "scanner": "Analyse & maintenance",
+      "mail": "Mail",
+      "apps": "Applications & supervision",
+      "edge": "Edge & bannissements",
+      "backups": "Sauvegardes",
+      "notifications": "Notifications",
+      "obligate": "SSO Obligate"
+    }
   },
   "setup": {
     "checkStatus": {

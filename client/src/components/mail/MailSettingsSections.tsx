@@ -20,7 +20,7 @@ import { TableScroll } from '@/components/common/TableScroll';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Field, SettingsBlock, settingsInputCls } from '@/components/settings/SettingsBlock';
-import { InfoRow, Pill, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, InfoRow, Pill, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { DnsCheckPill, useMailEngineLabel } from './MailBadges';
 import { mailErrorMessage, mailLoadError, toastMailError } from './mailErrors';
@@ -78,7 +78,6 @@ export function MailSettingsSections() {
           <MailAbuseBlock value={settings.mail} save={save} />
         </>
       )}
-      <MailBansBlock />
       <RelayTestBlock />
     </>
   );
@@ -285,7 +284,7 @@ function MailEngineBlock() {
             </div>
           )}
           <p className="text-xs text-text-muted">
-            {t('mailSettings.status.bans', { count: s.activeBans, defaultValue: '{{count}} active ban(s) on the mail ports.' })}{' '}
+            <Link to="/security/bans?tab=mail" className="text-accent hover:underline">{t('mailSettings.status.bans', { count: s.activeBans, defaultValue: '{{count}} active ban(s) on the mail ports.' })}</Link>{' '}
             <Link to="/manage/nodes" className="text-accent hover:underline">{t('mailSettings.status.nodesLink') || 'Containers: Nodes page'}</Link>
           </p>
 
@@ -594,14 +593,21 @@ function MailAbuseBlock({ value, save }: { value: MailSettings; save: SaveFn }) 
         <NumberField id="mab-win" label={t('mailSettings.abuse.banWindow') || 'Within (minutes)'} value={draft.authBanWindowMinutes} onChange={(v) => set({ authBanWindowMinutes: v })} min={1} max={1440} />
         <NumberField id="mab-dur" label={t('mailSettings.abuse.banDuration') || 'Ban duration (minutes)'} value={draft.authBanDurationMinutes} onChange={(v) => set({ authBanDurationMinutes: v })} min={1} max={43_200} />
       </div>
-      <p className="text-xs text-text-muted">{t('mailSettings.abuse.banHint') || 'Bans apply to the mail ports only (hostd nftables, before Docker); IPv6 per /64; internal addresses are never banned.'}</p>
+      <p className="text-xs text-text-muted">
+        {t('mailSettings.abuse.banHint') || 'Bans apply to the mail ports only (hostd nftables, before Docker); IPv6 per /64; internal addresses are never banned.'}{' '}
+        <Link to="/security/bans?tab=mail" className="text-accent hover:underline">{t('mailSettings.abuse.bansLink') || 'See the mail bans'}</Link>
+      </p>
     </SettingsBlock>
   );
 }
 
 // ── Bans ────────────────────────────────────────────────────────────────────
 
-function MailBansBlock() {
+/**
+ * Bans of the mail ports (platform admin): shown in the « Mail » tab of the
+ * Bans page (coherence plan D13); the thresholds stay in Settings → Mail.
+ */
+export function MailBansPanel() {
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
   const [bans, setBans] = useState<MailBan[] | null>(null);
@@ -638,20 +644,16 @@ function MailBansBlock() {
   };
 
   return (
-    <SettingsBlock
-      id="settings-mail-bans"
-      icon={<ShieldBan />}
-      title={t('mailSettings.bans.title') || 'Mail bans'}
-      headerExtra={<IconButton label={t('common.refresh') || 'Refresh'} icon={<RefreshCw size={14} />} onClick={() => { void load(); }} />}
-    >
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-text-muted">{t('mailSettings.bans.description') || 'Addresses banned from the mail ports (SMTP, submission, IMAP, POP3) after repeated authentication failures.'}</p>
       {error ? (
-        <p className="flex items-start gap-2 text-sm text-text-muted"><AlertTriangle size={14} className="mt-0.5 shrink-0" />{error}</p>
+        <EmptyState icon={<AlertTriangle />} text={error} />
       ) : bans === null ? (
-        <div className="flex justify-center py-4"><LoadingSpinner /></div>
+        <div className="flex justify-center py-8"><LoadingSpinner /></div>
       ) : bans.length === 0 ? (
-        <p className="text-sm text-text-muted">{t('mailSettings.bans.empty') || 'No address is banned.'}</p>
+        <EmptyState icon={<ShieldBan />} text={t('mailSettings.bans.empty') || 'No address is banned.'} />
       ) : (
-        <TableScroll className="rounded-lg bg-bg-primary">
+        <TableScroll className="rounded-xl bg-bg-secondary">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className={theadRowCls}>
@@ -681,7 +683,7 @@ function MailBansBlock() {
           </table>
         </TableScroll>
       )}
-    </SettingsBlock>
+    </div>
   );
 }
 

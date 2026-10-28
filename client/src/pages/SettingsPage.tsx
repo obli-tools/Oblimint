@@ -1,4 +1,4 @@
-import { useState, useEffect, type KeyboardEvent } from 'react';
+import { useState, useEffect, useRef, type KeyboardEvent } from 'react';
 import { Server, Eye, EyeOff, ArrowLeftRight, Info, Cpu, HardDrive, Database, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
@@ -12,7 +12,6 @@ import { isStepUpHandled } from '@/api/client';
 import type { SystemInfo } from '@/types';
 import { Button } from '@/components/common/Button';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
-import { PageContainer } from '@/components/common/PageContainer';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { MEDIA, matchesMedia } from '@/hooks/useMediaQuery';
 import { HostingSettingsSections } from '@/components/settings/HostingSettingsSections';
@@ -22,6 +21,7 @@ import { MailSettingsSections } from '@/components/mail/MailSettingsSections';
 import { AppsSettingsSections } from '@/components/settings/AppsSettingsSections';
 import { ProxySettingsSections } from '@/components/settings/ProxySettingsSections';
 import { BackupSettingsSections } from '@/components/settings/BackupSettingsSections';
+import { SettingsGroup, SettingsPageLayout, SettingsTocChips, useSettingsToc } from '@/components/settings/SettingsToc';
 import { useHostingMe } from '@/store/hostingStore';
 import { cn } from '@/utils/cn';
 
@@ -52,6 +52,9 @@ function AboutRow({ label, value }: { label: string; value: string }) {
  * Settings — single scrolling page of sections, like Obliance's
  * (About / system info, Obligate SSO gateway). Route: platform admin, or tenant staff
  * with the 'settings' capability, who only get the notification channels section.
+ * Coherence plan C11: the sections are grouped by family, every section is an
+ * anchor (/settings#<id>, the operation pages link to theirs) and a sticky
+ * table of contents follows the scroll (chips on a small screen).
  */
 export function SettingsPage() {
   const { t } = useTranslation();
@@ -172,6 +175,9 @@ export function SettingsPage() {
     return parts.join(' ');
   }
 
+  const contentRef = useRef<HTMLDivElement>(null);
+  const toc = useSettingsToc(contentRef);
+
   const mb = (n: number) => `${n} ${t('units.mb') || 'MB'}`;
   const setBadge = (
     <span className="ml-2 text-[10px] font-semibold rounded px-1.5 py-0.5 bg-green-500/10 text-green-400 border border-green-500/20">
@@ -180,16 +186,17 @@ export function SettingsPage() {
   );
 
   return (
-    <PageContainer className="space-y-8">
+    <SettingsPageLayout toc={toc} contentRef={contentRef}>
       <div>
         <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary mb-2">{t('settings.title') || 'Settings'}</h1>
         <p className="text-xs font-mono tracking-wider text-text-muted">
           {t('settings.globalDesc') || 'Platform-wide settings of this Oblimint server.'}
         </p>
       </div>
+      <SettingsTocChips toc={toc} className="xl:hidden" />
 
       {/* ── About ── */}
-      {admin && (<div>
+      {admin && (<SettingsGroup id="settings-about" title={t('about.title') || 'About'}><div>
         <div className="flex items-center gap-2 mb-4">
           <Info size={18} className="text-accent" />
           <h2 className="text-lg font-semibold text-text-primary">{t('about.title') || 'About'}</h2>
@@ -270,31 +277,31 @@ export function SettingsPage() {
             <p className="text-sm text-text-muted">{t('about.loadFailed') || 'Failed to load system information.'}</p>
           )}
         </div>
-      </div>
+      </div></SettingsGroup>
 
       )}
 
       {/* ── P2: hosting platform settings (DNS, previews, DB admin, access, usage) ── */}
-      {admin && <HostingSettingsSections />}
+      {admin && <SettingsGroup id="settings-group-hosting" title={t('settings.toc.hosting') || 'Hosting'}><HostingSettingsSections /></SettingsGroup>}
 
       {/* ── P3: scanner (ClamAV + YARA) and maintenance settings ── */}
-      {admin && <MaintenanceSettingsSections />}
+      {admin && <SettingsGroup id="settings-group-scanner" title={t('settings.toc.scanner') || 'Scanner & maintenance'}><MaintenanceSettingsSections /></SettingsGroup>}
 
-      {/* ── P4: mail service (engine, webmail, DNS defaults, anti-spam, limits, bans) ── */}
-      {admin && <MailSettingsSections />}
+      {/* ── P4: mail service (engine, webmail, DNS defaults, anti-spam, limits; the bans are on the Bans page) ── */}
+      {admin && <SettingsGroup id="settings-group-mail" title={t('settings.toc.mail') || 'Mail'}><MailSettingsSections /></SettingsGroup>}
 
       {/* ── P4b: applications, monitoring, network segmentation (ui-apps) — edge and bans (ui-proxy) ── */}
-      {admin && <AppsSettingsSections />}
-      {admin && <ProxySettingsSections />}
+      {admin && <SettingsGroup id="settings-group-apps" title={t('settings.toc.apps') || 'Applications & monitoring'}><AppsSettingsSections /></SettingsGroup>}
+      {admin && <SettingsGroup id="settings-group-edge" title={t('settings.toc.edge') || 'Edge & bans'}><ProxySettingsSections /></SettingsGroup>}
 
       {/* ── External backups (destinations, passphrase, schedule, runs) ── */}
-      {admin && <BackupSettingsSections />}
+      {admin && <SettingsGroup id="settings-group-backups" title={t('settings.toc.backups') || 'Backups'}><BackupSettingsSections /></SettingsGroup>}
 
       {/* ── P2: notification channels of the workspace ── */}
-      {canNotify && <NotificationChannelsSection />}
+      {canNotify && <SettingsGroup id="settings-group-notifications" title={t('settings.toc.notifications') || 'Notifications'}><NotificationChannelsSection /></SettingsGroup>}
 
       {/* ── Obligate SSO Gateway ── */}
-      {admin && (<div>
+      {admin && (<SettingsGroup id="settings-obligate" title={t('settings.toc.obligate') || 'Obligate SSO'}><div>
         <div className="flex items-center gap-2 mb-4">
           <ArrowLeftRight size={16} className="text-text-muted" />
           <h2 className="text-lg font-semibold text-text-primary">{t('settings.obligate.title') || 'Obligate SSO Gateway'}</h2>
@@ -447,7 +454,7 @@ export function SettingsPage() {
             </div>
           )}
         </div>
-      </div>)}
-    </PageContainer>
+      </div></SettingsGroup>)}
+    </SettingsPageLayout>
   );
 }

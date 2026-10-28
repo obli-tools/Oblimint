@@ -14,6 +14,7 @@ import { EmptyState, headerAccentBtnCls, headerBtnCls, useHostingEvents } from '
 import { DbInstanceCreateModal, DbPlanLimits } from '@/components/databases/DbInstanceCreateModal';
 import { DbInstanceList } from '@/components/databases/DbInstanceList';
 import { dbErrorMessage } from '@/components/databases/dbFormat';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 /** /databases — instances of the visible accounts (account scope: ?account=<id>, god view ?tenants=). */
 export function DatabasesPage() {
@@ -74,6 +75,7 @@ export function DatabasesPage() {
           {t('databases.count', { count: instances.length, defaultValue: '{{count}} instance(s)' })}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-dbadmin" />
           <button onClick={() => { void load(); }} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
           {canCreate && (
             <button onClick={() => setCreating(true)} className={headerAccentBtnCls}><Plus size={14} />{t('databases.create') || 'New instance'}</button>

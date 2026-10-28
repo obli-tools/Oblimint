@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { AlertTriangle, Plus, ServerCog, ShieldBan, X } from 'lucide-react';
@@ -291,7 +292,10 @@ function BansBlock({ value, save }: { value: BansSettings; save: SaveFn<BansSett
       id="settings-bans"
       icon={<ShieldBan />}
       title={t('bans.settings.title') || 'Web bans and honeypot'}
-      description={t('bans.settings.description') || 'Bans produced by the honeypots and the access-list trap of the proxy hosts, manual bans and the Obliguard synchronisation.'}
+      description={<>
+        {t('bans.settings.description') || 'Bans produced by the honeypots and the access-list trap of the proxy hosts, manual bans and the Obliguard synchronisation.'}{' '}
+        <Link to="/security/bans" className="text-accent hover:underline">{t('bans.settings.listLink') || 'See the web bans'}</Link>
+      </>}
       dirty={dirty}
       saving={saving}
       canSave={valid}

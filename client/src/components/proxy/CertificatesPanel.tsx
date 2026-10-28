@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { FileKey2, ShieldCheck, Trash2, Upload } from 'lucide-react';
+import { FileKey2, Globe, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { HostingSocketEvents, type CertificateListItem, type CertificateStatus, type HostingAccount, type ProxyUpdatedPayload } from '@oblimint/shared';
 import { proxyApi } from '@/api/proxy.api';
 import { Button } from '@/components/common/Button';
@@ -14,6 +14,7 @@ import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Pill, headerAccentBtnCls, inputCls, labelCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
+import { useDomainDrawer } from '@/components/hosting/DomainDrawer';
 import { AccountField, ListState, useProxyAccess } from './proxyUi';
 import { proxyErrorMessage, proxyLoadError, toastProxyError } from './proxyErrors';
 
@@ -37,7 +38,12 @@ export function CertificateStatusPill({ status, notAfter, lastError }: { status:
   return lastError ? <Tip content={<span className="whitespace-pre-wrap font-mono text-[11px]">{lastError}</span>}><span className="cursor-help">{pill}</span></Tip> : pill;
 }
 
-/** Certificates usable by proxy objects: ACME certificates of the domains (P1/P2) + imported ones. */
+/**
+ * Certificates usable by proxy objects: ACME certificates of the domains (P1/P2) + imported ones.
+ * Mounted by Proxy → Certificates and Domains & DNS → Certificates (coherence plan D14): only the
+ * imported ones are managed here; an ACME row opens the drawer of its domain, the one place where
+ * a Let's Encrypt certificate is managed.
+ */
 export function CertificatesPanel({ accountId, tenantId, accounts, showAccount, showTenant }: {
   accountId: number | null;
   tenantId?: number;
@@ -48,6 +54,7 @@ export function CertificatesPanel({ accountId, tenantId, accounts, showAccount, 
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
   const { canManage } = useProxyAccess();
+  const drawer = useDomainDrawer();
   const [items, setItems] = useState<CertificateListItem[]>([]);
   const [status, setStatus] = useState<CertificateStatus | ''>('');
   const [loading, setLoading] = useState(true);
@@ -118,7 +125,10 @@ export function CertificatesPanel({ accountId, tenantId, accounts, showAccount, 
         </select>
         <div className="ml-auto">{importBtn}</div>
       </div>
-      <p className="-mt-1 text-xs text-text-muted">{t('proxy.certs.description') || 'Let’s Encrypt certificates of the domains (renewed automatically, DNS-01 for wildcards) and imported certificates. A proxy host uses the certificates of its domains, or an imported one.'}</p>
+      <p className="-mt-1 text-xs text-text-muted">
+        {t('proxy.certs.description') || 'Let’s Encrypt certificates of the domains (renewed automatically, DNS-01 for wildcards) and imported certificates. A proxy host uses the certificates of its domains, or an imported one.'}{' '}
+        {t('proxy.certs.acmeHint') || 'A Let’s Encrypt certificate is managed from its domain: click its name.'}
+      </p>
       <ListState loading={loading} error={error} empty={items.length === 0} emptyIcon={<ShieldCheck />} emptyText={t('proxy.certs.empty') || 'No certificate.'} emptyAction={importBtn ?? undefined}>
         <GroupedTable<CertificateListItem>
           storageKey="proxy-certificates"
@@ -133,7 +143,11 @@ export function CertificatesPanel({ accountId, tenantId, accounts, showAccount, 
               id: 'names', header: t('proxy.certs.names') || 'Names', tdClassName: 'max-w-[20rem]', sort: (c) => c.primaryName,
               cell: (c) => (
                 <>
-                  <span className="font-mono text-[13px] text-text-primary">{c.primaryName}</span>
+                  {c.kind === 'acme' && c.domainId != null ? (
+                    <button type="button" onClick={() => drawer.open(c.domainId!)} className="font-mono text-[13px] text-text-primary hover:text-accent hover:underline" title={t('proxy.certs.openDomain') || 'Open the domain'}>
+                      {c.primaryName}
+                    </button>
+                  ) : <span className="font-mono text-[13px] text-text-primary">{c.primaryName}</span>}
                   {c.names.length > 1 && <div className="mt-0.5 break-all font-mono text-[11px] text-text-muted">{c.names.filter((n) => n !== c.primaryName).join(', ')}</div>}
                 </>
               ),
@@ -162,9 +176,11 @@ export function CertificatesPanel({ accountId, tenantId, accounts, showAccount, 
               )),
             },
             ...(showTenant && !showAccount ? [{ id: 'tenant', header: t('proxy.tenant') || 'Workspace', cell: (c: CertificateListItem) => <TenantBadge tenantId={c.tenantId} /> }] : []),
-            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (c) => (c.kind === 'imported' && c.accountId != null && canManage(c.accountId)
-              ? <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 size={14} />} variant="danger" size="sm" onClick={() => { void remove(c); }} />
-              : null) },
+            { id: 'actions', header: <span className="sr-only">{t('proxy.actions') || 'Actions'}</span>, thClassName: 'w-14', tdClassName: 'text-right', cell: (c) => (c.kind === 'acme' && c.domainId != null
+              ? <IconButton label={t('proxy.certs.openDomain') || 'Open the domain'} icon={<Globe size={14} />} variant="ghost" size="sm" onClick={() => drawer.open(c.domainId!)} />
+              : c.kind === 'imported' && c.accountId != null && canManage(c.accountId)
+                ? <IconButton label={t('common.delete') || 'Delete'} icon={<Trash2 size={14} />} variant="danger" size="sm" onClick={() => { void remove(c); }} />
+                : null) },
           ]}
         />
       </ListState>

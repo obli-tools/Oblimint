@@ -18,6 +18,7 @@ import { MailLogsPanel } from '@/components/mail/MailLogsPanel';
 import { MailStatusBanner } from '@/components/mail/MailStatusBanner';
 import { mailLoadError } from '@/components/mail/mailErrors';
 import { engineHasMailboxes } from '@/components/mail/mailFormat';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 type Tab = 'domains' | 'mailboxes' | 'aliases' | 'outbound' | 'logs';
 const TABS: readonly Tab[] = ['domains', 'mailboxes', 'aliases', 'outbound', 'logs'];
@@ -94,6 +95,7 @@ export function MailPage() {
           {scopeSubtitle(scope, t('mail.allAccountsShort') || 'all accounts')}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-group-mail" />
           <button onClick={() => { void loadOverview(); setTick((n) => n + 1); }} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
         </div>
       </div>

@@ -660,7 +660,8 @@
       "banThreshold": "Ban after (failed logins)",
       "banWindow": "Within (minutes)",
       "banDuration": "Ban duration (minutes)",
-      "banHint": "Bans apply to the mail ports only (hostd nftables, before Docker); IPv6 per /64; internal addresses are never banned."
+      "banHint": "Bans apply to the mail ports only (hostd nftables, before Docker); IPv6 per /64; internal addresses are never banned.",
+      "bansLink": "See the mail bans"
     },
     "bans": {
       "title": "Mail bans",
@@ -674,7 +675,8 @@
       "unbanTitle": "Lift the ban",
       "unbanConfirm": "Lift the ban of {{ip}} on the mail ports now?",
       "unbanned": "Ban lifted",
-      "unbanFailed": "Failed to lift the ban"
+      "unbanFailed": "Failed to lift the ban",
+      "description": "Addresses banned from the mail ports (SMTP, submission, IMAP, POP3) after repeated authentication failures."
     },
     "relayTest": {
       "title": "Open relay test",

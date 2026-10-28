@@ -111,7 +111,9 @@
       "usedRedirect": "redirection",
       "usedSite": "sites",
       "usedWorkflow": "workflow",
-      "valid": "valid"
+      "valid": "valid",
+      "acmeHint": "A Let’s Encrypt certificate is managed from its domain: click its name.",
+      "openDomain": "Open the domain"
     },
     "chooseAccount": "Choose an account…",
     "deadHosts": {
@@ -579,7 +581,8 @@
       "saved": "Ban settings saved",
       "title": "Web bans (edge) and honeypot",
       "urlInvalid": "Invalid URL.",
-      "window": "Escalation window (days)"
+      "window": "Escalation window (days)",
+      "listLink": "See the web bans"
     },
     "source": {
       "honeypotAcl": "Access-list trap",
@@ -603,7 +606,18 @@
     "unbanFailed": "Failed to lift the ban",
     "unbanTitle": "Lift the ban",
     "unbanned": "Ban lifted",
-    "until": "Until"
+    "until": "Until",
+    "tabs": {
+      "web": "Web bans (edge)",
+      "access": "SFTP / SQL bans",
+      "mail": "Mail bans"
+    },
+    "accessDescription": "Addresses banned from the SFTP and external SQL ports of an account after repeated authentication failures.",
+    "access": {
+      "noAccount": "No hosting account.",
+      "pickAccount": "Choose an account: the SFTP / SQL bans belong to the firewall of each account.",
+      "firewallLink": "Firewall of the account (rules, allowed addresses)"
+    }
   },
   "traffic": {
     "at": "Time",

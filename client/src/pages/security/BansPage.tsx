@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { ArrowUpCircle, Flame, Plus, RefreshCw, ShieldBan, ShieldOff } from 'lucide-react';
+import { ArrowUpCircle, Flame, Globe, KeyRound, Mail, Plus, RefreshCw, ShieldBan, ShieldCheck, ShieldOff } from 'lucide-react';
 import {
   HostingSocketEvents,
   type ProxyHost, type WebBan, type WebBanList, type WebBanScope, type WebBanSource, type WebBanStats, type WebFirewallSummary,
@@ -14,30 +14,115 @@ import { PageContainer } from '@/components/common/PageContainer';
 import { TableScroll } from '@/components/common/TableScroll';
 import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { TenantBadge } from '@/components/common/TenantBadge';
-import { AccountScopeSelect, scopeSubtitle, useAccountScope } from '@/components/common/AccountScope';
+import { AccountScopeBar, AccountScopeSelect, scopeSubtitle, useAccountScope, type AccountScope } from '@/components/common/AccountScope';
+import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
+import { SettingsLink } from '@/components/common/SettingsLink';
 import { TenantFilterChips } from '@/components/common/TenantFilterChips';
 import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { Pill, headerAccentBtnCls, headerBtnCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
+import { EmptyState, Pill, headerAccentBtnCls, headerBtnCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { MailSearch, Pager } from '@/components/mail/MailListParts';
 import { useDebounced } from '@/components/mail/useDebounced';
 import { ListState, useProxyAccess } from '@/components/proxy/proxyUi';
 import { proxyLoadError, toastProxyError } from '@/components/proxy/proxyErrors';
 import { BAN_SOURCES, GeoLine, ObliguardPill, useBanSourceLabel } from '@/components/security/bansUi';
 import { BanCreateModal } from '@/components/security/BanCreateModal';
+import { AccountAccessBans } from '@/components/security/AccountSecurityTab';
+import { MailBansPanel } from '@/components/mail/MailSettingsSections';
+import { accountAccessHref } from '@/utils/links';
 import { cn } from '@/utils/cn';
 
 const PAGE = 50;
 
+type Tab = 'web' | 'access' | 'mail';
+const TABS: readonly Tab[] = ['web', 'access', 'mail'];
+
+function isTab(v: string | null): v is Tab {
+  return v !== null && (TABS as readonly string[]).includes(v);
+}
+
+/** Settings section of each tab (coherence plan C11). */
+const SETTINGS_ANCHOR: Record<Tab, string> = { web: 'settings-bans', access: 'settings-access', mail: 'settings-mail-abuse' };
+
 /**
- * /security/bans — web bans of the edge (honeypot, access-list trap, manual,
- * Obliguard, promotion): stats, filters, GeoIP, ban / unban, promotion to a
- * platform ban (docs/P4b-PLAN.md §9, §13). OWNED BY MODULE `ui-proxy`.
+ * /security/bans — every ban in one page (coherence plan D13), tab `?tab=`:
+ * web bans of the edge (default), SFTP / SQL bans of an account, mail-port
+ * bans (platform admin). Account scope `?account=` (god view `?tenants=`);
+ * the thresholds stay in Settings. OWNED BY MODULE `ui-proxy`.
  */
 export function BansPage() {
+  const { t } = useTranslation();
+  const scope = useAccountScope();
+  const { platformAdmin } = useProxyAccess();
+  const [tick, setTick] = useState(0);
+  const tabParam = scope.params.get('tab');
+  const requested: Tab = isTab(tabParam) ? tabParam : 'web';
+  const tab: Tab = requested === 'mail' && !platformAdmin ? 'web' : requested;
+  const setTab = (next: Tab) => scope.update({ tab: next === 'web' ? null : next });
+
+  const tabs: SegmentedTab<Tab>[] = [
+    { id: 'web', label: t('bans.tabs.web') || 'Web bans (edge)', icon: <Globe size={16} /> },
+    { id: 'access', label: t('bans.tabs.access') || 'SFTP / SQL bans', icon: <KeyRound size={16} /> },
+    { id: 'mail', label: t('bans.tabs.mail') || 'Mail bans', icon: <Mail size={16} />, hidden: !platformAdmin },
+  ];
+  const description = tab === 'web'
+    ? (t('bans.description') || 'Addresses refused by the web front end: caught by a honeypot bait, by the access-list trap, banned by hand or synchronised from Obliguard. Repeat offences ban longer.')
+    : tab === 'access'
+      ? (t('bans.accessDescription') || 'Addresses banned from the SFTP and external SQL ports of an account after repeated authentication failures.')
+      : null;
+
+  return (
+    <PageContainer className="flex flex-col gap-5">
+      <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
+        <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.bans') || 'Bans'}</h1>
+        {tab !== 'mail' && <span className="text-xs font-mono tracking-wider text-text-muted">{scopeSubtitle(scope, t('proxy.allAccountsShort') || 'all accounts')}</span>}
+        <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor={SETTINGS_ANCHOR[tab]} />
+          <button onClick={() => setTick((n) => n + 1)} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
+        </div>
+      </div>
+      {description && <p className="-mt-3 text-sm text-text-muted">{description}</p>}
+
+      <SegmentedTabs<Tab> tabs={tabs} value={tab} onChange={setTab} ariaLabel={t('nav.bans') || 'Bans'} fill={false} />
+
+      {tab === 'web' && <WebBansPanel key={`web-${tick}`} scope={scope} />}
+      {tab === 'access' && <AccessBansPanel key={`access-${tick}`} scope={scope} />}
+      {tab === 'mail' && platformAdmin && <MailBansPanel key={`mail-${tick}`} />}
+    </PageContainer>
+  );
+}
+
+/** SFTP / SQL bans: per account (the firewall of an account), so an account must be chosen. */
+function AccessBansPanel({ scope }: { scope: AccountScope }) {
+  const { t } = useTranslation();
+  const { accountId } = scope;
+  return (
+    <div className="flex flex-col gap-3">
+      <AccountScopeBar scope={scope} allowAll={false} />
+      {accountId == null ? (
+        scope.accountsLoaded && scope.accounts.length === 0
+          ? <EmptyState icon={<KeyRound />} text={t('bans.access.noAccount') || 'No hosting account.'} />
+          : <EmptyState icon={<KeyRound />} text={t('bans.access.pickAccount') || 'Choose an account: the SFTP / SQL bans belong to the firewall of each account.'} />
+      ) : (
+        <>
+          <AccountAccessBans key={accountId} accountId={accountId} />
+          <Link to={accountAccessHref(accountId, 'firewall')} className="inline-flex items-center gap-1.5 self-start text-xs text-accent hover:underline">
+            <ShieldCheck size={13} />{t('bans.access.firewallLink') || 'Firewall of the account (rules, allowed addresses)'}
+          </Link>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Web bans of the edge (honeypot, access-list trap, manual, Obliguard,
+ * promotion): stats, filters, GeoIP, ban / unban, promotion to a platform ban
+ * (docs/P4b-PLAN.md §9, §13).
+ */
+function WebBansPanel({ scope }: { scope: AccountScope }) {
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
-  const scope = useAccountScope();
   const { canManage, platformAdmin } = useProxyAccess();
   const { accountId, tenantId, accounts } = scope;
 
@@ -170,17 +255,7 @@ export function BansPage() {
   );
 
   return (
-    <PageContainer className="flex flex-col gap-5">
-      <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
-        <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.bans') || 'Bans'}</h1>
-        <span className="text-xs font-mono tracking-wider text-text-muted">{scopeSubtitle(scope, t('proxy.allAccountsShort') || 'all accounts')}</span>
-        <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => { setLoading(true); void load(); }} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
-          {createBtn}
-        </div>
-      </div>
-      <p className="-mt-3 text-sm text-text-muted">{t('bans.description') || 'Addresses refused by the web front end: caught by a honeypot bait, by the access-list trap, banned by hand or synchronised from Obliguard. Repeat offences ban longer.'}</p>
-
+    <div className="flex flex-col gap-5">
       <TenantFilterChips value={scope.tenantFilter.value} onChange={scope.setSingleTenant} />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -231,6 +306,7 @@ export function BansPage() {
             {hosts.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
           </select>
         )}
+        {createBtn && <div className="ml-auto">{createBtn}</div>}
       </div>
 
       <ListState loading={loading} error={error} empty={list.items.length === 0} emptyIcon={<ShieldBan />} emptyText={q || source || hostId ? (t('common.noMatch') || 'No match') : (t('bans.empty') || 'No ban.')}>
@@ -310,6 +386,6 @@ export function BansPage() {
         onClose={() => setCreating(false)}
         onSaved={(b) => { setCreating(false); toast.success(t('bans.created', { ip: b.ip, defaultValue: '{{ip}} banned' })); void load(); }}
       />
-    </PageContainer>
+    </div>
   );
 }

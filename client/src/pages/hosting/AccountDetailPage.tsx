@@ -18,7 +18,7 @@ import { appsApi } from '@/api/apps.api';
 import { proxyApi } from '@/api/proxy.api';
 import { uptimeApi } from '@/api/uptime.api';
 import { backupsApi } from '@/api/backups.api';
-import { useHostingMe } from '@/store/hostingStore';
+import { hostingCan, useHostingMe } from '@/store/hostingStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
@@ -46,7 +46,6 @@ import { DbInstanceCreateModal } from '@/components/databases/DbInstanceCreateMo
 import { AccountMailTab } from '@/components/mail/AccountMailTab';
 import { MailDomainCreateModal } from '@/components/mail/MailDomainCreateModal';
 import { AppStacksPanel } from '@/components/apps/AppStacksPanel';
-import { p4bCan } from '@/components/apps/appsFormat';
 import { FileExplorer } from '@/components/files/FileExplorer';
 import {
   AccountStatusBadge, Card, DiskBar, EmptyState, InfoRow, Pill,
@@ -84,7 +83,7 @@ export function AccountDetailPage() {
 
   const isStaff = me?.kind === 'staff';
   const manage = isStaff && can('accounts.manage', accountId);
-  const appsReadable = p4bCan(me, 'read', accountId);
+  const appsReadable = hostingCan(me, 'read', accountId);
   const resolved = resolveAccountTab(params.get('tab'));
   const tab: Tab = resolved.tab === 'apps' && me && !appsReadable ? 'overview' : resolved.tab;
   // An old tab id (?tab=security|users|keys) becomes « Access & security » on its section.
@@ -552,7 +551,7 @@ function OverviewTab({ account, isStaff, appsReadable, onGoTo, onRefreshUsage, r
 function AppsTab({ account }: { account: HostingAccount }) {
   const { t } = useTranslation();
   const { me } = useHostingMe();
-  const canCreate = p4bCan(me, 'apps.manage', account.id) && account.status !== 'suspended' && account.status !== 'deleting';
+  const canCreate = hostingCan(me, 'apps.manage', account.id) && account.status !== 'suspended' && account.status !== 'deleting';
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-xs">

@@ -111,7 +111,9 @@
       "usedRedirect": "redirection",
       "usedSite": "sites",
       "usedWorkflow": "workflow",
-      "valid": "valide"
+      "valid": "valide",
+      "acmeHint": "Un certificat Let’s Encrypt se gère depuis son domaine : cliquez sur son nom.",
+      "openDomain": "Ouvrir le domaine"
     },
     "chooseAccount": "Choisir un compte…",
     "deadHosts": {
@@ -579,7 +581,8 @@
       "saved": "Paramètres des bannissements enregistrés",
       "title": "Bans web (edge) et honeypot",
       "urlInvalid": "URL invalide.",
-      "window": "Fenêtre d’escalade (jours)"
+      "window": "Fenêtre d’escalade (jours)",
+      "listLink": "Voir les bans web"
     },
     "source": {
       "honeypotAcl": "Piège des listes d’accès",
@@ -603,7 +606,18 @@
     "unbanFailed": "Impossible de lever le bannissement",
     "unbanTitle": "Lever le bannissement",
     "unbanned": "Bannissement levé",
-    "until": "Jusqu’au"
+    "until": "Jusqu’au",
+    "tabs": {
+      "web": "Bans web (edge)",
+      "access": "Bans SFTP / SQL",
+      "mail": "Bans mail"
+    },
+    "accessDescription": "Adresses bannies des ports SFTP et SQL externes d’un compte après des échecs d’authentification répétés.",
+    "access": {
+      "noAccount": "Aucun compte d’hébergement.",
+      "pickAccount": "Choisissez un compte : les bans SFTP / SQL relèvent du pare-feu de chaque compte.",
+      "firewallLink": "Pare-feu du compte (règles, adresses autorisées)"
+    }
   },
   "traffic": {
     "at": "Heure",

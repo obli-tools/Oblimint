@@ -2,7 +2,7 @@ import { useCallback, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, Clock, Loader2, PauseCircle, RotateCcw, ShieldAlert, Unplug } from 'lucide-react';
 import { isMasterTenant, type CertificateListItem, type EdgeUnitState, type EdgeUnitStatusKind, type HostingAccount, type ProxyBoundDomain } from '@oblimint/shared';
-import { useHostingMe } from '@/store/hostingStore';
+import { hostingCan, useHostingMe } from '@/store/hostingStore';
 import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
 import { Button } from '@/components/common/Button';
@@ -15,8 +15,8 @@ import { unitTone } from './proxyFormat';
 // Shared React pieces of the proxy / bans / traffic / edge UI. OWNED BY MODULE `ui-proxy`.
 
 /**
- * What the caller may do with proxy objects (mirror of the server rules,
- * docs/P4b-PLAN.md §12 — the server stays the authority, this only hides):
+ * What the caller may do with proxy objects (hostingCan, mirror of the server
+ * rules, docs/P4b-PLAN.md §12 — the server stays the authority, this only hides):
  * proxy.manage per account (client) or as a staff capability; streams for the
  * staff; advanced config / private targets / platform pages for the platform
  * staff (platform admin, or staff of the master tenant).
@@ -28,12 +28,8 @@ export function useProxyAccess() {
   const isStaff = me?.kind === 'staff';
   const platformAdmin = role === 'admin';
   const platformStaff = isStaff && (platformAdmin || me?.staffCapabilities === '*' || isMasterTenant(currentTenantId));
-  const canManage = useCallback((accountId?: number | null): boolean => {
-    if (!me) return false;
-    if (me.kind === 'staff') return me.staffCapabilities === '*' || me.staffCapabilities.includes('proxy.manage');
-    const entries = accountId != null ? [me.accounts[accountId]].filter(Boolean) : Object.values(me.accounts);
-    return entries.some((caps) => caps!.includes('proxy.manage'));
-  }, [me]);
+  // The one check (store/hostingStore.ts): null / undefined = "on some account".
+  const canManage = useCallback((accountId?: number | null): boolean => hostingCan(me, 'proxy.manage', accountId), [me]);
   return { me, isStaff, platformAdmin, platformStaff, canManage };
 }
 

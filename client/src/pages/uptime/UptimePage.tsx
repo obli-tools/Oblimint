@@ -8,6 +8,7 @@ import { AccountScopeBar, scopeSubtitle, useAccountScope } from '@/components/co
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { MonitorsPanel } from '@/components/uptime/MonitorsPanel';
 import { StatusPagesPanel } from '@/components/uptime/StatusPagesPanel';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 type Tab = 'monitors' | 'status-pages';
 
@@ -44,6 +45,7 @@ export function UptimePage() {
           {scopeSubtitle(scope, t('apps.scope.allAccountsShort') || 'all accounts')}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-monitoring" />
           <button onClick={() => setTick((n) => n + 1)} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
           {canCreate && (
             <button type="button" onClick={() => setCreating(true)} className={headerAccentBtnCls}>

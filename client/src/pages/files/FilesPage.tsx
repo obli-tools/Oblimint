@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { AccountScopeBar, useAccountScope } from '@/components/common/AccountScope';
 import { FileExplorer } from '@/components/files/FileExplorer';
 import { useHostingMe } from '@/store/hostingStore';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 const LAST_ACCOUNT = 'oblimint.files.account';
 
@@ -50,6 +51,7 @@ export function FilesPage() {
       <div className="flex flex-wrap items-center gap-3">
         <FolderOpen className="h-6 w-6 text-accent" />
         <h1 className="font-display text-2xl font-semibold text-text-primary">{t('nav.files') || 'Files'}</h1>
+        <div className="ml-auto"><SettingsLink anchor="settings-access" /></div>
       </div>
       <AccountScopeBar scope={scope} allowAll={false} value={accountId} onChange={(id) => { if (id != null) go('/staging', id); }} />
       {!accountsLoaded ? (

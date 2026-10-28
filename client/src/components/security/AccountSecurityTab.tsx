@@ -91,6 +91,43 @@ export function AccountSecurityTab({ accountId }: { accountId: number }) {
   );
 }
 
+/**
+ * SFTP / SQL bans of one account alone (Bans page, tab « File & SQL access »,
+ * coherence plan D13): the same card as the account's firewall section.
+ */
+export function AccountAccessBans({ accountId }: { accountId: number }) {
+  const { t } = useTranslation();
+  const { can } = useHostingMe();
+  const canEdit = can('files.manage', accountId);
+  const [info, setInfo] = useState<AccountAccessInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const seq = useRef(0);
+  const load = useCallback(async () => {
+    const id = ++seq.current;
+    try {
+      const data = await firewallApi.getAccess(accountId);
+      if (id !== seq.current) return;
+      setInfo(data);
+      setError(null);
+    } catch (err) {
+      if (id !== seq.current) return;
+      setInfo(null);
+      setError(opsErrorMessage(t, err, 'security', t('security.loadFailed') || 'Failed to load the access settings'));
+    } finally {
+      if (id === seq.current) setLoading(false);
+    }
+  }, [accountId, t]);
+
+  useEffect(() => { setLoading(true); void load(); }, [load]);
+  useHostingEvents([HostingSocketEvents.ACCESS_UPDATED], () => { void load(); }, (_e, p) => payloadNumber(p, 'accountId') === accountId);
+
+  if (loading && !info) return <div className="flex justify-center py-8"><LoadingSpinner /></div>;
+  if (!info) return <EmptyState icon={<AlertTriangle />} text={error ?? (t('security.loadFailed') || 'Failed to load the access settings')} />;
+  return <BansCard info={info} canEdit={canEdit} onReload={() => { void load(); }} />;
+}
+
 // ── Applied state ───────────────────────────────────────────────────────────
 
 function AppliedBanner({ info, onReload }: { info: AccountAccessInfo; onReload: () => void }) {

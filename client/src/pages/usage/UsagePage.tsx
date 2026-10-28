@@ -27,6 +27,7 @@ import { fillMonthDays, formatCount, isoMonth, quotaColor, quotaPct, sumBy } fro
 import {
   MonthPicker, OverQuotaBanner, OverQuotaPill, QuotaLine, UsageAlertsList, dayLabel, hourLabel, monthLabel, resourceSeries, useByteFormat,
 } from '@/components/usage/usageUi';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 const MIB = 1024 * 1024;
 
@@ -44,7 +45,7 @@ function PageHeader({ subtitle, actions }: { subtitle?: string; actions?: React.
     <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
       <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.usage') || 'Usage'}</h1>
       {subtitle && <span className="text-xs font-mono tracking-wider text-text-muted">{subtitle}</span>}
-      {actions && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
+      <div className="ml-auto flex flex-wrap items-center gap-2"><SettingsLink anchor="settings-usage" />{actions}</div>
     </div>
   );
 }

@@ -6,7 +6,8 @@ import { cn } from '@/utils/cn';
 /**
  * One section of the Settings page (icon + title, then the bg-secondary card)
  * — the layout of the P0 sections, itself Obliance's. When `dirty`, a footer
- * offers Save / Cancel; `error` shows under the fields.
+ * offers Save / Cancel; `error` shows under the fields. A block with an `id` is an
+ * anchor of the page (/settings#<id>) and an entry of its table of contents.
  */
 export function SettingsBlock({ id, icon, title, description, children, dirty = false, saving = false, canSave = true, onSave, onReset, error, headerExtra }: {
   id?: string;
@@ -24,7 +25,7 @@ export function SettingsBlock({ id, icon, title, description, children, dirty = 
 }) {
   const { t } = useTranslation();
   return (
-    <div id={id} className="scroll-mt-4">
+    <div id={id} data-toc-title={id ? title : undefined} className="scroll-mt-4">
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <span className="text-accent [&>svg]:h-[18px] [&>svg]:w-[18px]">{icon}</span>
         <h2 className="text-lg font-semibold text-text-primary">{title}</h2>

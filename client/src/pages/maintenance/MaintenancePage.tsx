@@ -15,6 +15,7 @@ import { WindowsTable } from '@/components/maintenance/WindowsTable';
 import { QuarantineViewer } from '@/components/maintenance/QuarantineViewer';
 import { UpdatesOverview } from '@/components/maintenance/UpdatesOverview';
 import { isNotImplemented, maintenanceErrorMessage } from '@/components/maintenance/maintenanceErrors';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 type Tab = 'reviews' | 'windows' | 'updates' | 'quarantine';
 const TABS: readonly Tab[] = ['reviews', 'windows', 'updates', 'quarantine'];
@@ -68,6 +69,7 @@ export function MaintenancePage() {
       <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
         <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.maintenance') || 'Maintenance'}</h1>
         <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-group-scanner" />
           <button onClick={() => { void loadCounts(); setTick((n) => n + 1); }} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
         </div>
       </div>

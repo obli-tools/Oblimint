@@ -660,7 +660,8 @@
       "banThreshold": "Bannir après (échecs de connexion)",
       "banWindow": "En (minutes)",
       "banDuration": "Durée du bannissement (minutes)",
-      "banHint": "Les bannissements ne portent que sur les ports mail (nftables de hostd, avant Docker) ; IPv6 par /64 ; les adresses internes ne sont jamais bannies."
+      "banHint": "Les bannissements ne portent que sur les ports mail (nftables de hostd, avant Docker) ; IPv6 par /64 ; les adresses internes ne sont jamais bannies.",
+      "bansLink": "Voir les bans mail"
     },
     "bans": {
       "title": "Bans mail",
@@ -674,7 +675,8 @@
       "unbanTitle": "Lever le bannissement",
       "unbanConfirm": "Lever maintenant le bannissement de {{ip}} sur les ports mail ?",
       "unbanned": "Bannissement levé",
-      "unbanFailed": "Impossible de lever le bannissement"
+      "unbanFailed": "Impossible de lever le bannissement",
+      "description": "Adresses bannies des ports mail (SMTP, soumission, IMAP, POP3) après des échecs d’authentification répétés."
     },
     "relayTest": {
       "title": "Test de relais ouvert",

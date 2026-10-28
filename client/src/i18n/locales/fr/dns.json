@@ -6,7 +6,8 @@
     "tabs": {
       "domains": "Domaines",
       "zones": "Zones DNS",
-      "templates": "Modèles"
+      "templates": "Modèles",
+      "certificates": "Certificats"
     },
     "kind": {
       "hosted": "Hébergée ici",

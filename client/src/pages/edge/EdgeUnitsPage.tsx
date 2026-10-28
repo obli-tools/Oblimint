@@ -21,6 +21,7 @@ import { proxyLoadError, toastProxyError } from '@/components/proxy/proxyErrors'
 import { ApplyResultPill, EdgeAppliesTable } from '@/components/edge/EdgeAppliesTable';
 import { EdgeUnitsTable, useOwnerKindLabel } from '@/components/edge/EdgeUnitsTable';
 import { cn } from '@/utils/cn';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 type View = 'units' | 'applies';
 const STATUSES: EdgeUnitStatusKind[] = ['quarantined', 'stub', 'upstreamUnreachable', 'pending', 'active', 'disabled'];
@@ -120,6 +121,7 @@ export function EdgeUnitsPage() {
       <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
         <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.edge') || 'Edge'}</h1>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <SettingsLink anchor="settings-edge" />
           <button onClick={() => { setLoading(true); void load(); }} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
           <Button size="sm" variant="danger" loading={rollingBack} onClick={() => { void rollback(); }}><Undo2 size={14} className="mr-1.5" />{t('edgeUnits.rollback') || 'Roll back'}</Button>
         </div>

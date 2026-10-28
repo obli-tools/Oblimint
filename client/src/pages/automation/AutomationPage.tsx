@@ -10,6 +10,7 @@ import { WorkflowsPanel } from '@/components/automation/WorkflowsPanel';
 import { SshKeysPanel } from '@/components/automation/SshKeysPanel';
 import { SftpTargetsPanel } from '@/components/automation/SftpTargetsPanel';
 import { MaintenanceWindowsPanel } from '@/components/automation/MaintenanceWindowsPanel';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 type Tab = 'workflows' | 'ssh-keys' | 'sftp-targets' | 'maintenance-windows';
 const TABS: readonly Tab[] = ['workflows', 'ssh-keys', 'sftp-targets', 'maintenance-windows'];
@@ -63,6 +64,7 @@ export function AutomationPage() {
           {scopeSubtitle(scope, t('apps.scope.allAccountsShort') || 'all accounts')}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-monitoring" />
           <button onClick={() => setTick((n) => n + 1)} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
           {canCreate && <button type="button" onClick={() => setCreating(true)} className={headerAccentBtnCls}><Plus size={14} />{addLabel}</button>}
         </div>

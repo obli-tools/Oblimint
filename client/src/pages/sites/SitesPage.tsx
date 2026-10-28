@@ -19,6 +19,7 @@ import { useHostingEvent } from '@/components/sites/useHostingEvent';
 import { siteErrorMessage } from '@/components/sites/siteErrors';
 import { fieldCls } from '@/components/sites/styles';
 import { headerAccentBtnCls, headerBtnCls } from '@/components/hosting/hostingUi';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 export function SitesPage() {
   const { t } = useTranslation();
@@ -131,6 +132,7 @@ export function SitesPage() {
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-preview" />
           <button onClick={() => void fetchSites()} className={headerBtnCls}>
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />{t('common.refresh') || 'Refresh'}
           </button>

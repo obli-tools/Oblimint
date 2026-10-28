@@ -173,6 +173,7 @@ export function BackupSettingsSections() {
       </SettingsBlock>
 
       <SettingsBlock
+        id="settings-backup-destinations"
         icon={<HardDrive />}
         title={t('backups.destinations') || 'Backup destinations'}
         headerExtra={<Button size="sm" onClick={() => setEditing('new')}><Plus className="mr-1 h-3.5 w-3.5" />{t('backups.addDestination') || 'Add'}</Button>}
@@ -205,6 +206,7 @@ export function BackupSettingsSections() {
       </SettingsBlock>
 
       <SettingsBlock
+        id="settings-backup-runs"
         icon={<Archive />}
         title={t('backups.runs') || 'Last backups'}
         headerExtra={<Button size="sm" variant="secondary" onClick={() => { void runPanel(); }}><Play className="mr-1 h-3.5 w-3.5" />{t('backups.runPanel') || 'Back up the panel now'}</Button>}

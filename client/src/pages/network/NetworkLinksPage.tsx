@@ -7,6 +7,7 @@ import { AccountScopeBar, scopeSubtitle, useAccountScope } from '@/components/co
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { NetworkLinksPanel } from '@/components/network/NetworkLinksPanel';
 import { NetworkSystemPanel } from '@/components/network/NetworkSystemPanel';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 /**
  * /network — declared links between the segments of an account (app → database,
@@ -30,6 +31,7 @@ export function NetworkLinksPage() {
           {scopeSubtitle(scope, t('apps.scope.allAccountsShort') || 'all accounts')}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-network" />
           <button onClick={() => setTick((n) => n + 1)} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
           {canCreate && <button type="button" onClick={() => setCreating(true)} className={headerAccentBtnCls}><Plus size={14} />{t('network.add') || 'New link'}</button>}
         </div>

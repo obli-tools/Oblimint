@@ -1,5 +1,5 @@
 import type {
-  AppDeploymentStatus, ClientCapability, HostingMe, AppMaintenanceSchedule, AppStackStatus, AppTemplateField, ContainerState, UptimeStatus,
+  AppDeploymentStatus, AppMaintenanceSchedule, AppStackStatus, AppTemplateField, ContainerState, UptimeStatus,
 } from '@oblimint/shared';
 
 // Pure helpers of the ui-apps screens (no React, no i18n instance): name rules
@@ -287,29 +287,4 @@ export function safeCss(css: string | null): string {
     .replace(/url\s*\([^)]*\)/gi, 'none')
     .replace(/expression\s*\([^)]*\)/gi, '')
     .replace(/javascript:/gi, '');
-}
-
-// ── Access (mirrors server/src/services/hosting/access.ts) ──────────────────
-
-export type P4bNeed = 'read' | 'apps.manage' | 'apps.console' | 'proxy.manage' | 'monitoring.manage';
-
-const STAFF_READ = [
-  'overview.read', 'accounts.manage', 'sites.manage', 'domains.manage', 'files.manage', 'plans.manage', 'databases.manage', 'dns.manage', 'mail.manage',
-  'apps.manage', 'proxy.manage', 'monitoring.manage',
-];
-
-/**
- * Pure check. `accountId` undefined = "on some account"; null = a platform
- * object (no account): staff only.
- */
-export function p4bCan(me: HostingMe | null, need: P4bNeed, accountId?: number | null): boolean {
-  if (!me) return false;
-  if (me.kind === 'staff') {
-    if (me.staffCapabilities === '*') return true;
-    const caps = me.staffCapabilities;
-    return need === 'read' ? STAFF_READ.some((c) => caps.includes(c)) : caps.includes(need);
-  }
-  if (accountId === null) return false;
-  const entries = accountId !== undefined ? [me.accounts[accountId]].filter(Boolean) : Object.values(me.accounts);
-  return entries.some((caps) => need === 'read' || (caps as ClientCapability[]).includes(need as ClientCapability));
 }

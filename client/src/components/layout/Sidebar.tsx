@@ -43,6 +43,8 @@ import { useUiStore, useEffectiveSidebar } from '@/store/uiStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { IconButton } from '@/components/common/IconButton';
 import { useRememberedAccount } from '@/components/common/AccountScope';
+import { hostingCan, useHostingMe, type HostingNeed } from '@/store/hostingStore';
+import { useMaintenanceBadge } from './useNavBadges';
 
 // ── localStorage helpers ─────────────────────────────────────────────────────
 
@@ -82,6 +84,21 @@ interface NavItem {
   inactivePatterns?: RegExp[];
   /** Link target when it differs from `path` (account scope kept for the session). */
   href?: string;
+  /** Family of the entry (coherence plan 1.1): a separator marks each change. */
+  family?: NavFamily;
+}
+
+/** Families of the Hosting section, in this order (coherence plan 1.1, D16). */
+type NavFamily = 'objects' | 'services' | 'network' | 'observation' | 'operations';
+
+/** Is a family separator drawn before items[i]? */
+function startsFamily(items: NavItem[], i: number): boolean {
+  return i > 0 && items[i].family !== undefined && items[i - 1].family !== undefined && items[i].family !== items[i - 1].family;
+}
+
+/** Separator between two families (and, in the rail, before Administration). */
+function FamilySeparator({ rail = false }: { rail?: boolean }) {
+  return <div aria-hidden className={rail ? 'mx-2 my-2 h-px bg-border' : 'mx-3 my-1.5 h-px bg-border/60'} />;
 }
 
 /** Cross-account pages reading `?account=` (coherence plan C1): their link carries the session's account. */
@@ -172,30 +189,51 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
 
   // ── Nav items ──────────────────────────────────────────────────────────────
   const rememberedAccount = useRememberedAccount();
+  // Entry hidden without rights (coherence plan 1.1): nothing to manage on any
+  // account AND nothing to read there. `read` is « member » for a client (the
+  // lists are scoped by the server), so it mostly hides the hosting area from
+  // a staff member without any hosting capability, or a client without an
+  // account; the file explorer needs files.manage even to read. Until
+  // /hosting/me answers nothing is hidden (no menu flash on a slow request).
+  const { me: hostingMe } = useHostingMe();
+  const may = (need: HostingNeed) => hostingMe === null || hostingCan(hostingMe, need);
+  const canRead = may('read');
+  const maintenanceBadge = useMaintenanceBadge(canRead && hostingMe !== null);
+  // A client of a single account: « My account » leads straight to it.
+  const clientAccounts = hostingMe?.kind === 'client' ? Object.keys(hostingMe.accounts).map(Number) : [];
+  const ownAccount = clientAccounts.length === 1 ? clientAccounts[0] : null;
+
+  // Hosting entries by family (coherence plan 1.1, D16): objects, services,
+  // network & security, observation, operations.
   const navItems: NavItem[] = ([
-    { label: t('nav.dashboard') || 'Dashboard',          path: '/',          icon: <LayoutDashboard size={18} /> },
-    { label: t('nav.accounts') || 'Accounts',            path: '/accounts',  icon: <UserSquare size={18} /> },
-    { label: t('nav.sites') || 'Sites',                  path: '/sites',     icon: <Globe size={18} />, inactivePatterns: [WINDOW_REVIEW_RE] },
+    // ── Objects
+    { family: 'objects', label: t('nav.dashboard') || 'Dashboard', path: '/', icon: <LayoutDashboard size={18} /> },
+    ownAccount != null
+      ? { family: 'objects', label: t('nav.myAccount') || 'My account', path: '/accounts', href: `/accounts/${ownAccount}`, icon: <UserSquare size={18} /> }
+      : { family: 'objects', label: t('nav.accounts') || 'Accounts', path: '/accounts', icon: <UserSquare size={18} />, hidden: !canRead },
+    { family: 'objects', label: t('nav.sites') || 'Sites', path: '/sites', icon: <Globe size={18} />, inactivePatterns: [WINDOW_REVIEW_RE], hidden: !canRead },
     // The zone editor lives under /dns/zones/:id.
-    { label: t('nav.domains') || 'Domains & DNS',        path: '/domains',   icon: <AtSign size={18} />, activePrefixes: ['/dns'] },
-    // Web file explorer — client space too (files.manage per account, the server scopes).
-    { label: t('nav.files') || 'Files',                path: '/files',     icon: <FolderOpen size={18} /> },
-    // P2: databases and usage are part of the client space too (the server scopes every list).
-    { label: t('nav.databases') || 'Databases',          path: '/databases', icon: <Database size={18} /> },
-    { label: t('nav.usage') || 'Usage',                  path: '/usage',     icon: <BarChart3 size={18} /> },
-    // P3: maintenance overview (windows to review, updates, quarantine) — client space too (server scopes).
-    { label: t('nav.maintenance') || 'Maintenance',      path: '/maintenance', icon: <Wrench size={18} />, activePrefixes: [WINDOW_REVIEW_RE] },
-    // P4: mail — client space too (the server scopes every list).
-    { label: t('nav.mail') || 'Mail',                    path: '/mail',      icon: <Mail size={18} /> },
-    // P4b: apps + proxy — client space too (the server scopes every list; capabilities gate the actions).
-    { label: t('nav.apps') || 'Applications',            path: '/apps',      icon: <Boxes size={18} /> },
-    { label: t('nav.proxy') || 'Proxy',                  path: '/proxy',     icon: <Waypoints size={18} /> },
-    { label: t('nav.network') || 'Network links',        path: '/network',   icon: <Network size={18} /> },
-    { label: t('nav.traffic') || 'Traffic',              path: '/traffic',   icon: <LineChart size={18} /> },
-    { label: t('nav.uptime') || 'Uptime',                path: '/uptime',    icon: <Activity size={18} /> },
-    { label: t('nav.automation') || 'Automation',        path: '/automation', icon: <Workflow size={18} /> },
-    { label: t('nav.bans') || 'Bans',                    path: '/security/bans', icon: <ShieldBan size={18} /> },
-  ] as NavItem[]).map((item) => (rememberedAccount != null && SCOPED_PATHS.has(item.path) ? { ...item, href: `${item.path}?account=${rememberedAccount}` } : item));
+    { family: 'objects', label: t('nav.domains') || 'Domains & DNS', path: '/domains', icon: <AtSign size={18} />, activePrefixes: ['/dns'], hidden: !canRead },
+    // ── Services
+    { family: 'services', label: t('nav.mail') || 'Mail', path: '/mail', icon: <Mail size={18} />, hidden: !canRead },
+    { family: 'services', label: t('nav.databases') || 'Databases', path: '/databases', icon: <Database size={18} />, hidden: !canRead },
+    // Web file explorer: files.manage on an account (the same right as SFTP), even to read.
+    { family: 'services', label: t('nav.files') || 'Files', path: '/files', icon: <FolderOpen size={18} />, hidden: !may('files.manage') },
+    { family: 'services', label: t('nav.apps') || 'Applications', path: '/apps', icon: <Boxes size={18} />, hidden: !canRead },
+    // ── Network & security
+    { family: 'network', label: t('nav.proxy') || 'Proxy', path: '/proxy', icon: <Waypoints size={18} />, hidden: !canRead },
+    { family: 'network', label: t('nav.network') || 'Network links', path: '/network', icon: <Network size={18} />, hidden: !canRead },
+    { family: 'network', label: t('nav.bans') || 'Bans', path: '/security/bans', icon: <ShieldBan size={18} />, hidden: !canRead },
+    // ── Observation
+    { family: 'observation', label: t('nav.uptime') || 'Uptime', path: '/uptime', icon: <Activity size={18} />, hidden: !canRead },
+    { family: 'observation', label: t('nav.traffic') || 'HTTP requests', path: '/traffic', icon: <LineChart size={18} />, hidden: !canRead },
+    { family: 'observation', label: t('nav.usage') || 'Usage', path: '/usage', icon: <BarChart3 size={18} />, hidden: !canRead },
+    // ── Operations: reviews + quarantine pending in the badge.
+    { family: 'operations', label: t('nav.maintenance') || 'Maintenance', path: '/maintenance', icon: <Wrench size={18} />, activePrefixes: [WINDOW_REVIEW_RE], badgeCount: maintenanceBadge, hidden: !canRead },
+    { family: 'operations', label: t('nav.automation') || 'Automation', path: '/automation', icon: <Workflow size={18} />, hidden: !canRead },
+  ] as Array<NavItem & { hidden?: boolean }>)
+    .filter((item) => !item.hidden)
+    .map((item) => (rememberedAccount != null && !item.href && SCOPED_PATHS.has(item.path) ? { ...item, href: `${item.path}?account=${rememberedAccount}` } : item));
 
   // Admin-tier section — hidden entirely when the list is empty.
   const adminNavItems: NavItem[] = [
@@ -239,9 +277,7 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
             const isActive = isItemActive(location.pathname, item);
             return (
               <div key={item.path}>
-                {i === navItems.length && adminNavItems.length > 0 && (
-                  <div className="mx-2 my-2 h-px bg-border" aria-hidden />
-                )}
+                {((i === navItems.length && adminNavItems.length > 0) || (i < navItems.length && startsFamily(navItems, i))) && <FamilySeparator rail />}
                 <Link
                   to={item.href ?? item.path}
                   title={item.label}
@@ -358,7 +394,12 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
         </button>
         {navMenuOpen && (
           <nav className="py-1 flex-1 min-h-0 overflow-y-auto">
-            {navItems.map(item => <NavLink key={item.path} item={item} />)}
+            {navItems.map((item, i) => (
+              <div key={item.path}>
+                {startsFamily(navItems, i) && <FamilySeparator />}
+                <NavLink item={item} />
+              </div>
+            ))}
           </nav>
         )}
       </div>

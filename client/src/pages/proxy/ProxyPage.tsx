@@ -14,6 +14,7 @@ import { AccessListsPanel } from '@/components/proxy/AccessListsPanel';
 import { CustomPagesPanel } from '@/components/proxy/CustomPagesPanel';
 import { AuthProvidersPanel } from '@/components/proxy/AuthProvidersPanel';
 import { CertificatesPanel } from '@/components/proxy/CertificatesPanel';
+import { SettingsLink } from '@/components/common/SettingsLink';
 
 type Tab = 'hosts' | 'redirections' | 'dead-hosts' | 'streams' | 'access-lists' | 'pages' | 'auth' | 'certificates';
 const TABS: readonly Tab[] = ['hosts', 'redirections', 'dead-hosts', 'streams', 'access-lists', 'pages', 'auth', 'certificates'];
@@ -62,6 +63,7 @@ export function ProxyPage() {
           {scopeSubtitle(scope, t('proxy.allAccountsShort') || 'all accounts')}
         </span>
         <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-edge" />
           <button onClick={() => setTick((n) => n + 1)} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
         </div>
       </div>
