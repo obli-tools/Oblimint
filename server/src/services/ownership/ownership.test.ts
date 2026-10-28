@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PublicDnsError, type PublicDnsLookup } from '../../utils/publicDns';
-import { CHECK_FINAL_INTERVAL_MS, evaluateOwnership, nextCheckDelayMs, ownershipTxt } from './ownership.service';
+import {
+  CHECK_FINAL_INTERVAL_MS, evaluateOwnership, FAST_CHECK_INTERVAL_MS, FAST_CHECK_WINDOW_MS, nextCheckDelayMs, ownershipTxt,
+} from './ownership.service';
 
 // Pure ownership logic (no database): proofs read through a fake public DNS
 // (the real one goes through utils/publicDns.ts, settings dns.resolvers),
@@ -72,21 +74,34 @@ test('resolver failure → resolverFailed, unless another proof succeeds', async
     { ok: false, method: null, error: 'txtMismatch' });
 });
 
-test('worker backoff: checks at +1, +6, +21, +81 min after creation, then every 6 h', () => {
+test('worker cadence: +1 min, then every 5 min for 48 h after creation, then the backoff (6 h)', () => {
+  const H = 60 * MIN;
+  assert.equal(FAST_CHECK_WINDOW_MS, 48 * H);
+  assert.equal(FAST_CHECK_INTERVAL_MS, 5 * MIN);
   assert.equal(nextCheckDelayMs(0), 1 * MIN);
   assert.equal(nextCheckDelayMs(1 * MIN + 2_000), 5 * MIN);
-  assert.equal(nextCheckDelayMs(6 * MIN + 4_000), 15 * MIN);
-  assert.equal(nextCheckDelayMs(21 * MIN + 6_000), 60 * MIN);
-  assert.equal(nextCheckDelayMs(81 * MIN + 8_000), CHECK_FINAL_INTERVAL_MS);
-  assert.equal(nextCheckDelayMs(30 * 24 * 60 * MIN), 6 * 60 * MIN);
-  // Simulated worker (30 s tick latency): the sequence of delays.
+  assert.equal(nextCheckDelayMs(6 * MIN + 4_000), 5 * MIN, 'fast window: the 15 min step is capped');
+  assert.equal(nextCheckDelayMs(21 * MIN + 6_000), 5 * MIN);
+  assert.equal(nextCheckDelayMs(47 * H), 5 * MIN);
+  assert.equal(nextCheckDelayMs(48 * H), CHECK_FINAL_INTERVAL_MS, 'window over: back to the normal cadence');
+  assert.equal(nextCheckDelayMs(30 * 24 * H), 6 * H);
+  // A manual check re-opens the fast window for 48 h (from the click).
+  assert.equal(nextCheckDelayMs(30 * 24 * H, 0), 5 * MIN);
+  assert.equal(nextCheckDelayMs(30 * 24 * H, 47 * H), 5 * MIN);
+  assert.equal(nextCheckDelayMs(30 * 24 * H, 48 * H), 6 * H);
+  assert.equal(nextCheckDelayMs(30 * 24 * H, -1), 6 * H, 'a click in the future (clock skew) is ignored');
+  assert.equal(nextCheckDelayMs(0, 0), 1 * MIN, 'never slower than the backoff');
+  // Simulated worker (30 s tick latency): the sequence of delays over 3 days.
   let t = 0;
   const delays: number[] = [];
   let next = nextCheckDelayMs(0);
-  for (let i = 0; i < 6; i++) {
+  while (t < 72 * H) {
     t += next + 30_000;
     delays.push(next / MIN);
     next = nextCheckDelayMs(t);
   }
-  assert.deepEqual(delays, [1, 5, 15, 60, 360, 360]);
+  assert.deepEqual(delays.slice(0, 4), [1, 5, 5, 5]);
+  assert.ok(delays.length < 600, `bounded: ${delays.length} checks in 72 h`);
+  assert.deepEqual(delays.slice(-3), [360, 360, 360]);
+  assert.ok(delays.filter((d) => d === 5).length > 500, 'every 5 min during the first 48 h');
 });

@@ -8,6 +8,7 @@ import { pdns, PdnsError, type PdnsClient } from './pdnsClient';
 import {
   buildRrsets, diffRrsets, inZone, nextSerial, publicationOf, soaRname, soaSerialOf, type Rrset,
 } from './records';
+import { pendingZoneDecisionForZone, pendingZoneRefusalLabel } from './pendingZone';
 import {
   domainRow, insertZone, loadContext, regenerateAuto, soaPrimary, zoneById, zoneForName, zoneRecords, zoneVerified,
   type DnsContext, type ZoneRow,
@@ -20,7 +21,9 @@ import {
 // D1, then makes PowerDNS hold exactly the rrsets rendered from dns_records
 // (+ SOA / apex NS from the settings): create, or PATCH the differences only
 // (idempotent: nothing sent when nothing changed), serial YYYYMMDDnn bumped
-// only on a real change, AXFR / NOTIFY metadata, DNSSEC keys. Failure →
+// only on a real change, AXFR / NOTIFY metadata, DNSSEC keys. The own zone of
+// an unverified domain may be served as a PENDING zone (SOA + NS only,
+// pendingZone.ts; dns_zones.served tells what is served). Failure →
 // status 'error' + status_message ("<label> : <cause>") + notify
 // dns.syncFailed + DNS_ZONE_UPDATED.
 //
@@ -118,17 +121,28 @@ async function unpublish(name: string, ctx: DnsContext): Promise<void> {
   }
 }
 
-/** Publication rule D1 for one zone row (records.publicationOf on the live account / domain state). */
+/**
+ * Publication rule D1 for one zone row (records.publicationOf on the live
+ * account / domain state). The own zone of an unverified domain may be served
+ * as a pending zone (pendingZone.ts: SOA + NS only, guarded).
+ */
 async function publicationFor(zone: ZoneRow, ctx: DnsContext): Promise<ReturnType<typeof publicationOf>> {
   const account = zone.account_id !== null
     ? await db('hosting_accounts').where({ id: zone.account_id }).first('status') as { status: string } | undefined
     : undefined;
+  const verified = await zoneVerified(zone);
+  let pendingZone: { allowed: boolean; refusal: string | null } | undefined;
+  if (!verified && zone.account_id !== null && zone.domain_id && zone.kind === 'hosted' && ctx.settings.enabled && account?.status !== 'deleting') {
+    const d = await pendingZoneDecisionForZone(zone, ctx, account?.status ?? null);
+    pendingZone = { allowed: d.allowed, refusal: pendingZoneRefusalLabel(d.reason) };
+  }
   return publicationOf({
     kind: zone.kind,
     accountId: zone.account_id,
     accountStatus: account?.status ?? null,
-    verified: await zoneVerified(zone),
+    verified,
     dnsEnabled: ctx.settings.enabled,
+    pendingZone,
   });
 }
 
@@ -149,11 +163,15 @@ async function syncZoneInner(zoneId: number, reason: string, ctxIn?: DnsContext)
     } catch (err) {
       return failZone(zone, err, reason);
     }
-    const changed = await setStatus(zone, pub.status ?? 'pending', pub.message);
-    if (changed || autoChanged) emitZone(zone);
-    return { ok: true, published: false, changed, error: null };
+    const wasServed = (zone.served ?? null) !== null;
+    const changed = await setStatus(zone, pub.status ?? 'pending', pub.message, wasServed ? { served: null } : {});
+    if (changed || autoChanged || wasServed) emitZone(zone);
+    if (wasServed) logger.info({ zone: zone.name, reason, cause: pub.message }, 'dns: zone removed from PowerDNS');
+    return { ok: true, published: false, changed: changed || wasServed, error: null };
   }
 
+  // Pending zone (domain not verified yet): SOA + apex NS only, never signed.
+  const pending = pub.mode === 'pending';
   try {
     const client = await pdns();
     const records = await zoneRecords(zone.id);
@@ -165,6 +183,7 @@ async function syncZoneInner(zoneId: number, reason: string, ctxIn?: DnsContext)
       nameservers: ctx.settings.nameservers,
       defaultTtl: zone.default_ttl,
       records: records.map((r) => ({ ...r, expiresAt: r.expires_at })),
+      pending,
     });
     const dbSerial = Number(zone.serial);
     const current = await client.getZone(zone.name);
@@ -201,7 +220,9 @@ async function syncZoneInner(zoneId: number, reason: string, ctxIn?: DnsContext)
       if (current.kind && current.kind !== kind) await client.setKind(zone.name, kind);
     }
     const metaChanged = await syncMetadata(client, zone.name, ctx);
-    const keysChanged = await syncDnssec(client, zone.name, !!zone.dnssec);
+    // DNSSEC keys only for a full zone: the pending one is never signed (the
+    // keys of the full zone are created once the domain is verified).
+    const keysChanged = await syncDnssec(client, zone.name, !pending && !!zone.dnssec);
     if (keysChanged) await client.rectify(zone.name);
     // A zone just created (published after its verification) or changed:
     // answers cached before (REFUSED, NXDOMAIN, old rrsets) are dropped now.
@@ -209,9 +230,13 @@ async function syncZoneInner(zoneId: number, reason: string, ctxIn?: DnsContext)
     if ((changed || metaChanged) && ctx.settings.alsoNotify.length) {
       await client.notify(zone.name).catch((err) => logger.warn({ zone: zone.name, err: errText(err) }, 'dns: NOTIFY failed'));
     }
-    const statusChanged = await setStatus(zone, 'active', null, { last_synced_at: db.fn.now() });
-    if (statusChanged || changed || autoChanged || keysChanged) emitZone(zone);
-    if (changed) logger.info({ zone: zone.name, reason }, 'dns: zone pushed to PowerDNS');
+    const served = pending ? 'pending' : 'full';
+    const servedChanged = (zone.served ?? null) !== served;
+    const statusChanged = pending
+      ? await setStatus(zone, 'pending', pub.message, { last_synced_at: db.fn.now(), served })
+      : await setStatus(zone, 'active', null, { last_synced_at: db.fn.now(), served });
+    if (statusChanged || servedChanged || changed || autoChanged || keysChanged) emitZone(zone);
+    if (changed) logger.info({ zone: zone.name, reason, served }, pending ? 'dns: pending zone (SOA + NS) pushed to PowerDNS' : 'dns: zone pushed to PowerDNS');
     return { ok: true, published: true, changed: changed || keysChanged || metaChanged, error: null };
   } catch (err) {
     return failZone(zone, err, reason);
@@ -368,9 +393,36 @@ async function zonesInvolving(name: string, accountId: number): Promise<number[]
   return rows.filter((z) => inZone(name, z.name) || inZone(z.name, name)).map((z) => z.id);
 }
 
+/**
+ * Zones of OTHER accounts related to `name` (the name, its parents, the names
+ * below it): the pending zone guard of each depends on this account's domains
+ * (pendingZone.ts), so they are re-synced when one of them appears, changes
+ * verification or goes — not only at the next full pass.
+ */
+async function foreignZonesRelatedTo(name: string, accountId: number): Promise<number[]> {
+  const n = name.toLowerCase();
+  const labels = n.split('.');
+  const names: string[] = [];
+  for (let i = 0; i < labels.length - 1; i++) names.push(labels.slice(i).join('.'));
+  const rows = await db('dns_zones')
+    .where((b) => { b.whereIn('name', names).orWhere('name', 'like', `%.${n.replace(/[\\%_]/g, (c) => `\\${c}`)}`); })
+    .whereNotNull('account_id').whereNot('account_id', accountId)
+    .select('id', 'name') as Array<{ id: number; name: string }>;
+  return rows.filter((z) => inZone(n, z.name) || inZone(z.name, n)).map((z) => z.id);
+}
+
+async function queueForeignRelated(name: string, accountId: number, reason: string): Promise<void> {
+  try {
+    for (const id of await foreignZonesRelatedTo(name, accountId)) queue.zone(id, `related:${reason}`);
+  } catch (err) {
+    logger.warn({ name, err: errText(err) }, 'dns: related zones lookup failed (the next full pass catches up)');
+  }
+}
+
 export async function handleDomainCreated(domainId: number, wanted: DnsZoneKind | 'none' | undefined): Promise<void> {
   const domain = await domainRow(domainId);
   if (!domain) return;
+  await queueForeignRelated(domain.name, domain.account_id, 'domain-created');
   if (domain.kind === 'subdomain' || wanted === 'none') {
     const parent = await parentZoneOf(domain.name, domain.account_id);
     if (parent) { queue.zone(parent.id, 'subdomain-created'); return; }
@@ -402,6 +454,7 @@ export async function handleDomainChanged(domainId: number, reason: string): Pro
   const domain = await domainRow(domainId);
   if (!domain) return;
   for (const id of await zonesInvolving(domain.name, domain.account_id)) queue.zone(id, `domain:${reason}`);
+  await queueForeignRelated(domain.name, domain.account_id, `domain:${reason}`);
 }
 
 export async function handleDomainDeleted(d: { id: number; name: string; accountId: number; tenantId: number }): Promise<void> {
@@ -418,6 +471,7 @@ export async function handleDomainDeleted(d: { id: number; name: string; account
   // otherwise they would keep shadowing a new holder of the name and block it with zoneExists.
   await dropUncoveredZones({ accountId: d.accountId, below: name });
   for (const id of await zonesInvolving(name, d.accountId)) queue.zone(id, 'domain-deleted');
+  await queueForeignRelated(name, d.accountId, 'domain-deleted');
 }
 
 /** The account changed status (suspension, 'deleting', back from error): its zones follow D1. */

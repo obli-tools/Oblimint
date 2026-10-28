@@ -57,6 +57,7 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   const { queue, syncAll } = await import('./sync');
   const { dns01Provider, acmeTiming } = await import('./acmeChallenge');
   const { nextSerial } = await import('./records');
+  const { pendingZoneForDomain } = await import('./pendingZone');
 
   const fake = await new FakePdns().start();
   setPdnsClientForTests(new PdnsClient({ baseUrl: fake.baseUrl, apiKey: fake.apiKey, timeoutMs: 3000 }));
@@ -132,7 +133,7 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   await dnsService.updateTemplate(req(tenantA), staffA, tpl.id, { isDefault: true });
   assert.equal((await db('dns_templates').where({ id: tpl2.id }).first()).is_default, false, 'one default per tenant');
 
-  // ── domain hook: unverified → pending, not published (D1) ──
+  // ── domain hook: unverified → pending, served as a PENDING zone only (SOA + NS) ──
   const dEx = await domain(tenantA, a1, 'example.com');
   dnsService.domainCreated(dEx);
   await queue.drain();
@@ -140,9 +141,14 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   assert.ok(z, 'zone created for the domain');
   assert.equal(z.kind, 'hosted');
   assert.equal(z.status, 'pending');
+  assert.equal(z.served, 'pending');
   assert.equal(z.domain_id, dEx);
   assert.equal(z.template_id, tpl.id);
-  assert.equal(fake.zone('example.com'), undefined, 'not published before verification');
+  assert.deepEqual(fake.zone('example.com')!.rrsets.map((r) => `${r.name} ${r.type}`).sort(), ['example.com. NS', 'example.com. SOA'],
+    'before verification: SOA + NS only (no address, no mail, no template / manual record)');
+  assert.deepEqual(fake.rrset('example.com', 'example.com.', 'NS')!.records.map((r) => r.content), ['ns1.host.net.', 'ns2.host.net.']);
+  assert.equal(Number(z.serial), today);
+  assert.equal((await dnsService.getZone(clientA1, z.id)).served, 'pending');
   const recs = await db('dns_records').where({ zone_id: z.id }).orderBy('id');
   const byKey = (rows: Array<{ name: string; type: string; origin: string }>) => rows.map((r) => `${r.origin}:${r.name}:${r.type}`).sort();
   assert.deepEqual(byKey(recs), [
@@ -161,12 +167,13 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   await queue.drain();
   z = await zoneOf('example.com');
   assert.equal(z.status, 'active', z.status_message);
-  assert.equal(Number(z.serial), today);
+  assert.equal(z.served, 'full');
+  assert.equal(Number(z.serial), today + 1, 'the full zone replaced the pending one (serial bumped)');
   const fz = fake.zone('example.com')!;
   assert.ok(fz);
   assert.equal(fz.kind, 'Native');
   assert.deepEqual(fake.rrset('example.com', 'example.com.', 'NS')!.records.map((r) => r.content), ['ns1.host.net.', 'ns2.host.net.']);
-  assert.equal(fake.rrset('example.com', 'example.com.', 'SOA')!.records[0].content, `ns1.host.net. hostmaster.host.net. ${today} 10800 3600 604800 3600`);
+  assert.equal(fake.rrset('example.com', 'example.com.', 'SOA')!.records[0].content, `ns1.host.net. hostmaster.host.net. ${today + 1} 10800 3600 604800 3600`);
   assert.deepEqual(fake.rrset('example.com', 'example.com.', 'MX')!.records.map((r) => r.content), ['10 panel.host.net.']);
   assert.deepEqual(fake.rrset('example.com', 'www.example.com.', 'AAAA')!.records.map((r) => r.content), ['2001:db8::5']);
   assert.deepEqual(fake.rrset('example.com', 'ftp.example.com.', 'CNAME')!.records.map((r) => r.content), ['example.com.']);
@@ -180,7 +187,7 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   await queue.drain();
   assert.ok(!fake.calls.slice(before).some((c) => c.startsWith('PATCH') || c.startsWith('POST') || c.startsWith('PUT /cache')),
     fake.calls.slice(before).join(', '));
-  assert.equal(Number((await zoneOf('example.com')).serial), today);
+  assert.equal(Number((await zoneOf('example.com')).serial), today + 1);
 
   // ── access rules ──
   await rejectsWith(dnsService.getZone(clientA2, z.id), 404);
@@ -233,8 +240,8 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   await queue.drain();
   z = await zoneOf('example.com');
   assert.equal(z.status, 'active', z.status_message);
-  assert.equal(Number(z.serial), today + 1, 'bumped once for the batch');
-  assert.equal(fake.rrset('example.com', 'example.com.', 'SOA')!.records[0].content.split(' ')[2], String(today + 1), 'bumped serial served by PowerDNS');
+  assert.equal(Number(z.serial), today + 2, 'bumped once for the batch');
+  assert.equal(fake.rrset('example.com', 'example.com.', 'SOA')!.records[0].content.split(' ')[2], String(today + 2), 'bumped serial served by PowerDNS');
   // a stored serial ahead of the served one (zones patched before the fix) converges without any record change
   await db('dns_zones').where({ id: z.id }).update({ serial: today + 5 });
   dnsService.requestSyncZone(z.id, 'diverged');
@@ -293,6 +300,13 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   await queue.drain();
   const zp = await zoneOf('pending.org');
   assert.equal(zp.status, 'pending');
+  assert.equal(zp.served, 'pending');
+  assert.deepEqual(fake.zone('pending.org')!.rrsets.map((r) => r.type).sort(), ['NS', 'SOA'], 'pending zone: SOA + NS only');
+  // A record typed in the editor of a pending zone is stored, never served.
+  await dnsService.createRecord(req(tenantA), clientA1, zp.id, { name: 'www', type: 'A', content: '203.0.113.77' });
+  await queue.drain();
+  assert.deepEqual(fake.zone('pending.org')!.rrsets.map((r) => r.type).sort(), ['NS', 'SOA']);
+  assert.ok(await db('dns_records').where({ zone_id: zp.id, name: 'www', type: 'A', content: '203.0.113.77' }).first(), 'kept in the panel');
   await rejectsWith(dnsService.updateZone(req(tenantA), clientA1, zp.id, { dnssec: true }), 409, 'zoneNotHosted');
   const sec = await dnsService.updateZone(req(tenantA), clientA1, z.id, { dnssec: true });
   assert.equal(sec.dnssec, true);
@@ -376,6 +390,63 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   await rejectsWith(dnsService.createZone(req(tenantA), clientA1, { accountId: a1, name: 'legacy.host.net' }), 400, 'domainReserved');
   await rejectsWith(dnsService.createZone(req(tenantA), clientA1, { accountId: a1, name: 'x.legacy.host.net' }), 400, 'domainReserved');
 
+  // ── pending zone guard ──
+  const pzView = async (id: number) => pendingZoneForDomain(await db('domains').where({ id }).first());
+  // Under a platform zone (held from before the rules): never served.
+  const dUnderPlatform = await domain(tenantA, a1, 'pend.host.net');
+  dnsService.domainCreated(dUnderPlatform);
+  await queue.drain();
+  assert.equal(fake.zone('pend.host.net'), undefined, 'no pending zone under a platform zone');
+  assert.equal((await pzView(dUnderPlatform))?.reason, 'platformName');
+  // Inside a domain of ANOTHER account (shop.example.com, example.com being a1's): never served.
+  const dInside = await domain(tenantB, b1, 'shop.example.com');
+  dnsService.domainCreated(dInside);
+  await queue.drain();
+  const zInside = await zoneOf('shop.example.com');
+  assert.ok(zInside, 'the zone row exists (records kept)');
+  assert.equal(zInside.served, null);
+  assert.equal(fake.zone('shop.example.com'), undefined, 'no pending zone inside another account');
+  assert.match(zInside.status_message, /zone d'attente refusée/);
+  assert.deepEqual(await pzView(dInside), { state: 'refused', reason: 'insideOtherAccount', expiresAt: null });
+  assert.equal((await dnsService.getZone(staffB, zInside.id)).statusMessage, zInside.status_message, 'the client / staff label is the whole message');
+  // Parent of another account's VERIFIED domain: never served; served once that domain goes.
+  const dCovered = await domain(tenantA, a2, 'shop.covers.org', { verification_status: 'verified', verification_method: 'txt' });
+  dnsService.domainCreated(dCovered);
+  await queue.drain();
+  assert.equal((await zoneOf('shop.covers.org')).served, 'full');
+  const dCovers = await domain(tenantA, a1, 'covers.org');
+  dnsService.domainCreated(dCovers);
+  await queue.drain();
+  assert.equal(fake.zone('covers.org'), undefined, 'would shadow the verified shop.covers.org of another account');
+  assert.equal((await pzView(dCovers))?.reason, 'coversOtherAccount');
+  await db('domains').where({ id: dCovered }).delete();
+  dnsService.domainDeleted({ id: dCovered, name: 'shop.covers.org', accountId: a2, tenantId: tenantA });
+  await queue.drain();
+  assert.equal(fake.zone('shop.covers.org'), undefined);
+  assert.deepEqual(fake.zone('covers.org')!.rrsets.map((r) => r.type).sort(), ['NS', 'SOA'], 'the other account\'s domain gone: the pending zone follows at once');
+  assert.equal((await pzView(dCovers))?.state, 'served');
+  // Window: 30 days from the creation / the last manual check.
+  const dOld = await domain(tenantA, a1, 'old.io', { created_at: new Date(Date.now() - 40 * 24 * 3600_000) });
+  dnsService.domainCreated(dOld);
+  await queue.drain();
+  assert.equal(fake.zone('old.io'), undefined, 'window over');
+  assert.equal((await pzView(dOld))?.reason, 'expired');
+  assert.match((await zoneOf('old.io')).status_message, /expirée/);
+  await db('domains').where({ id: dOld }).update({ verification_requested_at: new Date() });
+  dnsService.domainChanged(dOld, 'verification-requested');
+  await queue.drain();
+  assert.ok(fake.zone('old.io'), 'a manual check re-opens it');
+  // A served pending zone whose window ends is removed by the full pass.
+  await db('domains').where({ id: dOld }).update({ verification_requested_at: new Date(Date.now() - 31 * 24 * 3600_000) });
+  await dnsService.syncAllNow('test');
+  assert.equal(fake.zone('old.io'), undefined, 'expired pending zone removed by the full pass');
+  assert.equal((await zoneOf('old.io')).served, null);
+  // A deleted pending domain takes its pending zone with it.
+  await db('domains').where({ id: dCovers }).delete();
+  dnsService.domainDeleted({ id: dCovers, name: 'covers.org', accountId: a1, tenantId: tenantA });
+  await queue.drain();
+  assert.equal(fake.zone('covers.org'), undefined);
+
   // ── reset / apply template ──
   const reset = await dnsService.resetZone(req(tenantA), clientA1, z.id, { keepManual: false });
   assert.ok(!reset.records.some((r) => r.origin === 'manual'));
@@ -431,7 +502,9 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   dnsService.domainChanged(dEx, 'unverified');
   await queue.drain();
   assert.equal((await zoneOf('kids.example.com')).status, 'pending');
-  assert.equal(fake.zone('kids.example.com'), undefined, 'child zone unpublished with its domain');
+  assert.equal(fake.zone('kids.example.com'), undefined, 'child zone unpublished with its domain (no pending zone for a child zone)');
+  assert.deepEqual(fake.zone('example.com')!.rrsets.map((r) => r.type).sort(), ['NS', 'SOA'], 'the domain\'s own zone back to a pending zone');
+  assert.equal((await zoneOf('example.com')).served, 'pending');
   await db('domains').where({ id: dEx }).update({ verification_status: 'verified' });
   dnsService.domainChanged(dEx, 'verified');
   await queue.drain();
@@ -450,9 +523,11 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   dnsService.domainCreated(dLost);
   await queue.drain();
   assert.ok(await zoneOf('lost.io'));
+  assert.ok(fake.zone('lost.io'), 'served as a pending zone');
   await db('domains').where({ id: dLost }).delete();
   await dnsService.syncAllNow('test');
   assert.equal(await zoneOf('lost.io'), undefined, 'reconciled by the full pass');
+  assert.equal(fake.zone('lost.io'), undefined, 'no orphan pending zone left in PowerDNS');
   assert.ok(await zoneOf('outside.net'), 'zones still covered are kept');
   const audits = await db('audit_logs').where('action', 'like', 'dns.%').select('action');
   for (const a of ['dns.zone.create', 'dns.zone.update', 'dns.zone.delete', 'dns.zone.reset', 'dns.record.create', 'dns.record.update', 'dns.record.delete', 'dns.template.create', 'dns.template.update']) {
@@ -470,4 +545,6 @@ test('dns module on PostgreSQL (PGlite) with a fake PowerDNS', { timeout: 300_00
   await queue.drain();
   assert.equal((await zoneOf('host.net')).status, 'pending');
   assert.equal(fake.zone('host.net'), undefined, 'unpublished when the platform DNS is off');
+  assert.equal(fake.zone('pending.org'), undefined, 'pending zones too');
+  assert.equal((await zoneOf('pending.org')).served, null);
 });

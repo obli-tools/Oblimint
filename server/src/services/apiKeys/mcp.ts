@@ -376,7 +376,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'list_parent_domains', title: 'Domains for subdomains', readOnly: true,
-    description: 'Domains of the account under which add_subdomain can create a subdomain (scope domains.subdomain): the ones given to the key in the panel, or serving only its sites. A verified parent gives an immediately verified subdomain (HTTPS certificate issued automatically).',
+    description: 'Domains of the account under which add_subdomain can create a subdomain (scope domains.subdomain): the ones given to the key in the panel, or serving only its sites. A verified parent gives an immediately verified subdomain (HTTPS certificate issued automatically). pendingZone: not verified yet, but the platform name servers already answer for it (the human can switch the registrar to them, then verify in the panel).',
     inputSchema: obj({}, []), args: z.object({}).passthrough(),
     run: (ctx) => keyApi.parentDomains(ctx),
   },

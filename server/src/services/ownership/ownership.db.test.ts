@@ -199,6 +199,8 @@ test('edge-ownership on PostgreSQL (PGlite): verification, inheritance, claims, 
     assert.equal(v.status, 'pending');
     const next = new Date(v.nextCheckAt!).getTime() - Date.now();
     assert.ok(next > 30_000 && next <= 61_000, `next check in ~1 min (${next} ms)`);
+    // The dns module is faked here: no zone row, so no pending zone (the dns DB suite covers the publication).
+    assert.deepEqual(v.pendingZone, { state: 'unavailable', reason: 'noZone', expiresAt: null });
 
     // The edge serves the placeholder, never the site.
     const vh = (await edgeService.buildVhosts()).find((x) => x.id === `d-${d.id}`)!;
@@ -326,6 +328,7 @@ test('edge-ownership on PostgreSQL (PGlite): verification, inheritance, claims, 
     const v = await ownershipService.check(fakeReq(alice, tenantA), await actor(alice, tenantA), early.id);
     assert.equal(v.status, 'pending', 'our delegation of a platform zone is not a proof');
     assert.equal(v.nsProofAllowed, false, 'the UI does not offer the NS method under a platform zone');
+    assert.deepEqual(v.pendingZone, { state: 'refused', reason: 'platformName', expiresAt: null }, 'no pending zone under a platform zone');
     // A zone of ANOTHER account covering the name: same refusal.
     const bobName = await createAs(bob, tenantA, { accountId: blog, name: 'in.alicezone.net', tlsMode: 'none' });
     await db('dns_zones').insert({ tenant_id: tenantA, account_id: shop, name: 'alicezone.net', kind: 'hosted', status: 'active' });
@@ -333,6 +336,7 @@ test('edge-ownership on PostgreSQL (PGlite): verification, inheritance, claims, 
     const vBob = await ownershipService.check(fakeReq(bob, tenantA), await actor(bob, tenantA), bobName.id);
     assert.equal(vBob.status, 'pending');
     assert.equal(vBob.nsProofAllowed, false);
+    assert.deepEqual(vBob.pendingZone, { state: 'refused', reason: 'insideOtherAccount', expiresAt: null }, 'no pending zone inside another account');
     // The account's OWN zone: the NS proof still works.
     const own = await createAs(alice, tenantA, { accountId: shop, name: 'ownzone.net', tlsMode: 'none' });
     await db('dns_zones').insert({ tenant_id: tenantA, account_id: shop, domain_id: own.id, name: 'ownzone.net', kind: 'hosted', status: 'active' });
@@ -461,16 +465,34 @@ test('edge-ownership on PostgreSQL (PGlite): verification, inheritance, claims, 
     // The automatic pass does not consume the user's manual check slot (no spurious 429).
     _resetManualCheckCooldowns();
     assert.equal((await ownershipService.check(fakeReq(alice, tenantA), await actor(alice, tenantA), d.id)).status, 'pending');
+    // The manual check re-opens the fast window (and the pending zone window), nudges the dns module.
+    const clicked = await domainRow(d.id);
+    assert.ok(clicked.verification_requested_at && Date.now() - new Date(clicked.verification_requested_at).getTime() < 10_000);
+    const afterClick = new Date(clicked.verification_next_check_at).getTime() - Date.now();
+    assert.ok(afterClick > 4 * 60_000 && afterClick <= 5 * 60_000 + 1000, `next check ≤ 5 min after a click (${afterClick})`);
+    assert.ok(seen(`dns:changed:${d.id}:verification-requested`));
     // Not due → not checked again.
     const before = (await domainRow(d.id)).verification_checked_at;
     await ownershipWorkerPass();
     assert.equal(new Date((await domainRow(d.id)).verification_checked_at).getTime(), new Date(before).getTime());
-    // Older domain: backoff grows.
-    await db('domains').where({ id: d.id }).update({ created_at: new Date(Date.now() - 10 * 60_000), verification_next_check_at: new Date(Date.now() - 1000) });
+    // Within 48 h of the creation: every 5 min (the 15 min step is capped).
+    await db('domains').where({ id: d.id }).update({
+      created_at: new Date(Date.now() - 10 * 60_000), verification_requested_at: null, verification_next_check_at: new Date(Date.now() - 1000),
+    });
     const { txtName, txtValue } = ownershipTxt('worker.example.org', row1.verification_token);
     await ownershipWorkerPass();
     const delay2 = new Date((await domainRow(d.id)).verification_next_check_at).getTime() - Date.now();
-    assert.ok(delay2 > 14 * 60_000 && delay2 <= 15 * 60_000 + 1000, `15 min step (${delay2})`);
+    assert.ok(delay2 > 4 * 60_000 && delay2 <= 5 * 60_000 + 1000, `5 min in the fast window (${delay2})`);
+    // Older domain: back to the backoff (6 h)…
+    await db('domains').where({ id: d.id }).update({ created_at: new Date(Date.now() - 3 * 24 * 3600_000), verification_next_check_at: new Date(Date.now() - 1000) });
+    await ownershipWorkerPass();
+    const delay3 = new Date((await domainRow(d.id)).verification_next_check_at).getTime() - Date.now();
+    assert.ok(delay3 > 5.9 * 3600_000 && delay3 <= 6 * 3600_000 + 1000, `6 h step (${delay3})`);
+    // …unless a manual check happened within 48 h.
+    await db('domains').where({ id: d.id }).update({ verification_requested_at: new Date(Date.now() - 3600_000), verification_next_check_at: new Date(Date.now() - 1000) });
+    await ownershipWorkerPass();
+    const delay4 = new Date((await domainRow(d.id)).verification_next_check_at).getTime() - Date.now();
+    assert.ok(delay4 > 4 * 60_000 && delay4 <= 5 * 60_000 + 1000, `5 min after a recent click (${delay4})`);
     txt.set(txtName, [txtValue]);
     await db('domains').where({ id: d.id }).update({ verification_next_check_at: new Date(Date.now() - 1000) });
     const pass3 = await ownershipWorkerPass();

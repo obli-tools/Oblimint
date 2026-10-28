@@ -352,6 +352,12 @@ export interface ApiV1ParentDomain {
   verified: boolean;
   /** DNS zone hosted by the panel (the subdomain's records are added to it). */
   hostedZone: boolean;
+  /**
+   * Not verified yet, and our name servers already answer for it with a pending
+   * zone (SOA + NS only): the human can switch the domain's name servers at the
+   * registrar now, then verify it in the panel. Always false once verified.
+   */
+  pendingZone: boolean;
 }
 
 /** A subdomain attached through a key. */

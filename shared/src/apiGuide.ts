@@ -232,6 +232,8 @@ Simpler: a live preview shows the code before it goes live (without database nor
 4. \`list_parent_domains\` → pick a **verified** domain, then \`add_subdomain\`: \`{ "site_id": 12, "name": "landing.example.com" }\`.
 5. DNS and the HTTPS certificate follow automatically. Test \`https://landing.example.com/\`.
 
+A domain with \`verified: false\` is not proven yet: its subdomains show a placeholder page and get no certificate until the human verifies it in the panel (TXT record, or name servers). \`pendingZone: true\` means the platform's name servers already answer for it (with no address yet): the human can switch the domain's name servers at the registrar now, then click « Check now » on the domain in the panel. A key cannot verify a domain.
+
 ### An application's database
 
 1. \`list_databases\`: with no server of the right engine, \`database_catalog\` then \`create_database_instance\` (wait for \`status: "running"\`).
@@ -624,6 +626,8 @@ Plus simple : un aperçu en direct montre le code avant sa mise en ligne (sans b
 3. \`staging_changes\`, puis \`publish\` (en \`auto\`, c'est fait tout seul).
 4. \`list_parent_domains\` → choisis un domaine **vérifié**, puis \`add_subdomain\` : \`{ "site_id": 12, "name": "landing.exemple.com" }\`.
 5. Le DNS et le certificat HTTPS suivent automatiquement. Teste \`https://landing.exemple.com/\`.
+
+Un domaine en \`verified: false\` n'est pas encore prouvé : ses sous-domaines affichent une page d'attente et n'ont pas de certificat tant que l'humain ne l'a pas vérifié dans le panel (enregistrement TXT, ou serveurs de noms). \`pendingZone: true\` signifie que les serveurs de noms de la plateforme répondent déjà pour lui (sans adresse pour l'instant) : l'humain peut basculer dès maintenant les serveurs de noms du domaine chez le registrar, puis cliquer « Vérifier maintenant » sur le domaine dans le panel. Une clé ne peut pas vérifier un domaine.
 
 ### Base de données d'une application
 

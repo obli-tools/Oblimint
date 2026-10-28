@@ -10,6 +10,7 @@ import { logger } from '../../utils/logger';
 import { publicDns, type PublicDnsLookup } from '../../utils/publicDns';
 import { auditService } from '../audit.service';
 import { dnsService } from '../dns/dns.service';
+import { pendingZoneForDomain } from '../dns/pendingZone';
 import { zoneForName } from '../dns/store';
 import { reconcileService } from '../docker/reconcile.service';
 import { certificateService } from '../edge/certificate.service';
@@ -49,11 +50,15 @@ import { platformSettings } from '../platformSettings';
 //   admin      forced by a platform administrator (audited);
 //   legacy     domains of P1 (migration 003).
 // Until verified (invariant D1): placeholder vhost, no certificate, zone not
-// published (dns module reads verification_status).
+// published — except a PENDING zone (SOA + NS only, dns/pendingZone.ts) so
+// that a registrar accepts the switch to our name servers, which the NS proof
+// then sees (dns module reads verification_status).
 //
 // Worker: pending domains re-checked with backoff (1 min, 5 min, 15 min, 1 h,
-// then every 6 h — from the creation time, so a manual check does not reset
-// it); pending claims expired after 7 days. A verification change emits
+// then every 6 h — from the creation time), at least every 5 min during the
+// 48 h after the creation or after a manual check (verification_requested_at,
+// which also re-opens the pending zone window); pending claims expired after
+// 7 days. A verification change emits
 // DOMAIN_VERIFICATION_UPDATED and calls dnsService.domainChanged,
 // edgeService.scheduleSync, certificateService.ensureForDomain and audits
 // `domain.verified` in the domain's tenant.
@@ -79,6 +84,14 @@ export const CLAIM_TTL_MS = 7 * 24 * 3600_000;
 /** Backoff of the worker: 1 min, 5 min, 15 min, 1 h after creation, then every 6 h. */
 export const CHECK_BACKOFF_MS: readonly number[] = [60_000, 5 * 60_000, 15 * 60_000, 3600_000];
 export const CHECK_FINAL_INTERVAL_MS = 6 * 3600_000;
+/**
+ * Fast window: for 48 h after the creation of the domain or after a manual
+ * « Verify » click, a check at least every 5 min (the delegation to our name
+ * servers — pending zone, dns/pendingZone.ts — is seen within minutes). The
+ * worker batch (WORKER_BATCH per WORKER_TICK_MS) bounds the load.
+ */
+export const FAST_CHECK_WINDOW_MS = 48 * 3600_000;
+export const FAST_CHECK_INTERVAL_MS = 5 * 60_000;
 
 const WORKER_TICK_MS = 30_000;
 const WORKER_FIRST_DELAY_MS = 20_000;
@@ -87,15 +100,19 @@ const WORKER_BATCH = 25;
 /**
  * Delay before the next automatic check of a pending domain, from the time
  * elapsed since its creation: checks land at +1 min, +6 min, +21 min, +81 min,
- * then every 6 h. Pure (tests).
+ * then every 6 h — capped at 5 min while in the fast window (48 h after the
+ * creation, or after the last manual check: `elapsedSinceRequestMs`). Pure (tests).
  */
-export function nextCheckDelayMs(elapsedSinceCreationMs: number): number {
+export function nextCheckDelayMs(elapsedSinceCreationMs: number, elapsedSinceRequestMs: number | null = null): number {
+  let base = CHECK_FINAL_INTERVAL_MS;
   let due = 0;
   for (const step of CHECK_BACKOFF_MS) {
     due += step;
-    if (elapsedSinceCreationMs < due) return step;
+    if (elapsedSinceCreationMs < due) { base = step; break; }
   }
-  return CHECK_FINAL_INTERVAL_MS;
+  const fast = elapsedSinceCreationMs < FAST_CHECK_WINDOW_MS
+    || (elapsedSinceRequestMs !== null && elapsedSinceRequestMs >= 0 && elapsedSinceRequestMs < FAST_CHECK_WINDOW_MS);
+  return fast ? Math.min(base, FAST_CHECK_INTERVAL_MS) : base;
 }
 
 export interface OwnershipProof {
@@ -213,6 +230,14 @@ async function toVerification(row: DomainRow): Promise<DomainVerification> {
     lastCheckAt: iso(row.verification_checked_at),
     lastError: status === 'verified' ? null : asError(row.verification_error),
     nextCheckAt: status === 'verified' ? null : iso(row.verification_next_check_at),
+    pendingZone: status === 'verified' ? null : await pendingZoneForDomain({
+      id: row.id,
+      name: row.name,
+      account_id: row.account_id,
+      verification_status: row.verification_status ?? 'pending',
+      created_at: row.created_at,
+      verification_requested_at: row.verification_requested_at ?? null,
+    }),
   };
 }
 
@@ -504,14 +529,15 @@ export async function ownershipWorkerPass(now = Date.now()): Promise<{ checked: 
     .where((b) => { b.whereNull('d.verification_next_check_at').orWhere('d.verification_next_check_at', '<=', new Date(now)); })
     .orderByRaw('d.verification_next_check_at ASC NULLS FIRST')
     .limit(WORKER_BATCH)
-    .select('d.id', 'd.tenant_id', 'd.account_id', 'd.name', 'd.verification_token', 'd.created_at') as
-    Array<VerifiableDomain & { verification_token: string; created_at: Date | string }>;
+    .select('d.id', 'd.tenant_id', 'd.account_id', 'd.name', 'd.verification_token', 'd.created_at', 'd.verification_requested_at') as
+    Array<VerifiableDomain & { verification_token: string; created_at: Date | string; verification_requested_at: Date | string | null }>;
   let verified = 0;
   for (const d of due) {
     // Next slot first: a crash / slow resolver never re-runs the same domain in a loop.
     const elapsed = now - new Date(d.created_at).getTime();
+    const sinceRequest = d.verification_requested_at ? now - new Date(d.verification_requested_at).getTime() : null;
     await db('domains').where({ id: d.id }).update({
-      verification_next_check_at: new Date(now + nextCheckDelayMs(Math.max(0, elapsed))),
+      verification_next_check_at: new Date(now + nextCheckDelayMs(Math.max(0, elapsed), sinceRequest)),
       verification_checked_at: new Date(now),
     });
     try {
@@ -537,8 +563,16 @@ export const ownershipService = {
     // own clock: verification_checked_at is also written by the worker, a
     // user clicking right after an automatic pass must not get a 429.
     if (!takeManualSlot(row.id)) throw rateLimited();
-    await db('domains').where({ id: row.id }).update({ verification_checked_at: db.fn.now() });
-    await runCheck(row, { req });
+    // A manual check re-opens the fast re-check window and the pending zone window (dns/pendingZone.ts).
+    const now = new Date();
+    await db('domains').where({ id: row.id }).update({ verification_checked_at: now, verification_requested_at: now });
+    const verified = await runCheck(row, { req });
+    if (!verified) {
+      await db('domains').where({ id: row.id, verification_status: 'pending' })
+        .update({ verification_next_check_at: new Date(now.getTime() + FAST_CHECK_INTERVAL_MS) });
+      // The pending zone follows at once (re-opened window, or first publication).
+      try { dnsService.domainChanged(row.id, 'verification-requested'); } catch (err) { logger.warn({ err, domainId: row.id }, 'dnsService.domainChanged failed'); }
+    }
     return freshVerification(row.id);
   },
 

@@ -306,6 +306,25 @@
     "txtName": "Nom (hôte)",
     "txtValue": "Valeur",
     "nameserver": "Serveur de noms",
+    "pendingZone": {
+      "served": "Nos serveurs de noms répondent déjà pour {{name}} : vous pouvez dès maintenant basculer ses serveurs de noms vers les nôtres chez votre registraire, puis cliquer sur « Vérifier maintenant ».",
+      "waiting": "Nos serveurs de noms vont répondre pour {{name}} dans un instant : basculez ensuite ses serveurs de noms vers les nôtres chez votre registraire, puis cliquez sur « Vérifier maintenant ».",
+      "until": "(jusqu'au {{date}} ; une vérification prolonge ce délai)",
+      "cutWarning": "Entre la bascule et la vérification, le domaine répond sans aucune adresse : le site et la messagerie sont coupés quelques minutes. Pour un domaine déjà en production, l'enregistrement TXT évite toute coupure.",
+      "refused": "Nos serveurs de noms ne répondront pas pour ce domaine avant sa vérification : {{reason}} Vérifiez-le avec l'enregistrement TXT.",
+      "reasons": {
+        "insideOtherAccount": "Ce nom est, ou se trouve sous, un domaine d'un autre compte de la plateforme.",
+        "coversOtherAccount": "Un domaine sous ce nom est vérifié dans un autre compte de la plateforme.",
+        "platformName": "Ce nom est lié à un nom de la plateforme elle-même.",
+        "dnsDisabled": "Le serveur DNS de la plateforme est désactivé.",
+        "nsProofDisabled": "La méthode par serveurs de noms est désactivée sur cette plateforme.",
+        "externalZone": "La zone DNS de ce domaine est hébergée ailleurs.",
+        "noZone": "Ce domaine n'a pas de zone DNS propre ici (il vit dans la zone de son domaine parent) : vérifiez le domaine parent, ou utilisez l'enregistrement TXT.",
+        "accountDeleting": "Le compte est en cours de suppression.",
+        "expired": "Nos serveurs de noms ne répondent plus pour ce domaine (aucune vérification depuis 30 jours) : cliquez sur « Vérifier maintenant » pour les réactiver.",
+        "syncError": "La publication sur nos serveurs de noms a échoué ; elle est relancée automatiquement."
+      }
+    },
     "lastCheck": "Dernière vérification",
     "nextCheck": "Prochaine vérification automatique",
     "verifiedAt": "Vérifié le",

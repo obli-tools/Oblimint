@@ -61,6 +61,7 @@ export interface DnsRecordInput {
 
 export type DnsZoneKind = 'hosted' | 'external';
 export type DnsZoneStatus = 'pending' | 'active' | 'error' | 'disabled';
+export type DnsZoneServed = 'full' | 'pending';
 
 export interface DnsZone {
   id: number;
@@ -74,12 +75,18 @@ export interface DnsZone {
   name: string;
   kind: DnsZoneKind;
   /**
-   * pending = not published to PowerDNS (domain not verified yet, or never
-   * synced); active = served; error = last sync failed (statusMessage);
-   * disabled = kind external.
+   * pending = domain not verified yet (or never synced): not served, or served
+   * as a PENDING zone (see served); active = served in full; error = last sync
+   * failed (statusMessage); disabled = kind external.
    */
   status: DnsZoneStatus;
   statusMessage: string | null;
+  /**
+   * What our name servers serve after the last successful sync: 'full' = every
+   * record; 'pending' = SOA + apex NS only (domain not verified yet, so that a
+   * registrar accepts the switch to our name servers); null = not served.
+   */
+  served: DnsZoneServed | null;
   serial: number;
   defaultTtl: number;
   dnssec: boolean;
@@ -239,6 +246,46 @@ export interface DomainVerification extends DomainVerificationSummary {
   lastError: DomainVerificationError | null;
   /** Next automatic check (worker), null when verified. */
   nextCheckAt: string | null;
+  /** Pending zone on our name servers (null when verified). */
+  pendingZone: DomainPendingZone | null;
+}
+
+/**
+ * Pending zone of an unverified domain: our name servers answer for it with
+ * SOA + NS only (no address, no mail record, nothing the user typed in the
+ * zone editor), so that a registrar that checks the new name servers before
+ * switching (they must already serve the zone) accepts the delegation; the
+ * NS proof then verifies the domain and the full zone replaces it.
+ *  - served       our name servers answer for the domain now;
+ *  - waiting      allowed, not served yet (sync queued, or failed: syncError);
+ *  - refused      never for this name (guard: reason) — TXT method only;
+ *  - unavailable  not applicable (reason: DNS off, NS proof off, zone hosted
+ *                 elsewhere, no zone of its own, window expired…).
+ */
+export type DomainPendingZoneState = 'served' | 'waiting' | 'refused' | 'unavailable';
+
+/**
+ * refused:
+ *  insideOtherAccount  the name is (or lies inside) a domain / zone of ANOTHER account;
+ *  coversOtherAccount  the name is a parent of another account's verified domain / served zone;
+ *  platformName        the name is, covers or lies inside a name of the platform itself.
+ * unavailable:
+ *  dnsDisabled, nsProofDisabled (NS proof off or no name server configured),
+ *  externalZone (DNS hosted elsewhere), noZone (no zone of its own here: e.g.
+ *  a subdomain living in its parent's zone), accountDeleting, expired (window
+ *  over: a manual check opens it again).
+ * waiting: syncError (the last publication failed; retried by the DNS worker).
+ */
+export type DomainPendingZoneReason =
+  | 'insideOtherAccount' | 'coversOtherAccount' | 'platformName'
+  | 'dnsDisabled' | 'nsProofDisabled' | 'externalZone' | 'noZone' | 'accountDeleting' | 'expired'
+  | 'syncError';
+
+export interface DomainPendingZone {
+  state: DomainPendingZoneState;
+  reason: DomainPendingZoneReason | null;
+  /** End of the pending zone window (a manual check re-opens it), null when not applicable. */
+  expiresAt: string | null;
 }
 
 export type DomainVerificationError = 'txtMissing' | 'txtMismatch' | 'nsMismatch' | 'resolverFailed' | 'rateLimited';

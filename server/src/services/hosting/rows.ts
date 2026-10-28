@@ -58,6 +58,8 @@ export interface DomainRow {
   wildcard?: boolean; verification_status?: DomainVerificationStatus; verification_method?: DomainVerificationMethod | null;
   verification_token?: string; verified_at?: Date | string | null; verification_checked_at?: Date | string | null;
   verification_next_check_at?: Date | string | null; verification_error?: string | null;
+  /** Migration 018: last manual check (re-opens the pending zone window and the fast re-checks). */
+  verification_requested_at?: Date | string | null;
   /** joined */ account_username?: string;
 }
 

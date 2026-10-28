@@ -306,6 +306,25 @@
     "txtName": "Name (host)",
     "txtValue": "Value",
     "nameserver": "Name server",
+    "pendingZone": {
+      "served": "Our name servers already answer for {{name}}: you can switch its name servers to ours at your registrar now, then click « Check now ».",
+      "waiting": "Our name servers will answer for {{name}} in a moment: then switch its name servers to ours at your registrar, and click « Check now ».",
+      "until": "(until {{date}}; a check extends it)",
+      "cutWarning": "Between the switch and the verification, the domain answers without any address: the site and the mail are down for a few minutes. For a domain already in production, the TXT record avoids any cut.",
+      "refused": "Our name servers will not answer for this domain before it is verified: {{reason}} Verify it with the TXT record.",
+      "reasons": {
+        "insideOtherAccount": "This name is, or lies inside, a domain of another account on this platform.",
+        "coversOtherAccount": "A domain below this name is verified in another account on this platform.",
+        "platformName": "This name is related to a name of the platform itself.",
+        "dnsDisabled": "The platform DNS server is disabled.",
+        "nsProofDisabled": "The name server method is disabled on this platform.",
+        "externalZone": "The DNS zone of this domain is hosted elsewhere.",
+        "noZone": "This domain has no DNS zone of its own here (it lives in its parent domain's zone): verify the parent domain, or use the TXT record.",
+        "accountDeleting": "The account is being deleted.",
+        "expired": "Our name servers stopped answering for this domain (no check for 30 days): click « Check now » to bring them back.",
+        "syncError": "The publication on our name servers failed; it is retried automatically."
+      }
+    },
     "lastCheck": "Last check",
     "nextCheck": "Next automatic check",
     "verifiedAt": "Verified on",

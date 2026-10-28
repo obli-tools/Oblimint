@@ -305,11 +305,11 @@ test('template placeholders and template validation', () => {
 
 test('publication rule D1', () => {
   const base = { kind: 'hosted' as const, accountId: 7, accountStatus: 'active', verified: true, dnsEnabled: true };
-  assert.deepEqual(publicationOf(base), { publish: true, status: null, message: null });
+  assert.deepEqual(publicationOf(base), { publish: true, mode: 'full', status: null, message: null });
   assert.equal(publicationOf({ ...base, verified: false }).publish, false);
   assert.equal(publicationOf({ ...base, verified: false }).status, 'pending');
   assert.equal(publicationOf({ ...base, accountId: null, verified: false }).publish, true, 'platform zone');
-  assert.deepEqual(publicationOf({ ...base, kind: 'external' }), { publish: false, status: 'disabled', message: null });
+  assert.deepEqual(publicationOf({ ...base, kind: 'external' }), { publish: false, mode: null, status: 'disabled', message: null });
   assert.equal(publicationOf({ ...base, kind: 'external', accountId: null }).publish, false);
   assert.equal(publicationOf({ ...base, dnsEnabled: false }).status, 'pending');
   assert.equal(publicationOf({ ...base, accountStatus: 'deleting' }).publish, false);

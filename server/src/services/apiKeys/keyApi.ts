@@ -529,9 +529,12 @@ export const keyApi = {
     const rows = await db('domains as d')
       .leftJoin('dns_zones as z', function joinZone() { this.on('z.domain_id', '=', 'd.id').andOn('z.account_id', '=', 'd.account_id'); })
       .where('d.account_id', ctx.accountId)
-      .select('d.id', 'd.name', 'd.verification_status', 'z.kind as zone_kind')
-      .orderBy('d.name') as Array<{ id: number; name: string; verification_status: string | null; zone_kind: string | null }>;
-    return rows.filter((r) => allowed.has(Number(r.id))).map((r) => ({ name: r.name, verified: r.verification_status === 'verified', hostedZone: r.zone_kind === 'hosted' }));
+      .select('d.id', 'd.name', 'd.verification_status', 'z.kind as zone_kind', 'z.served as zone_served')
+      .orderBy('d.name') as Array<{ id: number; name: string; verification_status: string | null; zone_kind: string | null; zone_served: string | null }>;
+    return rows.filter((r) => allowed.has(Number(r.id))).map((r) => {
+      const verified = r.verification_status === 'verified';
+      return { name: r.name, verified, hostedZone: r.zone_kind === 'hosted', pendingZone: !verified && r.zone_served === 'pending' };
+    });
   },
 
   /** Subdomains this key created. */

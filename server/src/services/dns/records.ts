@@ -383,6 +383,11 @@ export interface ZoneRenderInput {
   records: StoredRecordLike[];
   /** Expiry reference of system records (default: now). */
   now?: Date;
+  /**
+   * Pending zone (domain not verified yet): SOA + apex NS ONLY — no record of
+   * the zone is rendered, whatever its origin (auto, manual, template, system).
+   */
+  pending?: boolean;
 }
 
 function served(r: StoredRecordLike, now: Date): boolean {
@@ -395,6 +400,7 @@ function served(r: StoredRecordLike, now: Date): boolean {
  * Every rrset of the zone, in a stable order (SOA, apex NS, then by name /
  * type): one rrset per (name, type), TTL = the smallest of its records,
  * contents de-duplicated and sorted. Disabled and expired records excluded.
+ * A pending zone (input.pending) is the SOA + apex NS rrsets only.
  */
 export function buildRrsets(input: ZoneRenderInput): Rrset[] {
   const now = input.now ?? new Date();
@@ -405,6 +411,7 @@ export function buildRrsets(input: ZoneRenderInput): Rrset[] {
   }];
   const ns = [...new Set(input.nameservers.map((n) => `${n.toLowerCase().replace(/\.$/, '')}.`))];
   if (ns.length) out.push({ name: apex, type: 'NS', ttl: input.defaultTtl, records: ns.map((content) => ({ content, disabled: false })) });
+  if (input.pending) return out;
   const groups = new Map<string, { name: string; type: string; ttl: number; contents: Set<string> }>();
   for (const r of input.records) {
     if (!served(r, now)) continue;
@@ -728,24 +735,43 @@ export interface PublicationInput {
   /** The domain of the zone (or the domain covering a manual zone) is verified. */
   verified: boolean;
   dnsEnabled: boolean;
+  /**
+   * Not verified: may the zone be served as a PENDING zone (SOA + NS only)?
+   * (pendingZone.ts: the domain's own zone, NS proof on, window open, guard
+   * passed). refusal: why not, when the guard refused it (French label).
+   */
+  pendingZone?: { allowed: boolean; refusal?: string | null };
 }
+
+/** 'full' = every record; 'pending' = SOA + apex NS only (unverified domain). */
+export type PublicationMode = 'full' | 'pending';
 
 export interface Publication {
   publish: boolean;
-  /** Status when not published (null when published: the sync decides active / error). */
+  /** What to serve when published (null when not published). */
+  mode: PublicationMode | null;
+  /** Status: when not published, or published as a pending zone (null when published in full: the sync decides active / error). */
   status: 'pending' | 'disabled' | null;
   message: string | null;
 }
 
+export const PENDING_ZONE_MESSAGE = "Zone d'attente publiée (SOA et NS seulement), en attente de la vérification du domaine";
+const AWAITING_VERIFICATION = 'En attente de la vérification du domaine';
+
 /**
- * D1: a zone reaches PowerDNS only when hosted, the platform DNS is on, and
- * its domain is verified — or it is a platform zone. External zones are never
- * published ('disabled').
+ * D1: a zone reaches PowerDNS in full only when hosted, the platform DNS is
+ * on, and its domain is verified — or it is a platform zone. External zones
+ * are never published ('disabled'). An unverified domain's own zone may be
+ * served as a PENDING zone (SOA + NS only) when pendingZone allows it.
  */
 export function publicationOf(z: PublicationInput): Publication {
-  if (z.kind === 'external') return { publish: false, status: 'disabled', message: null };
-  if (!z.dnsEnabled) return { publish: false, status: 'pending', message: 'Serveur DNS de la plateforme désactivé' };
-  if (z.accountId !== null && z.accountStatus === 'deleting') return { publish: false, status: 'pending', message: 'Compte en cours de suppression' };
-  if (z.accountId !== null && !z.verified) return { publish: false, status: 'pending', message: 'En attente de la vérification du domaine' };
-  return { publish: true, status: null, message: null };
+  if (z.kind === 'external') return { publish: false, mode: null, status: 'disabled', message: null };
+  if (!z.dnsEnabled) return { publish: false, mode: null, status: 'pending', message: 'Serveur DNS de la plateforme désactivé' };
+  if (z.accountId !== null && z.accountStatus === 'deleting') return { publish: false, mode: null, status: 'pending', message: 'Compte en cours de suppression' };
+  if (z.accountId !== null && !z.verified) {
+    if (z.pendingZone?.allowed) return { publish: true, mode: 'pending', status: 'pending', message: PENDING_ZONE_MESSAGE };
+    const refusal = z.pendingZone?.refusal;
+    return { publish: false, mode: null, status: 'pending', message: refusal ? `${AWAITING_VERIFICATION} (${refusal})` : AWAITING_VERIFICATION };
+  }
+  return { publish: true, mode: 'full', status: null, message: null };
 }

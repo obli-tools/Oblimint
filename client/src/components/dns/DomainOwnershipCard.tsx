@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, BadgeCheck, Fingerprint, RefreshCw, ShieldCheck } from 'lucide-react';
-import { HostingSocketEvents, type Domain, type DomainVerification } from '@oblimint/shared';
+import { AlertTriangle, BadgeCheck, Ban, Fingerprint, RefreshCw, Server, ShieldCheck } from 'lucide-react';
+import { HostingSocketEvents, type Domain, type DomainPendingZoneReason, type DomainVerification } from '@oblimint/shared';
 import { domainOwnershipApi } from '@/api/domains.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { useAuthStore } from '@/store/authStore';
@@ -24,6 +25,70 @@ export function CopyField({ label, value, mono = true }: { label: ReactNode; val
         <CopyButton text={value} className="shrink-0" />
       </div>
     </div>
+  );
+}
+
+/** Why our name servers do not answer for the domain (pending zone refused / not applicable). */
+function pendingZoneReasonLabel(t: TFunction, reason: DomainPendingZoneReason): string {
+  const fb: Record<DomainPendingZoneReason, string> = {
+    insideOtherAccount: 'This name is, or lies inside, a domain of another account on this platform.',
+    coversOtherAccount: 'A domain below this name is verified in another account on this platform.',
+    platformName: 'This name is related to a name of the platform itself.',
+    dnsDisabled: 'The platform DNS server is disabled.',
+    nsProofDisabled: 'The name server method is disabled on this platform.',
+    externalZone: 'The DNS zone of this domain is hosted elsewhere.',
+    noZone: 'This domain has no DNS zone of its own here (it lives in its parent domain\'s zone): verify the parent domain, or use the TXT record.',
+    accountDeleting: 'The account is being deleted.',
+    expired: 'Our name servers stopped answering for this domain (no check for 30 days): click « Check now » to bring them back.',
+    syncError: 'The publication on our name servers failed; it is retried automatically.',
+  };
+  return t(`domainOwnership.pendingZone.reasons.${reason}`) || fb[reason];
+}
+
+/**
+ * Pending zone of an unverified domain (dns/pendingZone.ts): our name
+ * servers answer for it with SOA + NS only, so that the registrar accepts the
+ * switch; the cut between the switch and the verification; the guard reason
+ * when refused.
+ */
+function PendingZoneNotice({ v, fmt }: { v: DomainVerification; fmt: (iso: string | null) => string }) {
+  const { t } = useTranslation();
+  const pz = v.pendingZone;
+  if (!pz) return null;
+  if (pz.state === 'served' || pz.state === 'waiting') {
+    return (
+      <div className="space-y-2">
+        <p className="flex items-start gap-2 rounded-md bg-accent/5 p-2.5 text-xs text-text-secondary">
+          <Server size={14} className="mt-0.5 shrink-0 text-accent" />
+          <span>
+            {pz.state === 'served'
+              ? t('domainOwnership.pendingZone.served', { name: v.domainName, defaultValue: 'Our name servers already answer for {{name}}: you can switch its name servers to ours at your registrar now, then click « Check now ».' })
+              : t('domainOwnership.pendingZone.waiting', { name: v.domainName, defaultValue: 'Our name servers will answer for {{name}} in a moment: then switch its name servers to ours at your registrar, and click « Check now ».' })}
+            {pz.expiresAt && (
+              <> {t('domainOwnership.pendingZone.until', { date: fmt(pz.expiresAt), defaultValue: '(until {{date}}; a check extends it)' })}</>
+            )}
+          </span>
+        </p>
+        {pz.reason === 'syncError' && (
+          <p className="rounded-md bg-status-down/5 px-2.5 py-1.5 text-xs text-status-down">{pendingZoneReasonLabel(t, pz.reason)}</p>
+        )}
+        <p className="flex items-start gap-2 rounded-md bg-amber-400/5 p-2 text-xs text-amber-400">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <span>{t('domainOwnership.pendingZone.cutWarning') || 'Between the switch and the verification, the domain answers without any address: the site and the mail are down for a few minutes. For a domain already in production, the TXT record avoids any cut.'}</span>
+        </p>
+      </div>
+    );
+  }
+  if (!pz.reason || pz.reason === 'nsProofDisabled') return null;
+  return (
+    <p className="flex items-start gap-2 rounded-md bg-amber-400/5 p-2 text-xs text-amber-400">
+      <Ban size={14} className="mt-0.5 shrink-0" />
+      <span>
+        {pz.state === 'refused'
+          ? t('domainOwnership.pendingZone.refused', { reason: pendingZoneReasonLabel(t, pz.reason), defaultValue: 'Our name servers will not answer for this domain before it is verified: {{reason}} Verify it with the TXT record.' })
+          : pendingZoneReasonLabel(t, pz.reason)}
+      </span>
+    </p>
   );
 }
 
@@ -169,8 +234,11 @@ export function DomainOwnershipCard({ domain, onVerified }: { domain: Domain; on
               <div className="grid grid-cols-1 gap-2">
                 {v.nameservers.map((ns) => <CopyField key={ns} label={t('domainOwnership.nameserver') || 'Name server'} value={ns} />)}
               </div>
+              <PendingZoneNotice v={v} fmt={fmt} />
             </div>
           )}
+          {/* TXT only (no name server method here): say why our name servers stay silent when the guard refused it. */}
+          {!nsProof && v.pendingZone?.state === 'refused' && <PendingZoneNotice v={v} fmt={fmt} />}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <InfoRow label={t('domainOwnership.lastCheck') || 'Last check'} mono>{fmt(v.lastCheckAt)}</InfoRow>
             <InfoRow label={t('domainOwnership.nextCheck') || 'Next automatic check'} mono>{fmt(v.nextCheckAt)}</InfoRow>

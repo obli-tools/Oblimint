@@ -1,6 +1,6 @@
 import type { Knex } from 'knex';
 import type {
-  DnsRecord, DnsRecordOrigin, DnsRecordType, DnsSettings, DnsTemplate, DnsTemplateRecord, DnsZone, DnsZoneKind, DnsZoneStatus,
+  DnsRecord, DnsRecordOrigin, DnsRecordType, DnsSettings, DnsTemplate, DnsTemplateRecord, DnsZone, DnsZoneKind, DnsZoneServed, DnsZoneStatus,
 } from '@oblimint/shared';
 import { MASTER_TENANT_ID } from '@oblimint/shared';
 import { db } from '../../db';
@@ -27,6 +27,8 @@ export interface ZoneRow {
   id: number; tenant_id: number; account_id: number | null; domain_id: number | null; name: string;
   kind: DnsZoneKind; status: DnsZoneStatus; status_message: string | null; serial: number | string;
   default_ttl: number; dnssec: boolean; template_id: number | null; last_synced_at: Date | string | null;
+  /** 018: what PowerDNS serves after the last successful sync (null = not served). */
+  served?: DnsZoneServed | null;
   created_at: Date | string; updated_at: Date | string;
   /** joined */ account_username?: string | null; record_count?: number | string | null;
 }
@@ -46,9 +48,14 @@ export interface TemplateRow {
 export interface ZoneDomainRow {
   id: number; tenant_id: number; account_id: number; name: string; kind: string; include_www: boolean; wildcard: boolean;
   verification_status: string | null; verification_token: string | null;
+  /** The pending zone window runs from the creation and from the last manual check (018). */
+  created_at: Date | string; verification_requested_at: Date | string | null;
 }
 
-const DOMAIN_COLS = ['id', 'tenant_id', 'account_id', 'name', 'kind', 'include_www', 'wildcard', 'verification_status', 'verification_token'];
+const DOMAIN_COLS = [
+  'id', 'tenant_id', 'account_id', 'name', 'kind', 'include_www', 'wildcard', 'verification_status', 'verification_token',
+  'created_at', 'verification_requested_at',
+];
 
 // ── mappers ──────────────────────────────────────────────────────────────────
 
@@ -63,6 +70,7 @@ export function toZone(r: ZoneRow): DnsZone {
     kind: r.kind,
     status: r.status,
     statusMessage: r.status_message,
+    served: r.served ?? null,
     serial: Number(r.serial),
     defaultTtl: r.default_ttl,
     dnssec: !!r.dnssec,
