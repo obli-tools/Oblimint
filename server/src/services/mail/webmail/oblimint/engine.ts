@@ -218,7 +218,7 @@ export function createStalwartWebmailEngine(opts: StalwartWebmailEngineOptions):
       const res = await send(fillTemplate(ep.uploadPath, { accountId }), {
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': contentType, Authorization: await asMailbox(address) },
-        body: body as BodyInit,
+        body: body as NonNullable<RequestInit['body']>,
         duplex: 'half',
       }, uploadTimeoutMs, signal);
       const j = await json(res, 'upload') as { blobId?: unknown; type?: unknown; size?: unknown } | null;
