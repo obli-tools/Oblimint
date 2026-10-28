@@ -21,8 +21,11 @@ import { TENANT_SECCOMP_OPT } from './seccomp';
 // /srv/oblimint/config nor the staging in a site container, no published port
 // except the file server's SFTP port (and 80/443 of the edge).
 // Feature B (release / staging preview, role site-rpreview): same hardening,
-// plus data READ-ONLY (tmpfs on the ephemeral paths), no database socket nor
-// network, releases bind WITHOUT propagation, RestartPolicy no, pids ≤ 128.
+// plus data READ-ONLY (tmpfs on the ephemeral paths), never the account's
+// database sockets nor network, releases bind WITHOUT propagation,
+// RestartPolicy no, pids ≤ 128. With a database clone (option database:
+// 'clone') it mounts the CLONE's socket dirs (previews/<pid>/dbsock, same
+// container paths as a site) and joins the preview's private network.
 //
 // Every spec carries the label oblimint.spec-hash = specHash(spec): the
 // reconcile recreates a container whose label differs from the desired hash
@@ -259,6 +262,11 @@ export interface ReleasePreviewContainerInput {
   env?: Array<[string, string]>;
   /** Platform ceiling (settings releasePreviews.memoryMb / cpus). */
   caps: { memoryMb: number; cpus: number };
+  /**
+   * Database clone only: host paths of previews/<pid>/dbsock (root, mysql/, postgresql/),
+   * mounted READ-ONLY like a site's dbSockets. NEVER the account's dbsock/ (live instances).
+   */
+  cloneDbSockets?: { root: string; mysql: string; postgresql: string } | null;
 }
 
 export const PREVIEW_PIDS_LIMIT = 128;
@@ -275,7 +283,8 @@ export function isPreviewTmpfsPath(p: string): boolean {
 /**
  * Docker create options of a release / staging preview container (role
  * site-rpreview): the hardening of siteContainerSpec, plus — data READ-ONLY
- * (tmpfs on the ephemeral paths), NO database socket, releases without
+ * (tmpfs on the ephemeral paths), never the account's database sockets (only
+ * a clone's, option database: 'clone'), releases without
  * propagation, never restarted (RestartPolicy no: the planner never starts it
  * again either, B1), limits = min(plan / node ceiling, preview caps), pids ≤ 128.
  */
@@ -294,6 +303,11 @@ export function releasePreviewContainerSpec(input: ReleasePreviewContainerInput)
       { Type: 'bind', Source: posix(input.previewReleasesDir), Target: CONTAINER_PATHS.releases, ReadOnly: true },
       { Type: 'bind', Source: posix(input.dataDir), Target: CONTAINER_PATHS.data, ReadOnly: true },
       { Type: 'bind', Source: posix(input.previewRuntimeDir), Target: CONTAINER_PATHS.siteConfigDir, ReadOnly: true },
+      ...(input.cloneDbSockets ? [
+        { Type: 'bind' as const, Source: posix(input.cloneDbSockets.root), Target: CONTAINER_PATHS.dbSocketsAll, ReadOnly: true },
+        { Type: 'bind' as const, Source: posix(input.cloneDbSockets.mysql), Target: CONTAINER_PATHS.dbSocketMysql, ReadOnly: true },
+        { Type: 'bind' as const, Source: posix(input.cloneDbSockets.postgresql), Target: CONTAINER_PATHS.dbSocketPostgresql, ReadOnly: true },
+      ] : []),
     ],
     Tmpfs: tmpfs,
     ReadonlyRootfs: true,

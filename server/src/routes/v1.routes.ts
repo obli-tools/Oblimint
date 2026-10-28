@@ -45,8 +45,8 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   GET    /sites/:id/releases/:rid/files/content?path=   → the file, streamed (Content-Length; ≤ 64 MiB, 413 fileTooLarge) files.read
 //   POST   /sites/:id/releases/:rid/restore-staging {discardPending?} → StagingRestoreResult (200) | {status:'running'} (202)  files.write
 //                                                        (409 stagingHasPendingChanges | restoreInProgress | stagingTooLarge | releaseNotReady)
-//   POST   /sites/:id/preview  {release_id? | staging?: true, ttl_minutes?, wait?, include_key?} → PreviewStartResult (202)
-//                                                        previews.manage + files.read (staging: + releases.publish)
+//   POST   /sites/:id/preview  {release_id? | staging?: true, ttl_minutes?, wait?, include_key?, database?, database_ids?} → PreviewStartResult (202)
+//                                                        previews.manage + files.read (staging: + releases.publish; database clone: + databases.manage)
 //   GET    /sites/:id/preview                           → SitePreview | null                       previews.manage
 //   DELETE /sites/:id/preview                           → { stopped: true }                        previews.manage + files.read
 //   POST   /sites/:id/preview/link                      → PreviewLink (one-shot interstitial page)  previews.manage + files.read (creator: sites.manage)
@@ -127,6 +127,8 @@ const previewStartBody = z.object({
   ttl_minutes: z.number().int().min(1).max(1440).nullable().optional(),
   wait: z.boolean().optional(),
   include_key: z.boolean().optional(),
+  database: z.enum(['none', 'clone']).optional(),
+  database_ids: z.array(z.number().int().positive()).max(8).optional(),
 }).strict();
 const previewFetchQuery = z.object({
   path: z.string().min(1).max(PREVIEW_PATH_MAX),
@@ -256,6 +258,7 @@ router.post('/sites/:id/preview', heavyOpLimiter, h(async (req, res) => {
   const b = parseBody(previewStartBody, req.body ?? {});
   ok(res, await keyApi.previewStart(ctxOf(req), req, siteId(req), {
     releaseId: b.release_id ?? null, staging: b.staging === true, ttlMinutes: b.ttl_minutes ?? null, wait: b.wait !== false, includeKey: b.include_key === true,
+    database: b.database ?? 'none', databaseIds: b.database_ids ?? null,
   }), 202);
 }));
 router.get('/sites/:id/preview', h(async (req, res) => ok(res, await keyApi.previewGet(ctxOf(req), siteId(req)))));

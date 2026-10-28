@@ -1,4 +1,5 @@
 import { siteEnvFor, siteEnvForPreview } from '../hosting/siteEnv.service';
+import { cloneReady, mergeEnv, openCloneEnv } from '../previews/previewDbEnv';
 import type Docker from 'dockerode';
 import type { HostingAccount, PlanLimits, QuotaMode, SiteBaseId, SiteStatus } from '@oblimint/shared';
 import { platformSettings } from '../platformSettings';
@@ -112,12 +113,17 @@ async function loadReleasePreviews(accountId: number, siteIds: number[]): Promis
   const out = new Map<number, NonNullable<PlanSite['releasePreview']>>();
   if (!siteIds.length) return out;
   const rows = await db('site_previews').where({ account_id: accountId }).whereIn('site_id', siteIds)
-    .whereIn('status', ['starting', 'running']).select('id', 'site_id', 'base', 'options') as Array<{ id: number; site_id: number; base: SiteBaseId; options: unknown }>;
+    .whereIn('status', ['starting', 'running']).select('id', 'site_id', 'base', 'options', 'db_clone', 'db_clone_env_sealed') as
+    Array<{ id: number; site_id: number; base: SiteBaseId; options: unknown; db_clone: unknown; db_clone_env_sealed: string | null }>;
   for (const r of rows) {
-    const opts = json<{ env?: string; ephemeralPaths?: unknown }>(r.options, {});
+    const opts = json<{ env?: string; ephemeralPaths?: unknown; database?: string }>(r.options, {});
     const ephemeralPaths = Array.isArray(opts.ephemeralPaths) ? opts.ephemeralPaths.map(String) : [];
-    const env = await siteEnvForPreview(r.site_id, opts.env === 'all' ? 'all' : 'public');
-    out.set(r.site_id, { id: r.id, base: r.base, ephemeralPaths, env });
+    let env = await siteEnvForPreview(r.site_id, opts.env === 'all' ? 'all' : 'public');
+    // Database clone: only once READY (the builder fills it before 'starting'); its env overrides
+    // replace the real secret passwords by the clone's random ones.
+    const dbClone = opts.database === 'clone' && cloneReady(r.db_clone);
+    if (dbClone) env = mergeEnv(env, openCloneEnv(r.db_clone_env_sealed));
+    out.set(r.site_id, { id: r.id, base: r.base, ephemeralPaths, env, dbClone });
   }
   return out;
 }
@@ -427,7 +433,8 @@ export async function runPass(state: AccountState, docker: Docker, now = new Dat
             continue;
           }
           // Extra networks (account database network) joined BEFORE the start.
-          const extra = dbNetworkFailed ? [] : action.extraNetworks;
+          // A failed account DB network drops only that one (a preview's private clone network stays).
+          const extra = dbNetworkFailed ? action.extraNetworks.filter((n) => n !== accountDbNetwork(account.id)) : action.extraNetworks;
           await recreateContainer(docker, action.spec, action.start && extra.length === 0);
           for (const n of extra) await connectNetwork(docker, n, action.name);
           if (action.start && extra.length > 0) await startContainer(docker, action.name);

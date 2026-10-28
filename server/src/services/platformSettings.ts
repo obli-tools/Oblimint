@@ -50,6 +50,8 @@ const sectionSchemas = {
     memoryMb: z.number().int().min(128).max(4096),
     cpus: z.number().min(0.25).max(4),
     minIntervalSeconds: z.number().int().min(0).max(3600),
+    // Feature B: database clone size cap (MiB of measured live data; 0 = clones disabled).
+    dbCloneMaxMb: z.number().int().min(0).max(65536),
   }).strict(),
   dbAdmin: z.object({
     hostname: hostname.nullable(),
@@ -283,6 +285,8 @@ export const platformSettings = {
       (current as unknown as Record<string, unknown>)[s] = parsed.data;
     }
     cache = null;
+    // Feature B: egress filter turned off while a database is published → the previews stop.
+    if (patch.access) await import('./previews/previews.service').then((m) => m.previewService.enforceDbIsolation()).catch(() => undefined);
     return current;
   },
 

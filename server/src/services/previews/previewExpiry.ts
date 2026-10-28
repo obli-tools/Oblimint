@@ -16,7 +16,12 @@ import { previewService } from './previews.service';
 //      never restarted (B1);
 //   4. cleanup retried while cleaned_at is null;
 //   5. stopped / failed rows purged after 7 days;
-//   6. expired claim links deleted.
+//   6. expired claim links deleted;
+//   7. database clones: a running preview whose clone server died → failed
+//      (dbCloneExited); live databases reachable through a published port
+//      (egress filter off + external access) → every active preview failed
+//      (dbIsolationLost); clone servers / private networks of previews gone or
+//      cleaned → removed (orphan sweep, also at boot).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const PREVIEW_WORKER_INTERVAL_MS = 30_000;
@@ -74,6 +79,20 @@ export async function previewWorkerPass(): Promise<void> {
       }
     }
 
+    // 3b. Database clones of running previews: a dead clone server fails the preview (never restarted).
+    const clones = await db('site_previews').whereIn('status', ['starting', 'running']).whereRaw("options->>'database' = 'clone'").pluck('id') as number[];
+    if (clones.length) {
+      const servers = await deps.dbCloneContainers();
+      if (servers) {
+        for (const id of clones) {
+          if (servers.get(id) === true) continue;
+          await failPreview(id, 'dbCloneExited', 'Le serveur de la copie de la base s’est arrêté').catch(() => undefined);
+        }
+      }
+    }
+    // 3c. The live databases must never be reachable from a preview.
+    await previewService.enforceDbIsolation();
+
     // 4. Cleanup to retry (stopping / stopped / failed without cleaned_at).
     const dirty = await db('site_previews').whereIn('status', ['stopping', 'stopped', 'failed']).whereNull('cleaned_at').pluck('id') as number[];
     for (const id of dirty) await stopInternal(id, 'failed').catch(() => undefined);
@@ -83,10 +102,22 @@ export async function previewWorkerPass(): Promise<void> {
       .where('updated_at', '<', new Date(now.getTime() - PREVIEW_RETENTION_MS)).del();
     // 6. Claim links.
     await db('site_preview_links').where('expires_at', '<', new Date(now.getTime() - 3600_000)).del();
+    // 7. Orphan clone servers / private networks.
+    await sweepClones(deps);
   } catch (err) {
     logger.warn({ err: (err as Error).message }, 'preview worker pass failed');
   } finally {
     running = false;
+  }
+}
+
+/** Removes the clone servers / private networks whose preview is gone or cleaned (never throws). */
+export async function sweepClones(deps = previewDeps()): Promise<void> {
+  try {
+    const keep = new Set((await db('site_previews').where((q) => q.whereIn('status', [...ACTIVE, 'stopping']).orWhereNull('cleaned_at')).pluck('id') as number[]).map(Number));
+    await deps.sweepDbClones((id) => keep.has(id));
+  } catch (err) {
+    logger.debug({ err: (err as Error).message }, 'preview: clone sweep failed');
   }
 }
 

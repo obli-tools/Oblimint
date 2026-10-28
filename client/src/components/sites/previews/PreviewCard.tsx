@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Clock, Copy, ExternalLink, Eye, Loader2, Square, TimerReset } from 'lucide-react';
+import { AlertTriangle, Clock, Copy, Database, ExternalLink, Eye, Loader2, Square, TimerReset } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
-  HostingSocketEvents, PREVIEW_TTL_MINUTES, type PreviewStatus, type PreviewUpdatedPayload, type Site, type SitePreview,
+  HostingSocketEvents, PREVIEW_TTL_MINUTES, type PreviewDbClone, type PreviewDbCloneState, type PreviewStatus, type PreviewUpdatedPayload, type Site, type SitePreview,
 } from '@oblimint/shared';
 import { previewsApi } from '@/api/previews.api';
 import { useHostingMe } from '@/store/hostingStore';
@@ -14,6 +14,7 @@ import { Pill, type Tone } from '../SiteBadges';
 import { siteErrorMessage, toastSiteError } from '../siteErrors';
 import { useHostingEvent } from '../useHostingEvent';
 import { fieldCls } from '../styles';
+import { formatBytes } from '@/components/databases/dbFormat';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Feature B — live preview of a release or of the staging: the card of the
@@ -27,6 +28,52 @@ const STATUS_TONE: Record<PreviewStatus, Tone> = {
   building: 'blue', starting: 'blue', running: 'green', failed: 'red', stopping: 'muted', stopped: 'muted',
 };
 const ACTIVE: PreviewStatus[] = ['building', 'starting', 'running'];
+const CLONE_TONE: Record<PreviewDbCloneState, Tone> = { pending: 'muted', cloning: 'blue', ready: 'green', failed: 'red' };
+
+/** Database copy of a preview: state, databases, size / progress, failure reason. */
+function DbCloneBlock({ clone, active }: { clone: PreviewDbClone; active: boolean }) {
+  const { t } = useTranslation();
+  const label = t(`previews.db.state.${clone.state}`) || clone.state;
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-bg-secondary/60 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <Database className="h-3.5 w-3.5 text-accent" />
+        <span className="font-medium text-text-primary">{t('previews.db.title') || 'Database copy'}</span>
+        <Pill tone={CLONE_TONE[clone.state]} className="text-[10px]">
+          {clone.state === 'cloning' && <Loader2 className="h-3 w-3 animate-spin" />}
+          {label}
+        </Pill>
+        {clone.state === 'cloning' && clone.streamedBytes > 0 && (
+          <span className="text-text-muted">{t('previews.db.streamed', { size: formatBytes(t, clone.streamedBytes), defaultValue: '{{size}} copied' })}</span>
+        )}
+        {clone.sizeBytes !== null && (
+          <span className="text-text-muted">{t('previews.db.size', { size: formatBytes(t, clone.sizeBytes), defaultValue: 'live size {{size}}' })}</span>
+        )}
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {clone.databases.map((d) => (
+          <span key={d.id} className="rounded bg-bg-tertiary px-1.5 py-0.5 font-mono text-[11px] text-text-secondary" title={`${d.instanceName} · ${d.engine} ${d.version}`}>
+            {d.name}
+          </span>
+        ))}
+      </div>
+      {clone.state === 'failed' && (clone.error || clone.errorCode) && (
+        <p className="mt-1 text-red-400">{(clone.errorCode && t(`previews.errorCodes.${clone.errorCode}`)) || clone.error || clone.errorCode}</p>
+      )}
+      {clone.rotatedUsers.length > 0 && (
+        <p className="mt-1 text-text-muted">
+          {t('previews.db.rotated', { users: clone.rotatedUsers.join(', '), defaultValue: 'Random password in the copy for {{users}} (their real one is a secret variable).' })}
+        </p>
+      )}
+      {active && (
+        <p className="mt-1 flex items-start gap-1.5 text-amber-400">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{t('previews.db.warning') || 'The copy holds production data: whoever opens the preview sees it. Every write is lost when the preview stops; mail stays off.'}</span>
+        </p>
+      )}
+    </div>
+  );
+}
 
 /** The site's latest preview, refreshed on PREVIEW_UPDATED (null: none, or not visible). */
 export function useSitePreview(siteId: number): { preview: SitePreview | null; loading: boolean; reload: () => Promise<void> } {
@@ -88,8 +135,11 @@ export function PreviewCard({ site, preview, onChanged, releaseId, compact }: {
 
   if (!preview || (releaseId !== undefined && preview.releaseId !== releaseId)) return null;
   const active = ACTIVE.includes(preview.status);
+  // A preview holding a database copy shows production data: databases.manage too (the server checks it).
+  const cloneOk = preview.options.database !== 'clone' || can('databases.manage', site.accountId);
   const canCode = can('code.read', site.accountId);
-  const canShare = canCode && can('sites.manage', site.accountId);
+  const canOpen = canCode && cloneOk;
+  const canShare = canOpen && can('sites.manage', site.accountId);
   const statusLabel = t(`previews.status.${preview.status}`) || preview.status;
 
   const open = () => {
@@ -166,6 +216,8 @@ export function PreviewCard({ site, preview, onChanged, releaseId, compact }: {
         </p>
       )}
 
+      {preview.dbClone && <DbCloneBlock clone={preview.dbClone} active={active} />}
+
       {active && preview.warnings.length > 0 && (
         <ul className="mt-2 space-y-1">
           {preview.warnings.map((w) => (
@@ -183,9 +235,11 @@ export function PreviewCard({ site, preview, onChanged, releaseId, compact }: {
 
       {active && canCode && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={open} disabled={preview.status !== 'running' && preview.status !== 'starting'}>
-            <ExternalLink size={14} className="mr-1" />{t('previews.open') || 'Open'}
-          </Button>
+          {canOpen && (
+            <Button size="sm" onClick={open} disabled={preview.status !== 'running' && preview.status !== 'starting'}>
+              <ExternalLink size={14} className="mr-1" />{t('previews.open') || 'Open'}
+            </Button>
+          )}
           {canShare && (
             <Button size="sm" variant="secondary" onClick={() => void share()} loading={busy === 'share'} disabled={busy !== null} title={t('previews.shareHint') || 'One-shot link, valid 10 minutes, through a confirmation page.'}>
               <Copy size={14} className="mr-1" />{t('previews.share') || 'Copy a share link'}

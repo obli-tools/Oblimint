@@ -1,6 +1,6 @@
 import apiClient from './client';
 import type {
-  ApiResponse, PreviewFetchResult, PreviewLink, PreviewStartRequest, PreviewStartResult, SitePreview,
+  ApiResponse, PreviewDatabaseCandidate, PreviewFetchResult, PreviewLink, PreviewStartRequest, PreviewStartResult, SitePreview,
 } from '@oblimint/shared';
 
 // /api/sites/:id/preview* — feature B (release / staging previews).
@@ -18,6 +18,12 @@ export const previewsApi = {
   async start(siteId: number, data: PreviewStartRequest): Promise<PreviewStartResult> {
     const res = await apiClient.post<ApiResponse<PreviewStartResult>>(`/sites/${siteId}/preview`, data);
     return res.data.data!;
+  },
+
+  /** Databases a clone may copy (databases.manage), the ones the site's environment references first. */
+  async databases(siteId: number): Promise<PreviewDatabaseCandidate[]> {
+    const res = await apiClient.get<ApiResponse<PreviewDatabaseCandidate[]>>(`/sites/${siteId}/preview/databases`);
+    return res.data.data ?? [];
   },
 
   async shareLink(siteId: number): Promise<PreviewLink> {

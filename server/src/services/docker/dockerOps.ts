@@ -148,6 +148,8 @@ export interface NetworkCreateOptions {
   /** com.docker.network.bridge.name (≤ 15 chars). */
   bridgeName?: string | null;
   internal?: boolean;
+  /** Extra bridge driver options (feature B: com.docker.network.bridge.inhibit_ipv4 on a preview's private network). */
+  driverOptions?: Record<string, string>;
   /** Extra labels merged over `labels`. */
   labels?: Record<string, string>;
 }
@@ -156,7 +158,9 @@ export async function createNetwork(docker: Docker, name: string, labels: Record
   try {
     const spec: Docker.NetworkCreateOptions = { Name: name, Driver: 'bridge', CheckDuplicate: true, Labels: { ...labels, ...(opts.labels ?? {}) } };
     if (opts.subnet) spec.IPAM = { Driver: 'default', Config: [{ Subnet: opts.subnet, ...(opts.gateway ? { Gateway: opts.gateway } : {}) }] };
-    if (opts.bridgeName) spec.Options = { 'com.docker.network.bridge.name': opts.bridgeName };
+    if (opts.bridgeName || opts.driverOptions) {
+      spec.Options = { ...(opts.driverOptions ?? {}), ...(opts.bridgeName ? { 'com.docker.network.bridge.name': opts.bridgeName } : {}) };
+    }
     if (opts.internal) spec.Internal = true;
     await withTimeout(docker.createNetwork(spec), CALL_TIMEOUT_MS, `create network ${name}`);
   } catch (err) {

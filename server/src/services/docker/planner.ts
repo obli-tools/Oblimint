@@ -2,7 +2,7 @@ import type Docker from 'dockerode';
 import type { FileServerMode, HostingAccount, PlanLimits, RuntimeRole, SiteBaseId, SiteStatus } from '@oblimint/shared';
 import { config } from '../../config';
 import {
-  accountDbNetwork, accountNetwork, EXTERNALLY_MANAGED_ROLES, fileServerContainer, LABELS, PANEL_ALIAS, type ContainerRole,
+  accountDbNetwork, accountNetwork, EXTERNALLY_MANAGED_ROLES, fileServerContainer, LABELS, PANEL_ALIAS, previewDbNetwork, type ContainerRole,
 } from '../hosting/naming';
 import { hostPaths, runtimeConfigFile, type HostingLayout } from '../hosting/paths';
 import { fileServerHookToken } from '../hosting/secrets';
@@ -26,7 +26,9 @@ import { fileServerContainerSpec, releasePreviewContainerSpec, siteContainerSpec
 //  - feature B: a release / staging preview (role site-rpreview) runs with its
 //    site; one container per preview id (another id → the old one is an
 //    orphan); an exited one is never started again (B1), not even recreated
-//    after a spec drift: only created.
+//    after a spec drift: only created. Its database clone (role preview-db) is
+//    owned by the preview module (EXTERNALLY_MANAGED_ROLES); the preview joins
+//    the clone's private network (extraNetworks), never the account's.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PlanAccount {
@@ -57,7 +59,11 @@ export interface PlanSite {
    * (null / absent: none). Its tree and runtime config are written by the
    * preview builder; ephemeralPaths were checked (real directories) at build.
    */
-  releasePreview?: { id: number; base: SiteBaseId; ephemeralPaths: string[]; env: Array<[string, string]> } | null;
+  releasePreview?: {
+    id: number; base: SiteBaseId; ephemeralPaths: string[]; env: Array<[string, string]>;
+    /** A READY database clone: the preview joins its private network and mounts its sockets. */
+    dbClone?: boolean;
+  } | null;
 }
 
 export interface ActualContainer {
@@ -212,7 +218,8 @@ export function desiredContainers(input: PlannerInput, notes: string[] = []): De
     add('primary', site.base, null);
     for (const rt of [...site.runtimes].sort((a, b) => a.id - b.id)) add('secondary', rt.base, rt.id);
     if (site.previewBase) add('preview', site.previewBase, null);
-    // Feature B: release / staging preview — never on the database network, one container per preview id.
+    // Feature B: release / staging preview — never on the account database network, one container per
+    // preview id; with a ready database clone: the preview's PRIVATE network + the clone's sockets.
     const rp = site.releasePreview;
     if (rp) {
       const spec = releasePreviewContainerSpec({
@@ -229,10 +236,15 @@ export function desiredContainers(input: PlannerInput, notes: string[] = []): De
         ephemeralPaths: rp.ephemeralPaths,
         env: rp.env,
         caps: input.previewCaps ?? DEFAULT_PREVIEW_CAPS,
+        cloneDbSockets: rp.dbClone ? {
+          root: layout.previewDbSockets(account.id, site.id, rp.id),
+          mysql: layout.previewDbSocketDefault(account.id, site.id, rp.id, 'mysql'),
+          postgresql: layout.previewDbSocketDefault(account.id, site.id, rp.id, 'postgresql'),
+        } : null,
       });
       out.push({
         name: spec.name!, role: 'site-rpreview', siteId: site.id, runtimeRole: null, runtimeId: null,
-        spec, hash: specHashLabel(spec), image: spec.Image!, run: siteRuns, extraNetworks: [],
+        spec, hash: specHashLabel(spec), image: spec.Image!, run: siteRuns, extraNetworks: rp.dbClone ? [previewDbNetwork(rp.id)] : [],
       });
     }
   }

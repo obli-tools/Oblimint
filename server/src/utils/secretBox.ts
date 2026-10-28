@@ -29,7 +29,9 @@ export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
   // Backups: destination credentials and the platform backup passphrase.
   | 'backup'
   // Feature B: access gate secret of a release / staging preview (edge string comparison).
-  | 'site-preview';
+  | 'site-preview'
+  // Feature B: environment overrides of a preview's database clone (random passwords of rotated users).
+  | 'site-preview-db';
 
 export class SecretBoxError extends Error {
   constructor(message: string) {

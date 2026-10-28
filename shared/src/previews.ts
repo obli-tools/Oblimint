@@ -1,3 +1,4 @@
+import type { DbEngine } from './databases';
 import type { ScanSummary, SiteBaseId } from './hosting';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6,12 +7,21 @@ import type { ScanSummary, SiteBaseId } from './hosting';
 // throw-away container (role site-rpreview) on <host>.<previewDomain>, behind
 // an access gate: data read-only, no database, no mail, secret env vars hidden.
 // Never promoted, never live. At most ONE active preview per site.
+//
+// Option database: 'clone' — a DISPOSABLE copy of the site's database(s): one
+// throw-away server per live instance (same engine / version), filled from a
+// consistent dump of the live database(s), on a network private to the
+// preview, under the live host names (db-<id>, oblimint-db-<id>, the socket
+// paths) with the same database names, users and passwords. The preview never
+// reaches the live instance; the clone is destroyed with the preview.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type PreviewTarget = 'release' | 'staging';
 export type PreviewStatus = 'building' | 'starting' | 'running' | 'failed' | 'stopping' | 'stopped';
 export type PreviewStopReason = 'user' | 'expired' | 'replaced' | 'failed' | 'siteStopped' | 'suspended' | 'key' | 'siteDeleted';
 export type PreviewEnvMode = 'public' | 'all';
+/** 'clone': a disposable copy of the site's database(s) (databases.manage on top of the preview rights). */
+export type PreviewDatabaseMode = 'none' | 'clone';
 
 export const PREVIEW_ACTIVE_STATUSES: readonly PreviewStatus[] = ['building', 'starting', 'running'];
 /** Release statuses a preview can run (the live release is excluded by the UI only). */
@@ -20,11 +30,64 @@ export const PREVIEWABLE_RELEASE_STATUSES = ['awaiting_approval', 'ready', 'reje
 export interface PreviewOptions {
   env: PreviewEnvMode;
   allowBlockedScan: boolean;
+  /** Absent = 'none' (previews started before the option existed). */
+  database?: PreviewDatabaseMode;
 }
 
 export type PreviewWarningCode =
   | 'scanWarnings' | 'dataReadOnly' | 'ephemeralSkipped' | 'noDatabase' | 'secretsHidden'
-  | 'noMail' | 'egressAllowed' | 'selfSignedCertificate' | 'notSegmented';
+  | 'noMail' | 'egressAllowed' | 'selfSignedCertificate' | 'notSegmented'
+  /** database 'clone': real production data, every write lost at stop. */
+  | 'dbCloneProductionData';
+
+export type PreviewDbCloneState = 'pending' | 'cloning' | 'ready' | 'failed';
+
+/** One database copied into the clone. */
+export interface PreviewDbCloneDatabase {
+  id: number;
+  name: string;
+  instanceId: number;
+  instanceName: string;
+  engine: DbEngine;
+  version: string;
+  /** Measured on the live instance at start (bytes), null when unknown. */
+  sizeBytes: number | null;
+  state: PreviewDbCloneState;
+}
+
+/** Disposable database clone of a preview (option database: 'clone'). */
+export interface PreviewDbClone {
+  state: PreviewDbCloneState;
+  databases: PreviewDbCloneDatabase[];
+  /** Total measured size of the cloned databases (bytes), null when unknown. */
+  sizeBytes: number | null;
+  /** SQL streamed from the live dump so far (bytes): progress while cloning. */
+  streamedBytes: number;
+  errorCode: string | null;
+  error: string | null;
+  startedAt: string | null;
+  readyAt: string | null;
+  /**
+   * Database users whose password comes from a SECRET environment variable of
+   * the site: the clone gets a random password for them, given to the preview
+   * in that variable instead (the real password never reaches a preview).
+   */
+  rotatedUsers: string[];
+}
+
+/** A database the clone may copy (GET /api/sites/:id/preview/databases). */
+export interface PreviewDatabaseCandidate {
+  id: number;
+  name: string;
+  instanceId: number;
+  instanceName: string;
+  engine: DbEngine;
+  version: string;
+  instanceStatus: string;
+  sizeBytes: number | null;
+  /** Referenced by the site's environment variables (DB_NAME, DATABASE_URL…): selected by default. */
+  referenced: boolean;
+}
 
 export interface SitePreview {
   id: number;
@@ -51,6 +114,8 @@ export interface SitePreview {
   options: PreviewOptions;
   scan: ScanSummary | null;
   warnings: PreviewWarningCode[];
+  /** Database clone (option database: 'clone'), null without one. */
+  dbClone: PreviewDbClone | null;
 }
 
 /** One-shot share link: an interstitial page, consumed by its POST (10 min). */
@@ -71,6 +136,8 @@ export interface PreviewStartRequest {
   releaseId?: number | null;
   ttlMinutes?: number;
   options?: Partial<PreviewOptions>;
+  /** database 'clone': the databases to copy (default: the ones the site's environment references). */
+  databaseIds?: number[];
 }
 
 export interface PreviewStartResult {
@@ -117,6 +184,8 @@ export const PREVIEW_FETCH_DEFAULT_BYTES = 65_536;
 /** A4: TEST-NET-1 — never private nor loopback (Require local / allow 127.0.0.1 guards stay closed). */
 export const PREVIEW_FETCH_CLIENT_IP = '192.0.2.1';
 export const PREVIEW_PATH_MAX = 2048;
+/** At most this many databases in one clone. */
+export const PREVIEW_DB_CLONE_MAX_DATABASES = 8;
 
 /** Socket payload of HostingSocketEvents.PREVIEW_UPDATED. */
 export interface PreviewUpdatedPayload {

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_PATH_MAX } from '@oblimint/shared';
+import { PREVIEW_DB_CLONE_MAX_DATABASES, PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_PATH_MAX } from '@oblimint/shared';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam, loadSite, resolveActor } from '../services/hosting/access';
 import { parseBody } from '../services/docker/parseBody';
@@ -9,7 +9,9 @@ import { previewService } from '../services/previews/previews.service';
 // /api/sites/:id/preview* — feature B (release / staging previews).
 //   GET    /:id/preview                  → SitePreview | null              (read)
 //   GET    /:id/previews?limit=          → SitePreview[] (≤ 50)            (read)
-//   POST   /:id/preview                  { target, releaseId?, ttlMinutes?, options? } → 202 PreviewStartResult
+//   POST   /:id/preview                  { target, releaseId?, ttlMinutes?, options?, databaseIds? } → 202 PreviewStartResult
+//                                         (options.database 'clone': + databases.manage)
+//   GET    /:id/preview/databases        → PreviewDatabaseCandidate[] (databases.manage)
 //   GET    /:id/preview/open             → 302 https://<host>/__oblimint_preview/claim?t=<60 s token> (code.read)
 //   POST   /:id/preview/link             → PreviewLink (share, one-shot, 10 min; clients: sites.manage)
 //   POST   /:id/preview/extend           { ttlMinutes } → SitePreview      (code.read)
@@ -26,7 +28,9 @@ export const startSchema = z.object({
   options: z.object({
     env: z.enum(['public', 'all']).optional(),
     allowBlockedScan: z.boolean().optional(),
+    database: z.enum(['none', 'clone']).optional(),
   }).strict().nullable().optional(),
+  databaseIds: z.array(z.number().int().positive()).max(PREVIEW_DB_CLONE_MAX_DATABASES).nullable().optional(),
 }).strict();
 
 export const extendSchema = z.object({ ttlMinutes: z.number().int().min(1).max(1440) }).strict();
@@ -65,8 +69,16 @@ router.post('/:id/preview', heavyOpLimiter, async (req, res, next) => {
     const body = parseBody(startSchema, req.body);
     const result = await previewService.start(req, actor, site.id, {
       target: body.target, releaseId: body.releaseId ?? null, ttlMinutes: body.ttlMinutes ?? null, options: body.options ?? null,
+      databaseIds: body.databaseIds ?? null,
     });
     res.status(202).json({ success: true, data: result });
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/preview/databases', async (req, res, next) => {
+  try {
+    const { actor, site } = await visibleSite(req);
+    res.json({ success: true, data: await previewService.databaseCandidates(actor, site.id) });
   } catch (err) { next(err); }
 });
 

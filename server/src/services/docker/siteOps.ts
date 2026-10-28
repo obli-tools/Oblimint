@@ -70,8 +70,8 @@ export const RELOAD_TIMEOUT_MS = 30_000;
 /**
  * `oblimint-reload` in every RUNNING container of the site (label
  * oblimint.site=<id>), except `skip` (containers just (re)created: they
- * rendered the fresh config at start) and the release previews (role
- * site-rpreview, feature B).
+ * rendered the fresh config at start), the release previews (role
+ * site-rpreview, feature B) and their database clones (role preview-db).
  */
 export async function reloadSiteContainers(docker: Docker, siteId: number, skip: ReadonlySet<string> = new Set()): Promise<{ ok: boolean; errors: string[]; reloaded: string[] }> {
   const errors: string[] = [];
@@ -81,7 +81,8 @@ export async function reloadSiteContainers(docker: Docker, siteId: number, skip:
     const name = cleanName(c.Names?.[0]);
     if (c.State !== 'running' || skip.has(name)) continue;
     // A3: a release preview's config never changes after its build — a publication never depends on its state.
-    if (c.Labels?.[LABELS.role] === 'site-rpreview') continue;
+    // Its database clone (role preview-db) is no site container at all.
+    if (c.Labels?.[LABELS.role] === 'site-rpreview' || c.Labels?.[LABELS.role] === 'preview-db') continue;
     try {
       const r = await execWith(docker, name, ['oblimint-reload'], { timeoutMs: RELOAD_TIMEOUT_MS });
       if (r.exitCode !== 0) {

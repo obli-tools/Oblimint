@@ -660,6 +660,9 @@ export const databaseService = {
         if (port === null) throw new AppError(409, 'No free external database port left in the configured range', 'allocationExhausted');
         await db('db_instances').where({ id }).update({ external_enabled: true, external_port: port, updated_at: new Date() });
       });
+      // Feature B: with the egress filter off, a published port is reachable from any container —
+      // the running previews of the node stop BEFORE the port is published (convergeNow below).
+      await import('../previews/previews.service').then((m) => m.previewService.enforceDbIsolation()).catch(() => undefined);
     } else {
       await db('db_instances').where({ id }).update({ external_enabled: false, external_port: null, updated_at: new Date() });
     }

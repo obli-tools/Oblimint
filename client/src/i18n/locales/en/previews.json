@@ -2,7 +2,7 @@
   "previews": {
     "title": "Live preview",
     "explain": "Runs the code of a release (or a scanned snapshot of the staging) in a temporary, isolated container on a private URL. Nothing goes live.",
-    "limits": "Data read-only (uploads, caches and file sessions fail), no database, no mail, Internet like the site, secret environment variables hidden. Staging snapshots are scanned first.",
+    "limits": "Data read-only (uploads, caches and file sessions fail), no database unless you ask for a copy, no mail, Internet like the site, secret environment variables hidden. Staging snapshots are scanned first.",
     "replaces": "Replaces the running preview of this site.",
     "start": "Preview",
     "startRelease": "Preview release #{{number}}",
@@ -61,7 +61,8 @@
       "noMail": "Mail is disabled.",
       "egressAllowed": "The preview reaches the Internet like the site (external APIs with real credentials included).",
       "selfSignedCertificate": "Self-signed certificate: the browser asks for an exception.",
-      "notSegmented": "The account network is not segmented: the preview reaches the other containers of the account like the site."
+      "notSegmented": "The account network is not segmented: the preview reaches the other containers of the account like the site.",
+      "dbCloneProductionData": "The database is a copy of production taken at start: real data, every write lost at stop."
     },
     "errorCodes": {
       "scanBlocked": "Blocked by the analysis.",
@@ -73,7 +74,14 @@
       "publishInProgress": "A publication was running: try again.",
       "releaseNotReady": "Commit of the release missing.",
       "cancelled": "Cancelled.",
-      "previewBuildFailed": "The preview could not be built."
+      "previewBuildFailed": "The preview could not be built.",
+      "dbCloneFailed": "The database copy failed.",
+      "dbCloneTooLarge": "The databases are too large to be copied.",
+      "dbCloneExited": "The server of the database copy stopped.",
+      "dbIsolationLost": "A database server became reachable through a published port (external access): preview stopped.",
+      "previewDbCloneDisabled": "Database copies are disabled on this platform.",
+      "previewDbInstanceNotRunning": "The database server is not running.",
+      "instanceBusy": "The database server was busy (backup, export…): try again."
     },
     "settings": {
       "title": "Release previews",
@@ -85,7 +93,29 @@
       "maxTotal": "Previews on the platform",
       "memoryMb": "Memory per preview (MiB)",
       "cpus": "CPUs per preview",
-      "minIntervalSeconds": "Minimum delay between two previews of a site (s)"
+      "minIntervalSeconds": "Minimum delay between two previews of a site (s)",
+      "dbCloneMaxMb": "Largest database copy (MiB, 0 = copies off)",
+      "dbCloneHint": "A preview may get a throw-away copy of the site's database(s), in memory, on a network of its own: the live database is never reachable. The copy counts in the memory of the host while the preview runs."
+    },
+    "db": {
+      "clone": "Copy the database",
+      "cloneHint": "A throw-away copy of the site's database(s), taken now from a consistent export: same names, users and passwords, so the site connects unchanged. The live database is never reachable from the preview.",
+      "warning": "The copy holds production data: whoever opens the preview sees it. Every write is lost when the preview stops; mail stays off.",
+      "loading": "Loading the databases…",
+      "none": "The account has no database.",
+      "referenced": "used by the site",
+      "stopped": "server stopped",
+      "pick": "Choose at least one database.",
+      "title": "Database copy",
+      "streamed": "{{size}} copied",
+      "size": "live size {{size}}",
+      "rotated": "Random password in the copy for {{users}} (their real one is a secret variable).",
+      "state": {
+        "pending": "waiting",
+        "cloning": "copying",
+        "ready": "ready",
+        "failed": "failed"
+      }
     }
   }
 }

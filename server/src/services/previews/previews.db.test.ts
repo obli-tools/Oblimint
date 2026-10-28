@@ -166,6 +166,17 @@ test('Feature B: release / staging previews', { timeout: 600_000 }, async (t: Te
   fs.writeFileSync(path.join(staging, 'index.html'), 'v3 (staging)');
 
   // ── preview side effects faked ──
+  const cloneCalls: Array<Parameters<NonNullable<Parameters<typeof setPreviewDepsForTests>[0]>['buildDbClone'] & object>[0]> = [];
+  const clonesRemoved: number[] = [];
+  let cloneServers = new Map<number, boolean>();
+  let cloneFailure: Error | null = null;
+  const fakeClone = async (c: (typeof cloneCalls)[number]) => {
+    if (cloneFailure) throw cloneFailure;
+    const clone = { state: 'ready' as const, databases: c.databases.map((d) => ({ ...d, state: 'ready' as const })), sizeBytes: 1024, streamedBytes: 2048,
+      errorCode: null, error: null, startedAt: new Date().toISOString(), readyAt: new Date().toISOString(), rotatedUsers: ['wpuser'] };
+    await c.save(clone);
+    return { clone, envOverrides: [['DB_PASSWORD', 'random-clone-pw']] as Array<[string, string]> };
+  };
   let reconciles = 0;
   let sleepMs = 0;
   let fetchGate: Promise<void> | null = null;
@@ -176,6 +187,10 @@ test('Feature B: release / staging previews', { timeout: 600_000 }, async (t: Te
     fetch: async () => { if (fetchGate) await fetchGate; return { ...OK_SIDE }; },
     previewContainers: async () => new Map(),
     sleep: async () => { if (sleepMs) await new Promise((r) => setTimeout(r, sleepMs)); },
+    buildDbClone: async (c) => { cloneCalls.push(c); return fakeClone(c); },
+    removeDbClone: async (r) => { clonesRemoved.push(r.id); },
+    dbCloneContainers: async () => cloneServers,
+    sweepDbClones: async () => {},
   });
   const waitStatus = async (id: number, want: string[], ms = 60_000) => {
     const t0 = Date.now();
@@ -417,6 +432,136 @@ test('Feature B: release / staging previews', { timeout: 600_000 }, async (t: Te
   assert.equal(ghost2.status, 'failed', 'interrupted start');
   assert.equal(ghost2.error_code, 'interrupted');
   assert.equal((await edgeService.buildVhosts()).some((v) => v.id === `pv-${ghost2.id}`), false);
+
+  // ── 14. database clone (option database: 'clone') ──
+  const { seal: sealEnv } = await import('../../utils/secretBox');
+  const { CloneFailure } = await import('./previewDbClone');
+  const { loadAccountState } = await import('../docker/reconcile.service');
+  const dba = await user('dba');
+  await caps(dba, ['sites.manage', 'files.manage', 'releases.publish', 'databases.manage']);
+  const dbaA = await actor(dba);
+  const mkInst = async (name: string, engine: string, isDefault: boolean) => Number(((await db('db_instances').insert({
+    tenant_id: tA, account_id: acc, node_id: nodeId, name, engine, version: engine === 'postgresql' ? '16' : '11.4', profile: 'S', status: 'running',
+    is_default: isDefault, root_secret: seal('db-root', 'root-pw'),
+  }).returning('id'))[0] as { id: number }).id);
+  const iMaria = await mkInst(`m${suffix}`.slice(0, 30), 'mariadb', true);
+  const iPg = await mkInst(`p${suffix}`.slice(0, 30), 'postgresql', true);
+  const mkDb = async (instanceId: number, name: string, size: number | null) => Number(((await db('db_databases').insert({ instance_id: instanceId, account_id: acc, name, size_bytes: size }).returning('id'))[0] as { id: number }).id);
+  const dbWp = await mkDb(iMaria, 'wp', 4096);
+  const dbApp = await mkDb(iPg, 'app', 8192);
+  const [wpUser] = await db('db_users').insert({ instance_id: iMaria, account_id: acc, username: 'wpuser' }).returning('id');
+  await db('db_grants').insert({ instance_id: iMaria, user_id: Number(wpUser.id ?? wpUser), database_id: dbWp, level: 'all' });
+
+  // Rights: databases.manage on top of the preview rights; a key needs the scope.
+  assert.equal(await code(previewService.start(fakeReq(), ownerA, siteId, { target: 'release', releaseId: r1.id, options: { database: 'clone' } })), '403 previewDatabaseForbidden');
+  assert.equal(await code(previewService.databaseCandidates(ownerA, siteId)), '403 previewDatabaseForbidden');
+  assert.equal(await code(previewService.start(fakeReq(), ownerA, siteId, { target: 'release', releaseId: r1.id, databaseIds: [dbWp] })), '400 validation');
+  // Two databases, none referenced by the environment: ambiguous.
+  const amb = await previewService.start(fakeReq(dba), dbaA, siteId, { target: 'release', releaseId: r1.id, options: { database: 'clone' } }).then(() => null, (e) => e);
+  assert.equal(amb?.code, 'previewDatabaseChoice');
+  assert.deepEqual((amb.details.candidates as Array<{ id: number }>).map((c) => c.id).sort(), [dbWp, dbApp].sort());
+  // The environment references wp (DB_NAME + localhost = the default MariaDB) and the user / secret password.
+  const env = [['DB_NAME', 'wp', false], ['DB_HOST', 'localhost', false], ['DB_USER', 'wpuser', false], ['DB_PASSWORD', 'real-live-password', true]] as const;
+  for (const [name, value, secret] of env) await db('site_env_vars').insert({ site_id: siteId, account_id: acc, name, value_sealed: sealEnv('site-env', value), secret });
+  const cands = await previewService.databaseCandidates(dbaA, siteId);
+  assert.deepEqual(cands.filter((c) => c.referenced).map((c) => c.id), [dbWp]);
+  // Size cap (stored sizes known at start).
+  await platformSettings.update({ releasePreviews: { dbCloneMaxMb: 0 } });
+  assert.equal(await code(previewService.start(fakeReq(dba), dbaA, siteId, { target: 'release', releaseId: r1.id, options: { database: 'clone' } })), '409 previewDbCloneDisabled');
+  await platformSettings.update({ releasePreviews: { dbCloneMaxMb: 1 } });
+  await db('db_databases').where({ id: dbWp }).update({ size_bytes: 5 * 1048576 });
+  assert.equal(await code(previewService.start(fakeReq(dba), dbaA, siteId, { target: 'release', releaseId: r1.id, options: { database: 'clone' } })), '413 previewDbCloneTooLarge');
+  await db('db_databases').where({ id: dbWp }).update({ size_bytes: 4096 });
+  await platformSettings.update({ releasePreviews: { dbCloneMaxMb: 2048 } });
+
+  // Started: default selection = wp; the clone is built BEFORE the container (reconcile) and lands ready.
+  const pc = await previewService.start(fakeReq(dba), dbaA, siteId, { target: 'release', releaseId: r1.id, options: { database: 'clone' } });
+  assert.equal(pc.preview.options.database, 'clone');
+  assert.deepEqual(pc.preview.dbClone?.databases.map((d) => d.id), [dbWp]);
+  assert.ok(pc.preview.warnings.includes('dbCloneProductionData') && !pc.preview.warnings.includes('noDatabase'));
+  const runC = await waitStatus(pc.preview.id, ['running', 'failed']);
+  assert.equal(runC.status, 'running', `${runC.error_code}: ${runC.error}`);
+  const call0 = cloneCalls.at(-1)!;
+  assert.deepEqual([call0.previewId, call0.siteId, call0.accountId, call0.uid, call0.capMb], [pc.preview.id, siteId, acc, uid, 2048]);
+  const got = await previewService.get(dbaA, siteId);
+  assert.equal(got?.dbClone?.state, 'ready');
+  assert.ok(!JSON.stringify(got).includes('random-clone-pw'), 'the overrides never reach the API');
+  // The reconcile gives the container the clone (network + sockets) and the ROTATED password, never the real one.
+  const acctState = await loadAccountState(acc);
+  const rpv = acctState!.sites.find((x) => x.site.id === siteId)!.releasePreview!;
+  assert.equal(rpv.dbClone, true);
+  assert.deepEqual(rpv.env.find(([k]) => k === 'DB_PASSWORD'), ['DB_PASSWORD', 'random-clone-pw']);
+  assert.ok(!rpv.env.some(([, v]) => v === 'real-live-password'));
+  // Opening / sharing / fetching a clone preview: databases.manage too.
+  assert.equal(await code(previewService.openLink(fakeReq(), ownerA, siteId)), '403 previewDatabaseForbidden');
+  assert.equal(await code(previewService.fetch(ownerA, siteId, { path: '/' })), '403 previewDatabaseForbidden');
+  assert.equal(await code(previewService.shareLink(fakeReq(), ownerA, siteId)), '403 previewDatabaseForbidden');
+  assert.equal(await code(previewService.openLink(fakeReq(dba), dbaA, siteId)), 'ok');
+  // A key: the databases.manage scope, and the clone's databases within its reach.
+  const kNoDb = await apiKeysService.create(fakeReq(dba), dbaA, acc, { name: 'nodb', scopes: ['files.read', 'releases.publish', 'previews.manage', 'sites.manage'], siteScope: 'all' });
+  assert.equal((await call(`/sites/${siteId}/preview/link`, { method: 'POST' }, kNoDb.key!)).status, 403);
+  assert.equal((await call(`/sites/${siteId}/preview`, { method: 'POST', body: JSON.stringify({ release_id: r1.id, database: 'clone', wait: false }) }, kNoDb.key!)).status, 403);
+  const kDb = await apiKeysService.create(fakeReq(dba), dbaA, acc, { name: 'withdb', scopes: ['files.read', 'releases.publish', 'previews.manage', 'sites.manage', 'databases.manage'], siteScope: 'all' });
+  assert.equal((await call(`/sites/${siteId}/preview/link`, { method: 'POST' }, kDb.key!)).status, 200);
+
+  // Stop: the clone goes with the preview.
+  await previewService.stop(fakeReq(dba), dbaA, siteId);
+  assert.ok(clonesRemoved.includes(pc.preview.id));
+  assert.equal((await db('site_previews').where({ id: pc.preview.id }).first()).status, 'stopped');
+
+  // A failed clone fails the preview (generic reason on the row and in dbClone), and is cleaned.
+  cloneFailure = new CloneFailure('dbCloneFailed', 'Copie de la base wp impossible (import, code 1)');
+  await db('site_previews').where({ site_id: siteId }).update({ created_at: new Date(Date.now() - 3600_000) });
+  const pfail = await previewService.start(fakeReq(dba), dbaA, siteId, { target: 'release', releaseId: r1.id, options: { database: 'clone' }, databaseIds: [dbWp] });
+  const rowFail = await waitStatus(pfail.preview.id, ['failed', 'running']);
+  assert.deepEqual([rowFail.status, rowFail.error_code], ['failed', 'dbCloneFailed']);
+  const failedClone = (await previewService.get(dbaA, siteId))!.dbClone!;
+  assert.equal(failedClone.state, 'failed');
+  assert.equal(failedClone.errorCode, 'dbCloneFailed');
+  assert.ok(clonesRemoved.includes(pfail.preview.id));
+  cloneFailure = null;
+
+  // Worker: a dead clone server fails the running preview (never restarted).
+  const pw = await previewService.start(fakeReq(dba), dbaA, siteId, { target: 'release', releaseId: r1.id, options: { database: 'clone' } });
+  await waitStatus(pw.preview.id, ['running']);
+  const { previewWorkerPass } = await import('./previewExpiry');
+  cloneServers = new Map([[pw.preview.id, true]]);
+  setPreviewDepsForTests({ ...(await import('./previewDeps')).previewDeps(), previewContainers: async () => new Map([[pw.preview.id, true]]) });
+  await previewWorkerPass();
+  assert.equal((await db('site_previews').where({ id: pw.preview.id }).first()).status, 'running');
+  cloneServers = new Map([[pw.preview.id, false]]);
+  await previewWorkerPass();
+  const dead = await db('site_previews').where({ id: pw.preview.id }).first();
+  assert.deepEqual([dead.status, dead.error_code], ['failed', 'dbCloneExited']);
+
+  // A live database reachable through a published port: external access on an instance of the
+  // account (any egress mode), or on the node with the egress filter off → no preview starts
+  // (clone or not), and the running ones are failed.
+  const pRun = await previewService.start(fakeReq(), ownerA, siteId, { target: 'release', releaseId: r1.id });
+  await waitStatus(pRun.preview.id, ['running']);
+  await db('db_instances').where({ id: iMaria }).update({ external_enabled: true, external_port: 33999 });
+  assert.equal(await code(previewService.start(fakeReq(), ownerA, siteId, { target: 'release', releaseId: r1.id })), '409 previewDbExposed');
+  assert.ok((await previewService.enforceDbIsolation()) >= 1);
+  const lost = await db('site_previews').where({ id: pRun.preview.id }).first();
+  assert.deepEqual([lost.status, lost.error_code], ['failed', 'dbIsolationLost']);
+  // Another account's instance published: harmless while the egress filter is on, refused when it is off.
+  const [otherAcct] = await db('hosting_accounts').insert({
+    tenant_id: tA, node_id: nodeId, plan_id: Number(plan.id ?? plan), username: `ot${suffix}`.slice(0, 30), uid: uid + 1, gid: uid + 1, status: 'active', filesrv_mode: 'off',
+  }).returning('id');
+  await db('db_instances').where({ id: iMaria }).update({ external_enabled: false, external_port: null });
+  await db('db_instances').insert({
+    tenant_id: tA, account_id: Number(otherAcct.id ?? otherAcct), node_id: nodeId, name: 'other', engine: 'mariadb', version: '11.4', status: 'running',
+    root_secret: seal('db-root', 'x'), external_enabled: true, external_port: 33998,
+  });
+  assert.equal(await code(previewService.start(fakeReq(), ownerA, siteId, { target: 'release', releaseId: r1.id })), 'ok');
+  const offActive = await db('site_previews').whereIn('status', ['building', 'starting', 'running']).pluck('id') as number[];
+  assert.ok(offActive.length > 0);
+  await platformSettings.update({ access: { egressFilter: 'off' } });
+  for (const id of offActive) assert.equal((await db('site_previews').where({ id }).first()).status, 'failed', 'egress filter turned off: stopped by the settings hook');
+  assert.equal(await code(previewService.start(fakeReq(), ownerA, siteId, { target: 'release', releaseId: r1.id })), '409 previewDbExposed');
+  await platformSettings.update({ access: { egressFilter: 'metadata' } });
+  await db('db_instances').where({ name: 'other', account_id: Number(otherAcct.id ?? otherAcct) }).del();
+  await db('site_env_vars').where({ site_id: siteId }).del();
 
   // ── 13. previewTooSoon ──
   await platformSettings.update({ releasePreviews: { minIntervalSeconds: 60 } });

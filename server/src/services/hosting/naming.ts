@@ -33,6 +33,13 @@ export const fileServerContainer = (accountId: number): string => `oblimint-file
  * container of the next preview (502).
  */
 export const releasePreviewContainer = (siteId: number, previewId: number): string => `oblimint-site-${siteId}-rpv-${previewId}`;
+/**
+ * Feature B: database clone of a preview — one per (preview, live instance), on the preview's
+ * private network only, under the live instance's names (dbInstanceAlias / dbInstanceContainer).
+ */
+export const previewDbContainer = (siteId: number, previewId: number, instanceId: number): string => `oblimint-site-${siteId}-rpv-${previewId}-db-${instanceId}`;
+/** Feature B: private network of a preview with a database clone (Internal, no address on the host). */
+export const previewDbNetwork = (previewId: number): string => `oblimint-pv-${previewId}`;
 export const releasePreviewUpstream = (siteId: number, previewId: number): string =>
   `http://${releasePreviewContainer(siteId, previewId)}:${SITE_CONTAINER_PORT}`;
 
@@ -44,13 +51,20 @@ export const LABELS = {
   role: 'oblimint.role',
   /** sha256 of the normalized create spec: drift → recreate (reconcile). */
   specHash: 'oblimint.spec-hash',
-  /** site_previews.id of a release / staging preview container (role site-rpreview). */
+  /** site_previews.id of a release / staging preview container (role site-rpreview) and of its database clones (role preview-db). */
   preview: 'oblimint.preview',
+  /**
+   * site_previews.id of a preview's PRIVATE network (database clone). Deliberately NOT
+   * oblimint.account: the edge joins every network carrying that label (infra.service).
+   */
+  previewNetwork: 'oblimint.preview-network',
 } as const;
 
 export type ContainerRole = 'site' | 'site-secondary' | 'site-preview'
   // Feature B: release / staging preview (sandbox, never restarted, never reloaded by a publication)
   | 'site-rpreview'
+  // Feature B: disposable database clone of a preview (private network only, never reloaded, never restarted)
+  | 'preview-db'
   | 'filesrv' | 'edge' | 'hostd' | 'panel-postgres'
   // P2
   | 'db' | 'pdns' | 'dbadmin'
@@ -86,9 +100,10 @@ export const P2_LABELS = {
 /**
  * Roles carrying oblimint.account=<id> that the account reconcile planner
  * must NEVER remove as orphans: their owning module converges them itself
- * (databases: db). destroyAccount still removes them (label oblimint.account).
+ * (databases: db; feature B previews: preview-db, removed by the preview stop
+ * path and the preview worker's orphan sweep). destroyAccount still removes them (label oblimint.account).
  */
-export const EXTERNALLY_MANAGED_ROLES: readonly ContainerRole[] = ['db', 'tools', 'app'];
+export const EXTERNALLY_MANAGED_ROLES: readonly ContainerRole[] = ['db', 'tools', 'app', 'preview-db'];
 
 // ── P3 (docs/P3-PLAN.md §Conteneurs) ─────────────────────────────────────────
 

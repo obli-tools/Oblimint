@@ -1,7 +1,7 @@
 import fs from 'fs';
 import type { Knex } from 'knex';
 import {
-  HostingSocketEvents, PREVIEW_ACTIVE_STATUSES, type PreviewOptions, type PreviewStatus, type PreviewStopReason, type PreviewTarget,
+  HostingSocketEvents, PREVIEW_ACTIVE_STATUSES, type PreviewDatabaseMode, type PreviewOptions, type PreviewStatus, type PreviewStopReason, type PreviewTarget,
   type PreviewWarningCode, type ScanSummary, type SiteBaseId, type SitePreview,
 } from '@oblimint/shared';
 import { db } from '../../db';
@@ -11,6 +11,7 @@ import { localPaths } from '../hosting/paths';
 import { json } from '../hosting/rows';
 import { dropCandidateRef } from '../releases/candidate';
 import { removeUnder } from '../releases/materialize';
+import { readClone } from './previewDbEnv';
 import { previewDeps } from './previewDeps';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,11 +47,15 @@ export interface PreviewRow {
   cleaned_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  /** migration 019: database clone (option database: 'clone'). */
+  db_clone?: unknown;
+  db_clone_env_sealed?: string | null;
 }
 
 export interface StoredPreviewOptions extends PreviewOptions {
   /** Ephemeral data paths that got a tmpfs (set by the builder). */
   ephemeralPaths?: string[];
+  database: PreviewDatabaseMode;
 }
 
 export const ACTIVE: PreviewStatus[] = [...PREVIEW_ACTIVE_STATUSES];
@@ -61,6 +66,7 @@ export function previewOptions(raw: unknown): StoredPreviewOptions {
   return {
     env: o.env === 'all' ? 'all' : 'public',
     allowBlockedScan: o.allowBlockedScan === true,
+    database: o.database === 'clone' ? 'clone' : 'none',
     ...(Array.isArray(o.ephemeralPaths) ? { ephemeralPaths: o.ephemeralPaths.map(String) } : {}),
   };
 }
@@ -89,9 +95,10 @@ export function toPreview(r: PreviewRow & { creator_name?: string | null; key_na
     createdAt: iso(r.created_at)!,
     createdBy: r.created_by ? { id: r.created_by, name: r.creator_name ?? `#${r.created_by}` } : null,
     createdByKey: r.created_by_key ? { id: r.created_by_key, name: r.key_name ?? `#${r.created_by_key}` } : null,
-    options: { env: opts.env, allowBlockedScan: opts.allowBlockedScan },
+    options: { env: opts.env, allowBlockedScan: opts.allowBlockedScan, database: opts.database },
     scan: json<ScanSummary | null>(r.scan, null),
     warnings: Array.isArray(warnings) ? warnings.filter((w): w is PreviewWarningCode => typeof w === 'string') : [],
+    dbClone: opts.database === 'clone' ? readClone(r.db_clone) : null,
   };
 }
 
@@ -138,7 +145,7 @@ const stopping = new Map<number, Promise<void>>();
 /**
  * Idempotent stop + cleanup: status stopping (a failed row stays failed) →
  * reconcile (the container is no longer desired: removed as an orphan) →
- * edge sync → candidate ref dropped → previews/<id> removed → stopped
+ * edge sync → database clone (servers + private network) removed → candidate ref dropped → previews/<id> removed → stopped
  * (stopped_at, stop_reason, cleaned_at). A failed reconcile leaves cleaned_at
  * null: the expiry worker retries.
  */
@@ -173,6 +180,16 @@ async function stopInner(id: number, reason: PreviewStopReason): Promise<void> {
     logger.warn({ previewId: id, errors: report.errors }, 'preview: container not removed yet (retried)');
   }
   deps.scheduleEdgeSync('preview');
+  // Database clone: its servers and private network (after the preview container's removal above;
+  // whatever is still attached is disconnected). Left behind = retried (cleaned_at stays null).
+  if (previewOptions(row.options).database === 'clone' || row.db_clone) {
+    try {
+      await deps.removeDbClone(row);
+    } catch (err) {
+      cleaned = false;
+      logger.warn({ err: (err as Error).message, previewId: id }, 'preview: database clone not removed yet (retried)');
+    }
+  }
   // A staging preview's ref is dropped by its NAME, whatever candidate_ref says: a stop during
   // commitWholeTree (or a panel exit between update-ref and the row update) leaves the ref
   // without candidate_ref (idempotent: a missing ref is fine).

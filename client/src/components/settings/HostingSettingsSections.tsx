@@ -242,6 +242,7 @@ function ReleasePreviewsSection({ value, previewDomain, save }: { value: Hosting
     memoryMb: String(value.memoryMb),
     cpus: String(value.cpus),
     minIntervalSeconds: String(value.minIntervalSeconds),
+    dbCloneMaxMb: String(value.dbCloneMaxMb),
   });
   const { saving, error, setError, run } = useSaver(save);
   const set = (patch: Partial<typeof draft>) => { setDraft({ ...draft, ...patch }); setError(null); };
@@ -254,8 +255,9 @@ function ReleasePreviewsSection({ value, previewDomain, save }: { value: Hosting
   const cpusNum = Number(draft.cpus);
   const cpus = Number.isFinite(cpusNum) && cpusNum >= 0.25 && cpusNum <= 4 ? cpusNum : null;
   const interval = intInRange(draft.minIntervalSeconds, 0, 3600);
+  const cloneMax = intInRange(draft.dbCloneMaxMb, 0, 65536);
   const ttlOrder = defTtl !== null && maxTtl !== null && defTtl > maxTtl;
-  const valid = defTtl !== null && maxTtl !== null && perAccount !== null && total !== null && memory !== null && cpus !== null && interval !== null && !ttlOrder;
+  const valid = defTtl !== null && maxTtl !== null && perAccount !== null && total !== null && memory !== null && cpus !== null && interval !== null && cloneMax !== null && !ttlOrder;
   const num = (id: keyof typeof draft, label: string, min: number, max: number, parsed: number | null) => (
     <Field label={label} htmlFor={`rp-${id}`} error={parsed === null ? range(min, max) : null}>
       <NumberInput id={`rp-${id}`} value={String(draft[id])} onChange={(v) => set({ [id]: v } as Partial<typeof draft>)} min={min} max={max} invalid={parsed === null} />
@@ -273,7 +275,7 @@ function ReleasePreviewsSection({ value, previewDomain, save }: { value: Hosting
         if (!valid) return;
         void run('releasePreviews', {
           enabled: draft.enabled, defaultTtlMinutes: defTtl!, maxTtlMinutes: maxTtl!, maxPerAccount: perAccount!, maxTotal: total!,
-          memoryMb: memory!, cpus: cpus!, minIntervalSeconds: interval!,
+          memoryMb: memory!, cpus: cpus!, minIntervalSeconds: interval!, dbCloneMaxMb: cloneMax!,
         });
       }}
       onReset={reset} error={error ?? (ttlOrder ? range(5, maxTtl ?? 1440) : null)}
@@ -295,7 +297,11 @@ function ReleasePreviewsSection({ value, previewDomain, save }: { value: Hosting
           <input id="rp-cpus" type="number" step="0.25" min={0.25} max={4} value={draft.cpus} onChange={(e) => set({ cpus: e.target.value })} className={cn(settingsInputCls, 'font-mono', cpus === null && 'ring-2 ring-status-down/50')} />
         </Field>
         {num('minIntervalSeconds', t('previews.settings.minIntervalSeconds') || 'Minimum delay between two previews of a site (s)', 0, 3600, interval)}
+        {num('dbCloneMaxMb', t('previews.settings.dbCloneMaxMb') || 'Largest database copy (MiB, 0 = copies off)', 0, 65536, cloneMax)}
       </div>
+      <p className="text-xs text-text-muted">
+        {t('previews.settings.dbCloneHint') || 'A preview may get a throw-away copy of the site\'s database(s), in memory, on a network of its own: the live database is never reachable. The copy counts in the memory of the host while the preview runs.'}
+      </p>
     </SettingsBlock>
   );
 }

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import type { PreviewWarningCode, ScanSummary } from '@oblimint/shared';
+import type { PreviewDbClone, PreviewWarningCode, ScanSummary } from '@oblimint/shared';
+import { platformSettings } from '../platformSettings';
 import { db } from '../../db';
 import { logger } from '../../utils/logger';
 import { siteDeletions } from '../hosting/deletions';
@@ -16,6 +17,8 @@ import { commitExists, diffStats, headCommit } from '../releases/repo';
 import { releaseService } from '../releases/release.service';
 import { emitPreview, errorText, failPreview, loadPreview, previewCandidateRef, previewDirs, previewOptions, type PreviewRow } from './previewCore';
 import { previewDeps } from './previewDeps';
+import { CloneFailure } from './previewDbClone';
+import { readClone, sealCloneEnv } from './previewDbEnv';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Feature B — preview builder: in-process queue (2 builds at a time, one per
@@ -27,7 +30,8 @@ import { previewDeps } from './previewDeps';
 //   the site lock (withSiteLock: clearStaleGitLocks never runs meanwhile)] →
 //   scan (staging snapshot, or a release never scanned: B6) → ephemeral paths
 //   (real directories only) → tree releases/<n|0> hardlinked from the live tree
-//   → current → <n> → preview.json → starting → reconcile → readiness →
+//   → current → <n> → preview.json → [database clone: private network, clone
+//   servers, data streamed, users] → starting → reconcile → readiness →
 //   edge sync → running.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -219,11 +223,20 @@ async function build1(build: Build): Promise<void> {
   // The reload marker is meaningless for a preview (never reloaded): dropped.
   fs.rmSync(path.join(dirs.runtime, '.reload-pending'), { force: true });
 
+  // Database clone (option database: 'clone'): built BEFORE the preview container exists — the
+  // reconcile only gives the container the clone's network and sockets once the clone is ready.
+  let cloneEnvSealed: string | null = null;
+  if (options.database === 'clone') {
+    await guard();
+    cloneEnvSealed = await buildDbClone(build, row, ctx.account, deps);
+  }
+
   await guard();
   const n = await db('site_previews').where({ id: row.id, status: 'building' }).update({
     status: 'starting',
     options: JSON.stringify({ ...options, ephemeralPaths: ephemeral }),
     warnings: JSON.stringify([...warnings].sort()),
+    ...(cloneEnvSealed ? { db_clone_env_sealed: cloneEnvSealed } : {}),
     updated_at: db.fn.now(),
   });
   if (!n) throw new BuildCancelled();
@@ -256,6 +269,38 @@ async function build1(build: Build): Promise<void> {
     deps.scheduleEdgeSync('preview');
   }
   emitPreview(row, 'running');
+}
+
+/** Builds the database clone of a building preview; returns the sealed env overrides (null: none). */
+async function buildDbClone(build: Build, row: PreviewRow, account: { id: number; node_id: number; uid: number; gid: number }, deps: ReturnType<typeof previewDeps>): Promise<string | null> {
+  const selection = readClone(row.db_clone);
+  if (!selection || !selection.databases.length) throw new BuildFailure('dbCloneFailed', 'Aucune base de données à copier');
+  const rp = await platformSettings.section('releasePreviews');
+  if (rp.dbCloneMaxMb <= 0) throw new BuildFailure('previewDbCloneDisabled', 'Les copies de base sont désactivées sur cette plateforme');
+  let last: PreviewDbClone = selection;
+  const save = async (c: PreviewDbClone) => {
+    last = c;
+    const n = await db('site_previews').where({ id: row.id, status: 'building' }).update({ db_clone: JSON.stringify(c), updated_at: db.fn.now() });
+    if (n) emitPreview(row, 'building');
+  };
+  try {
+    const r = await deps.buildDbClone({
+      previewId: row.id, siteId: row.site_id, accountId: row.account_id, uid: account.uid, gid: account.gid, nodeId: account.node_id,
+      capMb: rp.dbCloneMaxMb, cpus: rp.cpus, databases: selection.databases.map((d) => ({ ...d, state: 'pending' as const })),
+      isCancelled: () => build.cancelled || siteDeletions.has(row.site_id), save,
+    });
+    return sealCloneEnv(r.envOverrides);
+  } catch (err) {
+    const code = err instanceof CloneFailure ? err.code : 'dbCloneFailed';
+    if (code === 'cancelled') throw new BuildCancelled();
+    const message = err instanceof CloneFailure ? err.message : 'La copie de la base de données a échoué';
+    if (!(err instanceof CloneFailure)) logger.warn({ previewId: row.id, err: (err as Error)?.message }, 'preview: database clone failed');
+    await save({
+      ...last, state: 'failed', errorCode: code, error: errorText(message),
+      databases: last.databases.map((d) => (d.state === 'ready' ? d : { ...d, state: 'failed' as const })),
+    }).catch(() => undefined);
+    throw new BuildFailure(code, message);
+  }
 }
 
 /** Fails a build (test / worker use): generic message. */

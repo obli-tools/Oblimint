@@ -2,9 +2,9 @@ import crypto from 'crypto';
 import type { Request } from 'express';
 import {
   PREVIEW_CLAIM_PATH, PREVIEW_FETCH_DEFAULT_BYTES, PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_KEY_HEADER,
-  PREVIEW_MAX_LIFETIME_MS, PREVIEW_OPEN_LINK_TTL_MS, PREVIEW_SHARE_LINK_TTL_MS, PREVIEW_TTL_MINUTES, PREVIEWABLE_RELEASE_STATUSES,
+  PREVIEW_DB_CLONE_MAX_DATABASES, PREVIEW_MAX_LIFETIME_MS, PREVIEW_OPEN_LINK_TTL_MS, PREVIEW_SHARE_LINK_TTL_MS, PREVIEW_TTL_MINUTES, PREVIEWABLE_RELEASE_STATUSES,
   type PreviewFetchResult, type PreviewLink, type PreviewOptions, type PreviewStartResult, type PreviewTarget, type PreviewWarningCode,
-  type ScanSummary, type SitePreview,
+  type PreviewDatabaseCandidate, type PreviewDbCloneDatabase, type ScanSummary, type SitePreview,
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -22,8 +22,10 @@ import { commitExists, scanStaging } from '../releases/repo';
 import { healthcheckHost } from '../releases/release.service';
 import { previewBuilder } from './previewBuild';
 import {
-  ACTIVE, activePreviewOfSite, emitPreview, previewQuery, stopInternal, toPreview, type PreviewRow,
+  ACTIVE, activePreviewOfSite, emitPreview, failPreview, previewOptions, previewQuery, stopInternal, toPreview, type PreviewRow,
 } from './previewCore';
+import { cloneCandidates, initialClone, liveDbExposed, resolveCloneSelection, type DbReach } from './previewDbClone';
+import { readClone } from './previewDbEnv';
 import { previewDeps } from './previewDeps';
 import { validatePreviewPath } from './previewFetch';
 import { setPreviewClaimDomain } from './previewClaimHost';
@@ -36,6 +38,13 @@ import { setPreviewClaimDomain } from './previewClaimHost';
 // sites.manage) — an access key never has it. compare and the options that
 // weaken the isolation need sites.manage (allowBlockedScan: staff only).
 // Share links (decision 9): clients with sites.manage, or staff.
+// Database clone (option database: 'clone'): it exposes live data, so starting
+// one, and opening / sharing / fetching / the key of a clone preview, also
+// need databases.manage on the account (staff: the matching right; a key: the
+// databases.manage scope and every cloned database within its reach).
+// No preview at all while a live database is reachable through a published
+// port (external access on an instance of the account, or anywhere on the
+// node with the egress filter off): liveDbExposed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PreviewStartInput {
@@ -43,6 +52,8 @@ export interface PreviewStartInput {
   releaseId?: number | null;
   ttlMinutes?: number | null;
   options?: Partial<PreviewOptions> | null;
+  /** database 'clone': the databases to copy (default: the ones the site's environment references). */
+  databaseIds?: number[] | null;
 }
 
 export interface PreviewVia {
@@ -52,6 +63,8 @@ export interface PreviewVia {
   includeKey?: boolean;
   /** Keys only: return a share link when the actor may create one. */
   withLink?: boolean;
+  /** Keys only: databases the key reaches (scope databases.manage); absent = no database clone for a key. */
+  dbReach?: DbReach;
 }
 
 const err = (status: number, message: string, code: string, details?: unknown) => new AppError(status, message, code, details);
@@ -72,6 +85,22 @@ async function userId(actor: HostingActor): Promise<number | null> {
 /** Share links: a client needs sites.manage (decision 9), staff code.read (checked before). */
 function canShare(actor: HostingActor, site: SiteRow): boolean {
   return actor.kind === 'staff' || actorCan(actor, 'sites.manage', siteTarget(site));
+}
+
+/**
+ * A preview with a database clone shows production data: databases.manage on
+ * the account (staff: the matching right), and for a key every cloned
+ * database within its reach. Throws 403 previewDatabaseForbidden.
+ */
+function assertCloneAccess(actor: HostingActor, site: SiteRow, row: Pick<PreviewRow, 'options' | 'db_clone'>, reach?: DbReach): void {
+  if (previewOptions(row.options).database !== 'clone') return;
+  if (!actorCan(actor, 'databases.manage', siteTarget(site))) {
+    throw err(403, 'This preview holds a copy of the database: it needs the right to manage the databases', 'previewDatabaseForbidden');
+  }
+  if (reach && reach !== 'all') {
+    const out = (readClone(row.db_clone)?.databases ?? []).filter((d) => !reach.has(d.id));
+    if (out.length) throw err(403, 'This preview holds a copy of a database the key cannot reach', 'previewDatabaseForbidden', { databaseIds: out.map((d) => d.id) });
+  }
 }
 
 /** The ACME wildcard *.previewDomain exists and is valid. */
@@ -170,7 +199,15 @@ export const previewService = {
     }
 
     // 3. Options weakening the isolation.
-    const options: PreviewOptions = { env: input.options?.env === 'all' ? 'all' : 'public', allowBlockedScan: input.options?.allowBlockedScan === true };
+    const options: PreviewOptions = {
+      env: input.options?.env === 'all' ? 'all' : 'public', allowBlockedScan: input.options?.allowBlockedScan === true,
+      database: input.options?.database === 'clone' ? 'clone' : 'none',
+    };
+    const clone = options.database === 'clone';
+    if (clone && (!actorCan(actor, 'databases.manage', target) || (keyId !== null && !via.dbReach))) {
+      throw err(403, 'A database clone needs the right to manage the databases', 'previewDatabaseForbidden');
+    }
+    if (!clone && input.databaseIds && input.databaseIds.length) throw err(400, 'databaseIds needs options.database = clone', 'validation');
     if (options.env === 'all' && !actorCan(actor, 'sites.manage', target)) throw err(403, 'Every environment variable needs the right to manage the site', 'previewOptionForbidden');
     if (options.allowBlockedScan && !(actor.kind === 'staff' && actorCan(actor, 'sites.manage', target))) {
       throw err(403, 'Only the platform staff can preview code blocked by the analysis', 'previewOptionForbidden');
@@ -183,8 +220,14 @@ export const previewService = {
     const previewDomain = settings.preview.previewDomain;
     if (!previewDomain) throw err(409, 'No preview domain is configured on this platform', 'previewDomainMissing');
     setPreviewClaimDomain(previewDomain);
-    const account = await db('hosting_accounts').where({ id: site.account_id }).first('status', 'tenant_id') as { status: string; tenant_id: number } | undefined;
+    const account = await db('hosting_accounts').where({ id: site.account_id }).first('status', 'tenant_id', 'node_id') as { status: string; tenant_id: number; node_id: number } | undefined;
     if (!account || account.status !== 'active') throw err(409, 'The account is not active', 'accountNotActive');
+    // A preview must never reach a live database: a published port (external access) answers on the
+    // host's public address, and with the egress filter off on every host address — no preview then.
+    if (await liveDbExposed(settings.access.egressFilter, Number(account.node_id), site.account_id)) {
+      throw err(409, 'A database server is reachable through a published port (external access): a preview could reach it', 'previewDbExposed');
+    }
+    if (clone && rp.dbCloneMaxMb <= 0) throw err(409, 'Database clones are disabled on this platform', 'previewDbCloneDisabled');
     if (site.status === 'stopped') throw err(409, 'The site is stopped', 'siteStopped');
     if (siteDeletions.has(site.id)) throw err(409, 'The site is being deleted', 'siteDeleting');
     if (rp.minIntervalSeconds > 0) {
@@ -212,6 +255,16 @@ export const previewService = {
       if (st.fileCount === 0) throw err(409, 'The staging is empty', 'stagingEmpty');
     }
 
+    // Database clone: which databases (explicit, else the env-referenced ones), within the size cap.
+    let cloneDbs: PreviewDbCloneDatabase[] | null = null;
+    if (clone) {
+      cloneDbs = await resolveCloneSelection(site, input.databaseIds ?? null, via.dbReach ?? 'all', PREVIEW_DB_CLONE_MAX_DATABASES);
+      const known = cloneDbs.reduce((a, d) => a + (d.sizeBytes ?? 0), 0);
+      if (known > rp.dbCloneMaxMb * 1048576) {
+        throw err(413, 'The databases are too large to be cloned', 'previewDbCloneTooLarge', { sizeBytes: known, maxMb: rp.dbCloneMaxMb });
+      }
+    }
+
     // 6. TTL.
     const ttl = input.ttlMinutes === undefined || input.ttlMinutes === null ? rp.defaultTtlMinutes : Number(input.ttlMinutes);
     const maxTtl = Math.min(rp.maxTtlMinutes, 1440);
@@ -222,7 +275,7 @@ export const previewService = {
     if (!host) throw err(409, 'No valid preview host name for this site', 'previewHostInvalid');
 
     // Warnings known before the build.
-    const warnings = new Set<PreviewWarningCode>(['noDatabase', 'noMail']);
+    const warnings = new Set<PreviewWarningCode>([clone ? 'dbCloneProductionData' : 'noDatabase', 'noMail']);
     if (await db('site_data_paths').where({ site_id: site.id }).first('id')) warnings.add('dataReadOnly');
     if (options.env === 'public' && await siteHasSecretEnv(site.id)) warnings.add('secretsHidden');
     if (settings.access.egressFilter !== 'strict') warnings.add('egressAllowed');
@@ -253,6 +306,7 @@ export const previewService = {
           release_id: release?.id ?? null, release_number: release?.number ?? null, commit_sha: release?.commit_sha ?? null,
           base: site.base, status: 'building', host, access_secret_sealed: seal('site-preview', secret),
           options: JSON.stringify(options), scan: scan ? JSON.stringify(scan) : null, warnings: JSON.stringify([...warnings].sort()),
+          db_clone: cloneDbs ? JSON.stringify(initialClone(cloneDbs)) : null,
           created_by: await userId(actor), created_by_key: keyId, expires_at: new Date(now + ttl * 60_000),
         }).returning('*') as PreviewRow[];
         return row;
@@ -271,7 +325,10 @@ export const previewService = {
     previewBuilder.enqueue(created.id, site.id);
     await auditService.logReqAs(req, site.tenant_id, 'preview.start', {
       resourceType: 'site', resourcePath: String(site.id),
-      details: { previewId: created.id, target: input.target, releaseId: release?.id ?? null, releaseNumber: release?.number ?? null, ttlMinutes: ttl, options },
+      details: {
+        previewId: created.id, target: input.target, releaseId: release?.id ?? null, releaseNumber: release?.number ?? null, ttlMinutes: ttl, options,
+        ...(cloneDbs ? { databaseIds: cloneDbs.map((d) => d.id) } : {}),
+      },
     });
     emitPreview(created, 'building');
 
@@ -289,10 +346,11 @@ export const previewService = {
   },
 
   /** The gate key of the running preview (keys: include_key on a preview already started). */
-  async key(req: Request, actor: HostingActor, siteId: number): Promise<{ header: string; value: string }> {
+  async key(req: Request, actor: HostingActor, siteId: number, reach?: DbReach): Promise<{ header: string; value: string }> {
     const site = await loadSite(actor, siteId, 'read');
     assertReadsCode(actor, site);
     const row = await activeOrThrow(site.id);
+    assertCloneAccess(actor, site, row, reach);
     await auditService.logReqAs(req, site.tenant_id, 'preview.key', { resourceType: 'site', resourcePath: String(site.id), details: { previewId: row.id } });
     return { header: PREVIEW_KEY_HEADER, value: openSecret('site-preview', row.access_secret_sealed) };
   },
@@ -332,11 +390,12 @@ export const previewService = {
   },
 
   /** One-shot share link (interstitial page + POST, 10 min). Clients: sites.manage (decision 9). */
-  async shareLink(req: Request, actor: HostingActor, siteId: number, keyId: number | null = null): Promise<PreviewLink> {
+  async shareLink(req: Request, actor: HostingActor, siteId: number, keyId: number | null = null, reach?: DbReach): Promise<PreviewLink> {
     const site = await loadSite(actor, siteId, 'read');
     assertReadsCode(actor, site);
     if (!canShare(actor, site)) throw err(403, 'Share links need the right to manage the site', 'previewShareForbidden');
     const row = await activeOrThrow(site.id);
+    assertCloneAccess(actor, site, row, reach);
     const l = await createLink(row, 'share', actor, keyId);
     await auditService.logReqAs(req, site.tenant_id, 'preview.link', { resourceType: 'site', resourcePath: String(site.id), details: { previewId: row.id, kind: 'share' } });
     return { url: claimUrl(row.host, l.token), expiresAt: l.expiresAt.toISOString(), kind: 'share' };
@@ -347,6 +406,7 @@ export const previewService = {
     const site = await loadSite(actor, siteId, 'read');
     assertReadsCode(actor, site);
     const row = await activeOrThrow(site.id, ['starting', 'running']);
+    assertCloneAccess(actor, site, row);
     const l = await createLink(row, 'open', actor, null);
     await auditService.logReqAs(req, site.tenant_id, 'preview.link', { resourceType: 'site', resourcePath: String(site.id), details: { previewId: row.id, kind: 'open' } });
     return claimUrl(row.host, l.token);
@@ -355,7 +415,7 @@ export const previewService = {
   /** GET/HEAD of one path of the running preview (compare: + the live primary container, sites.manage). */
   async fetch(actor: HostingActor, siteId: number, q: {
     path: unknown; compare?: boolean; host?: 'preview' | 'live' | null; maxBytes?: number | null; method?: 'GET' | 'HEAD' | null;
-  }): Promise<PreviewFetchResult> {
+  }, reach?: DbReach): Promise<PreviewFetchResult> {
     const site = await loadSite(actor, siteId, 'read');
     assertReadsCode(actor, site);
     const path = validatePreviewPath(q.path);
@@ -363,6 +423,7 @@ export const previewService = {
     if (q.compare && !actorCan(actor, 'sites.manage', siteTarget(site))) throw err(403, 'Comparing with the live site needs the right to manage the site', 'previewCompareForbidden');
     const row = await activePreviewOfSite(site.id);
     if (!row || row.status !== 'running') throw err(409, 'No preview is running for this site', 'previewNotRunning');
+    assertCloneAccess(actor, site, row, reach);
     const maxBytes = q.maxBytes === undefined || q.maxBytes === null ? PREVIEW_FETCH_DEFAULT_BYTES : Number(q.maxBytes);
     if (!Number.isInteger(maxBytes) || maxBytes < PREVIEW_FETCH_MIN_BYTES || maxBytes > PREVIEW_FETCH_MAX_BYTES) {
       throw err(400, `maxBytes must be between ${PREVIEW_FETCH_MIN_BYTES} and ${PREVIEW_FETCH_MAX_BYTES}`, 'validation');
@@ -390,6 +451,36 @@ export const previewService = {
     } finally {
       const n = (fetchSlots.get(site.id) ?? 1) - 1;
       if (n <= 0) fetchSlots.delete(site.id); else fetchSlots.set(site.id, n);
+    }
+  },
+
+  /** Databases a clone of this site may copy (databases.manage; a key: within its reach), env-referenced ones flagged. */
+  async databaseCandidates(actor: HostingActor, siteId: number, reach: DbReach = 'all'): Promise<PreviewDatabaseCandidate[]> {
+    const site = await loadSite(actor, siteId, 'read');
+    if (!actorCan(actor, 'databases.manage', siteTarget(site))) throw err(403, 'A database clone needs the right to manage the databases', 'previewDatabaseForbidden');
+    return cloneCandidates(site, reach);
+  },
+
+  /**
+   * Worker / hooks: an active preview that could reach a live database through a published port
+   * (liveDbExposed) is failed (dbIsolationLost). Never throws.
+   */
+  async enforceDbIsolation(): Promise<number> {
+    try {
+      const egress = (await platformSettings.section('access')).egressFilter;
+      const rows = await db('site_previews as p').join('hosting_accounts as a', 'a.id', 'p.account_id')
+        .whereIn('p.status', ACTIVE).select('p.id', 'p.account_id', 'a.node_id') as Array<{ id: number; account_id: number; node_id: number }>;
+      let n = 0;
+      for (const r of rows) {
+        if (!(await liveDbExposed(egress, Number(r.node_id), Number(r.account_id)))) continue;
+        previewBuilder.cancel(r.id);
+        await failPreview(r.id, 'dbIsolationLost', 'Un serveur de base est joignable par un port publié (accès externe) : aperçu arrêté').catch(() => undefined);
+        n++;
+      }
+      return n;
+    } catch (e) {
+      logger.warn({ err: (e as Error).message }, 'preview: database isolation not checked');
+      return 0;
     }
   },
 
@@ -438,6 +529,9 @@ export const previewService = {
     const toClean = await db('site_previews').whereIn('status', ['stopping', 'failed']).whereNull('cleaned_at').pluck('id') as number[];
     void (async () => {
       for (const id of toClean) await stopInternal(id, 'expired').catch(() => undefined);
+      // Clone servers / private networks left by a preview that no longer needs them.
+      const { sweepClones } = await import('./previewExpiry');
+      await sweepClones();
     })();
   },
 

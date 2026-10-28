@@ -373,7 +373,14 @@
       "previewHostInvalid": "Aucun nom d'hôte d'aperçu valide pour ce site.",
       "scanBlocked": "L'analyse a bloqué ce code : pas d'aperçu.",
       "accountNotActive": "Le compte d'hébergement n'est pas actif.",
-      "siteStopped": "Le site est arrêté."
+      "siteStopped": "Le site est arrêté.",
+      "previewDatabaseForbidden": "Une copie de la base demande le droit de gérer les bases de données.",
+      "previewDatabaseChoice": "Choisissez la ou les bases à copier.",
+      "previewNoDatabase": "Le compte n'a aucune base à copier.",
+      "previewDbCloneTooLarge": "Les bases sont trop volumineuses pour être copiées dans un aperçu.",
+      "previewDbCloneDisabled": "Les copies de base sont désactivées sur cette plateforme.",
+      "previewDbInstanceNotRunning": "Le serveur de base de données n'est pas démarré.",
+      "previewDbExposed": "Un serveur de base du compte a l'accès externe activé (ou un serveur de la machine alors que le filtre de sortie est coupé) : aucun aperçu ne peut tourner, il pourrait joindre la base en ligne. Coupez d'abord l'accès externe."
     },
     "fields": {
       "account": "Compte d'hébergement",

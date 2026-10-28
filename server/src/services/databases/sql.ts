@@ -1,4 +1,5 @@
-import type { DbFamily, DbPrivilegeLevel } from '@oblimint/shared';
+import type { DbEngine, DbFamily, DbPrivilegeLevel } from '@oblimint/shared';
+import { dbFamilyOf } from '@oblimint/shared';
 import { AppError } from '../../middleware/errorHandler';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,4 +404,136 @@ export function mysqlRestoreUserLockSql(databaseId: number, password: string): S
 /** Restore preamble (PostgreSQL runs the dump as the database owner role: objects belong to it). */
 export function pgRestoreOptions(databaseId: number): string {
   return `-c role=${pgOwnerRole(databaseId)}`;
+}
+
+// ── feature B: users copied into a preview's database clone ──────────────────
+//
+// The clone gets the live users with the SAME password, without the panel ever
+// knowing it: the stored hash is read on the live instance (superuser, hex
+// encoded) and replayed (MariaDB IDENTIFIED VIA … USING, MySQL IDENTIFIED WITH
+// … AS 0x…, PostgreSQL PASSWORD '<SCRAM verifier>'). A user whose password sits
+// in a SECRET environment variable gets a random one instead ('password').
+
+/** Authentication of a user in a preview's database clone. */
+export type CloneUserAuth =
+  | { kind: 'password'; password: string }
+  /** mysql.global_priv (MariaDB): plugin + authentication_string. */
+  | { kind: 'mariadb'; plugin: string; authString: string }
+  /** mysql.user (MySQL): plugin + authentication_string as hex (binary hashes). */
+  | { kind: 'mysql'; plugin: string; authHex: string }
+  /** pg_authid.rolpassword (null: no password). */
+  | { kind: 'postgresql'; verifier: string | null };
+
+export const AUTH_PLUGIN_RE = /^[a-z0-9_]{1,64}$/;
+const HEX_RE = /^(?:[0-9A-Fa-f]{2})*$/;
+/** A SCRAM / md5 verifier: printable ASCII, no quote. */
+const PG_VERIFIER_RE = /^[\x21-\x26\x28-\x7e]{1,512}$/;
+
+function cloneUser(user: string): string {
+  if (!DB_USER_RE.test(user)) throw new Error(`invalid user name for a clone: ${user}`);
+  return user;
+}
+
+/** Superuser query: the stored authentication of `users` (hex encoded columns, batch output). */
+export function cloneAuthQuerySql(engine: DbEngine, users: string[]): SqlScript | null {
+  const names = [...new Set(users.map(cloneUser))];
+  if (!names.length) return null;
+  if (dbFamilyOf(engine) === 'postgresql') {
+    const list = names.map((u) => quoteString('postgresql', u)).join(', ');
+    return {
+      sql: join([
+        `SELECT encode(convert_to(rolname, 'UTF8'), 'hex'), encode(convert_to(COALESCE(rolpassword, ''), 'UTF8'), 'hex') FROM pg_catalog.pg_authid WHERE rolname IN (${list});`,
+      ]),
+    };
+  }
+  const list = names.map((u) => quoteString('mysql', u)).join(', ');
+  if (engine === 'mariadb') {
+    return {
+      sql: join([
+        `SELECT HEX(User), HEX(IFNULL(JSON_VALUE(Priv, '$.plugin'), '')), HEX(IFNULL(JSON_VALUE(Priv, '$.authentication_string'), '')) FROM mysql.global_priv WHERE Host = '%' AND User IN (${list});`,
+      ]),
+    };
+  }
+  return { sql: join([`SELECT HEX(User), HEX(plugin), HEX(authentication_string) FROM mysql.user WHERE Host = '%' AND User IN (${list});`]) };
+}
+
+/** Parses the batch output of cloneAuthQuerySql: user → authentication (malformed lines ignored). */
+export function parseCloneAuthOutput(engine: DbEngine, stdout: string): Map<string, CloneUserAuth> {
+  const out = new Map<string, CloneUserAuth>();
+  const unhex = (h: string): string | null => (HEX_RE.test(h) ? Buffer.from(h, 'hex').toString('utf8') : null);
+  for (const line of stdout.split(/\r?\n/)) {
+    const cols = line.split('\t').map((c) => c.trim());
+    if (cols.length < 2 || !cols[0]) continue;
+    const user = unhex(cols[0]);
+    if (!user || !DB_USER_RE.test(user)) continue;
+    if (engine === 'postgresql') {
+      const v = unhex(cols[1] ?? '');
+      if (v === null) continue;
+      out.set(user, { kind: 'postgresql', verifier: v === '' ? null : v });
+      continue;
+    }
+    const plugin = unhex(cols[1] ?? '');
+    if (!plugin || !AUTH_PLUGIN_RE.test(plugin)) continue;
+    if (engine === 'mariadb') {
+      const auth = unhex(cols[2] ?? '');
+      if (auth === null) continue;
+      out.set(user, { kind: 'mariadb', plugin, authString: auth });
+    } else {
+      const hex = cols[2] ?? '';
+      if (!HEX_RE.test(hex)) continue;
+      out.set(user, { kind: 'mysql', plugin, authHex: hex.toUpperCase() });
+    }
+  }
+  return out;
+}
+
+/**
+ * Creates a user in a preview's database clone with its authentication and
+ * its grants (on the cloned databases only). Validated like the rest: user
+ * name whitelist, plugin whitelist, hex / verifier charsets, then quoting.
+ */
+export function cloneUserSql(family: DbFamily, user: string, auth: CloneUserAuth, grants: GrantSpec[]): SqlScript {
+  cloneUser(user);
+  if (family === 'postgresql') {
+    let head: string;
+    if (auth.kind === 'password') {
+      head = `CREATE ROLE ${quoteIdent('postgresql', user)} LOGIN PASSWORD ${quoteString('postgresql', auth.password)};`;
+    } else if (auth.kind === 'postgresql') {
+      if (auth.verifier !== null && !PG_VERIFIER_RE.test(auth.verifier)) throw new Error(`unexpected password verifier for ${user}`);
+      head = `CREATE ROLE ${quoteIdent('postgresql', user)} LOGIN${auth.verifier === null ? '' : ` PASSWORD ${quoteString('postgresql', auth.verifier)}`};`;
+    } else {
+      throw new Error('PostgreSQL clone user with a MySQL authentication');
+    }
+    return pgScript(grants.flatMap((g) => pgGrantLines(user, g)), [head]);
+  }
+  let create: string;
+  if (auth.kind === 'password') {
+    create = `CREATE USER ${mysqlAccount(user)} IDENTIFIED BY ${quoteString('mysql', auth.password)};`;
+  } else if (auth.kind === 'mariadb') {
+    if (!AUTH_PLUGIN_RE.test(auth.plugin) || auth.authString.includes('\0')) throw new Error(`unexpected authentication for ${user}`);
+    create = `CREATE USER ${mysqlAccount(user)} IDENTIFIED VIA ${auth.plugin} USING ${quoteString('mysql', auth.authString)};`;
+  } else if (auth.kind === 'mysql') {
+    if (!AUTH_PLUGIN_RE.test(auth.plugin) || !HEX_RE.test(auth.authHex)) throw new Error(`unexpected authentication for ${user}`);
+    create = `CREATE USER ${mysqlAccount(user)} IDENTIFIED WITH ${auth.plugin} AS ${auth.authHex ? `0x${auth.authHex}` : "''"};`;
+  } else {
+    throw new Error('MySQL clone user with a PostgreSQL authentication');
+  }
+  return { sql: join([create, ...grants.map((g) => mysqlGrant(user, g))]) };
+}
+
+/** PostgreSQL clone: temporary login role restoring a database as its owner role (dropped right after). */
+export function pgCloneRestoreRoleSql(databaseId: number, role: string, password: string): SqlScript {
+  if (!/^oblimint_r[0-9a-f]{8}$/.test(role)) throw new Error('invalid restore role');
+  const r = quoteIdent('postgresql', role);
+  return {
+    sql: join([
+      `CREATE ROLE ${r} LOGIN PASSWORD ${quoteString('postgresql', password)};`,
+      `GRANT ${quoteIdent('postgresql', pgOwnerRole(databaseId))} TO ${r};`,
+    ]),
+  };
+}
+
+export function pgDropRoleSql(role: string): SqlScript {
+  if (!/^oblimint_r[0-9a-f]{8}$/.test(role)) throw new Error('invalid restore role');
+  return { sql: join([`DROP ROLE IF EXISTS ${quoteIdent('postgresql', role)};`]) };
 }

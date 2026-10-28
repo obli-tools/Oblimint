@@ -286,6 +286,12 @@ export interface ReleasePreviewSettings {
   cpus: number;
   /** Minimum delay between two previews of the same site (seconds). */
   minIntervalSeconds: number;
+  /**
+   * Disposable database clone of a preview (option database: 'clone'): the
+   * largest total size of the cloned databases, measured on the live
+   * instances (MiB). 0 = clones disabled.
+   */
+  dbCloneMaxMb: number;
 }
 
 export interface HostingSettings {
@@ -329,7 +335,7 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
   },
   preview: { previewDomain: null, wildcardCertificate: false },
   releasePreviews: {
-    enabled: true, defaultTtlMinutes: 60, maxTtlMinutes: 480, maxPerAccount: 2, maxTotal: 20, memoryMb: 512, cpus: 1, minIntervalSeconds: 60,
+    enabled: true, defaultTtlMinutes: 60, maxTtlMinutes: 480, maxPerAccount: 2, maxTotal: 20, memoryMb: 512, cpus: 1, minIntervalSeconds: 60, dbCloneMaxMb: 2048,
   },
   dbAdmin: { hostname: null },
   access: {

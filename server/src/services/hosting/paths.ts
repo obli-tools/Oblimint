@@ -24,6 +24,9 @@ import { config, dataDir } from '../../config';
 //           <previewId>/releases/<n>/            immutable tree (n = release number, 0 = staging snapshot)
 //           <previewId>/releases/current -> <n>  relative symlink (→ /srv/releases, RO, in the preview container ONLY)
 //           <previewId>/runtime/preview.json     SiteRuntimeConfig role 'preview' — never msmtprc
+//           <previewId>/dbsock/                  root:gid 0750  database clone (option database: 'clone'), same layout as
+//             i-<liveInstanceId>/                uid:gid  0750  the account's dbsock/ (below): rw in the CLONE container, the whole
+//             mysql/ postgresql/                 root:gid 0750  dbsock/ RO in the preview container — never the account's dbsock/
 //           (outside releases/: prune / orphan sweeps never see it; same filesystem → hardlinks work)
 //
 //     dbsock/                                   root:gid  0750  (P2: parent of the socket dirs, root-owned: bind sources)
@@ -130,6 +133,12 @@ export function hostingLayout(root: string) {
     preview: (accountId: number, siteId: number, previewId: number) => joinPosix(site(accountId, siteId), 'previews', previewId),
     previewReleases: (accountId: number, siteId: number, previewId: number) => joinPosix(site(accountId, siteId), 'previews', previewId, 'releases'),
     previewRuntime: (accountId: number, siteId: number, previewId: number) => joinPosix(site(accountId, siteId), 'previews', previewId, 'runtime'),
+    // Feature B — database clone of a preview: socket dirs (bind sources of the clone and the preview container).
+    previewDbSockets: (accountId: number, siteId: number, previewId: number) => joinPosix(site(accountId, siteId), 'previews', previewId, 'dbsock'),
+    previewDbSocketInstance: (accountId: number, siteId: number, previewId: number, instanceId: number) =>
+      joinPosix(site(accountId, siteId), 'previews', previewId, 'dbsock', `i-${instanceId}`),
+    previewDbSocketDefault: (accountId: number, siteId: number, previewId: number, family: 'mysql' | 'postgresql') =>
+      joinPosix(site(accountId, siteId), 'previews', previewId, 'dbsock', family),
     // P2 — database sockets / data (hostd creates them; see the tree above).
     dbSockets: (accountId: number) => joinPosix(account(accountId), 'dbsock'),
     dbSocketDefault: (accountId: number, family: 'mysql' | 'postgresql') => joinPosix(account(accountId), 'dbsock', family),

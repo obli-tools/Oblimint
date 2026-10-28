@@ -44,6 +44,17 @@ async function accountRow(ctx: ApiKeyContext): Promise<AccountRow> {
   return loadAccount(ctx.actor, ctx.accountId, 'read');
 }
 
+/**
+ * Feature B (database clone): the databases a key reaches — every one of the account on a key for
+ * all sites, else the ones it created (api_key_db_objects, as keyDatabases). A key without the
+ * databases.manage scope reaches none (its actor lacks databases.manage anyway).
+ */
+async function keyDbReach(ctx: ApiKeyContext): Promise<'all' | Set<number>> {
+  if (!ctx.scopes.has('databases.manage')) return new Set();
+  if (ctx.siteScope === 'all') return 'all';
+  return new Set((await db('api_key_db_objects').where({ key_id: ctx.id, kind: 'database' }).pluck('object_id') as number[]).map(Number));
+}
+
 /** previews.manage, and files.read (a preview runs and shows the code): 403 codeReadForbidden with a hint otherwise. */
 function previewScopes(ctx: ApiKeyContext): void {
   requireScope(ctx, 'previews.manage');
@@ -455,6 +466,7 @@ export const keyApi = {
    */
   async previewStart(ctx: ApiKeyContext, req: Request, siteId: number, body: {
     releaseId?: number | null; staging?: boolean; ttlMinutes?: number | null; wait?: boolean; includeKey?: boolean;
+    database?: 'none' | 'clone'; databaseIds?: number[] | null;
   }): Promise<PreviewStartResult> {
     previewScopes(ctx);
     const site = await keySite(ctx, siteId);
@@ -463,9 +475,13 @@ export const keyApi = {
       throw new AppError(400, 'Give either release_id or staging: true', 'validation');
     }
     if (staging) requireScope(ctx, 'releases.publish');
+    // Database clone: + the databases.manage scope, only databases within the key's reach.
+    const clone = body.database === 'clone';
+    if (clone) requireScope(ctx, 'databases.manage');
     const r = await previewService.start(req, ctx.actor, site.id, {
-      target: staging ? 'staging' : 'release', releaseId: body.releaseId ?? null, ttlMinutes: body.ttlMinutes ?? null, options: null,
-    }, { keyId: ctx.id, includeKey: body.includeKey === true, withLink: true });
+      target: staging ? 'staging' : 'release', releaseId: body.releaseId ?? null, ttlMinutes: body.ttlMinutes ?? null,
+      options: clone ? { database: 'clone' } : null, databaseIds: clone ? body.databaseIds ?? null : null,
+    }, { keyId: ctx.id, includeKey: body.includeKey === true, withLink: true, ...(clone ? { dbReach: await keyDbReach(ctx) } : {}) });
     if (body.wait === false) return r;
     for (let waited = 0; waited < 25_000; waited += 500) {
       const p = await previewService.get(ctx.actor, site.id);
@@ -493,7 +509,7 @@ export const keyApi = {
   async previewLink(ctx: ApiKeyContext, req: Request, siteId: number): Promise<PreviewLink> {
     previewScopes(ctx);
     const site = await keySite(ctx, siteId);
-    return previewService.shareLink(req, ctx.actor, site.id, ctx.id);
+    return previewService.shareLink(req, ctx.actor, site.id, ctx.id, await keyDbReach(ctx));
   },
 
   async previewFetch(ctx: ApiKeyContext, siteId: number, q: {
@@ -502,7 +518,7 @@ export const keyApi = {
     previewScopes(ctx);
     if (q.compare) requireScope(ctx, 'sites.manage');
     const site = await keySite(ctx, siteId);
-    return previewService.fetch(ctx.actor, site.id, q);
+    return previewService.fetch(ctx.actor, site.id, q, await keyDbReach(ctx));
   },
 
   // ── subdomains (scope domains.subdomain) ──

@@ -2,7 +2,7 @@
   "previews": {
     "title": "Aperçu en direct",
     "explain": "Fait tourner le code d'une release (ou un instantané analysé du staging) dans un conteneur temporaire et isolé, sur une URL privée. Rien ne part en ligne.",
-    "limits": "Données en lecture seule (uploads, caches et sessions fichiers échouent), aucune base de données, pas de mail, Internet comme le site, variables d'environnement secrètes masquées. Les instantanés du staging sont analysés avant.",
+    "limits": "Données en lecture seule (uploads, caches et sessions fichiers échouent), pas de base de données sauf copie demandée, pas de mail, Internet comme le site, variables d'environnement secrètes masquées. Les instantanés du staging sont analysés d'abord.",
     "replaces": "Remplace l'aperçu en cours de ce site.",
     "start": "Aperçu",
     "startRelease": "Aperçu de la release #{{number}}",
@@ -61,7 +61,8 @@
       "noMail": "L'envoi de mail est désactivé.",
       "egressAllowed": "L'aperçu accède à Internet comme le site (API externes avec de vrais identifiants comprises).",
       "selfSignedCertificate": "Certificat auto-signé : le navigateur demande une exception.",
-      "notSegmented": "Le réseau du compte n'est pas segmenté : l'aperçu atteint les autres conteneurs du compte comme le site."
+      "notSegmented": "Le réseau du compte n'est pas segmenté : l'aperçu atteint les autres conteneurs du compte comme le site.",
+      "dbCloneProductionData": "La base est une copie de la production prise au démarrage : données réelles, toute écriture perdue à l'arrêt."
     },
     "errorCodes": {
       "scanBlocked": "Bloqué par l'analyse.",
@@ -73,7 +74,14 @@
       "publishInProgress": "Une publication était en cours : réessaie.",
       "releaseNotReady": "Commit de la release introuvable.",
       "cancelled": "Annulé.",
-      "previewBuildFailed": "L'aperçu n'a pas pu être construit."
+      "previewBuildFailed": "L'aperçu n'a pas pu être construit.",
+      "dbCloneFailed": "La copie de la base a échoué.",
+      "dbCloneTooLarge": "Les bases sont trop volumineuses pour être copiées.",
+      "dbCloneExited": "Le serveur de la copie de la base s'est arrêté.",
+      "dbIsolationLost": "Un serveur de base est devenu joignable par un port publié (accès externe) : aperçu arrêté.",
+      "previewDbCloneDisabled": "Les copies de base sont désactivées sur cette plateforme.",
+      "previewDbInstanceNotRunning": "Le serveur de base de données n'est pas démarré.",
+      "instanceBusy": "Le serveur de base était occupé (sauvegarde, export…) : réessayez."
     },
     "settings": {
       "title": "Aperçus de release",
@@ -85,7 +93,29 @@
       "maxTotal": "Aperçus sur la plateforme",
       "memoryMb": "Mémoire par aperçu (Mio)",
       "cpus": "CPU par aperçu",
-      "minIntervalSeconds": "Délai minimal entre deux aperçus d'un site (s)"
+      "minIntervalSeconds": "Délai minimal entre deux aperçus d'un site (s)",
+      "dbCloneMaxMb": "Plus grande copie de base (Mio, 0 = copies coupées)",
+      "dbCloneHint": "Un aperçu peut recevoir une copie jetable de la ou des bases du site, en mémoire, sur un réseau à lui : la base en ligne n'est jamais joignable. La copie compte dans la mémoire de l'hôte tant que l'aperçu tourne."
+    },
+    "db": {
+      "clone": "Copier la base de données",
+      "cloneHint": "Une copie jetable de la ou des bases du site, prise maintenant à partir d'un export cohérent : mêmes noms, utilisateurs et mots de passe, le site se connecte sans changement. La base en ligne n'est jamais joignable depuis l'aperçu.",
+      "warning": "La copie contient des données de production : quiconque ouvre l'aperçu les voit. Toute écriture est perdue à l'arrêt de l'aperçu ; le mail reste coupé.",
+      "loading": "Chargement des bases…",
+      "none": "Le compte n'a aucune base de données.",
+      "referenced": "utilisée par le site",
+      "stopped": "serveur arrêté",
+      "pick": "Choisissez au moins une base.",
+      "title": "Copie de la base",
+      "streamed": "{{size}} copiés",
+      "size": "taille en ligne {{size}}",
+      "rotated": "Mot de passe aléatoire dans la copie pour {{users}} (le vrai est dans une variable secrète).",
+      "state": {
+        "pending": "en attente",
+        "cloning": "copie en cours",
+        "ready": "prête",
+        "failed": "échec"
+      }
     }
   }
 }
