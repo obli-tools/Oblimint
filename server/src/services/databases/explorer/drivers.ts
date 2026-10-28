@@ -830,7 +830,8 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
     setTimeout: (s) => exclusive(() => setTimeoutS(s)),
 
     cancel: (id) => exclusive(async () => {
-      try { const r = await rows<unknown[]>('SELECT pg_cancel_backend($1)', [id]); return r[0]?.[0] === true; } catch { return false; }
+      // The session user itself (the connection otherwise runs as the database owner role: no right on the session's backend).
+      try { await run1('SET ROLE NONE'); const r = await rows<unknown[]>('SELECT pg_cancel_backend($1)', [id]); return r[0]?.[0] === true; } catch { return false; }
     }),
 
     close: () => client.end().catch(() => undefined),
