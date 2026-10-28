@@ -197,6 +197,7 @@ test('SQL explorer end to end on real engines', { timeout: 600_000 }, async (t: 
       assert.ok(!/root|postgres@/.test(dump.split('\n').filter((l) => /DEFINER|OWNER/.test(l)).join('\n')), 'no superuser definer / owner');
       const st = await explorerService.startImport(instance, shop2, U, Readable.from([res.body()]), 'application/gzip', res.body().length, { format: 'sql' });
       assert.equal(st.state, 'done', JSON.stringify(st.errors));
+      if (my) assert.match(st.message ?? '', /trg_orders[\s\S]*DEFINER/, 'the definer note of a MySQL-family import');
       for (const table of ['customers', 'orders']) {
         const sum = my ? `SELECT COUNT(*), MD5(GROUP_CONCAT(CONCAT_WS('|', ${table === 'orders' ? 'id, customer_id, title, qty, HEX(bin), note' : 'id, name'}) ORDER BY id)) FROM ${table}`
           : `SELECT COUNT(*), md5(string_agg(concat_ws('|', ${table === 'orders' ? 'id, customer_id, title, qty, encode(bin, \'hex\'), note' : 'id, name'}), ',' ORDER BY id)) FROM ${table}`;

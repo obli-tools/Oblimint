@@ -651,6 +651,15 @@ export const explorerService = {
           }
         });
         status.state = job.cancel ? 'cancelled' : status.errorCount && !o.continueOnError ? 'failed' : 'done';
+        if (o.format === 'sql' && s.family === 'mysql') {
+          // DEFINER clauses were removed: views / routines in SQL SECURITY DEFINER, triggers and events now run as this
+          // session's temporary user, and break once it is dropped. Said, never silently.
+          let orphans: DbxObject[] = [];
+          try { orphans = (await s.driver.objects()).filter((x) => x.ephemeralDefiner && !!x.definer?.includes(s.username)); } catch { /* catalog not readable: no note */ }
+          if (orphans.length) {
+            status.message = `${status.message ? `${status.message}. ` : ''}${orphans.length} object(s) (${orphans.slice(0, 5).map((x) => x.name).join(', ')}${orphans.length > 5 ? '…' : ''}) have the temporary SQL user of this session as DEFINER and will stop working when the session ends: recreate them with SQL SECURITY INVOKER, or restore the dump from the database page (permanent definer).`;
+          }
+        }
       } catch (err) {
         status.state = 'failed';
         status.message = err instanceof AppError ? err.message : sqlError(err).message;
