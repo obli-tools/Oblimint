@@ -114,15 +114,26 @@ export async function stagingConflicts(siteId: number, baseCommit: string, paths
   return conflictsWithStaging(s.repo, s.staging, baseCommit, paths.filter((p) => !s.dataPaths.some((d) => p === d || p.startsWith(`${d}/`))));
 }
 
-/** Applies the written / deleted paths to staging/<slug> through hostd (source: window export or workspace). */
-export async function reflectToStaging(siteId: number, source: HostdChangeSource, changes: ChangedPath[]): Promise<{ written: number; deleted: number; conflicts: string[] }> {
+/** hostd applyToStaging calls carry at most this many paths (one request body each). */
+export const REFLECT_BATCH = 50_000;
+
+/** Applies the written / deleted paths to staging/<slug> through hostd (source: window export or workspace), in batches. */
+export async function reflectToStaging(
+  siteId: number, source: HostdChangeSource, changes: ChangedPath[], opts: { batchSize?: number } = {},
+): Promise<{ written: number; deleted: number; conflicts: string[] }> {
   const s = await siteRefs(siteId);
   const list = changes
     .filter((c) => !c.ignored && c.type !== 'dir' && !s.dataPaths.some((d) => c.path === d || c.path.startsWith(`${d}/`)))
     .map((c) => ({ path: c.path, op: c.change === 'deleted' ? 'delete' as const : 'write' as const }));
-  if (!list.length) return { written: 0, deleted: 0, conflicts: [] };
-  const r = await releaseDeps().applyToStaging(s.nodeId, s.spec, source, list);
-  return { written: r.written, deleted: r.deleted, conflicts: (r.conflicts ?? []).map((c) => c.path) };
+  const out = { written: 0, deleted: 0, conflicts: [] as string[] };
+  const size = Math.max(1, opts.batchSize ?? REFLECT_BATCH);
+  for (let i = 0; i < list.length; i += size) {
+    const r = await releaseDeps().applyToStaging(s.nodeId, s.spec, source, list.slice(i, i + size));
+    out.written += r.written;
+    out.deleted += r.deleted;
+    out.conflicts.push(...(r.conflicts ?? []).map((c) => c.path));
+  }
+  return out;
 }
 
 /** Drops a candidate ref (rejected window / failed run); objects are left to git gc. Never throws. */

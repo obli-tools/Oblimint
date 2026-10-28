@@ -173,7 +173,7 @@ const defaults: WindowDeps = {
       const site = await db('sites').where({ id: siteId }).first('publish_mode') as { publish_mode: string } | undefined;
       if (!site || site.publish_mode === 'manual') return;
       const { releaseService } = await import('../releases/release.service');
-      if ((await releaseService.stagingStatus(siteId)).pendingChanges <= 0) return;
+      if ((await releaseService.stagingStatus(siteId, { compareLive: false })).pendingChanges <= 0) return;
       const { publishScheduler } = await import('../releases/publishScheduler');
       publishScheduler.notifyChange(siteId);
     })().catch((err) => logger.debug({ err, siteId }, 'Windows: staging re-arm skipped'));

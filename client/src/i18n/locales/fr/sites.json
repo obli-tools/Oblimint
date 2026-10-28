@@ -61,7 +61,15 @@
       "rollback": "Restaurer cette release",
       "rollbackConfirm": "Remettre en ligne la release n°{{number}} ? La bascule est instantanée ; si son contrôle de santé échoue, la release courante est conservée.",
       "rollbackShort": "Restaurer",
-      "rolledBack": "La release n°{{number}} est de nouveau en ligne"
+      "rolledBack": "La release n°{{number}} est de nouveau en ligne",
+      "restoreStaging": "Copier dans le staging",
+      "restoreStagingShort": "Copier",
+      "restoreStagingConfirm": "Rendre le dossier de staging identique au code de la release #{{number}} ? Rien ne passe en ligne ; les chemins de données ne sont pas touchés. En publication automatique, le prochain envoi la publiera.",
+      "restoreStagingRunning": "Copie de la release #{{number}} dans le staging lancée",
+      "restoreStagingDone": "Release #{{number}} copiée dans le staging",
+      "restoreStagingModeLost": "{{count}} fichier(s) copié(s) sans leur bit exécutable ({{paths}}…) : rendez-les de nouveau exécutables dans le staging (chmod +x en SFTP) avant de publier.",
+      "discardPending": "Abandonner les changements non publiés",
+      "discardPendingConfirm": "Le staging contient {{count}} changement(s) non publié(s). Les abandonner ? Une copie est gardée sur le serveur."
     },
     "current": "courante",
     "diff": {
@@ -117,7 +125,10 @@
       "messagePlaceholder": "Que change cette release ?",
       "needsApproval": "Ce site publie avec approbation : la release attendra une approbation avant sa mise en ligne.",
       "queued": "Release n°{{number}} en file",
-      "title": "Publier {{name}}"
+      "title": "Publier {{name}}",
+      "overrideRollback": "Publier quand même",
+      "rolledBackWarning": "La release en ligne #{{liveRelease}} est un retour arrière de la #{{rolledBackFrom}} : le staging contient encore {{count}} fichier(s) de la #{{rolledBackFrom}}. Le publier tel quel remet en ligne les changements abandonnés.",
+      "rolledBackHint": "Pour garder le retour arrière, copiez plutôt la release en ligne dans le staging (onglet Releases)."
     },
     "scan": {
       "clean": "Sain",
@@ -146,7 +157,8 @@
       "manual": "manuelle",
       "window": "fenêtre",
       "adapter": "adaptateur"
-    }
+    },
+    "rolledBackFrom": "Retour arrière (depuis #{{number}})"
   },
   "runtime": {
     "catalog": {
@@ -353,7 +365,15 @@
       "siteDeleting": "Le site est en cours de suppression.",
       "slugTaken": "Cet identifiant est déjà utilisé par un autre site du compte.",
       "stagingEmpty": "Le dossier de staging est vide : il n'y a rien à publier.",
-      "validation": "Les données envoyées sont invalides."
+      "validation": "Les données envoyées sont invalides.",
+      "liveRolledBack": "La release en ligne est un retour arrière : le staging contient encore le code de la release annulée, le publier la remettrait en ligne.",
+      "releaseCommitMissing": "L’historique de cette release est absent du dépôt.",
+      "stagingHasPendingChanges": "Le staging contient des changements non publiés : publiez-les ou abandonnez-les d’abord.",
+      "stagingTooLarge": "Le staging contient trop d’entrées pour être comparé sans risque.",
+      "restoreInProgress": "Une copie de release dans le staging est déjà en cours pour ce site.",
+      "releaseNotOnDisk": "La release en ligne n’est pas sur le disque : republiez ou contactez un administrateur.",
+      "hostdBusy": "L’agent de l’hôte est occupé : réessayez dans une minute.",
+      "adapterBusy": "Une mise à jour d’application est en cours sur ce site : réessayez une fois terminée."
     },
     "fields": {
       "account": "Compte d'hébergement",
@@ -435,7 +455,16 @@
         "stagingMissing": "Le dossier de staging n'existe pas encore.",
         "nestedRepo": "Dépôt git imbriqué (exclu des publications) : {{path}}",
         "symlink": "Lien symbolique : {{path}}",
-        "moreSymlinks": "… et {{count}} autre(s) lien(s) symbolique(s)"
+        "moreSymlinks": "… et {{count}} autre(s) lien(s) symbolique(s)",
+        "liveOlderThanBase": "Retour arrière : la release en ligne #{{releaseNumber}} est plus ancienne que la #{{baseNumber}}, dont le staging contient encore le code. Le publier tel quel annulerait le retour arrière : copiez d’abord la release en ligne dans le staging.",
+        "baseNotPublished": "Le dernier commit du staging est la release #{{baseNumber}}, qui n’est pas en ligne ({{status}}).",
+        "autoPublishHeld": "Publication automatique retenue : le staging remettrait en ligne {{count}} fichier(s) de la release #{{releaseNumber}} annulée par un retour arrière. Publiez manuellement ou copiez la release en ligne dans le staging."
+      },
+      "restore": {
+        "running": "Copie de la release #{{number}} dans le staging…",
+        "failed": "La copie de la release #{{number}} dans le staging a échoué.",
+        "done": "Release #{{number}} copiée dans le staging ({{remaining}} chemin(s) encore différent(s)).",
+        "modeLost": "{{count}} fichier(s) copié(s) sans leur bit exécutable ({{paths}}…) : rendez-les de nouveau exécutables dans le staging (chmod +x en SFTP) avant de publier."
       }
     },
     "status": {

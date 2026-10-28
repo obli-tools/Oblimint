@@ -42,7 +42,10 @@ export function selectSites() {
   return db('sites as s')
     .join('hosting_accounts as a', 'a.id', 's.account_id')
     .leftJoin('releases as r', 'r.id', 's.current_release_id')
-    .select('s.*', 'a.username as account_username', 'r.number as current_release_number',
+    .leftJoin('releases as rf', 'rf.id', 's.rolled_back_from_release_id')
+    .leftJoin('users as cu', 'cu.id', 's.current_release_by')
+    .select('s.*', 'a.username as account_username', 'r.number as current_release_number', 'rf.number as rolled_back_from_number',
+      db.raw('COALESCE(cu.display_name, cu.username) as current_release_by_name'),
       db.raw(`(SELECT d.name FROM site_routes sr JOIN domains d ON d.id = sr.domain_id
                WHERE sr.site_id = s.id ORDER BY (sr.path_prefix = '/') DESC, sr.id ASC LIMIT 1) AS primary_domain`));
 }

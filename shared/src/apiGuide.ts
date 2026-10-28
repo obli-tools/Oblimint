@@ -50,7 +50,7 @@ JSON answers \`{ "success": true, "data": … }\`. On error: \`{ "success": fals
 
 ### Option C — Claude connector (claude.ai, Claude Desktop, mobile)
 
-For Claude without a terminal: on the Access keys tab, create a **Claude connector** (same rights and sites as a key). In Claude: Settings → Connectors → Add custom connector, URL \`${panel}/mcp\`, then paste the OAuth Client ID and Client Secret under « Advanced settings ». « Connect » opens the panel, where you approve. The tools are those of option A; the connection acts with the rights of whoever approved it and is ended from the Access keys tab.
+For Claude without a terminal: on the Access keys tab, create a **Claude connector** (same rights and sites as a key). In Claude: Settings → Connectors → Add custom connector, URL \`${panel}/mcp\`, then paste the OAuth Client ID and Client Secret under « Advanced settings ». « Connect » opens the panel, where you approve. The tools are those of option A; the connection acts as the human who approved it, with that human's **current** rights, and is ended from the Access keys tab. Its access tokens (\`oba_…\`) work on \`/mcp\` only, never on the REST API.
 
 ---
 
@@ -76,6 +76,7 @@ Consequences:
 5. Paths are **relative to the site area**: \`/index.php\`, \`/wp-content/themes/x/style.css\`. You cannot leave the site (\`..\` is refused).
 6. **Document root (\`docroot\`)**: the staging subfolder the web server serves (e.g. \`public\` for Laravel, empty = root). Everything **outside** the document root (e.g. \`/config/secrets.php\` when the root is \`public\`) is published with the code but **never served**: sensitive configuration files belong there.
 7. **Symbolic links** are shown but never followed nor created.
+8. **Someone may go back.** A human can put an older release back live (rollback) at any time. The staging then still holds the abandoned code: publishing it as is would undo their decision. See §5 « Rollbacks by a human ».
 
 ---
 
@@ -102,7 +103,7 @@ Never possible with a key: deleting a site, adding a **new root domain**, deleti
 
 Oblimint runs **no permanent process** (bot, websocket, queue worker listening all the time): only the website and its cron tasks, one hour at most each. Such a program must be hosted elsewhere, or rewritten as short tasks run by cron (e.g. every minute, resuming where it stopped).
 
-A key never has more rights than the human who created it: if they lose a right, so does the key. A site outside the key's scope answers **"not found"** (as if it did not exist). A missing right answers **\`keyScope\`**. Do not work around it: ask the human to widen the key.
+A key (or a connector) acts as the human who created (approved) it, with that human's **current** rights: if they lose a right, so does the key. A site outside the key's scope answers **"not found"** (as if it did not exist). A missing right answers **\`keyScope\`**. Do not work around it: ask the human to widen the key.
 
 ---
 
@@ -112,7 +113,7 @@ A key never has more rights than the human who created it: if they lose a right,
 |---|---|---|
 | \`whoami\` | The key, its rights, the account | — |
 | \`get_guide\` | This guide (\`lang\`: \`en\` or \`fr\`) | — |
-| \`list_sites\` / \`get_site\` | Sites of the key (id, slug, domains, status, document root, publish mode, live release) | — |
+| \`list_sites\` / \`get_site\` | Sites of the key (id, slug, domains, status, document root, publish mode); \`liveRelease\` (since when, how: \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, by whom), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
 | \`create_site\` | Create a site: \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (URL prefix it expects, e.g. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Change a site: \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
 | \`list_files\` | List a folder (\`path\`, \`area\`) | \`files.read\` |
@@ -122,10 +123,12 @@ A key never has more rights than the human who created it: if they lose a right,
 | \`move_path\` / \`copy_path\` | Move, rename, copy (within the same site and area) | \`files.write\` |
 | \`delete_paths\` | Delete files / folders | \`files.write\` |
 | \`extract_archive\` | Extract a \`.zip\` / \`.tar\` / \`.tar.gz\` already in the site | \`files.write\` |
-| \`staging_changes\` | What changed since the live release (what \`publish\` would ship) | \`files.read\` |
-| \`publish\` | Publish (new live release), \`message?\` | \`releases.publish\` |
+| \`staging_changes\` | Unpublished changes (\`pendingChanges\`, \`files\`), \`base\` / \`baseIsLive\`, \`liveChanges\` (what \`publish\` would change on the live site), \`rolledBack\`, \`warningItems\`, \`restore\` | \`files.read\` |
+| \`publish\` | Publish (new live release), \`message?\`, \`override_rollback?\` (only on the human's explicit request) | \`releases.publish\` |
 | \`list_releases\` | Release history, newest first (\`limit\`) | — |
-| \`rollback\` | Back to a release (\`release_id\`) | \`releases.publish\` |
+| \`rollback\` | Back to a release (\`release_id\`); the staging is not changed | \`releases.publish\` |
+| \`list_release_files\` / \`read_release_file\` | Files of any release, read from its history (paged: \`nextOffset\`; windows of ~96 KB) | \`files.read\` + code right |
+| \`restore_release_to_staging\` | Make the staging exactly a release (\`discard_pending?\`); never publishes | \`files.write\` + code right |
 | \`list_parent_domains\` | Account domains a subdomain can be created under | \`domains.subdomain\` |
 | \`add_subdomain\` | Create \`xxx.existing-domain.tld\` and route it to a site | \`domains.subdomain\` |
 | \`list_subdomains\` / \`remove_subdomain\` | Subdomains of the key (only the ones it created can be removed, and not one with a route towards a site outside the key) | \`domains.subdomain\` |
@@ -152,7 +155,30 @@ A key never has more rights than the human who created it: if they lose a right,
 
 ## 5. Developing directly on Oblimint
 
-The idea: the agent develops on the platform, puts things live **only once the work is done**, tests, and rolls back if something breaks. Always start with \`whoami\` then \`get_site\` to know your rights and the site's \`publishMode\`.
+The idea: the agent develops on the platform, puts things live **only once the work is done**, tests, and rolls back if something breaks.
+
+### Before you start (checklist)
+
+1. \`whoami\`: your rights (scopes) and the account.
+2. \`get_site\`: \`publishMode\`, \`liveRelease\`, and **\`rolledBack\`**. If it is \`true\`, stop and read « Rollbacks by a human » below.
+3. \`staging_changes\`: \`pendingChanges\` > 0 means **someone else's unpublished work** is in the staging. Do not publish it, do not overwrite it: ask the human.
+4. **One agent per site at a time**: two agents writing the same staging publish each other's half-done work.
+5. Site in \`auto\` mode: every write goes live a few seconds later (see Method B).
+
+### After publishing
+
+1. \`list_releases\`: the release is \`ready\` (or \`awaiting_approval\`: tell the human).
+2. Check that the site answers (its URL) and \`read_logs\` (\`source: "error"\`).
+3. Broken: \`rollback\` to the previous release at once, then fix in the staging.
+
+### Rollbacks by a human
+
+\`get_site\` → \`rolledBack: true\`: a human put an older release live (\`liveRelease\`) instead of \`rolledBackFrom\`, the abandoned one. It is never set by an automatic return of an application update (\`revert\`): there the staging never received the update. The staging still holds code of \`rolledBackFrom\`, so:
+
+- **Do not republish the staging as is.** \`publish\` is refused (\`liveRolledBack\`, with the paths in \`details\`); in \`auto\` mode the automatic publication is **held** (\`autoPublishHeld\` in \`staging_changes\`) as long as the staging holds code of the abandoned release.
+- Inspect: \`list_release_files\` / \`read_release_file\` on both releases, \`read_file\` on the staging.
+- If appropriate, \`restore_release_to_staging\` with the **live** release: the staging becomes exactly that code (data paths untouched) and the flag is cleared. It refuses when the staging holds unpublished changes (\`stagingHasPendingChanges\`): pass \`discard_pending\` only if they can be lost (a copy is kept on the server). It may answer \`{ status: "running" }\`: follow \`staging_changes\` → \`restore\`. It never publishes; in \`auto\` mode the next write publishes the restored code. **\`modeLost\`** (\`modeLostCount\`) lists files copied **without their executable bit** (the live release's tree on disk predates executable bits being kept): their mode must be fixed in the staging (\`chmod +x\`, by the human over SFTP) **before publishing**, or the publication drops the bit for good. Tell the human; in \`auto\` mode switch the site to \`manual\` first.
+- **Ask the human** what they want before redoing anything. \`override_rollback\` only on their explicit request.
 
 **Keep the reference source code in your local working folder** (ideally a git repository) and push it to Oblimint: it is faster for large changes, and you can send it identically to two sites.
 
@@ -271,10 +297,14 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | POST | \`/sites/:id/files/delete\` | \`{ paths: [] }\` (≤ 1000) | \`files.write\` |
 | POST | \`/sites/:id/files/move\` · \`/copy\` | \`{ items: [{ from, to }], overwrite? }\` | \`files.write\` |
 | POST | \`/sites/:id/files/extract\` | \`{ path, to?, overwrite? }\` | \`files.write\` |
-| GET | \`/sites/:id/staging\` | unpublished changes | \`files.read\` |
-| POST | \`/sites/:id/publish\` | \`{ message? }\` (≤ 500 characters) | \`releases.publish\` |
+| GET | \`/sites/:id/staging\` | unpublished changes, base vs live, rollback pending | \`files.read\` |
+| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback? }\` (≤ 500 characters) | \`releases.publish\` |
 | GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
+| GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` |
+| GET | \`/sites/:id/releases/:releaseId/files/text\` | \`?path=&encoding=utf8\\|base64&offset=\` (≤ 2 MB text, 8 MB base64) | \`files.read\` |
+| GET | \`/sites/:id/releases/:releaseId/files/content\` | \`?path=\`: the file, streamed with \`Content-Length\` (≤ 64 MB) | \`files.read\` |
+| POST | \`/sites/:id/releases/:releaseId/restore-staging\` | \`{ discardPending? }\` → 200 done, or 202 \`{ status: "running" }\` | \`files.write\` |
 | GET | \`/sites/:id/logs\` | \`?source=error\\|access\\|app&q=&limit=&since=&until=&status=\` | \`logs.read\` |
 | GET | \`/domains\` · \`/subdomains\` | possible parent domains · subdomains of the key | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.example.com" }\` | \`domains.subdomain\` |
@@ -307,6 +337,8 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`write_file\` / PUT content | 8 MB per file (above: upload sessions) |
 | \`read_file\` | 2 MB, text only |
 | Requests | 1,200 / min per key |
+| MCP batch | 20 messages at most |
+| \`read_release_file\` | windows of ~96 KB, up to 8 MB into the file |
 | Invalid keys | 20 attempts / 15 min per IP address |
 | Disk quota | the account plan's |
 
@@ -314,7 +346,15 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 |---|---|---|
 | \`invalidKey\` (401) | Invalid, expired or revoked key, or source address not allowed | Ask for a new key |
 | \`rateLimited\` (429) | Too many requests | Slow down, retry a bit later |
-| \`keyScope\` (403) | The key lacks the right | Ask the human to add it |
+| \`keyScope\` (403) | The key lacks the right (e.g. switching to \`auto\` without \`releases.publish\`) | Ask the human to add it |
+| \`codeReadForbidden\` (403) | Reading code content needs the right to manage the files (or to approve releases) | Ask the human |
+| \`liveRolledBack\` (409) | The live release is a rollback by a human; the staging would put the abandoned code back (\`details\`: \`liveRelease\`, \`rolledBackFrom\`, \`count\`, \`paths\`) | See §5 « Rollbacks by a human »; ask the human |
+| \`stagingHasPendingChanges\` (409) | Copy into the staging refused: unpublished changes there (\`details\`: \`count\`, \`paths\`) | Ask the human; \`discard_pending\` only if they can be lost |
+| \`restoreInProgress\` (409) | A copy into the staging is running | Follow \`staging_changes\` → \`restore\` |
+| \`stagingTooLarge\` · \`releaseNotOnDisk\` · \`releaseCommitMissing\` (409) | Staging too big to compare · live tree missing · release history missing | Tell the human |
+| \`releaseNotReady\` (409) | The release is not published (failed, rejected, awaiting approval) | Pick a \`ready\` release |
+| \`adapterBusy\` · \`windowActive\` (409) | An application update / a modification window holds the site | Wait, retry |
+| \`envValueRequired\` (400) | A new variable, or a secret made visible, needs a value (secrets are write-only: never read back) | Send the value |
 | \`notFound\` (404) | Site outside the key's scope, or missing path | Check with \`list_sites\` / \`list_files\` |
 | \`fileForbidden\` (403) | Folder that cannot be changed (area root, the site's own \`data\` folder) | Write in a subfolder |
 | \`fileExists\` (409) | The file already exists | \`overwrite: true\` if intended |
@@ -323,8 +363,9 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`slugTaken\` (409) | Slug already used | Pick another one |
 | \`publishInProgress\` / \`noChanges\` (409) | Publish already running / nothing to publish | Wait / check \`staging_changes\` |
 | \`hostdOutdated\` (503) | The server's file service is older than the panel | Tell the human (an update to apply in the panel), then retry |
+| \`hostdBusy\` (503) | The host agent is busy | Retry in a minute |
 | \`keyNotCreator\` (403) | Deleting a database / user the key did not create | Ask the human |
-| \`keyDomainNotManageable\` (403) | The domain is not given to the key and also serves sites outside it (routes, parent of a subdomain) | Ask the human, or use a domain of \`list_parent_domains\` |
+| \`keyDomainNotManageable\` (403) | The domain is not given to the key (Domains section of the key in the panel) and also serves sites outside it (routes, parent of a subdomain) | Ask the human to give it to the key, or use a domain of \`list_parent_domains\` |
 | \`keyRouteOutside\` (403) | The route leads to a site outside the key | Leave it; add another path, or ask the human |
 | \`routeTaken\` (409) · \`runtimeInUse\` (409) | Path already routed · runtime still used by a route | \`list_routes\`; move / remove the route first |
 | \`planLimit\` · \`cronTooFrequent\` (409) | Plan limit (number of databases, cron jobs, minimum interval…) | Stay within the limits, or ask the human |
@@ -336,7 +377,9 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 
 - **Say what you are about to do** before a deletion, a publish or a rollback, especially on a live site.
 - **Check before publishing** (\`staging_changes\`) and **test afterwards** (site URL, \`read_logs\`).
-- **Small consistent batches**: one publish = one understandable change, with a \`message\`.
+- **Small consistent batches**: one publish = one understandable change, with a \`message\`: a short imperative summary of what changed (e.g. « Fix the contact form validation »), not « update ».
+- **One agent per site at a time**, and never publish someone else's pending changes.
+- **Never put a secret in the code**: a committed secret stays readable in the old releases. Secrets go to \`set_env\` with \`secret: true\` (write-only).
 - **Do not delete what you did not create** without an explicit request.
 - **Leave settings as you found them** (publish mode…) unless the human agrees.
 - Everything you do is **recorded in the panel's audit log**, under the human who created the key and with the key's name.
@@ -376,7 +419,7 @@ Réponses JSON \`{ "success": true, "data": … }\`. En cas d'erreur : \`{ "succ
 
 ### Option C — Connecteur Claude (claude.ai, Claude Desktop, mobile)
 
-Pour Claude sans terminal : dans l'onglet Clés d'accès, crée un **Connecteur Claude** (mêmes droits et sites qu'une clé). Dans Claude : Paramètres → Connecteurs → Ajouter un connecteur personnalisé, URL \`${panel}/mcp\`, puis colle l'OAuth Client ID et le Client Secret dans « Paramètres avancés ». « Connecter » ouvre le panel, où tu approuves. Les outils sont les mêmes que l'option A ; la connexion agit avec les droits de la personne qui l'a approuvée et se coupe depuis l'onglet Clés d'accès.
+Pour Claude sans terminal : dans l'onglet Clés d'accès, crée un **Connecteur Claude** (mêmes droits et sites qu'une clé). Dans Claude : Paramètres → Connecteurs → Ajouter un connecteur personnalisé, URL \`${panel}/mcp\`, puis colle l'OAuth Client ID et le Client Secret dans « Paramètres avancés ». « Connecter » ouvre le panel, où tu approuves. Les outils sont les mêmes que l'option A ; la connexion agit comme l'humain qui l'a approuvée, avec ses droits **actuels**, et se coupe depuis l'onglet Clés d'accès. Ses jetons d'accès (\`oba_…\`) ne marchent que sur \`/mcp\`, jamais sur l'API REST.
 
 ---
 
@@ -402,6 +445,7 @@ Conséquences :
 5. Les chemins sont **relatifs à la zone du site** : \`/index.php\`, \`/wp-content/themes/x/style.css\`. Impossible de sortir du site (\`..\` est refusé).
 6. **Racine web (\`docroot\`)** : le sous-dossier du staging servi par le serveur web (ex. \`public\` pour Laravel, vide = racine). Tout ce qui est **hors** de la racine web (ex. \`/config/secrets.php\` quand la racine est \`public\`) est publié avec le code mais **jamais servi** : c'est là que vont les fichiers de configuration sensibles.
 7. Les **liens symboliques** sont affichés mais jamais suivis ni créés.
+8. **Quelqu'un peut revenir en arrière.** Un humain peut remettre en ligne une release plus ancienne (retour arrière) à tout moment. Le staging contient alors encore le code abandonné : le publier tel quel annulerait sa décision. Voir §5 « Retours arrière par un humain ».
 
 ---
 
@@ -428,7 +472,7 @@ Jamais possible avec une clé : supprimer un site, ajouter un **nouveau domaine 
 
 Oblimint ne fait tourner **aucun processus permanent** (bot, websocket, file d'attente qui écoute en continu) : seulement le site web et ses tâches cron, d'une heure au plus chacune. Un tel programme doit être hébergé ailleurs, ou réécrit en tâches courtes lancées par le cron (ex. toutes les minutes, en reprenant là où il s'était arrêté).
 
-Une clé n'a jamais plus de droits que l'humain qui l'a créée : s'il perd un droit, la clé le perd aussi. Un site hors du périmètre répond **« not found »** (comme s'il n'existait pas). Un droit manquant répond **\`keyScope\`**. Ne contourne pas : demande à l'humain d'élargir la clé.
+Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), avec ses droits **actuels** : s'il perd un droit, la clé le perd aussi. Un site hors du périmètre répond **« not found »** (comme s'il n'existait pas). Un droit manquant répond **\`keyScope\`**. Ne contourne pas : demande à l'humain d'élargir la clé.
 
 ---
 
@@ -438,7 +482,7 @@ Une clé n'a jamais plus de droits que l'humain qui l'a créée : s'il perd un d
 |---|---|---|
 | \`whoami\` | La clé, ses droits, le compte | — |
 | \`get_guide\` | Ce guide (\`lang\`: \`fr\` ou \`en\`) | — |
-| \`list_sites\` / \`get_site\` | Sites de la clé (id, slug, domaines, statut, racine web, mode de publication, release en ligne) | — |
+| \`list_sites\` / \`get_site\` | Sites de la clé (id, slug, domaines, statut, racine web, mode de publication) ; \`liveRelease\` (depuis quand, comment : \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, par qui), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
 | \`create_site\` | Créer un site : \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (préfixe d'URL attendu, ex. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Modifier un site : \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
 | \`list_files\` | Lister un dossier (\`path\`, \`area\`) | \`files.read\` |
@@ -448,10 +492,12 @@ Une clé n'a jamais plus de droits que l'humain qui l'a créée : s'il perd un d
 | \`move_path\` / \`copy_path\` | Déplacer, renommer, copier (dans le même site et la même zone) | \`files.write\` |
 | \`delete_paths\` | Supprimer fichiers / dossiers | \`files.write\` |
 | \`extract_archive\` | Extraire un \`.zip\` / \`.tar\` / \`.tar.gz\` déjà présent dans le site | \`files.write\` |
-| \`staging_changes\` | Ce qui a changé depuis la release en ligne (ce que \`publish\` enverrait) | \`files.read\` |
-| \`publish\` | Publier (nouvelle release en ligne), \`message?\` | \`releases.publish\` |
+| \`staging_changes\` | Changements non publiés (\`pendingChanges\`, \`files\`), \`base\` / \`baseIsLive\`, \`liveChanges\` (ce que \`publish\` changerait sur le site en ligne), \`rolledBack\`, \`warningItems\`, \`restore\` | \`files.read\` |
+| \`publish\` | Publier (nouvelle release en ligne), \`message?\`, \`override_rollback?\` (seulement à la demande explicite de l'humain) | \`releases.publish\` |
 | \`list_releases\` | Historique des releases, la plus récente en premier (\`limit\`) | — |
-| \`rollback\` | Retour à une release (\`release_id\`) | \`releases.publish\` |
+| \`rollback\` | Retour à une release (\`release_id\`) ; le staging n'est pas modifié | \`releases.publish\` |
+| \`list_release_files\` / \`read_release_file\` | Fichiers de n'importe quelle release, lus dans son historique (pagination : \`nextOffset\` ; fenêtres d'environ 96 Ko) | \`files.read\` + droit sur le code |
+| \`restore_release_to_staging\` | Rendre le staging identique à une release (\`discard_pending?\`) ; ne publie jamais | \`files.write\` + droit sur le code |
 | \`list_parent_domains\` | Domaines du compte sous lesquels créer un sous-domaine | \`domains.subdomain\` |
 | \`add_subdomain\` | Créer \`xxx.domaine-existant.tld\` et le router vers un site | \`domains.subdomain\` |
 | \`list_subdomains\` / \`remove_subdomain\` | Sous-domaines de la clé (seuls ceux qu'elle a créés peuvent être retirés, et pas un qui a une route vers un site hors de la clé) | \`domains.subdomain\` |
@@ -478,7 +524,30 @@ Une clé n'a jamais plus de droits que l'humain qui l'a créée : s'il perd un d
 
 ## 5. Développer directement sur Oblimint
 
-L'idée : l'agent développe sur la plateforme, ne met en ligne **qu'une fois le travail terminé**, teste, et revient en arrière si quelque chose casse. Commence toujours par \`whoami\` puis \`get_site\` pour connaître tes droits et le \`publishMode\` du site.
+L'idée : l'agent développe sur la plateforme, ne met en ligne **qu'une fois le travail terminé**, teste, et revient en arrière si quelque chose casse.
+
+### Avant de commencer (liste de contrôle)
+
+1. \`whoami\` : tes droits (scopes) et le compte.
+2. \`get_site\` : \`publishMode\`, \`liveRelease\`, et **\`rolledBack\`**. S'il vaut \`true\`, arrête-toi et lis « Retours arrière par un humain » ci-dessous.
+3. \`staging_changes\` : \`pendingChanges\` > 0 signifie qu'il y a **le travail non publié de quelqu'un d'autre** dans le staging. Ne le publie pas, ne l'écrase pas : demande à l'humain.
+4. **Un seul agent par site à la fois** : deux agents qui écrivent dans le même staging publient le travail à moitié fait l'un de l'autre.
+5. Site en mode \`auto\` : chaque écriture part en ligne quelques secondes plus tard (voir Méthode B).
+
+### Après publication
+
+1. \`list_releases\` : la release est \`ready\` (ou \`awaiting_approval\` : préviens l'humain).
+2. Vérifie que le site répond (son URL) et \`read_logs\` (\`source: "error"\`).
+3. Cassé : \`rollback\` vers la release précédente tout de suite, puis corrige dans le staging.
+
+### Retours arrière par un humain
+
+\`get_site\` → \`rolledBack: true\` : un humain a remis en ligne une release plus ancienne (\`liveRelease\`) à la place de \`rolledBackFrom\`, la release annulée. Ce drapeau n'est jamais levé par un retour automatique d'application (\`revert\`) : le staging n'avait pas reçu la mise à jour. Le staging contient encore du code de \`rolledBackFrom\`, donc :
+
+- **Ne republie pas le staging tel quel.** \`publish\` est refusé (\`liveRolledBack\`, avec les chemins dans \`details\`) ; en mode \`auto\`, la publication automatique est **retenue** (\`autoPublishHeld\` dans \`staging_changes\`) tant que le staging contient du code de la release annulée.
+- Inspecte : \`list_release_files\` / \`read_release_file\` sur les deux releases, \`read_file\` sur le staging.
+- Si c'est approprié, \`restore_release_to_staging\` avec la release **en ligne** : le staging devient exactement ce code (chemins de données intacts) et le drapeau est levé. Refusé si le staging a des changements non publiés (\`stagingHasPendingChanges\`) : passe \`discard_pending\` seulement s'ils peuvent être perdus (une copie est gardée sur le serveur). Peut répondre \`{ status: "running" }\` : suis \`staging_changes\` → \`restore\`. Ne publie jamais ; en mode \`auto\`, la prochaine écriture publie le code restauré. **\`modeLost\`** (\`modeLostCount\`) liste les fichiers copiés **sans leur bit exécutable** (l'arbre sur disque de la release en ligne date d'avant la conservation de ce bit) : leur mode doit être corrigé dans le staging (\`chmod +x\`, par l'humain en SFTP) **avant de publier**, sinon la publication retire le bit pour de bon. Préviens l'humain ; en mode \`auto\`, passe d'abord le site en \`manual\`.
+- **Demande à l'humain** ce qu'il veut avant de refaire quoi que ce soit. \`override_rollback\` seulement à sa demande explicite.
 
 **Garde le code source de référence dans ton dossier de travail local** (idéalement un dépôt git) et pousse-le sur Oblimint : c'est plus rapide pour les gros changements, et tu peux l'envoyer à l'identique sur deux sites.
 
@@ -597,10 +666,14 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | POST | \`/sites/:id/files/delete\` | \`{ paths: [] }\` (≤ 1000) | \`files.write\` |
 | POST | \`/sites/:id/files/move\` · \`/copy\` | \`{ items: [{ from, to }], overwrite? }\` | \`files.write\` |
 | POST | \`/sites/:id/files/extract\` | \`{ path, to?, overwrite? }\` | \`files.write\` |
-| GET | \`/sites/:id/staging\` | changements non publiés | \`files.read\` |
-| POST | \`/sites/:id/publish\` | \`{ message? }\` (≤ 500 caractères) | \`releases.publish\` |
+| GET | \`/sites/:id/staging\` | changements non publiés, base comparée à la release en ligne, retour arrière en attente | \`files.read\` |
+| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback? }\` (≤ 500 caractères) | \`releases.publish\` |
 | GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
+| GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` |
+| GET | \`/sites/:id/releases/:releaseId/files/text\` | \`?path=&encoding=utf8\\|base64&offset=\` (≤ 2 Mo texte, 8 Mo base64) | \`files.read\` |
+| GET | \`/sites/:id/releases/:releaseId/files/content\` | \`?path=\` : le fichier, en flux avec \`Content-Length\` (≤ 64 Mo) | \`files.read\` |
+| POST | \`/sites/:id/releases/:releaseId/restore-staging\` | \`{ discardPending? }\` → 200 terminé, ou 202 \`{ status: "running" }\` | \`files.write\` |
 | GET | \`/sites/:id/logs\` | \`?source=error\\|access\\|app&q=&limit=&since=&until=&status=\` | \`logs.read\` |
 | GET | \`/domains\` · \`/subdomains\` | domaines parents possibles · sous-domaines de la clé | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.exemple.com" }\` | \`domains.subdomain\` |
@@ -633,6 +706,8 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`write_file\` / PUT content | 8 Mo par fichier (au-delà : sessions d'upload) |
 | \`read_file\` | 2 Mo, texte uniquement |
 | Requêtes | 1 200 / min par clé |
+| Lot MCP | 20 messages au plus |
+| \`read_release_file\` | fenêtres d'environ 96 Ko, jusqu'à 8 Mo dans le fichier |
 | Clés invalides | 20 essais / 15 min par adresse IP |
 | Quota disque | celui du plan du compte |
 
@@ -640,7 +715,15 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 |---|---|---|
 | \`invalidKey\` (401) | Clé invalide, expirée, révoquée, ou adresse IP non autorisée | Demander une nouvelle clé |
 | \`rateLimited\` (429) | Trop de requêtes | Ralentir, réessayer un peu plus tard |
-| \`keyScope\` (403) | Droit manquant sur la clé | Demander à l'humain d'ajouter le droit |
+| \`keyScope\` (403) | Droit manquant sur la clé (ex. passer en \`auto\` sans \`releases.publish\`) | Demander à l'humain d'ajouter le droit |
+| \`codeReadForbidden\` (403) | Lire le contenu du code demande le droit de gérer les fichiers (ou d'approuver les releases) | Demander à l'humain |
+| \`liveRolledBack\` (409) | La release en ligne est un retour arrière d'un humain ; le staging remettrait le code abandonné (\`details\` : \`liveRelease\`, \`rolledBackFrom\`, \`count\`, \`paths\`) | Voir §5 « Retours arrière par un humain » ; demander à l'humain |
+| \`stagingHasPendingChanges\` (409) | Copie dans le staging refusée : changements non publiés (\`details\` : \`count\`, \`paths\`) | Demander à l'humain ; \`discard_pending\` seulement s'ils peuvent être perdus |
+| \`restoreInProgress\` (409) | Une copie dans le staging est en cours | Suivre \`staging_changes\` → \`restore\` |
+| \`stagingTooLarge\` · \`releaseNotOnDisk\` · \`releaseCommitMissing\` (409) | Staging trop gros pour être comparé · arbre en ligne absent · historique de la release absent | Prévenir l'humain |
+| \`releaseNotReady\` (409) | La release n'est pas publiée (échouée, rejetée, en attente d'approbation) | Choisir une release \`ready\` |
+| \`adapterBusy\` · \`windowActive\` (409) | Une mise à jour d'application / une fenêtre de modification tient le site | Attendre, réessayer |
+| \`envValueRequired\` (400) | Une nouvelle variable, ou un secret rendu visible, demande une valeur (les secrets sont en écriture seule : jamais relus) | Envoyer la valeur |
 | \`notFound\` (404) | Site hors du périmètre, ou chemin inexistant | Vérifier avec \`list_sites\` / \`list_files\` |
 | \`fileForbidden\` (403) | Dossier non modifiable (racine de la zone, dossier \`data\` du site lui-même) | Écrire dans un sous-dossier |
 | \`fileExists\` (409) | Le fichier existe déjà | \`overwrite: true\` si c'est voulu |
@@ -649,8 +732,9 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`slugTaken\` (409) | Slug déjà utilisé | En choisir un autre |
 | \`publishInProgress\` / \`noChanges\` (409) | Publication en cours / rien à publier | Attendre / vérifier \`staging_changes\` |
 | \`hostdOutdated\` (503) | Le service de fichiers du serveur est plus ancien que le panel | Prévenir l'humain (mise à jour à appliquer dans le panel), puis réessayer |
+| \`hostdBusy\` (503) | L'agent de l'hôte est occupé | Réessayer dans une minute |
 | \`keyNotCreator\` (403) | Suppression d'une base / d'un utilisateur que la clé n'a pas créé | Demander à l'humain |
-| \`keyDomainNotManageable\` (403) | Le domaine n'est pas donné à la clé et sert aussi des sites hors d'elle (routes, parent d'un sous-domaine) | Demander à l'humain, ou utiliser un domaine de \`list_parent_domains\` |
+| \`keyDomainNotManageable\` (403) | Le domaine n'est pas donné à la clé (section Domaines de la clé dans le panel) et sert aussi des sites hors d'elle (routes, parent d'un sous-domaine) | Demander à l'humain de le donner à la clé, ou utiliser un domaine de \`list_parent_domains\` |
 | \`keyRouteOutside\` (403) | La route mène à un site hors de la clé | La laisser ; ajouter un autre chemin, ou demander à l'humain |
 | \`routeTaken\` (409) · \`runtimeInUse\` (409) | Chemin déjà routé · runtime encore utilisé par une route | \`list_routes\` ; déplacer / retirer la route d'abord |
 | \`planLimit\` · \`cronTooFrequent\` (409) | Limite du plan (nombre de bases, de crons, intervalle minimal…) | Rester dans les limites, ou demander à l'humain |
@@ -662,7 +746,9 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 
 - **Annonce ce que tu vas faire** avant une suppression, une publication ou un retour arrière, surtout sur un site déjà en ligne.
 - **Vérifie avant de publier** (\`staging_changes\`) et **teste après** (URL du site, \`read_logs\`).
-- **Petits lots cohérents** : une publication = un changement compréhensible, avec un \`message\`.
+- **Petits lots cohérents** : une publication = un changement compréhensible, avec un \`message\` : un court résumé à l'impératif de ce qui change (ex. « Corrige la validation du formulaire de contact »), pas « mise à jour ».
+- **Un seul agent par site à la fois**, et ne publie jamais les changements en attente de quelqu'un d'autre.
+- **Jamais de secret dans le code** : un secret commité reste lisible dans les anciennes releases. Les secrets vont dans \`set_env\` avec \`secret: true\` (écriture seule).
 - **Ne supprime pas ce que tu n'as pas créé** sans demande explicite.
 - **Laisse les réglages comme tu les as trouvés** (mode de publication…) sauf accord de l'humain.
 - Tout ce que tu fais est **inscrit au journal d'audit** du panel, au nom de l'humain qui a créé la clé et avec le nom de la clé.

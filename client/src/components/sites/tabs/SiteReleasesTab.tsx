@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ChevronLeft, ChevronRight, History, RotateCcw, Rocket, ShieldAlert, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, CopyCheck, History, RotateCcw, Rocket, ShieldAlert, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { HostingSocketEvents, type Release } from '@oblimint/shared';
 import { releasesApi } from '@/api/releases.api';
@@ -36,6 +36,7 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
   const { can } = useHostingMe();
   const canPublish = can('releases.publish', site.accountId);
   const canApprove = can('releases.approve', site.accountId);
+  const canManageFiles = can('files.manage', site.accountId);
 
   const [items, setItems] = useState<Release[]>([]);
   const [total, setTotal] = useState(0);
@@ -143,6 +144,55 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
     }
   };
 
+  /** Copies a ready release into the staging (never publishes); unpublished changes are discarded only after a second confirmation. */
+  const restoreToStaging = async (r: Release) => {
+    if (!(await confirm({
+      title: t('releases.actions.restoreStaging') || 'Copy into the staging',
+      message: t('releases.actions.restoreStagingConfirm', {
+        number: r.number,
+        defaultValue: 'Make the staging folder exactly the code of release #{{number}}? Nothing goes live; data paths are not touched. In automatic publication mode, the next upload publishes it.',
+      }),
+      confirmLabel: t('releases.actions.restoreStagingShort') || 'Copy',
+    }))) return;
+    setBusyId(r.id);
+    const run = async (discardPending: boolean) => {
+      const res = await releasesApi.restoreToStaging(site.id, r.id, { discardPending });
+      if (res.status === 'running') toast.success(t('releases.actions.restoreStagingRunning', { number: r.number, defaultValue: 'Copy of release #{{number}} into the staging started' }));
+      else {
+        toast.success(t('releases.actions.restoreStagingDone', { number: r.number, defaultValue: 'Release #{{number}} copied into the staging' }));
+        if (res.modeLostCount > 0) {
+          toast.error(t('releases.actions.restoreStagingModeLost', {
+            count: res.modeLostCount, paths: res.modeLost.slice(0, 5).join(', '),
+            defaultValue: '{{count}} file(s) were copied without their executable bit ({{paths}}…): make them executable again in the staging (chmod +x over SFTP) before publishing.',
+          }), { duration: 12000 });
+        }
+      }
+    };
+    try {
+      try {
+        await run(false);
+      } catch (err) {
+        if (apiErrorCode(err) !== 'stagingHasPendingChanges') throw err;
+        const count = Number((err as { response?: { data?: { details?: { count?: unknown } } } }).response?.data?.details?.count ?? 0);
+        if (!(await confirm({
+          title: t('releases.actions.restoreStaging') || 'Copy into the staging',
+          message: t('releases.actions.discardPendingConfirm', {
+            count,
+            defaultValue: 'The staging holds {{count}} unpublished change(s). Discard them? A copy is kept on the server.',
+          }),
+          confirmLabel: t('releases.actions.discardPending') || 'Discard the unpublished changes',
+          danger: true,
+        }))) return;
+        await run(true);
+      }
+      await afterAction();
+    } catch (err) {
+      toastSiteError(err, t);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const renderActions = (r: Release, inDrawer = false) => {
     const busy = busyId === r.id;
     const out = [];
@@ -162,6 +212,13 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
       out.push(
         <Button key="rollback" size="sm" variant={inDrawer ? 'primary' : 'secondary'} onClick={() => void rollback(r)} loading={busy}>
           <RotateCcw size={14} className="mr-1" />{t('releases.actions.rollback') || 'Restore this release'}
+        </Button>,
+      );
+    }
+    if (r.status === 'ready' && canManageFiles && (inDrawer || (r.isCurrent && site.rolledBackFromNumber !== null))) {
+      out.push(
+        <Button key="restoreStaging" size="sm" variant="secondary" onClick={() => void restoreToStaging(r)} loading={busy}>
+          <CopyCheck size={14} className="mr-1" />{t('releases.actions.restoreStaging') || 'Copy into the staging'}
         </Button>,
       );
     }
@@ -209,6 +266,11 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
                 <>
                   <span className="font-mono font-semibold text-text-primary">#{r.number}</span>
                   {r.isCurrent && <Pill tone="accent" className="ml-2 text-[10px]">{t('releases.current') || 'current'}</Pill>}
+                  {r.isCurrent && site.rolledBackFromNumber !== null && (
+                    <Pill tone="amber" className="ml-1 text-[10px]">
+                      {t('releases.rolledBackFrom', { number: site.rolledBackFromNumber, defaultValue: 'Rollback (from #{{number}})' })}
+                    </Pill>
+                  )}
                 </>
               ),
             },

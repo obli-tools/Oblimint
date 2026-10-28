@@ -44,6 +44,14 @@ const SITE_ERROR_FALLBACKS = {
   releaseRebuildFailed: 'The live release could not be rebuilt with the new data paths: nothing was changed.',
   publishRequired: 'Automatic publication requires the right to publish releases.',
   codeReadForbidden: 'Reading the content of the files needs the right to manage the files or to approve the releases.',
+  liveRolledBack: 'The live release is a rollback: the staging still holds code of the abandoned release, publishing would put it back online.',
+  releaseCommitMissing: 'The history of this release is missing from the repository.',
+  stagingHasPendingChanges: 'The staging holds unpublished changes: publish or discard them first.',
+  stagingTooLarge: 'The staging holds too many entries to be compared safely.',
+  restoreInProgress: 'A copy of a release into the staging is already running for this site.',
+  releaseNotOnDisk: 'The live release is not on disk: publish again or contact an administrator.',
+  hostdBusy: 'The host agent is busy: try again in a minute.',
+  adapterBusy: 'An application update runs on this site: try again once it is over.',
 } as const;
 
 const RUNTIME_NOT_RESTORED_FALLBACK = 'The runtime change failed and the previous runtime could not be restored: the site may be down, contact an administrator.';

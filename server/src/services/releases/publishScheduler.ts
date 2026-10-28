@@ -43,7 +43,8 @@ const defaultDeps: SchedulerDeps = {
   },
   async publish(siteId) {
     const { releaseService } = await import('./release.service');
-    return releaseService.publish(siteId, { trigger: 'auto', userId: null });
+    // A rollback by a human is never undone by an automatic publication (409 liveRolledBack: held).
+    return releaseService.publish(siteId, { trigger: 'auto', userId: null, rollbackGuard: 'refuse' });
   },
   now: () => Date.now(),
 };
@@ -56,6 +57,8 @@ const settingsCache = new Map<number, SiteSettings>();
 const transientRetries = new Map<number, number>();
 /** Each notifyChange chains on the previous one of the site (settings load is async). */
 const chains = new Map<number, Promise<void>>();
+/** Auto publications held because the staging still holds code of a release a human rolled back from. */
+const held = new Map<number, { at: string; releaseNumber: number; count: number }>();
 /** Off until start() (workers disabled = no auto-publish). */
 let running = false;
 
@@ -83,6 +86,8 @@ async function fire(siteId: number): Promise<void> {
   try {
     settingsCache.delete(siteId); // the mode may have changed since the first event
     const s = await settings(siteId);
+    // Only the latest outcome holds the site: manual mode, noChanges, a publication… clear it.
+    held.delete(siteId);
     if (!s || s.mode === 'manual') return;
     await deps.publish(siteId);
   } catch (err) {
@@ -90,6 +95,13 @@ async function fire(siteId: number): Promise<void> {
     if (err instanceof AppError && (err.code === 'publishInProgress' || err.code === 'adapterBusy')) {
       const now = deps.now();
       arm(siteId, now, now + BUSY_RETRY_MS);
+      return;
+    }
+    // Not re-armed: the next staging change replays the guard (restoring the live release lets it pass).
+    if (err instanceof AppError && err.code === 'liveRolledBack') {
+      const d = (err.details ?? {}) as { rolledBackFrom?: number; count?: number };
+      held.set(siteId, { at: new Date(deps.now()).toISOString(), releaseNumber: Number(d.rolledBackFrom ?? 0), count: Number(d.count ?? 0) });
+      logger.warn({ siteId, rolledBackFrom: d.rolledBackFrom, count: d.count }, 'Auto-publish held: the staging would undo a rollback');
       return;
     }
     if (err instanceof AppError && (err.code === 'stagingEmpty' || err.code === 'noChanges' || err.code === 'accountSuspended' || err.statusCode === 404)) return;
@@ -108,6 +120,16 @@ async function handleChange(siteId: number, at: number): Promise<void> {
   arm(siteId, first, deadline);
 }
 
+/** Chains a handleChange of the site after the previous one (settings load is async). */
+function enqueue(siteId: number, t: number): void {
+  const prev = chains.get(siteId) ?? Promise.resolve();
+  const next = prev
+    .then(() => handleChange(siteId, t))
+    .catch((err) => logger.warn({ err, siteId }, 'Auto-publish scheduling failed'));
+  chains.set(siteId, next);
+  void next.finally(() => { if (chains.get(siteId) === next) chains.delete(siteId); });
+}
+
 export const publishScheduler = {
   /** A staging change of the site (file-server event). Never throws. */
   notifyChange(siteId: number, at: Date = new Date()): void {
@@ -115,12 +137,7 @@ export const publishScheduler = {
     const t = at.getTime();
     lastChanges.set(siteId, Math.max(lastChanges.get(siteId) ?? 0, t));
     transientRetries.delete(siteId);
-    const prev = chains.get(siteId) ?? Promise.resolve();
-    const next = prev
-      .then(() => handleChange(siteId, t))
-      .catch((err) => logger.warn({ err, siteId }, 'Auto-publish scheduling failed'));
-    chains.set(siteId, next);
-    void next.finally(() => { if (chains.get(siteId) === next) chains.delete(siteId); });
+    enqueue(siteId, t);
   },
 
   /** Pending deadline of a site, null when none. */
@@ -155,6 +172,27 @@ export const publishScheduler = {
     return true;
   },
 
+  /** The auto publication of a site is held (liveRolledBack), null when not. */
+  heldInfo(siteId: number): { at: string; releaseNumber: number; count: number } | null {
+    return held.get(siteId) ?? null;
+  },
+
+  /** A publication succeeded or the staging was restored: nothing held any more. */
+  clearHeld(siteId: number): void {
+    held.delete(siteId);
+  },
+
+  /**
+   * The rollback a held auto-publication protected is over (a human went
+   * forward again): cleared and, when it was held, re-armed (as a staging
+   * change would, without recording one) so the pending staging changes are
+   * published. Never throws.
+   */
+  releaseHeld(siteId: number): void {
+    if (!held.delete(siteId) || !running) return;
+    enqueue(siteId, deps.now());
+  },
+
   cancel(siteId: number): void {
     const p = pending.get(siteId);
     if (p) clearTimeout(p.timer);
@@ -187,5 +225,6 @@ export function setSchedulerDeps(over: Partial<SchedulerDeps> | null): void {
   settingsCache.clear();
   transientRetries.clear();
   chains.clear();
+  held.clear();
   running = true;
 }

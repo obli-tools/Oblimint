@@ -24,6 +24,11 @@ import { parseBody } from '../docker/parseBody';
 
 export const MCP_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
 const MAX_TEXT_RESULT = 200_000;
+/** list_release_files: page cut by size so the JSON answer stays whole under MAX_TEXT_RESULT. */
+export const MCP_RELEASE_LIST_CHARS = 150_000;
+/** read_release_file: bytes per window, and the largest JSON answer before the window shrinks. */
+export const MCP_RELEASE_READ_BYTES = 96 * 1024;
+const MCP_RELEASE_READ_CHARS = 180_000;
 /** JSON-RPC batch (older protocol versions): at most this many messages, run this many at a time (M5). */
 export const MAX_BATCH = 20;
 const BATCH_CONCURRENCY = 4;
@@ -105,13 +110,14 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'list_sites', title: 'List sites', readOnly: true,
-    description: 'Sites this key can work on (id, slug, domains, status, live release).',
+    description: 'Sites this key can work on (id, slug, domains, status, live release). rolledBack: a human put an OLDER release live and nobody has published or restored the staging since — read get_site before writing or publishing.',
     inputSchema: obj({}, []), args: z.object({}).passthrough(),
     run: (ctx) => keyApi.listSites(ctx),
   },
   {
     name: 'get_site', title: 'Site details', readOnly: true,
-    description: 'One site of the key.', inputSchema: obj({ site_id: siteId }, ['site_id']),
+    description: 'One site of the key. liveRelease: the live release, since when, how (via publish | rollback | revert = automatic return after a failed application update | rebuild) and by whom (byThisKey: through this key). latestRelease: the newest published one. rolledBack true (with rolledBackFrom, the release abandoned): a human went back to an older release — do NOT republish the staging as is; inspect with list_release_files / read_release_file, restore_release_to_staging if appropriate, and ask the human.',
+    inputSchema: obj({ site_id: siteId }, ['site_id']),
     args: z.object({ site_id: zSite }),
     run: (ctx, _r, a) => keyApi.getSite(ctx, a.site_id),
   },
@@ -236,16 +242,20 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'staging_changes', title: 'Unpublished changes', readOnly: true,
-    description: 'What changed in the code (staging) since the live release: the files a publish would ship. Scope files.read.',
+    description: 'Unpublished changes of the code (staging) since its last commit (pendingChanges, files: someone else\'s work in progress too — check before starting), and where it stands: base (its last commit and release), baseIsLive, liveChanges (what a publish would change on the LIVE site), rolledBack / rolledBackFrom, warningItems (liveOlderThanBase, baseNotPublished, autoPublishHeld), restore (a copy of a release into the staging, running or done). Scope files.read.',
     inputSchema: obj({ site_id: siteId }, ['site_id']), args: z.object({ site_id: zSite }),
     run: (ctx, _r, a) => keyApi.stagingStatus(ctx, a.site_id),
   },
   {
     name: 'publish', title: 'Publish the site',
-    description: 'Publishes the code (staging) as a new release and puts it live (scope releases.publish). The previous release stays available for rollback.',
-    inputSchema: obj({ site_id: siteId, message: { type: 'string', description: 'Release note.' } }, ['site_id']),
-    args: z.object({ site_id: zSite, message: z.string().max(500).optional() }),
-    run: (ctx, req, a) => keyApi.publish(ctx, req, a.site_id, a.message ?? null),
+    description: 'Publishes the code (staging) as a new release and puts it live (scope releases.publish). The previous release stays available for rollback. Refused (liveRolledBack, with the paths) while the staging still holds files of a release a human rolled back from: restore_release_to_staging the live release, or ask the human; override_rollback only when the human explicitly asked to publish anyway.',
+    inputSchema: obj({
+      site_id: siteId,
+      message: { type: 'string', description: 'Release note: a short imperative summary of what changed (e.g. "Fix the contact form validation").' },
+      override_rollback: { type: 'boolean', description: 'Publish even though it undoes a rollback by a human (only on the human\'s explicit request; audited).' },
+    }, ['site_id']),
+    args: z.object({ site_id: zSite, message: z.string().max(500).optional(), override_rollback: z.boolean().optional() }),
+    run: (ctx, req, a) => keyApi.publish(ctx, req, a.site_id, a.message ?? null, { overrideRollback: a.override_rollback === true }),
   },
   {
     name: 'list_releases', title: 'Releases', readOnly: true,
@@ -256,10 +266,50 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'rollback', title: 'Roll back', destructive: true,
-    description: 'Puts a previous release live again (scope releases.publish). release_id comes from list_releases.',
+    description: 'Puts a previous release live again (scope releases.publish). release_id comes from list_releases. The staging is not changed: restore_release_to_staging copies that release into it.',
     inputSchema: obj({ site_id: siteId, release_id: { type: 'integer' } }, ['site_id', 'release_id']),
     args: z.object({ site_id: zSite, release_id: z.number().int().positive() }),
     run: async (ctx, req, a) => { await keyApi.rollback(ctx, req, a.site_id, a.release_id); return { rolledBack: true }; },
+  },
+  {
+    name: 'list_release_files', title: 'Files of a release', readOnly: true,
+    description: 'Files of a release (any status with a commit), read from its history, never from disk: path, type (file | symlink), size, executable. Paged: pass nextOffset as offset while hasMore. Files under the current data paths are hidden (hiddenDataPathEntries). Scope files.read and the right to read the code.',
+    inputSchema: obj({
+      site_id: siteId, release_id: { type: 'integer', description: 'From list_releases or get_site.' },
+      path: relPath('Folder or file inside the release: any file name; "/" or omitted = root.'),
+      limit: { type: 'integer', minimum: 1, maximum: 500, description: 'Default 200.' }, offset: { type: 'integer', minimum: 0 },
+    }, ['site_id', 'release_id']),
+    args: z.object({ site_id: zSite, release_id: zId, path: zPath.optional(), limit: z.number().int().min(1).max(500).optional(), offset: z.number().int().min(0).optional() }),
+    run: (ctx, _r, a) => keyApi.releaseFiles(ctx, a.site_id, a.release_id, a.path ?? '', a.limit ?? 200, a.offset ?? 0, MCP_RELEASE_LIST_CHARS),
+  },
+  {
+    name: 'read_release_file', title: 'Read a file of a release', readOnly: true,
+    description: 'Content of one file of a release, by windows of about 96 KB: pass nextOffset as offset while truncated (windows stop at 8 MB; a binary file read as utf8 gives content null: use encoding base64). Compare with read_file (staging) before restoring. Scope files.read and the right to read the code.',
+    inputSchema: obj({
+      site_id: siteId, release_id: { type: 'integer' }, path: relPath('File path inside the release, e.g. "index.php".'),
+      encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'Default utf8.' }, offset: { type: 'integer', minimum: 0, description: 'Byte offset (nextOffset of the previous window).' },
+    }, ['site_id', 'release_id', 'path']),
+    args: z.object({ site_id: zSite, release_id: zId, path: zPath, encoding: z.enum(['utf8', 'base64']).optional(), offset: z.number().int().min(0).optional() }),
+    run: async (ctx, _r, a) => {
+      const read = (maxBytes: number) => keyApi.releaseFile(ctx, a.site_id, a.release_id, a.path, { encoding: a.encoding ?? 'utf8', offset: a.offset ?? 0, maxBytes });
+      let out = await read(MCP_RELEASE_READ_BYTES);
+      // Escaped JSON can be several times the bytes (control characters, non-Latin text): shrink the window (C12).
+      const len = JSON.stringify(out.content ?? '').length;
+      if (out.content !== null && len > MCP_RELEASE_READ_CHARS && out.length > 0) {
+        out = await read(Math.max(4, Math.floor(out.length * 170_000 / len)));
+      }
+      return out;
+    },
+  },
+  {
+    name: 'restore_release_to_staging', title: 'Copy a release into the staging', destructive: true,
+    description: 'Makes the staging (the code) EXACTLY the code of a published release: files written / deleted, data paths untouched (scope files.write and the right to read the code). Use it after a human rollback (get_site rolledBack) to restore the LIVE release in the staging before working, so a publish does not bring back the abandoned code. Refused (stagingHasPendingChanges) when the staging holds unpublished changes: pass discard_pending only if they can be lost (a copy is kept on the server, previousStagingCommit). May answer { status: "running" }: then poll staging_changes → restore. NEVER publishes. In publish mode "auto" the next staging write publishes the restored code. modeLost (modeLostCount): files copied WITHOUT their executable bit (the live tree on disk predates executable bits being kept); their mode must be fixed in the staging (chmod +x, by the human over SFTP) before publishing, or the publication drops the bit — tell the human, and switch an "auto" site to "manual" first.',
+    inputSchema: obj({
+      site_id: siteId, release_id: { type: 'integer', description: 'A ready release (list_releases).' },
+      discard_pending: { type: 'boolean', description: 'Replace unpublished changes of the staging (kept on the server).' },
+    }, ['site_id', 'release_id']),
+    args: z.object({ site_id: zSite, release_id: zId, discard_pending: z.boolean().optional() }),
+    run: (ctx, req, a) => keyApi.restoreReleaseToStaging(ctx, req, a.site_id, a.release_id, { discardPending: a.discard_pending === true }),
   },
   {
     name: 'list_parent_domains', title: 'Domains for subdomains', readOnly: true,
@@ -551,12 +601,16 @@ async function ensureParents(ctx: ApiKeyContext, req: Request, siteId: number, a
 }
 
 const INSTRUCTIONS = [
-  'Oblimint hosting panel. This key works on ONE hosting account and only on the sites list_sites returns.',
+  'Oblimint hosting panel. This key works on ONE hosting account and only on the sites list_sites returns. It acts as the human who created or approved it, with that human\'s CURRENT rights.',
   'A site has two file areas: "staging" (its code, never live as is) and "data" (files the site itself writes, live).',
   'Workflow: write / upload code into staging, check staging_changes, then publish to create a release and put it live.',
   'The live code is read-only: every change goes through staging and publish; rollback restores a previous release.',
-  'A site in publish mode "auto" puts every staging change live a few seconds later: on a live site, switch it to "manual" (update_site) before developing.',
-  'Writable folders are declared data paths (add_data_path); secrets and database credentials go to environment variables (set_env, create_database_user with env_site_id), never into the code.',
+  'Before writing or publishing, call get_site: if rolledBack is true (liveRelease older than rolledBackFrom), a human went back to an older release — do not republish the staging as is (publish is refused: liveRolledBack; in mode "auto" the auto-publication is held: autoPublishHeld); inspect with list_release_files / read_release_file, restore the live release with restore_release_to_staging if appropriate, and ask the human.',
+  'Also check staging_changes first: pending changes are someone else\'s unpublished work. One agent per site at a time.',
+  'Release message: a short imperative summary of what changed. After a publish, check the site answers (read_logs); if it is broken, rollback.',
+  'A site in publish mode "auto" puts every staging change live a few seconds later: on a live site, switch it to "manual" (update_site) before developing; switching to "auto" needs releases.publish.',
+  'Writable folders are declared data paths (add_data_path); secrets and database credentials go to environment variables (set_env secret: write-only, create_database_user with env_site_id), never into the code (a committed secret stays readable in old releases).',
+  'Domains: only those given to the key (Domains of the key in the panel) or serving only its sites can be routed or get subdomains; a route towards a site outside the key is never changed nor removed. Batches: at most 20 messages.',
   'No permanent process runs: only the website and its cron jobs (one hour at most each).',
   'Call get_guide for the full guide (rights, tools, databases, cron, routes, how to develop on a live site and roll back).',
 ].join(' ');
@@ -570,6 +624,27 @@ function textResult(value: unknown, isError = false) {
   let text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   if (text.length > MAX_TEXT_RESULT) text = `${text.slice(0, MAX_TEXT_RESULT)}\n… (cut at ${MAX_TEXT_RESULT} characters)`;
   return { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) };
+}
+
+/** Fixed texts of the server errors an agent can act on (their own message may carry internal paths). */
+const SERVER_ERROR_TEXT: Record<string, string> = {
+  hostdBusy: 'The host agent is busy: retry in a minute (hostdBusy)',
+  backendUnavailable: 'The release could not be prepared on disk: retry later (backendUnavailable)',
+  hostdOutdated: 'The host agent is older than the panel: ask the platform administrator to update it (hostdOutdated)',
+};
+
+/**
+ * A tool error as the model reads it (it can react): message and code, plus
+ * the details of a client error (e.g. liveRolledBack: the paths). Server
+ * errors keep their internal details out (A6): a fixed text for the known
+ * codes, a generic one otherwise.
+ */
+export function mcpErrorText(err: unknown): string {
+  const e = err instanceof AppError ? err : null;
+  if (!e) return 'Internal error: try again later';
+  if (e.statusCode >= 500) return (e.code && SERVER_ERROR_TEXT[e.code]) || 'Internal error: try again later';
+  const base = `${e.message}${e.code ? ` (${e.code})` : ''}`;
+  return e.details !== undefined && e.details !== null ? `${base}\ndetails: ${JSON.stringify(e.details)}` : base;
 }
 
 export function toolList() {
@@ -620,10 +695,7 @@ export async function handleRpc(ctx: ApiKeyContext, req: Request, msg: RpcMessag
       try {
         return { jsonrpc: '2.0', id, result: textResult(await tool.run(ctx, req, parsed.data)) };
       } catch (err) {
-        // Tool errors go back to the model (it can react); infrastructure details stay out (A6).
-        const e = err instanceof AppError ? err : null;
-        const message = e && e.statusCode < 500 ? `${e.message}${e.code ? ` (${e.code})` : ''}` : 'Internal error: try again later';
-        return { jsonrpc: '2.0', id, result: textResult(message, true) };
+        return { jsonrpc: '2.0', id, result: textResult(mcpErrorText(err), true) };
       }
     }
     default:

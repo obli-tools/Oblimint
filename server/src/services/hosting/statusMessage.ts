@@ -18,8 +18,12 @@ export function clientStatusMessage(message: string | null): string | null {
 }
 
 /** The object as `actor` may see it (status message reduced to its labels for a client). */
-export function forActor<T extends { statusMessage: string | null }>(actor: HostingActor, value: T): T {
-  return actor.kind === 'client' ? { ...value, statusMessage: clientStatusMessage(value.statusMessage) } : value;
+export function forActor<T extends { statusMessage: string | null; currentReleaseReason?: string | null }>(actor: HostingActor, value: T): T {
+  if (actor.kind !== 'client') return value;
+  const out = { ...value, statusMessage: clientStatusMessage(value.statusMessage) };
+  // A site: the reason of an automatic revert carries the same raw causes.
+  if (typeof value.currentReleaseReason === 'string') out.currentReleaseReason = clientStatusMessage(value.currentReleaseReason);
+  return out;
 }
 
 // Release errors: a pipeline failure that is not a PipelineError is stored as

@@ -1,5 +1,5 @@
 import type { DbConnectionInfo, DbDatabase, DbEngine, DbFamily, DbInstanceStatus, DbUser } from './databases';
-import type { SiteUpdate } from './hosting';
+import type { CurrentReleaseVia, SiteUpdate } from './hosting';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API access keys of a hosting account (« Clés d'accès »): a script, a CI or an
@@ -311,6 +311,28 @@ export interface ApiV1Site {
   currentRelease: number | null;
   /** Created through this key. */
   createdByKey: boolean;
+  liveRelease: ApiV1LiveRelease | null;
+  /** Newest published release (informative). */
+  latestRelease: { id: number; number: number; publishedAt: string | null } | null;
+  /** A human rolled the site back and nobody published from the staging (or restored it) since: publishing would undo it. Never set by an automatic revert. */
+  rolledBack: boolean;
+  /** The release abandoned by that rollback. */
+  rolledBackFrom: { id: number; number: number } | null;
+}
+
+/** How the live release of a site became live. */
+export interface ApiV1LiveRelease {
+  id: number;
+  number: number;
+  since: string | null;
+  via: CurrentReleaseVia | null;
+  /** Who did it (a staff member or an automatic revert: null). */
+  by: string | null;
+  byKind: 'user' | 'staff' | 'system' | null;
+  /** Made live through this very key. */
+  byThisKey: boolean;
+  /** Automatic revert: its reason. */
+  reason: string | null;
 }
 
 /** PATCH /api/v1/sites/:id (scope sites.manage): the platform-only settings (custom nginx, base path, profile) stay in the panel. */

@@ -1,6 +1,7 @@
 import apiClient from './client';
 import type {
-  ApiResponse, ApproveRequest, ProfileDetection, PublishRequest, Release, ReleaseDetail, ReleaseDiff, Site, StagingStatus,
+  ApiResponse, ApproveRequest, ProfileDetection, PublishRequest, Release, ReleaseDetail, ReleaseDiff, Site, StagingRestoreRequest, StagingRestoreResult,
+  StagingRestoreRunning, StagingStatus,
 } from '@oblimint/shared';
 
 // /api/sites/:id/releases + /staging — docs/P1-PLAN.md §API. OWNED BY MODULE `ui-sites`
@@ -42,6 +43,12 @@ export const releasesApi = {
 
   async reject(siteId: number, releaseId: number, reason?: string): Promise<Release> {
     const res = await apiClient.post<ApiResponse<Release>>(`/sites/${siteId}/releases/${releaseId}/reject`, { reason: reason ?? null });
+    return res.data.data!;
+  },
+
+  /** Copies a ready release into the staging (never publishes); 409 stagingHasPendingChanges without discardPending. */
+  async restoreToStaging(siteId: number, releaseId: number, data: StagingRestoreRequest = {}): Promise<StagingRestoreResult | StagingRestoreRunning> {
+    const res = await apiClient.post<ApiResponse<StagingRestoreResult | StagingRestoreRunning>>(`/sites/${siteId}/releases/${releaseId}/restore-staging`, data);
     return res.data.data!;
   },
 

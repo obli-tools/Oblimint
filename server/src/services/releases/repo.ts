@@ -288,6 +288,12 @@ export async function diffNumstat(repoDir: string, from: string, to: string): Pr
   return parseNumstat(r.stdout);
 }
 
+/** Paths that differ between two tree-ish (commits or trees), no rename detection. */
+export async function diffNameOnly(repoDir: string, from: string, to: string): Promise<string[]> {
+  const r = await runGit(['diff', ...DIFF_FLAGS, '--no-renames', '--name-only', '-z', from, to], { gitDir: repoDir, maxBuffer: 256 * 1024 * 1024 });
+  return splitZ(r.stdout);
+}
+
 /** Files added / modified / deleted between two commits (renames = delete + add). */
 export async function diffStats(repoDir: string, from: string | null, to: string): Promise<{ added: number; modified: number; deleted: number; changed: string[] }> {
   const entries = await diffNameStatus(repoDir, from ?? EMPTY_TREE, to, false);
@@ -352,4 +358,115 @@ export async function stagingChanges(
     fs.rmSync(tmpIndex, { force: true });
     fs.rmSync(`${tmpIndex}.lock`, { force: true });
   }
+}
+
+// ── staging vs a commit, trees, snapshots (Feature A: rollback detection, restore) ──
+
+export interface StagingDiffEntry { path: string; status: DiffFileStatus; oldMode: string; newMode: string }
+
+const RAW_STATUS: Record<string, DiffFileStatus> = { A: 'added', D: 'deleted', M: 'modified', T: 'typechange' };
+
+/** Parses `diff --raw -z --no-renames` (`:oldMode newMode oldOid newOid X\0path\0`). */
+export function parseRawZ(buf: Buffer | string): StagingDiffEntry[] {
+  const f = splitZ(buf);
+  const out: StagingDiffEntry[] = [];
+  for (let i = 0; i < f.length;) {
+    const head = f[i++];
+    if (!head.startsWith(':')) continue;
+    const [oldMode, newMode, , , st] = head.slice(1).split(' ');
+    const letter = (st ?? '').charAt(0);
+    const p = f[i++];
+    if (p === undefined) break;
+    if (letter === 'R' || letter === 'C') { i++; continue; } // --no-renames: never produced
+    out.push({ path: p, status: RAW_STATUS[letter] ?? 'modified', oldMode, newMode });
+  }
+  return out;
+}
+
+const SHA_RE = /^[0-9a-f]{40,64}$/;
+const under = (roots: string[], p: string) => roots.some((r) => p === r || p.startsWith(`${r}/`));
+
+/**
+ * What committing the staging NOW would change against `commit` (same rules
+ * as commitStaging: info/exclude, data paths and nested repositories left
+ * out), plus the tree that commit would have. A throw-away index built from
+ * `commit` (never HEAD's index, never `git status`: HEAD may differ from
+ * `commit`). Data paths, nested repositories and gitlinks (160000) are never
+ * listed, so a caller applying the list never touches them. rewriteExclude
+ * false while a publication holds the site (its commit owns info/exclude).
+ */
+export async function stagingDiffAgainst(input: TreeMatchInput & { rewriteExclude?: boolean; treeOnly?: boolean }): Promise<{ entries: StagingDiffEntry[]; tree: string }> {
+  const { repoDir, stagingDir, commit, tmpIndex } = input;
+  if (!SHA_RE.test(commit)) throw new Error(`invalid commit ${commit}`);
+  if (input.rewriteExclude !== false) writeExclude(repoDir, input.dataPaths, input.nestedRepos);
+  const env = { GIT_INDEX_FILE: tmpIndex };
+  const opts = { gitDir: repoDir, workTree: stagingDir, env };
+  try {
+    await runGit(['read-tree', commit], { gitDir: repoDir, env });
+    const untrack = [...input.dataPaths, ...input.nestedRepos];
+    if (untrack.length) await runGit(['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', ...untrack], opts);
+    await runGit(['add', '-A'], opts);
+    const tree = (await runGit(['write-tree'], { gitDir: repoDir, env })).stdout.toString('utf8').trim();
+    if (input.treeOnly) return { entries: [], tree };
+    const r = await runGit(['diff', '--cached', '--raw', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', commit], {
+      ...opts, maxBuffer: 256 * 1024 * 1024,
+    });
+    const skip = [...input.dataPaths, ...input.nestedRepos];
+    const entries = parseRawZ(r.stdout).filter((e) => !under(skip, e.path) && e.oldMode !== '160000' && e.newMode !== '160000' && !e.path.endsWith('/'));
+    return { entries, tree };
+  } finally {
+    fs.rmSync(tmpIndex, { force: true });
+    fs.rmSync(`${tmpIndex}.lock`, { force: true });
+  }
+}
+
+/**
+ * Tree object of each commit, in the SAME order and length as the input (null
+ * entry, non-hex value or missing object → null). One `cat-file --batch-check`.
+ */
+export async function treesOf(repoDir: string, commits: Array<string | null | undefined>): Promise<Array<string | null>> {
+  const out: Array<string | null> = commits.map(() => null);
+  const asked = commits.map((c, i) => ({ c, i })).filter((x): x is { c: string; i: number } => typeof x.c === 'string' && SHA_RE.test(x.c));
+  if (!asked.length || !fs.existsSync(path.join(repoDir, 'HEAD'))) return out;
+  const r = await runGit(['cat-file', '--batch-check=%(objectname) %(objecttype)'], {
+    gitDir: repoDir, input: asked.map((x) => `${x.c}^{tree}\n`).join(''),
+  });
+  const lines = r.stdout.toString('utf8').split('\n');
+  asked.forEach((x, k) => {
+    const m = /^([0-9a-f]{40,64}) tree$/.exec((lines[k] ?? '').trim());
+    out[x.i] = m ? m[1] : null;
+  });
+  return out;
+}
+
+/**
+ * Records a staging tree (computed by stagingDiffAgainst) as a commit: on HEAD
+ * (parent HEAD), or on the backup ref refs/oblimint/staging-before-restore
+ * (parents HEAD and the previous backup: one chained ref, every copy reachable).
+ * null when the tree equals the first parent's (nothing to record). The ref is
+ * moved with compare-and-swap. Caller holds the site lock.
+ */
+export async function snapshotStagingCommit(input: {
+  repoDir: string; tree: string; message: string; author: GitIdentity; ref: 'HEAD' | 'refs/oblimint/staging-before-restore';
+}): Promise<string | null> {
+  const { repoDir, tree } = input;
+  if (!SHA_RE.test(tree)) throw new Error(`invalid tree ${tree}`);
+  const head = await headCommit(repoDir);
+  let old: string | null = head;
+  const parents: string[] = head ? [head] : [];
+  if (input.ref !== 'HEAD') {
+    const r = await runGit(['rev-parse', '-q', '--verify', `${input.ref}^{commit}`], { gitDir: repoDir, okCodes: [1, 128] });
+    const sha = r.stdout.toString('utf8').trim();
+    old = r.code === 0 && SHA_RE.test(sha) ? sha : null;
+    if (old && !parents.includes(old)) parents.push(old);
+  }
+  const [firstTree] = await treesOf(repoDir, [parents[0] ?? null]);
+  if ((firstTree ?? EMPTY_TREE) === tree) return null;
+  const args = ['commit-tree', tree];
+  for (const p of parents) args.push('-p', p);
+  args.push('-F', '-');
+  const created = (await runGit(args, { gitDir: repoDir, input: input.message, env: identityEnv(input.author) })).stdout.toString('utf8').trim();
+  if (!SHA_RE.test(created)) throw new Error('commit-tree gave no commit');
+  await runGit(['update-ref', '-m', 'oblimint staging snapshot', input.ref, created, old ?? ''], { gitDir: repoDir });
+  return created;
 }

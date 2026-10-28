@@ -53,12 +53,20 @@ test('materialize: content equality, nested dirs, binary, empty file, .tmp renam
   }
 });
 
-test('materialize: executable bits are normalized to 0644', { skip: process.platform === 'win32' ? 'POSIX modes only' : false }, async () => {
-  const s = await site({ 'run.sh': '#!/bin/sh\n' });
+test('materialize: the executable bit is kept (0755), other files 0644, same content with both modes', { skip: process.platform === 'win32' ? 'POSIX modes only' : false }, async () => {
+  const s = await site({ 'run.sh': '#!/bin/sh\n', 'copy.sh': '#!/bin/sh\n', 'plain.txt': 'x' });
   fs.chmodSync(`${s.staging}/run.sh`, 0o755);
   const c1 = await s.commit();
   await materializeRelease({ repoDir: s.repo, releasesDir: s.releases, number: 1, commit: c1, dataPaths: [], base: null });
-  assert.equal(fs.statSync(`${s.releases}/1/run.sh`).mode & 0o777, 0o644);
+  assert.equal(fs.statSync(`${s.releases}/1/run.sh`).mode & 0o777, 0o755);
+  assert.equal(fs.statSync(`${s.releases}/1/copy.sh`).mode & 0o777, 0o644, 'same blob, not executable: a copy, not a hardlink');
+  assert.equal(fs.statSync(`${s.releases}/1/plain.txt`).mode & 0o777, 0o644);
+  // Hardlinked from the base only with the same mode; the base tree is never modified.
+  fs.chmodSync(`${s.staging}/run.sh`, 0o644);
+  const c2 = await s.commit();
+  await materializeRelease({ repoDir: s.repo, releasesDir: s.releases, number: 2, commit: c2, dataPaths: [], base: { number: 1, commit: c1 } });
+  assert.equal(fs.statSync(`${s.releases}/2/run.sh`).mode & 0o777, 0o644);
+  assert.equal(fs.statSync(`${s.releases}/1/run.sh`).mode & 0o777, 0o755);
 });
 
 test('materialize: unchanged blobs are hardlinked to the base release, changed ones are fresh', async () => {

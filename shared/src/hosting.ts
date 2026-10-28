@@ -610,6 +610,18 @@ export interface Site {
   statusMessage: string | null;
   currentReleaseId: number | null;
   currentReleaseNumber: number | null;
+  /** When / how the live release became live (null: unknown, before migration 016). */
+  currentReleaseSince: string | null;
+  currentReleaseVia: CurrentReleaseVia | null;
+  /** Who made it live (publisher, approver, or who rolled back); null for an automatic revert. */
+  currentReleaseByName: string | null;
+  /** Automatic revert (adapter failure): its reason (labels only for a client). */
+  currentReleaseReason: string | null;
+  /**
+   * A human rolled back from this release and nobody published from the
+   * staging (or restored it) since: publishing the staging as is would undo the rollback.
+   */
+  rolledBackFromNumber: number | null;
   /** Blue/green candidate base, null when no preview runs. */
   previewBase: SiteBaseId | null;
   previewUrl: string | null;
@@ -782,6 +794,8 @@ export interface DomainUpdate {
 export type ReleaseStatus = 'queued' | 'scanning' | 'awaiting_approval' | 'publishing' | 'ready' | 'failed' | 'rejected';
 /** P3: 'window' = validated modification window, 'adapter' = application adapter run (docs/P3-PLAN.md). */
 export type ReleaseTrigger = 'auto' | 'manual' | 'api' | 'window' | 'adapter';
+/** How the live release of a site became live: publication, human rollback, automatic revert (adapter), rebuild (data paths changed). */
+export type CurrentReleaseVia = 'publish' | 'rollback' | 'revert' | 'rebuild';
 
 export type ScanVerdict = 'clean' | 'suspicious' | 'infected';
 
@@ -853,6 +867,101 @@ export interface ReleaseDetail extends Release {
 
 export interface PublishRequest {
   message?: string | null;
+  /** Publish even though the staging still holds files of a release a human rolled back from (409 liveRolledBack otherwise). */
+  overrideRollback?: boolean;
+}
+
+/** POST /sites/:id/releases/:rid/restore-staging */
+export interface StagingRestoreRequest {
+  /** Replace unpublished changes of the staging (a copy is kept on the server); 409 stagingHasPendingChanges otherwise. */
+  discardPending?: boolean;
+}
+
+/** The staging now holds exactly the code of a release (copy of the release into the staging, never published by itself). */
+export interface StagingRestoreResult {
+  status: 'done';
+  siteId: number;
+  releaseId: number;
+  releaseNumber: number;
+  /** The staging already held that code: nothing copied. */
+  unchanged: boolean;
+  written: number;
+  deleted: number;
+  /** Paths not applied (a symlink or a file in the way…), first 50. */
+  conflicts: string[];
+  /** Paths still differing from the release after the copy (a write during the copy, a conflict). */
+  remaining: number;
+  remainingPaths: string[];
+  /**
+   * Paths copied WITHOUT their executable bit (first 50; also in remainingPaths): the live
+   * release's tree on disk predates executable bits being kept, and the live tree is never
+   * rebuilt. Make them executable again in the staging (chmod +x) before publishing, or the
+   * next publication drops the bit.
+   */
+  modeLost: string[];
+  modeLostCount: number;
+  /** Unpublished changes discarded (discardPending): commit keeping them on the server. */
+  previousStagingCommit: string | null;
+}
+
+/** The copy goes on in the background (big release): follow StagingStatus.restore. */
+export interface StagingRestoreRunning {
+  status: 'running';
+  siteId: number;
+  releaseId: number;
+  releaseNumber: number;
+  previousStagingCommit: string | null;
+}
+
+export interface StagingRestoreState {
+  status: 'running' | 'done' | 'failed';
+  releaseNumber: number;
+  startedAt: string;
+  finishedAt: string | null;
+  errorCode: string | null;
+  result: StagingRestoreResult | null;
+}
+
+/** A file of a release (GET /sites/:id/releases/:rid/files). */
+export interface ReleaseFileEntry {
+  path: string;
+  type: 'file' | 'symlink';
+  size: number;
+  executable: boolean;
+}
+
+export interface ReleaseFileList {
+  siteId: number;
+  releaseId: number;
+  releaseNumber: number;
+  /** Prefix listed ('' = the whole release). */
+  path: string;
+  /** Files under the prefix. */
+  total: number;
+  offset: number;
+  entries: ReleaseFileEntry[];
+  hasMore: boolean;
+  nextOffset: number | null;
+  /** Entries under the CURRENT data paths, hidden (their content lives in the data area). */
+  hiddenDataPathEntries: number;
+}
+
+export interface ReleaseFileContent {
+  siteId: number;
+  releaseId: number;
+  releaseNumber: number;
+  path: string;
+  type: 'file' | 'symlink';
+  size: number;
+  binary: boolean;
+  encoding: 'utf8' | 'base64';
+  /** null: a binary file asked as utf8 (ask encoding base64). A symlink: its target. */
+  content: string | null;
+  offset: number;
+  /** Bytes returned. */
+  length: number;
+  truncated: boolean;
+  nextOffset: number | null;
 }
 
 /** POST /sites/:id/releases/:rid/approve (P3: override of a high-risk scan, staff only, audited). */
@@ -905,16 +1014,43 @@ export interface StagingStatus {
   warnings: string[];
   /** Same warnings as codes + parameters (the UI translates them). */
   warningItems: StagingWarning[];
+  /** Last commit of the staging (HEAD of the site repository) and the release it belongs to. */
+  base: StagingBase | null;
+  live: { releaseId: number; releaseNumber: number; commit: string | null } | null;
+  /** The last commit of the staging has the tree of the live release (null: unknown). */
+  baseIsLive: boolean | null;
+  /** Files a publication would change on the LIVE site (only when the base is not live). */
+  liveChanges?: { count: number; files: Array<{ path: string; status: DiffFileStatus }>; truncated: boolean };
+  /** A human rolled back to an older release since the last publication from the staging: publishing it as is would undo that. */
+  rolledBack: boolean;
+  rolledBackFrom: { releaseId: number; releaseNumber: number } | null;
+  /** Copy of a release into the staging, running or finished (kept one hour). */
+  restore: StagingRestoreState | null;
 }
 
-export type StagingWarningCode = 'stagingMissing' | 'nestedRepo' | 'symlink' | 'moreSymlinks';
+export interface StagingBase {
+  commit: string;
+  releaseId: number | null;
+  releaseNumber: number | null;
+  releaseStatus: ReleaseStatus | null;
+  /** The base has the tree of the live release, or of the newest published one. */
+  matches: 'live' | 'latest' | null;
+}
+
+export type StagingWarningCode = 'stagingMissing' | 'nestedRepo' | 'symlink' | 'moreSymlinks' | 'liveOlderThanBase' | 'baseNotPublished' | 'autoPublishHeld';
 
 export interface StagingWarning {
   code: StagingWarningCode;
   /** Path relative to the staging of the site (nestedRepo, symlink). */
   path?: string;
-  /** moreSymlinks: number of symlinks not listed. */
+  /** moreSymlinks: number of symlinks not listed; autoPublishHeld: files of the abandoned release. */
   count?: number;
+  /** liveOlderThanBase: live release; autoPublishHeld: the release rolled back from. */
+  releaseNumber?: number;
+  /** liveOlderThanBase: the release rolled back from; baseNotPublished: the release of the staging base. */
+  baseNumber?: number;
+  /** baseNotPublished: status of that release. */
+  status?: ReleaseStatus;
 }
 
 // ─── RUNTIME / CONTAINERS (ARCHITECTURE §3.1, §3.6) ──────────────────────────

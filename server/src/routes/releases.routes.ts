@@ -13,7 +13,12 @@ import { releaseService } from '../services/releases/release.service';
 // /api/sites/:id/releases*, /api/sites/:id/staging* — OWNED BY MODULE `releases`
 // (docs/P1-PLAN.md §API). Mounted on /sites after sites.routes.ts (no catch-all here).
 //   GET  /:id/releases               ?limit=&offset= → { items: Release[]; total: number } (read)
-//   POST /:id/releases               PublishRequest → Release (releases.publish; 409 publishInProgress | stagingEmpty | noChanges)
+//   POST /:id/releases               PublishRequest → Release (releases.publish; 409 publishInProgress | stagingEmpty | noChanges |
+//                                    liveRolledBack {liveRelease, rolledBackFrom, count, paths}: the staging still holds code of a
+//                                    release a human rolled back from — confirmed with overrideRollback, audited)
+//   POST /:id/releases/:rid/restore-staging { discardPending? } → StagingRestoreResult (200) | StagingRestoreRunning (202)
+//                                    (files.manage + code.read; copies a ready release into the staging, never publishes;
+//                                    409 stagingHasPendingChanges | restoreInProgress | stagingTooLarge | releaseNotReady)
 //   GET  /:id/releases/:rid          → ReleaseDetail (read)
 //   GET  /:id/releases/:rid/diff     ?against=<rid>|previous|empty &file=<path> → ReleaseDiff (read: names and
 //                                    stats; the patches need code.read — files.manage or client releases.approve, staff sites.manage too —,
@@ -37,6 +42,11 @@ const listQuery = z.object({
 
 const publishBody = z.object({
   message: z.string().max(2000).nullable().optional(),
+  overrideRollback: z.boolean().optional(),
+}).strict();
+
+const restoreBody = z.object({
+  discardPending: z.boolean().optional(),
 }).strict();
 
 const diffQuery = z.object({
@@ -65,9 +75,12 @@ async function siteView(siteId: number): Promise<SiteRow> {
   const row = await db('sites as s')
     .join('hosting_accounts as a', 'a.id', 's.account_id')
     .leftJoin('releases as r', 'r.id', 's.current_release_id')
+    .leftJoin('releases as rf', 'rf.id', 's.rolled_back_from_release_id')
+    .leftJoin('users as cu', 'cu.id', 's.current_release_by')
     .where('s.id', siteId)
     .first(
-      's.*', 'a.username as account_username', 'r.number as current_release_number',
+      's.*', 'a.username as account_username', 'r.number as current_release_number', 'rf.number as rolled_back_from_number',
+      db.raw('COALESCE(cu.display_name, cu.username) as current_release_by_name'),
       db.raw(`(SELECT d.name FROM site_routes sr JOIN domains d ON d.id = sr.domain_id
                WHERE sr.site_id = s.id ORDER BY (sr.path_prefix = '/') DESC, (d.kind = 'primary') DESC, d.id ASC LIMIT 1) as primary_domain`),
     ) as SiteRow | undefined;
@@ -89,11 +102,33 @@ router.post('/:id/releases', validate(publishBody), async (req, res, next) => {
   try {
     const site = await siteFor(req, 'releases.publish');
     const body = req.body as z.infer<typeof publishBody>;
-    const release = await releaseService.publish(site.id, { trigger: 'manual', userId: userIdOf(req), message: body.message ?? null });
+    // After a rollback by a human the publication asks for a confirmation (decision A3): overrideRollback.
+    const release = await releaseService.publish(site.id, {
+      trigger: 'manual', userId: userIdOf(req), message: body.message ?? null, rollbackGuard: body.overrideRollback ? 'off' : 'refuse',
+    });
     await auditService.logReqAs(req, site.tenant_id, 'release.publish', {
-      resourceType: 'release', resourcePath: String(release.id), details: { siteId: site.id, number: release.number },
+      resourceType: 'release', resourcePath: String(release.id),
+      details: { siteId: site.id, number: release.number, ...(body.overrideRollback ? { overrideRollback: true } : {}) },
     });
     res.status(201).json({ success: true, data: release });
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/releases/:rid/restore-staging', heavyOpLimiter, validate(restoreBody), async (req, res, next) => {
+  try {
+    const actor = await resolveActor(req);
+    const site = await loadSite(actor, idParam(req), 'files.manage');
+    assertReadsCode(actor, site);
+    const rid = idParam(req, 'rid');
+    const discardPending = (req.body as z.infer<typeof restoreBody>).discardPending === true;
+    const r = await releaseService.restoreToStaging(site.id, rid, { userId: userIdOf(req), apiKeyId: null, discardPending });
+    await auditService.logReqAs(req, site.tenant_id, 'release.restoreToStaging', {
+      resourceType: 'release', resourcePath: String(rid),
+      details: r.status === 'done'
+        ? { siteId: site.id, number: r.releaseNumber, written: r.written, deleted: r.deleted, conflicts: r.conflicts.slice(0, 50), remaining: r.remaining, modeLost: r.modeLostCount, discardPending, previousStagingCommit: r.previousStagingCommit, status: r.status }
+        : { siteId: site.id, number: r.releaseNumber, discardPending, previousStagingCommit: r.previousStagingCommit, status: r.status },
+    });
+    res.status(r.status === 'running' ? 202 : 200).json({ success: true, data: r });
   } catch (err) { next(err); }
 });
 

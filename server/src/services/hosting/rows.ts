@@ -1,6 +1,6 @@
 import type {
   AccessMode, DnsZoneKind, DomainVerificationMethod, DomainVerificationStatus, OverQuotaState,
-  AccountSshKey, AppProfileId, CertificateSummary, ClientCapability, DataPathPolicy, Domain, HostingAccount, PhpSettings,
+  AccountSshKey, AppProfileId, CertificateSummary, ClientCapability, CurrentReleaseVia, DataPathPolicy, Domain, HostingAccount, PhpSettings,
   Plan, PlanLimits, Release, ReleaseDetail, ReleaseLogLine, ScanSummary, Site, SiteBaseId, SiteDataPath, SiteRoute,
 } from '@oblimint/shared';
 import { CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS } from '@oblimint/shared';
@@ -37,7 +37,11 @@ export interface SiteRow {
   publish_debounce_sec: number; healthcheck_path: string; status: Site['status']; status_message: string | null;
   current_release_id: number | null; preview_base: SiteBaseId | null; php_settings: unknown; custom_nginx: string | null;
   created_at: Date | string; updated_at: Date | string;
+  /** migration 016: provenance of the live release, release a human rolled back from. */
+  current_release_at?: Date | string | null; current_release_by?: number | null; current_release_via?: CurrentReleaseVia | null;
+  current_release_key_id?: number | null; current_release_reason?: string | null; rolled_back_from_release_id?: number | null;
   /** joined */ account_username?: string; current_release_number?: number | null; primary_domain?: string | null;
+  /** joined */ current_release_by_name?: string | null; rolled_back_from_number?: number | null;
 }
 
 export interface SiteRuntimeRow { id: number; site_id: number; base: SiteBaseId; created_at: Date | string }
@@ -74,6 +78,8 @@ export interface ReleaseRow {
   published_at: Date | string | null; created_at: Date | string; updated_at: Date | string;
   /** P3 (migration 005): origin of a window / adapter release, staff override of a blocked scan. */
   window_id?: number | null; adapter_run_id?: number | null; scan_override_by?: number | null; scan_override_at?: Date | string | null;
+  /** migration 016: access key that created it (never exposed). */
+  api_key_id?: number | null;
   /** joined */ author_name?: string | null; approver_name?: string | null; is_current?: boolean;
 }
 
@@ -188,6 +194,11 @@ export function toSite(r: SiteRow, extras: { previewUrl?: string | null } = {}):
     statusMessage: r.status_message,
     currentReleaseId: r.current_release_id,
     currentReleaseNumber: r.current_release_number ?? null,
+    currentReleaseSince: iso(r.current_release_at ?? null),
+    currentReleaseVia: r.current_release_via ?? null,
+    currentReleaseByName: r.current_release_via === 'revert' ? null : r.current_release_by_name ?? null,
+    currentReleaseReason: r.current_release_via === 'revert' ? r.current_release_reason ?? null : null,
+    rolledBackFromNumber: r.rolled_back_from_number ?? null,
     previewBase: r.preview_base,
     previewUrl: extras.previewUrl ?? null,
     php: json<PhpSettings>(r.php_settings, {}),

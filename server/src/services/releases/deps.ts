@@ -1,5 +1,5 @@
 import http from 'http';
-import { hostdFor, type HostdClient, type HostdChangeSource, type HostdSiteSpec, type HostdStagingApplyResult, type HostdStagingChange } from '../hostd/client';
+import { hostdFor, type HostdClient, type HostdChangeSource, type HostdSiteSpec, type HostdStagingApplyResult, type HostdStagingChange, type HostdWorkspaceSpec } from '../hostd/client';
 import { realLinkOps, type LinkOps } from './materialize';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,6 +32,9 @@ export interface ReleaseDeps {
   windowBlocks(siteId: number, exemptWindowId: number | null): Promise<boolean>;
   /** hostd applyToStaging (changeset.reflectToStaging). */
   applyToStaging(nodeId: number, spec: HostdSiteSpec, source: HostdChangeSource, changes: HostdStagingChange[]): Promise<HostdStagingApplyResult>;
+  /** hostd ensureWorkspace: copy of releases/<n> owned by the account (source of a copy into the staging). */
+  ensureWorkspace(nodeId: number, spec: HostdWorkspaceSpec): Promise<{ files: number; bytes: number }>;
+  removeWorkspace(nodeId: number, spec: HostdSiteSpec & { workspaceId: number }): Promise<void>;
 }
 
 /** GET with an explicit Host header (node:http: fetch would not let us set Host). */
@@ -78,6 +81,8 @@ const defaults: ReleaseDeps = {
     }
   },
   applyToStaging: (nodeId, spec, source, changes) => hostdFor(nodeId).applyToStaging(spec, source, changes),
+  ensureWorkspace: (nodeId, spec) => hostdFor(nodeId).ensureWorkspace(spec),
+  removeWorkspace: (nodeId, spec) => hostdFor(nodeId).removeWorkspace(spec),
 };
 
 let current: ReleaseDeps = { ...defaults };

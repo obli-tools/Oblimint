@@ -436,6 +436,11 @@ export async function recoverInterruptedRuns(): Promise<number> {
     }
     for (const name of names) {
       if (!/^\d{1,10}$/.test(name) || ownRuns.has(Number(name)) || deferredIds.has(Number(name))) continue;
+      // The workspace of a copy of a release into the staging (releases module), while it runs.
+      if (name === '2147483648') {
+        const { releaseService } = await import('../releases/release.service');
+        if (await releaseService.pipelineBusy(Number(s.id))) continue;
+      }
       await deps.removeWorkspace(Number(s.node_id), {
         accountId: Number(s.account_id), siteId: Number(s.id), slug: s.slug, uid: Number(s.uid), gid: Number(s.gid), workspaceId: Number(name),
       }).catch((err) => logger.warn({ siteId: s.id, workspaceId: name, err: errText(err) }, 'Adapters: orphan workspace not removed'));

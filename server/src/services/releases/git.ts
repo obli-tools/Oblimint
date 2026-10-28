@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -180,6 +180,27 @@ export function runGit(args: string[], opts: GitRunOptions): Promise<GitResult> 
     if (opts.input !== undefined) child.stdin.end(opts.input);
     else child.stdin.end();
   });
+}
+
+/**
+ * One git command whose stdout is streamed to the caller (no buffering): same
+ * hardened environment and `-c` options as runGit. The caller consumes
+ * child.stdout and kills the child when its own consumer goes away.
+ */
+export function spawnGit(args: string[], opts: { gitDir: string; env?: Record<string, string> }): ChildProcessWithoutNullStreams {
+  const child = spawn(config.hosting.gitBinary, [...gitBaseArgs(), `--git-dir=${opts.gitDir}`, ...args], {
+    env: gitEnv(opts.env),
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+    shell: false,
+  });
+  // A spawn failure (EAGAIN / EMFILE under load, ENOENT) or a failed kill() emits 'error' on the
+  // child: without a listener it would crash the process. It reaches the consumer through stdout.
+  child.on('error', (err) => { child.stdout.destroy(new GitError(`git ${args[0]}: ${err.message}`, null, '')); });
+  child.stdin.on('error', () => { /* git exited early */ });
+  child.stdin.end();
+  child.stderr.resume();
+  return child;
 }
 
 /** Identity env vars (author = the publisher, committer = the panel). */

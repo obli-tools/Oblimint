@@ -135,7 +135,7 @@ export function fileError(err: unknown): AppError {
 const target = (a: AccountRow): HostdFileTarget => ({ nodeId: a.node_id, accountId: a.id });
 const owner = (a: AccountRow): HostdFileOwner => ({ uid: a.uid, gid: a.gid });
 
-async function assertWritable(a: AccountRow): Promise<void> {
+export async function assertWritable(a: AccountRow): Promise<void> {
   if (a.status !== 'active') throw new AppError(409, 'The account is not active', 'accountNotActive');
   if (await deps.uploadsBlocked(a.id)) throw new AppError(507, 'Disk quota exceeded: uploads are blocked (read and delete only)', 'uploadsBlocked');
 }

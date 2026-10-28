@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { AppError } from '../middleware/errorHandler';
+import { heavyOpLimiter } from '../middleware/rateLimiter';
+import { idParam } from '../services/hosting/access';
 import { parseBody } from '../services/docker/parseBody';
 import { keyApi, type SiteArea } from '../services/apiKeys/keyApi';
 import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from '../services/apiKeys/middleware';
@@ -32,10 +34,15 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   POST   /sites/:id/files/move    {items, overwrite?, area?} → FileOpResult[]        files.write
 //   POST   /sites/:id/files/copy    {items, area?}      → FileOpResult[]               files.write
 //   POST   /sites/:id/files/extract {path, to?, overwrite?, area?} → FileExtractResult files.write
-//   GET    /sites/:id/staging                           → StagingStatus (unpublished changes) files.read
-//   POST   /sites/:id/publish   {message?}              → Release (201)                releases.publish
+//   GET    /sites/:id/staging                           → StagingStatus (unpublished changes, base vs live, rollback pending) files.read
+//   POST   /sites/:id/publish   {message?, overrideRollback?} → Release (201; 409 liveRolledBack {liveRelease, rolledBackFrom, count, paths}) releases.publish
 //   GET    /sites/:id/releases?limit=&offset=           → { items: Release[]; total }
 //   POST   /sites/:id/releases/:rid/rollback            → { rolledBack: true }         releases.publish
+//   GET    /sites/:id/releases/:rid/files?path=&limit=&offset= → ReleaseFileList (limit ≤ 5000)  files.read (+ code right)
+//   GET    /sites/:id/releases/:rid/files/text?path=&encoding=utf8|base64&offset= → ReleaseFileContent (≤ 2 MiB text / 8 MiB base64) files.read
+//   GET    /sites/:id/releases/:rid/files/content?path=   → the file, streamed (Content-Length; ≤ 64 MiB, 413 fileTooLarge) files.read
+//   POST   /sites/:id/releases/:rid/restore-staging {discardPending?} → StagingRestoreResult (200) | {status:'running'} (202)  files.write
+//                                                        (409 stagingHasPendingChanges | restoreInProgress | stagingTooLarge | releaseNotReady)
 //   GET    /sites/:id/logs?source=access|error|app&q=&limit=&since=&until=&status= → LogQueryResult  logs.read
 //   GET    /sites/:id/env                               → SiteEnvVar[] (secrets: value null)        sites.manage
 //   PATCH  /sites/:id/env  {set?: [{name, value?, secret?}], remove?: [name]} → {vars, changed} (others kept; restarts the site) sites.manage
@@ -99,7 +106,12 @@ const itemsBody = z.object({
 }).strict();
 const extractBody = z.object({ path: relPath.min(1), to: relPath.optional(), overwrite: z.boolean().optional(), area: area.optional() }).strict();
 const uploadBody = z.object({ path: relPath.min(1), size: z.number().int().min(0), overwrite: z.boolean().optional(), area: area.optional() }).strict();
-const publishBody = z.object({ message: z.string().max(500).nullable().optional() }).strict();
+const publishBody = z.object({ message: z.string().max(500).nullable().optional(), overrideRollback: z.boolean().optional() }).strict();
+const restoreBody = z.object({ discardPending: z.boolean().optional() }).strict();
+const releaseFilesQuery = z.object({
+  path: relPath.optional(), limit: z.coerce.number().int().min(1).max(5000).default(200), offset: z.coerce.number().int().min(0).default(0),
+}).passthrough();
+const releaseTextQuery = z.object({ path: relPath, encoding: z.enum(['utf8', 'base64']).default('utf8'), offset: z.coerce.number().int().min(0).default(0) }).passthrough();
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const h = (fn: Handler) => (req: Request, res: Response, next: (err?: unknown) => void) => { fn(req, res).catch(next); };
@@ -180,7 +192,7 @@ router.post('/sites/:id/files/extract', h(async (req, res) => {
 router.get('/sites/:id/staging', h(async (req, res) => ok(res, await keyApi.stagingStatus(ctxOf(req), siteId(req)))));
 router.post('/sites/:id/publish', h(async (req, res) => {
   const b = parseBody(publishBody, req.body ?? {});
-  ok(res, await keyApi.publish(ctxOf(req), req, siteId(req), b.message ?? null), 201);
+  ok(res, await keyApi.publish(ctxOf(req), req, siteId(req), b.message ?? null, { overrideRollback: b.overrideRollback === true }), 201);
 }));
 router.get('/sites/:id/releases', h(async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
@@ -188,8 +200,33 @@ router.get('/sites/:id/releases', h(async (req, res) => {
   ok(res, await keyApi.releases(ctxOf(req), siteId(req), limit, offset));
 }));
 router.post('/sites/:id/releases/:rid/rollback', h(async (req, res) => {
-  await keyApi.rollback(ctxOf(req), req, siteId(req), Number(req.params.rid));
+  await keyApi.rollback(ctxOf(req), req, siteId(req), idParam(req, 'rid'));
   ok(res, { rolledBack: true });
+}));
+router.get('/sites/:id/releases/:rid/files', h(async (req, res) => {
+  const q = parseBody(releaseFilesQuery, req.query);
+  ok(res, await keyApi.releaseFiles(ctxOf(req), siteId(req), idParam(req, 'rid'), q.path ?? '', q.limit, q.offset));
+}));
+router.get('/sites/:id/releases/:rid/files/text', h(async (req, res) => {
+  const q = parseBody(releaseTextQuery, req.query);
+  ok(res, await keyApi.releaseFile(ctxOf(req), siteId(req), idParam(req, 'rid'), q.path, { encoding: q.encoding, offset: q.offset }));
+}));
+router.get('/sites/:id/releases/:rid/files/content', h(async (req, res) => {
+  const f = await keyApi.releaseFileStream(ctxOf(req), siteId(req), idParam(req, 'rid'), qPath(req));
+  const { stream, kill } = f.open();
+  res.status(200);
+  res.setHeader('Content-Length', String(f.entry.size));
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(f.entry.path.split('/').pop() ?? 'file')}`);
+  req.on('close', kill);
+  stream.on('error', () => { kill(); res.destroy(); });
+  stream.pipe(res);
+}));
+router.post('/sites/:id/releases/:rid/restore-staging', heavyOpLimiter, h(async (req, res) => {
+  const b = parseBody(restoreBody, req.body ?? {});
+  const r = await keyApi.restoreReleaseToStaging(ctxOf(req), req, siteId(req), idParam(req, 'rid'), { discardPending: b.discardPending === true });
+  ok(res, r, r.status === 'running' ? 202 : 200);
 }));
 router.get('/sites/:id/logs', h(async (req, res) => {
   const q = req.query;

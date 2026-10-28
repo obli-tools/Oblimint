@@ -2,7 +2,7 @@ import type { Request } from 'express';
 import type { Readable } from 'stream';
 import type {
   ApiV1Me, ApiV1ParentDomain, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
-  SiteCreate, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
+  ReleaseFileContent, ReleaseFileList, SiteCreate, StagingRestoreResult, StagingRestoreRunning, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
 } from '@oblimint/shared';
 import { apiKeyGuide } from '@oblimint/shared';
 import { db } from '../../db';
@@ -10,17 +10,18 @@ import { AppError } from '../../middleware/errorHandler';
 import { auditService } from '../audit.service';
 import { filesService, joinVirtual, splitVirtual } from '../files/files.service';
 import type { HostdFileStream } from '../hostd/files';
-import { loadAccount, loadSite } from '../hosting/access';
+import { assertReadsCode, loadAccount, loadSite } from '../hosting/access';
 import type { AccountRow, SiteRow } from '../hosting/rows';
 import { domainsService } from '../hosting/domains.service';
 import { sitesService } from '../hosting/sites.service';
-import { releaseForActor } from '../hosting/statusMessage';
+import { clientStatusMessage, releaseForActor } from '../hosting/statusMessage';
 import { appConfigService } from '../appConfig.service';
 import { publicPanelOrigin } from '../panelHosts';
 import { cronService } from '../cron/cron.service';
 import type { DataPathInputBody, DataPathUpdateBody } from '../../validators/hosting.schema';
 import { assertSource, logsService } from '../logs/logs.service';
 import { releaseService } from '../releases/release.service';
+import { liveStates } from '../releases/liveState';
 import { apiKeysService, keyAllowsDomain, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,6 +151,22 @@ function fileAudit(req: Request, a: AccountRow, siteId: number | null, action: s
   });
 }
 
+/** A release id given by the caller: a positive integer, else 404 (never a 500 on NaN). */
+export function releaseIdOf(n: unknown): number {
+  const v = typeof n === 'string' && /^\d+$/.test(n) ? Number(n) : n;
+  if (typeof v !== 'number' || !Number.isInteger(v) || v <= 0) throw new AppError(404, 'Release not found', 'notFound');
+  return v;
+}
+
+/** Users who are not members of the account (platform staff): their name is never shown to a key. */
+async function nonMembers(accountId: number, userIds: Array<number | null | undefined>): Promise<Set<number>> {
+  const ids = [...new Set(userIds.filter((v): v is number => typeof v === 'number' && v > 0))];
+  if (!ids.length) return new Set();
+  const rows = await db('users as u').leftJoin('account_users as au', function joinMember() { this.on('au.user_id', '=', 'u.id').andOnVal('au.account_id', '=', accountId); })
+    .whereIn('u.id', ids).select('u.id', 'u.kind', 'au.user_id as member') as Array<{ id: number; kind: string; member: number | null }>;
+  return new Set(rows.filter((r) => r.kind === 'staff' || r.member === null).map((r) => Number(r.id)));
+}
+
 /** Paths in an audit entry: the first 50 of a batch. */
 const sample = (paths: string[]) => (paths.length > 50 ? [...paths.slice(0, 50), `… +${paths.length - 50}`] : paths);
 
@@ -167,13 +184,27 @@ async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV
     .select('sr.site_id', 'd.name', 'sr.path_prefix', 'd.kind').orderBy([{ column: 'sr.path_prefix' }, { column: 'd.id' }]) as
     Array<{ site_id: number; name: string; path_prefix: string; kind: string }>;
   const created = new Set(await db('api_key_sites').where({ key_id: ctx.id, created_by_key: true }).pluck('site_id') as number[]);
+  const states = await liveStates(rows.map((r) => r.id));
+  const client = ctx.actor.kind === 'client';
   return rows.map((r) => {
     const mine = doms.filter((d) => d.site_id === r.id);
     const primary = mine.find((d) => d.path_prefix === '/') ?? mine[0];
+    const st = states.get(r.id);
+    const revert = st?.via === 'revert';
     return {
       id: r.id, name: r.name, slug: r.slug, status: r.status, base: r.base, docroot: r.docroot, publishMode: r.publish_mode,
       primaryDomain: primary?.name ?? null, domains: [...new Set(mine.map((d) => d.name))], currentRelease: r.release_number ?? null,
       createdByKey: created.has(r.id),
+      liveRelease: st?.live ? {
+        id: st.live.id, number: st.live.number, since: st.since, via: st.via,
+        by: st.byStaff || revert ? null : st.byName,
+        byKind: revert ? 'system' : st.byStaff ? 'staff' : st.byUserId ? 'user' : null,
+        byThisKey: st.keyId === ctx.id,
+        reason: revert ? (client ? clientStatusMessage(st.reason) : st.reason) : null,
+      } : null,
+      latestRelease: st?.latest ? { id: st.latest.id, number: st.latest.number, publishedAt: st.latest.publishedAt } : null,
+      rolledBack: st?.rolledBack ?? false,
+      rolledBackFrom: st?.rolledBackFrom ? { id: st.rolledBackFrom.id, number: st.rolledBackFrom.number } : null,
     };
   });
 }
@@ -314,29 +345,93 @@ export const keyApi = {
   },
 
   // ── releases ──
-  async publish(ctx: ApiKeyContext, req: Request, siteId: number, message: string | null): Promise<Release> {
+  /**
+   * Publishes the staging. Refused (409 liveRolledBack) while it still holds
+   * files of a release a human rolled back from, unless overrideRollback (the
+   * human asked for it): audited.
+   */
+  async publish(ctx: ApiKeyContext, req: Request, siteId: number, message: string | null, opts: { overrideRollback?: boolean } = {}): Promise<Release> {
     requireScope(ctx, 'releases.publish');
     const site = await keySite(ctx, siteId);
     await loadSite(ctx.actor, site.id, 'releases.publish');
-    const release = await releaseService.publish(site.id, { trigger: 'manual', userId: ctx.creatorId, message });
+    const release = await releaseService.publish(site.id, {
+      trigger: 'manual', userId: ctx.creatorId, message, apiKeyId: ctx.id, rollbackGuard: opts.overrideRollback ? 'off' : 'refuse',
+    });
     await auditService.logReqAs(req, site.tenant_id, 'release.publish', {
-      resourceType: 'release', resourcePath: String(release.id), details: { siteId: site.id, number: release.number },
+      resourceType: 'release', resourcePath: String(release.id),
+      details: { siteId: site.id, number: release.number, ...(opts.overrideRollback ? { overrideRollback: true } : {}) },
     });
     return release;
   },
 
+  /** Releases, newest first; the name of a platform staff member is never shown (author, approver). */
   async releases(ctx: ApiKeyContext, siteId: number, limit: number, offset: number): Promise<{ items: Release[]; total: number }> {
     const site = await keySite(ctx, siteId);
     const page = await releaseService.list(site.id, { limit, offset } as Parameters<typeof releaseService.list>[1]);
-    return { ...page, items: page.items.map((r) => releaseForActor(ctx.actor, r)) };
+    const ids = page.items.map((r) => r.id);
+    const approvers = ids.length ? await db('releases').whereIn('id', ids).select('id', 'approved_by') as Array<{ id: number; approved_by: number | null }> : [];
+    const approverOf = new Map(approvers.map((a) => [Number(a.id), a.approved_by]));
+    const hidden = await nonMembers(site.account_id, [...page.items.map((r) => r.authorUserId), ...approvers.map((a) => a.approved_by)]);
+    return {
+      ...page,
+      items: page.items.map((r) => {
+        const out = releaseForActor(ctx.actor, r);
+        const approver = approverOf.get(r.id);
+        return {
+          ...out,
+          ...(r.authorUserId && hidden.has(r.authorUserId) ? { authorName: null } : {}),
+          ...(approver && hidden.has(Number(approver)) ? { approvedBy: null } : {}),
+        };
+      }),
+    };
   },
 
-  async rollback(ctx: ApiKeyContext, req: Request, siteId: number, releaseId: number): Promise<void> {
+  async rollback(ctx: ApiKeyContext, req: Request, siteId: number, releaseId: unknown): Promise<void> {
     requireScope(ctx, 'releases.publish');
     const site = await keySite(ctx, siteId);
+    const rid = releaseIdOf(releaseId);
     await loadSite(ctx.actor, site.id, 'releases.publish');
-    await releaseService.rollback(site.id, releaseId, ctx.creatorId);
-    await auditService.logReqAs(req, site.tenant_id, 'release.rollback', { resourceType: 'release', resourcePath: String(releaseId), details: { siteId: site.id } });
+    await releaseService.rollback(site.id, rid, ctx.creatorId, { apiKeyId: ctx.id });
+    await auditService.logReqAs(req, site.tenant_id, 'release.rollback', { resourceType: 'release', resourcePath: String(rid), details: { siteId: site.id } });
+  },
+
+  // ── files of a release (read from git; files.read + the code right) ──
+  async releaseFiles(ctx: ApiKeyContext, siteId: number, releaseId: unknown, path: unknown, limit: number, offset: number, maxChars?: number): Promise<ReleaseFileList> {
+    await filesAccount(ctx, false);
+    const site = await keySite(ctx, siteId);
+    assertReadsCode(ctx.actor, site);
+    return releaseService.releaseFiles(site.id, releaseIdOf(releaseId), { path, limit, offset, maxChars });
+  },
+
+  async releaseFile(ctx: ApiKeyContext, siteId: number, releaseId: unknown, path: unknown, opts: { encoding?: 'utf8' | 'base64'; offset?: number; maxBytes?: number } = {}): Promise<ReleaseFileContent> {
+    await filesAccount(ctx, false);
+    const site = await keySite(ctx, siteId);
+    assertReadsCode(ctx.actor, site);
+    return releaseService.releaseFile(site.id, releaseIdOf(releaseId), { path, ...opts });
+  },
+
+  async releaseFileStream(ctx: ApiKeyContext, siteId: number, releaseId: unknown, path: unknown): ReturnType<typeof releaseService.releaseFileStream> {
+    await filesAccount(ctx, false);
+    const site = await keySite(ctx, siteId);
+    assertReadsCode(ctx.actor, site);
+    return releaseService.releaseFileStream(site.id, releaseIdOf(releaseId), path);
+  },
+
+  /** Copies a published release into the staging (files.write; never publishes). Audited, also when it goes on in the background. */
+  async restoreReleaseToStaging(ctx: ApiKeyContext, req: Request, siteId: number, releaseId: unknown, opts: { discardPending?: boolean } = {}): Promise<StagingRestoreResult | StagingRestoreRunning> {
+    await filesAccount(ctx, true);
+    const site = await keySite(ctx, siteId);
+    assertReadsCode(ctx.actor, site);
+    const rid = releaseIdOf(releaseId);
+    const discardPending = opts.discardPending === true;
+    const r = await releaseService.restoreToStaging(site.id, rid, { userId: ctx.creatorId, apiKeyId: ctx.id, discardPending });
+    await auditService.logReqAs(req, site.tenant_id, 'release.restoreToStaging', {
+      resourceType: 'release', resourcePath: String(rid),
+      details: r.status === 'done'
+        ? { siteId: site.id, number: r.releaseNumber, written: r.written, deleted: r.deleted, conflicts: sample(r.conflicts), remaining: r.remaining, modeLost: r.modeLostCount, discardPending, previousStagingCommit: r.previousStagingCommit, status: r.status }
+        : { siteId: site.id, number: r.releaseNumber, discardPending, previousStagingCommit: r.previousStagingCommit, status: r.status },
+    });
+    return r;
   },
 
   // ── subdomains (scope domains.subdomain) ──

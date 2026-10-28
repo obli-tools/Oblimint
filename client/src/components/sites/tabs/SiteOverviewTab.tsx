@@ -374,6 +374,12 @@ function StagingCard({ site, onPublish }: SiteTabProps) {
             )}
           </div>
 
+          {stagingRestoreText(t, staging) && (
+            <p className={`rounded-lg px-3 py-2 text-xs ${staging.restore?.status === 'failed' ? 'bg-red-400/10 text-red-400' : 'bg-bg-tertiary/60 text-text-secondary'}`}>
+              {stagingRestoreText(t, staging)}
+            </p>
+          )}
+
           {staging.warnings.length > 0 && (
             <ul className="space-y-1">
               {stagingWarningTexts(t, staging).map((w) => (
@@ -549,7 +555,28 @@ function stagingWarningTexts(t: TFunction, staging: StagingStatus): string[] {
       case 'nestedRepo': return t('sites.staging.warnings.nestedRepo', { path: w.path ?? '' }) || `Nested git repository (excluded from publications): ${w.path ?? ''}`;
       case 'symlink': return t('sites.staging.warnings.symlink', { path: w.path ?? '' }) || `Symbolic link: ${w.path ?? ''}`;
       case 'moreSymlinks': return t('sites.staging.warnings.moreSymlinks', { count: w.count ?? 0 }) || `… and ${w.count ?? 0} more symbolic link(s)`;
+      case 'liveOlderThanBase': return t('sites.staging.warnings.liveOlderThanBase', { releaseNumber: w.releaseNumber ?? '?', baseNumber: w.baseNumber ?? '?' })
+        || `Rollback: the live release #${w.releaseNumber ?? '?'} is older than #${w.baseNumber ?? '?'}, whose code the staging still holds. Publishing it as is would undo the rollback: copy the live release into the staging first.`;
+      case 'baseNotPublished': return t('sites.staging.warnings.baseNotPublished', { baseNumber: w.baseNumber ?? '?', status: w.status ?? '' })
+        || `The staging was last committed as release #${w.baseNumber ?? '?'}, which is not live (${w.status ?? ''}).`;
+      case 'autoPublishHeld': return t('sites.staging.warnings.autoPublishHeld', { count: w.count ?? 0, releaseNumber: w.releaseNumber ?? '?' })
+        || `Automatic publication held: the staging would put back online ${w.count ?? 0} file(s) of release #${w.releaseNumber ?? '?'}, undone by a rollback. Publish manually or copy the live release into the staging.`;
       default: return staging.warnings[i] ?? '';
     }
   }).filter(Boolean);
+}
+
+/** Copy of a release into the staging, running or finished (StagingStatus.restore). */
+function stagingRestoreText(t: TFunction, staging: StagingStatus): string | null {
+  const r = staging.restore;
+  if (!r) return null;
+  if (r.status === 'running') return t('sites.staging.restore.running', { number: r.releaseNumber }) || `Copying release #${r.releaseNumber} into the staging…`;
+  if (r.status === 'failed') return t('sites.staging.restore.failed', { number: r.releaseNumber }) || `The copy of release #${r.releaseNumber} into the staging failed.`;
+  const done = t('sites.staging.restore.done', { number: r.releaseNumber, remaining: r.result?.remaining ?? 0 })
+    || `Release #${r.releaseNumber} copied into the staging (${r.result?.remaining ?? 0} path(s) still differing).`;
+  const lost = r.result?.modeLostCount ?? 0;
+  if (!lost) return done;
+  const paths = (r.result?.modeLost ?? []).slice(0, 5).join(', ');
+  return `${done} ${t('sites.staging.restore.modeLost', { count: lost, paths })
+    || `${lost} file(s) were copied without their executable bit (${paths}…): make them executable again in the staging (chmod +x over SFTP) before publishing.`}`;
 }

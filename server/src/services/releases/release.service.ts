@@ -2,9 +2,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
+import type { Readable } from 'stream';
+import type { Knex } from 'knex';
 import type {
-  ProfileDetection, Release, ReleaseDetail, ReleaseDiff, ReleaseDiffFile, ReleaseLogLine, ReleaseStatus, ReleaseTrigger,
-  ScanSummary, StagingStatus,
+  CurrentReleaseVia, ProfileDetection, Release, ReleaseDetail, ReleaseDiff, ReleaseDiffFile, ReleaseFileContent, ReleaseFileList, ReleaseLogLine,
+  ReleaseStatus, ReleaseTrigger, ScanSummary, StagingRestoreResult, StagingRestoreRunning, StagingRestoreState, StagingStatus,
 } from '@oblimint/shared';
 import { detectAppProfile, HostingSocketEvents, normalizeRelPath } from '@oblimint/shared';
 import { db } from '../../db';
@@ -19,17 +21,20 @@ import { siteUpstream } from '../hosting/naming';
 import { emitHosting } from '../hosting/events';
 import { json, toRelease, toReleaseDetail, type DataPathRow, type ReleaseRow, type SiteRow } from '../hosting/rows';
 import { HostdError, type HostdSiteSpec } from '../hostd/client';
-import type { PublishCommitOptions } from '../maintenance/contracts';
+import type { ChangedPath, PublishCommitOptions } from '../maintenance/contracts';
 import { notify } from '../usage/notifications.service';
 import { EMPTY_TREE, type GitIdentity } from './git';
 import {
-  clearStaleGitLocks, commitExists, commitStaging, diffNameStatus, diffNumstat, diffStats, filePatch, headCommit, initBareRepo, scanStaging,
-  stagingChanges, stagingMatchesCommit, writeExclude,
+  clearStaleGitLocks, commitExists, commitStaging, diffNameOnly, diffNameStatus, diffNumstat, diffStats, filePatch, headCommit, initBareRepo, scanStaging,
+  snapshotStagingCommit, stagingChanges, stagingDiffAgainst, treesOf, writeExclude, type StagingDiffEntry, type TreeMatchInput,
 } from './repo';
 import { fastForwardHead, parentOf } from './candidate';
 import { dataLinksMatch, materializeRelease, readCurrent, removeTmpEntries, removeUnder, staleDataExposure, switchCurrent } from './materialize';
 import { releaseDeps } from './deps';
 import { getScanner } from './scan';
+import { liveStates } from './liveState';
+import { REFLECT_BATCH, reflectToStaging } from './changeset';
+import { cleanReleasePath, pageEntries, readReleaseBlob, releaseTree, streamReleaseBlob, toFileEntry, utf8SafeCut, type ReleaseTreeEntry } from './releaseFiles';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Release pipeline (ARCHITECTURE §1, docs/P1-PLAN.md §9). OWNED BY MODULE `releases` (P1);
@@ -59,6 +64,14 @@ export interface PublishOptions {
   /** null = file-server event (auto). */
   userId: number | null;
   message?: string | null;
+  /** Access key that asked for it (releases.api_key_id: provenance of the live release). */
+  apiKeyId?: number | null;
+  /**
+   * 'refuse': 409 liveRolledBack when the staging still holds files of the
+   * release a HUMAN rolled back from (keys, auto-publication, panel without
+   * confirmation). A comfort guard, not a security boundary. Default 'off'.
+   */
+  rollbackGuard?: 'refuse' | 'off';
 }
 
 const IN_FLIGHT: ReleaseStatus[] = ['queued', 'scanning', 'publishing'];
@@ -72,6 +85,67 @@ const PATCH_FILE_CAP = 256 * 1024;
 const AUTO_PATCH_MAX_FILES = 20;
 const AUTO_PATCH_MAX_BYTES = 16 * 1024;
 const STAGING_FILES_CAP = 500;
+/** Text read of a release file (utf8), base64 read, and the furthest byte a windowed read reaches (each window re-reads from byte 0). */
+const READ_TEXT_MAX = 2 * 1024 * 1024;
+export const READ_ABS_MAX = 8 * 1024 * 1024;
+/** Streamed download of a release file. */
+export const STREAM_MAX = 64 * 1024 * 1024;
+/** Paths in a liveRolledBack / stagingHasPendingChanges error. */
+const ERROR_PATHS = 20;
+
+const underAny = (roots: string[], p: string) => roots.some((r) => p === r || p.startsWith(`${r}/`));
+
+/** Columns of sites recording how the live release became live (migration 016). */
+function provenance(via: CurrentReleaseVia, by: number | null, keyId: number | null, reason: string | null, k: Knex = db): Record<string, unknown> {
+  return {
+    current_release_at: k.fn.now(), current_release_via: via, current_release_by: by, current_release_key_id: keyId,
+    current_release_reason: reason ? reason.slice(0, 500) : null,
+  };
+}
+
+/** The auto-publication of the site is no longer held (publication from the staging, restoration). Never throws. */
+async function clearHeld(siteId: number): Promise<void> {
+  try {
+    const { publishScheduler } = await import('./publishScheduler');
+    publishScheduler.clearHeld(siteId);
+  } catch { /* scheduler unavailable */ }
+}
+
+/** A human went forward again (rollback flag cleared): a held auto-publication is cleared and re-armed. Never throws. */
+async function releaseHeld(siteId: number): Promise<void> {
+  try {
+    const { publishScheduler } = await import('./publishScheduler');
+    publishScheduler.releaseHeld(siteId);
+  } catch { /* scheduler unavailable */ }
+}
+
+const tmpIndexPath = (what: string, siteId: number) => path.join(os.tmpdir(), `oblimint-${what}-${siteId}-${crypto.randomBytes(6).toString('hex')}.index`);
+
+// ── copy of a release into the staging (Feature A) ──
+
+/** hostd workspace id of a copy into the staging (hostd accepts ids up to 2^31; adapter runs use their run id). */
+export const RESTORE_WORKSPACE_ID = 2 ** 31;
+const RESTORE_STATE_TTL_MS = 60 * 60_000;
+/** The request waits this long for the copy, then answers { status: 'running' } (tests shorten it). */
+const restoreTuning = { waitMs: 25_000, batchSize: REFLECT_BATCH, scanMax: 200_000 };
+const restoreStates = new Map<number, StagingRestoreState>();
+const restoreTimers = new Map<number, NodeJS.Timeout>();
+
+function setRestoreState(siteId: number, state: StagingRestoreState): void {
+  restoreStates.set(siteId, state);
+  const prev = restoreTimers.get(siteId);
+  if (prev) clearTimeout(prev);
+  restoreTimers.delete(siteId);
+  if (state.status !== 'running') {
+    const t = setTimeout(() => { restoreStates.delete(siteId); restoreTimers.delete(siteId); }, RESTORE_STATE_TTL_MS);
+    t.unref?.();
+    restoreTimers.set(siteId, t);
+  }
+}
+
+function restoreInProgress(): AppError {
+  return new AppError(409, 'A copy of a release into the staging is running for this site', 'restoreInProgress');
+}
 
 /** Expected pipeline failure: its message (French) is shown as the release error. */
 class PipelineError extends Error {}
@@ -516,11 +590,19 @@ async function deploy(run: Run): Promise<void> {
   const failed = await switchAndVerify(ctx, release.number, run);
   if (failed) throw new PipelineError(failed);
 
+  // A publication from the staging is an assumed decision: a pending rollback is cleared. A window /
+  // adapter release only reflects ITS paths into the staging (the rest still holds the abandoned code): kept.
+  const fromStaging = release.trigger === 'manual' || release.trigger === 'auto' || release.trigger === 'api';
   await db.transaction(async (trx) => {
     await trx('releases').where({ id: release.id }).update({ status: 'ready', published_at: trx.fn.now(), error: null });
-    await trx('sites').where({ id: ctx.site.id }).update({ current_release_id: release.id, updated_at: trx.fn.now() });
+    await trx('sites').where({ id: ctx.site.id }).update({
+      current_release_id: release.id, updated_at: trx.fn.now(),
+      ...provenance('publish', release.approved_by ?? release.author_user_id ?? null, release.approved_by ? null : release.api_key_id ?? null, null, trx),
+      ...(fromStaging ? { rolled_back_from_release_id: null } : {}),
+    });
   });
   ctx.site.current_release_id = release.id;
+  if (fromStaging) await clearHeld(ctx.site.id);
   await run.step('info', `release #${release.number} en ligne`, { status: 'ready' });
   if ((release.trigger === 'window' || release.trigger === 'adapter') && release.commit_sha) await fastForwardHeadTo(run, release.commit_sha);
   if (release.trigger !== 'manual' || release.approved_by) {
@@ -734,7 +816,7 @@ function assertNotDeleting(ctx: SiteContext): void {
  * now would give exactly its tree. Any doubt (disk out of sync, git error)
  * → false: publishing is the repair path. Caller holds the site lock.
  */
-async function unchangedSinceLive(ctx: SiteContext, nestedRepos: string[]): Promise<boolean> {
+async function unchangedSinceLive(ctx: SiteContext, stagedTree: () => Promise<string | null>): Promise<boolean> {
   if (!ctx.site.current_release_id) return false;
   const cur = await db('releases').where({ id: ctx.site.current_release_id, site_id: ctx.site.id })
     .first('number', 'status', 'commit_sha', 'on_disk') as Pick<ReleaseRow, 'number' | 'status' | 'commit_sha' | 'on_disk'> | undefined;
@@ -747,14 +829,72 @@ async function unchangedSinceLive(ctx: SiteContext, nestedRepos: string[]): Prom
   if (!dataLinksMatch(dir, dataPaths, deps.links) || staleDataExposure(dir, cur.number, dataPaths, typed, deps.links).length > 0) return false;
   try {
     if (!(await commitExists(ctx.paths.repo, cur.commit_sha))) return false;
-    const tmpIndex = path.join(os.tmpdir(), `oblimint-same-${ctx.site.id}-${crypto.randomBytes(6).toString('hex')}.index`);
-    return await stagingMatchesCommit({
-      repoDir: ctx.paths.repo, stagingDir: ctx.paths.staging, dataPaths, nestedRepos, commit: cur.commit_sha, tmpIndex,
-    });
+    const staged = await stagedTree();
+    if (!staged) return false;
+    const [liveTree] = await treesOf(ctx.paths.repo, [cur.commit_sha]);
+    return liveTree !== null && liveTree === staged;
   } catch (err) {
     logger.warn({ err, siteId: ctx.site.id }, 'Release: cannot compare the staging with the live release');
     return false;
   }
+}
+
+/**
+ * Tree a publication would commit from the staging NOW (rules of
+ * commitStaging; throw-away index from HEAD). null on any error (the checks
+ * using it are then skipped: publishing stays the repair path). Caller holds
+ * the site lock (info/exclude is rewritten).
+ */
+async function stagingTree(ctx: SiteContext, nestedRepos: string[]): Promise<string | null> {
+  try {
+    if (!fs.existsSync(path.join(ctx.paths.repo, 'HEAD'))) return null;
+    const head = await headCommit(ctx.paths.repo);
+    const r = await stagingDiffAgainst({
+      repoDir: ctx.paths.repo, stagingDir: ctx.paths.staging, dataPaths: dataPathList(ctx), nestedRepos,
+      commit: head ?? EMPTY_TREE, tmpIndex: tmpIndexPath('tree', ctx.site.id), treeOnly: true,
+    });
+    return r.tree || null;
+  } catch (err) {
+    logger.warn({ err, siteId: ctx.site.id }, 'Release: cannot compute the tree of the staging');
+    return null;
+  }
+}
+
+/**
+ * Guard liveRolledBack: paths where the staging holds EXACTLY the content (or
+ * the absence) of the release a human rolled back from, while the live release
+ * differs there — publishing would put the abandoned code back. Paths under
+ * the current data paths are left out. null when no rollback is pending or
+ * nothing would be reintroduced. No size cap: git compares object ids.
+ */
+async function reintroducedPaths(ctx: SiteContext, stagedTree: () => Promise<string | null>): Promise<{ live: number; from: number; count: number; paths: string[] } | null> {
+  const st = (await liveStates([ctx.site.id])).get(ctx.site.id);
+  const from = st?.rolledBackFrom;
+  const live = st?.live;
+  if (!from?.commitSha || !live?.commitSha) return null;
+  const repo = ctx.paths.repo;
+  if (!(await commitExists(repo, from.commitSha)) || !(await commitExists(repo, live.commitSha))) return null;
+  const dataPaths = dataPathList(ctx);
+  const differing = (await diffNameStatus(repo, live.commitSha, from.commitSha, false)).map((e) => e.path).filter((p) => !underAny(dataPaths, p));
+  if (!differing.length) return null;
+  const staged = await stagedTree();
+  if (!staged) return null;
+  const changedSinceFrom = new Set(await diffNameOnly(repo, from.commitSha, staged));
+  const same = differing.filter((p) => !changedSinceFrom.has(p));
+  return same.length ? { live: live.number, from: from.number, count: same.length, paths: same } : null;
+}
+
+/**
+ * No copy into the staging while an adapter run of the site works on it (from
+ * queued to post_deploy, or deferred awaiting the approval of its release with
+ * a reflection pending): it reflects its own changes into the staging.
+ */
+async function assertNoAdapterActivity(siteId: number): Promise<void> {
+  const row = await db('adapter_runs').where({ site_id: siteId }).where((w) => {
+    w.whereIn('status', ['queued', 'preparing', 'running', 'analyzing', 'publishing', 'post_deploy'])
+      .orWhere((d) => d.where('status', 'awaiting_approval').whereRaw("analysis -> 'pendingReflect' is not null"));
+  }).first('id');
+  if (row) throw new AppError(409, 'An application update runs on this site (adapter run in progress)', 'adapterBusy');
 }
 
 function publishInProgress(): AppError {
@@ -940,7 +1080,8 @@ export const releaseService = {
         await opts.apply();
         await db.transaction(async (trx) => {
           await trx('releases').where({ id: release.id }).update({ status: 'ready', published_at: trx.fn.now(), error: null });
-          await trx('sites').where({ id: siteId }).update({ current_release_id: release.id, updated_at: trx.fn.now() });
+          // Same code with other data links: the provenance says so, a pending rollback stays pending.
+          await trx('sites').where({ id: siteId }).update({ current_release_id: release.id, updated_at: trx.fn.now(), ...provenance('rebuild', opts.userId ?? null, null, null, trx) });
         });
         ctx.site.current_release_id = release.id;
         await run.step('info', `release #${release.number} en ligne`, { status: 'ready' });
@@ -979,9 +1120,20 @@ export const releaseService = {
       if (scan.fileCount === 0) {
         throw new AppError(409, 'The staging directory of this site is empty', 'stagingEmpty');
       }
+      // One `git add -A` of the staging serves both checks below (tree computed on demand).
+      let staged: string | null | undefined;
+      const tree = async (): Promise<string | null> => (staged === undefined ? (staged = await stagingTree(ctx, scan.nestedRepos)) : staged);
       // Same tree as the live release: no empty 'ready' release (nothing would change on line).
-      if (await unchangedSinceLive(ctx, scan.nestedRepos)) {
+      if (await unchangedSinceLive(ctx, tree)) {
         throw new AppError(409, 'Nothing changed in the staging since the live release', 'noChanges');
+      }
+      if (opts.rollbackGuard === 'refuse') {
+        const hit = await reintroducedPaths(ctx, tree);
+        if (hit) {
+          throw new AppError(409,
+            `The live release #${hit.live} is a rollback of #${hit.from}: the staging still holds ${hit.count} file(s) of #${hit.from} (publishing would undo the rollback). First paths: ${hit.paths.slice(0, 5).join(', ')}`,
+            'liveRolledBack', { liveRelease: hit.live, rolledBackFrom: hit.from, count: hit.count, paths: hit.paths.slice(0, ERROR_PATHS) });
+        }
       }
       const message = opts.message?.trim() ? opts.message.trim().slice(0, 2000) : null;
       const id = await db.transaction(async (trx) => {
@@ -994,6 +1146,7 @@ export const releaseService = {
           trigger: opts.trigger,
           message,
           author_user_id: opts.userId,
+          api_key_id: opts.apiKeyId ?? null,
           log: JSON.stringify([]),
           on_disk: false,
         }).returning('id');
@@ -1100,9 +1253,9 @@ export const releaseService = {
   },
 
   /** Makes an older READY release current again (re-materialized from git when pruned). */
-  async rollback(siteId: number, releaseId: number, userId: number): Promise<void> {
+  async rollback(siteId: number, releaseId: number, userId: number, opts: { apiKeyId?: number | null } = {}): Promise<void> {
     await assertNoAdapterRun(siteId);
-    await rollbackTo(siteId, releaseId, { userId, reason: null });
+    await rollbackTo(siteId, releaseId, { userId, reason: null, apiKeyId: opts.apiKeyId ?? null });
   },
 
   // ── P3 (docs/P3-PLAN.md §6.4) — module `windows` ──
@@ -1295,18 +1448,43 @@ export const releaseService = {
     return { fromReleaseId: fromId, toReleaseId: to.id, fromCommit, toCommit: to.commit_sha, files, totalFiles, truncated, contentHidden: !content };
   },
 
-  async stagingStatus(siteId: number): Promise<StagingStatus> {
+  /**
+   * Pending changes (vs HEAD) + where the staging stands against the live
+   * release (Feature A): its base (HEAD) and whether it is live, the files a
+   * publication would change on the live site, a pending human rollback, a
+   * held auto-publication, a copy of a release running. compareLive false:
+   * skip the second diff (internal callers needing pendingChanges only).
+   */
+  async stagingStatus(siteId: number, opts: { compareLive?: boolean } = {}): Promise<StagingStatus> {
     const ctx = await loadContext(siteId);
     const { publishScheduler } = await import('./publishScheduler');
     const lastUpload = publishScheduler.lastChange(siteId);
     const deadline = publishScheduler.deadline(siteId);
+    const st = (await liveStates([siteId])).get(siteId);
     const base: StagingStatus = {
       siteId, pendingChanges: 0, files: [], truncated: false,
       lastUploadAt: lastUpload ? lastUpload.toISOString() : null,
       autoPublishAt: deadline ? deadline.toISOString() : null,
       warnings: [],
       warningItems: [],
+      base: null,
+      live: st?.live ? { releaseId: st.live.id, releaseNumber: st.live.number, commit: st.live.commitSha } : null,
+      baseIsLive: null,
+      rolledBack: st?.rolledBack ?? false,
+      rolledBackFrom: st?.rolledBackFrom ? { releaseId: st.rolledBackFrom.id, releaseNumber: st.rolledBackFrom.number } : null,
+      restore: restoreStates.get(siteId) ?? null,
     };
+    // A held auto-publication only means something while the rollback is pending and the mode is
+    // not manual (a forward rollback, a switch to manual mode): otherwise it is stale, dropped.
+    let held = publishScheduler.heldInfo(siteId);
+    if (held && (!st?.rolledBack || ctx.site.publish_mode === 'manual')) {
+      publishScheduler.clearHeld(siteId);
+      held = null;
+    }
+    if (held) {
+      base.warnings.push(`publication automatique retenue : le staging remettrait en ligne ${held.count} fichier(s) de la release #${held.releaseNumber} annulée par un retour arrière`);
+      base.warningItems.push({ code: 'autoPublishHeld', releaseNumber: held.releaseNumber, count: held.count });
+    }
     if (!fs.existsSync(ctx.paths.staging)) {
       base.warnings.push('dossier de staging absent');
       base.warningItems.push({ code: 'stagingMissing' });
@@ -1334,7 +1512,231 @@ export const releaseService = {
     base.pendingChanges = changes.length;
     base.truncated = changes.length > STAGING_FILES_CAP;
     base.files = changes.slice(0, STAGING_FILES_CAP);
+
+    const repo = ctx.paths.repo;
+    const head = await headCommit(repo);
+    const baseRow = head
+      ? await db('releases').where({ site_id: siteId, commit_sha: head }).orderBy('number', 'desc').first('id', 'number', 'status') as { id: number; number: number; status: ReleaseStatus } | undefined
+      : undefined;
+    // Fixed positions, never filtered: a null entry stays null.
+    const [headTree, liveTree, latestTree] = await treesOf(repo, [head, st?.live?.commitSha, st?.latest?.commitSha]);
+    const eq = (a: string | null, b: string | null) => a !== null && b !== null && a === b;
+    base.base = head ? {
+      commit: head, releaseId: baseRow?.id ?? null, releaseNumber: baseRow?.number ?? null, releaseStatus: baseRow?.status ?? null,
+      matches: eq(headTree, liveTree) ? 'live' : eq(headTree, latestTree) ? 'latest' : null,
+    } : null;
+    base.baseIsLive = headTree !== null && liveTree !== null ? headTree === liveTree : null;
+    if (opts.compareLive !== false && base.baseIsLive === false && !scan.truncated && st?.live?.commitSha && await commitExists(repo, st.live.commitSha)) {
+      try {
+        const lc = (await stagingDiffAgainst({
+          repoDir: repo, stagingDir: ctx.paths.staging, dataPaths, nestedRepos: scan.nestedRepos, commit: st.live.commitSha,
+          tmpIndex: tmpIndexPath('live', siteId), rewriteExclude: !locks.has(siteId),
+        })).entries;
+        base.liveChanges = { count: lc.length, files: lc.slice(0, STAGING_FILES_CAP).map(({ path: p, status }) => ({ path: p, status })), truncated: lc.length > STAGING_FILES_CAP };
+      } catch (err) {
+        logger.warn({ err, siteId }, 'Release: cannot compare the staging with the live release');
+      }
+    }
+    if (st?.rolledBack && st.live && st.rolledBackFrom && base.baseIsLive === false) {
+      base.warnings.push(`retour arrière : la release en ligne #${st.live.number} est plus ancienne que #${st.rolledBackFrom.number}, dont le staging contient encore du code`);
+      base.warningItems.push({ code: 'liveOlderThanBase', releaseNumber: st.live.number, baseNumber: st.rolledBackFrom.number });
+    }
+    if (baseRow && ['failed', 'rejected', 'awaiting_approval'].includes(baseRow.status) && base.baseIsLive === false) {
+      base.warnings.push(`la base du staging (release #${baseRow.number}) n’est pas en ligne (${baseRow.status})`);
+      base.warningItems.push({ code: 'baseNotPublished', baseNumber: baseRow.number, status: baseRow.status });
+    }
     return base;
+  },
+
+  /**
+   * Copies the code of a READY release into the staging (Feature A: undo, in
+   * the staging, what a rollback left there). Never publishes, never touches
+   * the live tree nor the data paths: the release tree is used as it is on
+   * disk (materialized only when absent, never the live one), copied by hostd
+   * into a workspace and applied to the staging (written / deleted paths only;
+   * data paths, nested repositories and gitlinks never listed). Unpublished
+   * changes refuse it (409 stagingHasPendingChanges) unless discardPending —
+   * then they are kept on refs/oblimint/staging-before-restore. Waits up to
+   * restoreTuning.waitMs, then answers { status: 'running' } (follow
+   * stagingStatus.restore). Clears the pending rollback and the held
+   * auto-publication; never notifies the auto-publish scheduler (in mode
+   * 'auto', the next staging write publishes the restored code).
+   */
+  async restoreToStaging(siteId: number, releaseId: number, who: { userId: number | null; apiKeyId: number | null; discardPending: boolean }): Promise<StagingRestoreResult | StagingRestoreRunning> {
+    const ctx = await loadContext(siteId);
+    const target = await fetchRelease(siteId, releaseId);
+    // failed / awaiting_approval / rejected releases are never copied (decision 3).
+    if (target.status !== 'ready' || !target.commit_sha) throw new AppError(409, 'Only a published release can be copied into the staging', 'releaseNotReady');
+    const commit = target.commit_sha;
+    assertNotDeleting(ctx);
+    if (ctx.account.status !== 'active') throw new AppError(409, 'The account is not active', 'accountNotActive');
+    const { assertWritable } = await import('../files/files.service');
+    await assertWritable(ctx.account as unknown as Parameters<typeof assertWritable>[0]);
+    if (!fs.existsSync(ctx.paths.staging)) throw new AppError(409, 'The staging directory of this site is missing', 'stagingMissing');
+    if (locks.has(siteId)) throw restoreStates.get(siteId)?.status === 'running' ? restoreInProgress() : publishInProgress();
+    locks.add(siteId);
+    let handedOff = false;
+    let materialized = false;
+    try {
+      if (await hasInFlight(siteId)) throw publishInProgress();
+      await assertNoWindow(siteId);
+      await assertNoAdapterActivity(siteId);
+      await ensureStorageFor(ctx);
+      const repo = ctx.paths.repo;
+      if (!(await commitExists(repo, commit))) throw new AppError(409, `The commit of release #${target.number} is missing from the repository`, 'releaseCommitMissing');
+      const dataPaths = dataPathList(ctx);
+      const scan = scanStaging(ctx.paths.staging, dataPaths, restoreTuning.scanMax);
+      if (scan.truncated) throw new AppError(409, 'The staging holds too many entries to be compared safely', 'stagingTooLarge');
+      const diffInput = (c: string): TreeMatchInput => ({
+        repoDir: repo, stagingDir: ctx.paths.staging, dataPaths, nestedRepos: scan.nestedRepos, commit: c, tmpIndex: tmpIndexPath('restore', siteId),
+      });
+      const head = await headCommit(repo);
+      const pending = await stagingDiffAgainst(diffInput(head ?? EMPTY_TREE));
+      let previousStagingCommit: string | null = null;
+      if (pending.entries.length) {
+        if (!who.discardPending) {
+          throw new AppError(409,
+            `The staging holds ${pending.entries.length} unpublished change(s) (work not published yet): publish or discard them first, or pass discardPending (a copy is kept on the server)`,
+            'stagingHasPendingChanges', { count: pending.entries.length, paths: pending.entries.slice(0, ERROR_PATHS).map((e) => e.path) });
+        }
+        previousStagingCommit = await snapshotStagingCommit({
+          repoDir: repo, ref: 'refs/oblimint/staging-before-restore', tree: pending.tree,
+          message: `Staging avant restauration de la release #${target.number}`, author: await authorIdentity(who.userId),
+        });
+      }
+      const diff = await stagingDiffAgainst(diffInput(commit));
+      const changes: ChangedPath[] = diff.entries.map((e) => ({ path: e.path, change: e.status === 'added' ? 'deleted' : 'modified', type: 'file', size: null, ignored: null }));
+      const startedAt = new Date().toISOString();
+      if (!changes.length) {
+        const result = await finishRestore(ctx, target, who, { written: 0, deleted: 0, conflicts: [] }, previousStagingCommit, diffInput(commit), true, []);
+        setRestoreState(siteId, { status: 'done', releaseNumber: target.number, startedAt, finishedAt: new Date().toISOString(), errorCode: null, result });
+        return result;
+      }
+      // The release tree as it is on disk (A1): stale data links are harmless (data paths are never
+      // listed); absent → materialized from git (never for the live release), pruned again afterwards.
+      const dir = path.posix.join(ctx.paths.releases, String(target.number));
+      const isLive = target.id === ctx.site.current_release_id || readCurrent(ctx.paths.releases, releaseDeps().links) === target.number;
+      // A tree materialized before the executable bit was kept has every file 0644: hostd copies
+      // the mode on disk, so its 100755 files would land in the staging as 0644. Rebuilt from git
+      // unless it is the live tree (never replaced, A1): those paths are reported (modeLost).
+      let execLost = fs.existsSync(dir) ? execBitsLost(dir, diff.entries) : [];
+      if (execLost.length && !isLive) {
+        logger.info({ siteId, release: target.number, paths: execLost.length }, 'Release: tree on disk without the executable bits, rebuilt for the copy into the staging');
+        await db('releases').where({ id: target.id }).update({ on_disk: false });
+        removeUnder(ctx.paths.releases, dir);
+        execLost = [];
+      }
+      if (!fs.existsSync(dir)) {
+        if (isLive) throw new AppError(409, 'The live release is not on disk', 'releaseNotOnDisk');
+        await materializeRelease({
+          repoDir: repo, releasesDir: ctx.paths.releases, number: target.number, commit, dataPaths,
+          typedDataPaths: ctx.dataPaths.filter((d) => d.policy === 'typed').map((d) => d.path),
+          base: await hardlinkBase(ctx, target.id), links: releaseDeps().links, log: (level, message) => logger.debug({ siteId, level }, message),
+        });
+        await db('releases').where({ id: target.id }).update({ on_disk: true });
+        materialized = true;
+      }
+      setRestoreState(siteId, { status: 'running', releaseNumber: target.number, startedAt, finishedAt: null, errorCode: null, result: null });
+      const job = (async (): Promise<StagingRestoreResult> => {
+        try {
+          const applied = await applyRestore(ctx, target, changes);
+          const result = await finishRestore(ctx, target, who, applied, previousStagingCommit, diffInput(commit), false, execLost);
+          setRestoreState(siteId, { status: 'done', releaseNumber: target.number, startedAt, finishedAt: new Date().toISOString(), errorCode: null, result });
+          logger.info({ siteId, release: target.number, written: result.written, deleted: result.deleted, remaining: result.remaining }, 'Release copied into the staging');
+          return result;
+        } catch (err) {
+          setRestoreState(siteId, {
+            status: 'failed', releaseNumber: target.number, startedAt, finishedAt: new Date().toISOString(),
+            errorCode: err instanceof AppError ? err.code ?? 'error' : 'internalError', result: null,
+          });
+          logger.warn({ err, siteId, release: target.number }, 'Release: copy into the staging failed');
+          throw err;
+        } finally {
+          if (materialized) { try { await prune(ctx); } catch (err) { logger.warn({ err, siteId }, 'Release prune failed'); } }
+          locks.delete(siteId);
+        }
+      })();
+      handedOff = true;
+      job.catch(() => { /* reported through restoreStates (and to the caller when it is still waiting) */ });
+      const TIMEOUT = Symbol('timeout');
+      let timer: NodeJS.Timeout | undefined;
+      const r = await Promise.race([job, new Promise<typeof TIMEOUT>((res) => { timer = setTimeout(() => res(TIMEOUT), restoreTuning.waitMs); })])
+        .finally(() => { if (timer) clearTimeout(timer); });
+      if (r === TIMEOUT) return { status: 'running', siteId, releaseId: target.id, releaseNumber: target.number, previousStagingCommit };
+      return r;
+    } finally {
+      if (!handedOff) {
+        if (materialized) { try { await prune(ctx); } catch (err) { logger.warn({ err, siteId }, 'Release prune failed'); } }
+        locks.delete(siteId);
+      }
+    }
+  },
+
+  /** Files of a release (git, no lock): under `path` ('' or '/' = all), paged, the current data paths hidden. */
+  async releaseFiles(siteId: number, releaseId: number, opts: { path?: unknown; limit?: number; offset?: number; maxChars?: number }): Promise<ReleaseFileList> {
+    const ctx = await loadContext(siteId);
+    const rel = await fetchRelease(siteId, releaseId);
+    if (!rel.commit_sha) throw new AppError(409, 'This release has no commit yet', 'releaseNotReady');
+    const prefix = cleanReleasePath(opts.path, true);
+    if (prefix === null) throw new AppError(400, 'Invalid path', 'invalidPath');
+    if (!(await commitExists(ctx.paths.repo, rel.commit_sha))) throw new AppError(409, `The commit of release #${rel.number} is missing from the repository`, 'releaseCommitMissing');
+    const tree = await releaseTree(ctx.paths.repo, rel.commit_sha);
+    const dataPaths = dataPathList(ctx);
+    let hidden = 0;
+    const all = [];
+    for (const e of tree.entries) {
+      if (prefix && e.path !== prefix && !e.path.startsWith(`${prefix}/`)) continue;
+      if (underAny(dataPaths, e.path)) { hidden++; continue; }
+      all.push(toFileEntry(e));
+    }
+    const limit = Math.min(5000, Math.max(1, Math.trunc(opts.limit ?? 200) || 200));
+    const offset = Math.max(0, Math.trunc(opts.offset ?? 0) || 0);
+    const { page, nextOffset } = pageEntries(all, offset, limit, opts.maxChars);
+    return {
+      siteId, releaseId: rel.id, releaseNumber: rel.number, path: prefix, total: all.length, offset, entries: page,
+      hasMore: nextOffset !== null, nextOffset, hiddenDataPathEntries: hidden,
+    };
+  },
+
+  /**
+   * A window of one file of a release: utf8 (≤ 2 MiB, a binary file gives
+   * content null) or base64 (≤ 8 MiB); nextOffset to read on. Each window
+   * re-reads the blob from its first byte: windows stop at READ_ABS_MAX (the
+   * streamed /content serves bigger files).
+   */
+  async releaseFile(siteId: number, releaseId: number, opts: { path: unknown; encoding?: 'utf8' | 'base64'; offset?: number; maxBytes?: number }): Promise<ReleaseFileContent> {
+    const { ctx, rel, entry } = await releaseEntry(siteId, releaseId, opts.path);
+    const encoding = opts.encoding ?? 'utf8';
+    const offset = Math.max(0, Math.trunc(opts.offset ?? 0) || 0);
+    if (offset > 0 && offset >= READ_ABS_MAX) {
+      throw new AppError(413, `Windowed reads stop at ${READ_ABS_MAX} bytes: download the file instead`, 'fileTooLarge');
+    }
+    const cap = encoding === 'base64' ? READ_ABS_MAX : READ_TEXT_MAX;
+    const maxBytes = Math.max(4, Math.min(cap, READ_ABS_MAX - offset, Math.trunc(opts.maxBytes ?? cap) || cap));
+    const out: ReleaseFileContent = {
+      siteId, releaseId: rel.id, releaseNumber: rel.number, path: entry.path, type: entry.type, size: entry.size, binary: false,
+      encoding, content: null, offset, length: 0, truncated: false, nextOffset: null,
+    };
+    const head = entry.type === 'file' ? await readReleaseBlob(ctx.paths.repo, entry, { offset: 0, maxBytes: 8000 }) : null;
+    out.binary = !!head && head.data.includes(0);
+    if (encoding === 'utf8' && out.binary) {
+      out.truncated = entry.size > 0;
+      return out;
+    }
+    const { data, truncated } = await readReleaseBlob(ctx.paths.repo, entry, { offset, maxBytes });
+    const chunk = encoding === 'utf8' && truncated ? utf8SafeCut(data) : data;
+    out.content = encoding === 'utf8' ? chunk.toString('utf8') : chunk.toString('base64');
+    out.length = chunk.length;
+    out.truncated = offset + chunk.length < entry.size;
+    out.nextOffset = out.truncated ? offset + chunk.length : null;
+    return out;
+  },
+
+  /** One file of a release, streamed (≤ STREAM_MAX): open() spawns git, kill() stops it. */
+  async releaseFileStream(siteId: number, releaseId: number, p: unknown): Promise<{ entry: ReleaseTreeEntry; open(): { stream: Readable; kill(): void } }> {
+    const { ctx, entry } = await releaseEntry(siteId, releaseId, p);
+    if (entry.size > STREAM_MAX) throw new AppError(413, `The file is larger than ${STREAM_MAX} bytes`, 'fileTooLarge');
+    return { entry, open: () => streamReleaseBlob(ctx.paths.repo, entry.sha) };
   },
 
   /** detectAppProfile (shared) over the staging of the site (no symlink followed). */
@@ -1378,7 +1780,7 @@ export const releaseService = {
 };
 
 /** Body of rollback() / revertTo(): makes an older READY release current again. */
-async function rollbackTo(siteId: number, releaseId: number, who: { userId: number | null; reason: string | null }): Promise<void> {
+async function rollbackTo(siteId: number, releaseId: number, who: { userId: number | null; reason: string | null; apiKeyId?: number | null }): Promise<void> {
   const ctx = await loadContext(siteId);
   const target = await fetchRelease(siteId, releaseId);
   if (target.status !== 'ready') throw new AppError(409, 'Only a published release can be restored', 'releaseNotReady');
@@ -1392,6 +1794,7 @@ async function rollbackTo(siteId: number, releaseId: number, who: { userId: numb
   if (locks.has(siteId)) throw publishInProgress();
   locks.add(siteId);
   const run = new Run(ctx, target);
+  let forward = false;
   try {
     if (await hasInFlight(siteId)) throw publishInProgress();
     await assertNoWindow(siteId);
@@ -1418,15 +1821,128 @@ async function rollbackTo(siteId: number, releaseId: number, who: { userId: numb
       await run.save();
       throw new AppError(502, failed, 'rollbackHealthcheckFailed');
     }
-    await db('sites').where({ id: siteId }).update({ current_release_id: target.id, updated_at: db.fn.now() });
+    // A HUMAN going back to an older release: remember the one abandoned (the first of a series of
+    // rollbacks); going forward up to it (or to the same commit) clears it. An automatic revert
+    // (adapter, userId null) leaves it as is: the staging never received the update it reverts.
+    const fresh = await db('sites').where({ id: siteId }).first('current_release_id', 'rolled_back_from_release_id') as
+      { current_release_id: number | null; rolled_back_from_release_id: number | null } | undefined;
+    const prevRow = fresh?.current_release_id
+      ? await db('releases').where({ id: fresh.current_release_id }).first('id', 'number', 'commit_sha') as { id: number; number: number; commit_sha: string | null } | undefined
+      : undefined;
+    const fromRow = fresh?.rolled_back_from_release_id
+      ? await db('releases').where({ id: fresh.rolled_back_from_release_id }).first('id', 'number', 'commit_sha') as { id: number; number: number; commit_sha: string | null } | undefined
+      : undefined;
+    let rolledFrom: number | null | undefined;
+    if (who.userId) {
+      const ref = fromRow ?? prevRow;
+      rolledFrom = ref && target.number < ref.number && target.commit_sha !== ref.commit_sha ? ref.id : null;
+    }
+    await db('sites').where({ id: siteId }).update({
+      current_release_id: target.id, updated_at: db.fn.now(),
+      ...provenance(who.userId ? 'rollback' : 'revert', who.userId, who.userId ? who.apiKeyId ?? null : null, who.userId ? null : who.reason),
+      ...(rolledFrom !== undefined ? { rolled_back_from_release_id: rolledFrom } : {}),
+    });
     ctx.site.current_release_id = target.id;
     run.line('info', `release #${target.number} restaurée`);
     await run.save({ status: 'ready' });
+    forward = rolledFrom === null;
   } finally {
     try { await prune(ctx); } catch (err) { logger.warn({ err, siteId }, 'Release prune failed'); }
     locks.delete(siteId);
   }
+  // After the lock: the re-armed auto-publication must not find the site busy.
+  if (forward) await releaseHeld(siteId);
 }
 
-/** Tests only: in-process lock state. */
-export const __releaseInternals = { locks, prune: (siteId: number) => loadContext(siteId).then(prune) };
+/** A file of a release, resolved by an exact lookup in its tree (404 under the current data paths). */
+async function releaseEntry(siteId: number, releaseId: number, p: unknown): Promise<{ ctx: SiteContext; rel: ReleaseRow; entry: ReleaseTreeEntry }> {
+  const ctx = await loadContext(siteId);
+  const rel = await fetchRelease(siteId, releaseId);
+  if (!rel.commit_sha) throw new AppError(409, 'This release has no commit yet', 'releaseNotReady');
+  const rp = cleanReleasePath(p, false);
+  if (!rp) throw new AppError(400, 'Invalid path', 'invalidPath');
+  if (!(await commitExists(ctx.paths.repo, rel.commit_sha))) throw new AppError(409, `The commit of release #${rel.number} is missing from the repository`, 'releaseCommitMissing');
+  const entry = (await releaseTree(ctx.paths.repo, rel.commit_sha)).byPath.get(rp);
+  if (!entry || underAny(dataPathList(ctx), rp)) throw new AppError(404, 'File not found in this release', 'notFound');
+  return { ctx, rel, entry };
+}
+
+/**
+ * Paths the copy writes (in the release, differing in the staging) whose
+ * release mode is 100755 but whose file in the tree on disk is not executable
+ * (trees materialized before the executable bit was kept). Never on Windows
+ * (no executable bit there).
+ */
+export function execBitsLost(releaseDir: string, entries: StagingDiffEntry[]): string[] {
+  if (process.platform === 'win32') return [];
+  const out: string[] = [];
+  for (const e of entries) {
+    // diff --cached <release>: old = the release, new = the staging; 'added' = absent from the release.
+    if (e.status === 'added' || e.oldMode !== '100755') continue;
+    try {
+      const st = fs.lstatSync(path.join(releaseDir, e.path));
+      if (st.isFile() && (st.mode & 0o100) === 0) out.push(e.path);
+    } catch { /* absent from the tree: reported by the copy itself */ }
+  }
+  return out;
+}
+
+/** hostd part of a copy into the staging: workspace of the release, applied in batches, workspace removed. No retry loop. */
+async function applyRestore(ctx: SiteContext, target: ReleaseRow, changes: ChangedPath[]): Promise<{ written: number; deleted: number; conflicts: string[] }> {
+  const deps = releaseDeps();
+  const ws = { ...hostdSpec(ctx), workspaceId: RESTORE_WORKSPACE_ID };
+  try {
+    await deps.ensureWorkspace(ctx.account.node_id, { ...ws, releaseNumber: target.number });
+    return await reflectToStaging(ctx.site.id, { kind: 'workspace', workspaceId: RESTORE_WORKSPACE_ID }, changes, { batchSize: restoreTuning.batchSize });
+  } catch (err) {
+    if (isTransientHostd(err)) throw new AppError(503, 'The host agent is busy: retry in a minute', 'hostdBusy');
+    if (err instanceof HostdError) {
+      if (err.code === 'notFound' && /no route/.test(err.message)) {
+        throw new AppError(503, 'The host daemon (hostd) is older than the panel: apply the platform update of hostd (Nodes > Updates)', 'hostdOutdated');
+      }
+      throw new AppError(502, `The copy into the staging failed: ${err.message}`, 'backendUnavailable');
+    }
+    throw err;
+  } finally {
+    await deps.removeWorkspace(ctx.account.node_id, ws).catch((err) => logger.warn({ err, siteId: ctx.site.id }, 'Release: restore workspace not removed'));
+  }
+}
+
+/**
+ * End of a copy into the staging: what still differs, HEAD recorded on the
+ * restored tree when nothing differs (pending changes and the base then match
+ * the release), the pending rollback and the held auto-publication cleared.
+ * No line in the release log (C11), no notifyChange.
+ */
+async function finishRestore(
+  ctx: SiteContext, target: ReleaseRow, who: { userId: number | null }, applied: { written: number; deleted: number; conflicts: string[] },
+  previousStagingCommit: string | null, input: TreeMatchInput, unchanged: boolean, execLost: string[],
+): Promise<StagingRestoreResult> {
+  const nested = scanStaging(ctx.paths.staging, dataPathList(ctx), 200_000).nestedRepos;
+  const remaining = await stagingDiffAgainst({ ...input, nestedRepos: nested });
+  if (!remaining.entries.length) {
+    try {
+      await snapshotStagingCommit({
+        repoDir: ctx.paths.repo, ref: 'HEAD', tree: remaining.tree,
+        message: `Restauration de la release #${target.number} dans le staging`, author: await authorIdentity(who.userId),
+      });
+    } catch (err) {
+      logger.warn({ err, siteId: ctx.site.id }, 'Release: HEAD not recorded after a copy into the staging');
+    }
+  }
+  await db('sites').where({ id: ctx.site.id }).update({ rolled_back_from_release_id: null, updated_at: db.fn.now() });
+  await clearHeld(ctx.site.id);
+  // Copied from the live tree without their executable bit: still differing by their mode only.
+  const lost = new Set(execLost);
+  const modeLost = remaining.entries.filter((e) => lost.has(e.path) && e.status === 'modified' && e.oldMode === '100755' && e.newMode === '100644').map((e) => e.path);
+  if (modeLost.length) logger.warn({ siteId: ctx.site.id, release: target.number, paths: modeLost.length }, 'Release: copied into the staging without the executable bit (live tree materialized before it was kept)');
+  return {
+    status: 'done', siteId: ctx.site.id, releaseId: target.id, releaseNumber: target.number, unchanged,
+    written: applied.written, deleted: applied.deleted, conflicts: applied.conflicts.slice(0, 50),
+    remaining: remaining.entries.length, remainingPaths: remaining.entries.slice(0, 50).map((e) => e.path),
+    modeLost: modeLost.slice(0, 50), modeLostCount: modeLost.length, previousStagingCommit,
+  };
+}
+
+/** Tests only: in-process lock state, copy-into-staging tuning and states. */
+export const __releaseInternals = { locks, prune: (siteId: number) => loadContext(siteId).then(prune), restoreTuning, restoreStates };

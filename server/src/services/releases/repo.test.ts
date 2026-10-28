@@ -5,7 +5,7 @@ import path from 'path';
 import { EMPTY_TREE, runGit } from './git';
 import {
   clearStaleGitLocks, commitStaging, diffNameStatus, diffNumstat, diffStats, filePatch, headCommit, initBareRepo, lsTree, parseNameStatus,
-  parseNumstat, parsePorcelain, scanStaging, stagingChanges, stagingMatchesCommit, writeExclude,
+  parseNumstat, parsePorcelain, parseRawZ, scanStaging, snapshotStagingCommit, stagingChanges, stagingDiffAgainst, stagingMatchesCommit, treesOf, writeExclude,
 } from './repo';
 import { tempDir, writeFiles } from './testUtil';
 
@@ -220,4 +220,101 @@ test('stagingMatchesCommit: same tree → true, commit rules (data paths, empty 
   assert.equal(await headCommit(repo), c1, 'HEAD unchanged');
   assert.deepEqual(fs.readFileSync(`${repo}/index`), indexBefore, 'publication index untouched');
   assert.deepEqual(fs.readdirSync(root).filter((n) => n.startsWith('same-')), [], 'temp indexes removed');
+});
+
+// ── Feature A: staging vs a commit, trees, snapshots ──
+
+const diffOf = async (repo: string, staging: string, root: string, commitSha: string, dataPaths: string[] = []) => {
+  const scan = scanStaging(staging, dataPaths);
+  return stagingDiffAgainst({
+    repoDir: repo, stagingDir: staging, dataPaths, nestedRepos: scan.nestedRepos, commit: commitSha,
+    tmpIndex: path.join(root, `diff-${Math.random().toString(36).slice(2)}.index`),
+  });
+};
+const statusMap = (entries: Array<{ path: string; status: string }>) => Object.fromEntries(entries.map((e) => [e.path, e.status]));
+
+test('parseRawZ: modes, statuses, paths with spaces', () => {
+  const z = ':100644 100755 aaa bbb M\0run sh\0:000000 100644 000 ccc A\0new.txt\0:160000 000000 ddd 000 D\0sub\0';
+  assert.deepEqual(parseRawZ(z), [
+    { path: 'run sh', status: 'modified', oldMode: '100644', newMode: '100755' },
+    { path: 'new.txt', status: 'added', oldMode: '000000', newMode: '100644' },
+    { path: 'sub', status: 'deleted', oldMode: '160000', newMode: '000000' },
+  ]);
+});
+
+test('stagingDiffAgainst: compares with the given commit, never HEAD (staging = an older commit → no entry)', async () => {
+  const { root, repo, staging } = await setup({ 'a.txt': 'a1', 'b.txt': 'b' });
+  const c1 = await commit(repo, staging);
+  fs.writeFileSync(`${staging}/a.txt`, 'a2');
+  const c2 = await commit(repo, staging);
+  assert.equal(await headCommit(repo), c2);
+  fs.writeFileSync(`${staging}/a.txt`, 'a1');
+  // `git status` (stagingChanges) compares with HEAD: one change; against c1: nothing (A3).
+  assert.equal((await stagingChanges(repo, staging, [], [], path.join(root, 'st.index'))).length, 1);
+  const r1 = await diffOf(repo, staging, root, c1);
+  assert.deepEqual(r1.entries, []);
+  const [t1] = await treesOf(repo, [c1]);
+  assert.equal(r1.tree, t1, 'the tree a publication would commit');
+  assert.deepEqual(statusMap((await diffOf(repo, staging, root, c2)).entries), { 'a.txt': 'modified' });
+  // Added / deleted, data paths and nested repositories never listed.
+  writeFiles(staging, { 'new.txt': 'n', 'uploads/u.jpg': 'J', 'vendor/lib/.git/config': '[core]', 'vendor/lib/x.php': 'x' });
+  fs.rmSync(`${staging}/b.txt`);
+  assert.deepEqual(statusMap((await diffOf(repo, staging, root, c1, ['uploads'])).entries), { 'b.txt': 'deleted', 'new.txt': 'added' });
+  assert.equal(fs.existsSync(path.join(root, 'st.index')), false, 'throw-away indexes removed');
+});
+
+test('stagingDiffAgainst: a path become a data path and a gitlink of the commit are filtered (never deleted)', async () => {
+  const { root, repo, staging } = await setup({ 'a.txt': 'a', 'cache/old.txt': 'o' });
+  await commit(repo, staging);
+  // A gitlink (160000) in the commit, absent from the staging.
+  const head = (await headCommit(repo)) as string;
+  await runGit(['update-index', '--add', '--cacheinfo', `160000,${head},sub`], { gitDir: repo, workTree: staging });
+  await runGit(['commit', '-q', '--no-verify', '-m', 'gitlink'], {
+    gitDir: repo, workTree: staging, env: { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
+  });
+  const withLink = (await headCommit(repo)) as string;
+  assert.ok((await lsTree(repo, withLink)).some((e) => e.mode === '160000'));
+  const r = await diffOf(repo, staging, root, withLink, ['cache']);
+  assert.deepEqual(r.entries, [], 'cache/old.txt (data path) and sub (gitlink) are not listed');
+});
+
+test('treesOf: same order and length, null for null / non-hex / missing', async () => {
+  const { repo, staging } = await setup({ 'a.txt': 'a' });
+  const c1 = await commit(repo, staging);
+  fs.writeFileSync(`${staging}/a.txt`, 'b');
+  const c2 = await commit(repo, staging);
+  const out = await treesOf(repo, [c1, null, 'zzz', '0'.repeat(40), undefined, c2]);
+  assert.equal(out.length, 6);
+  assert.match(out[0] as string, /^[0-9a-f]{40}$/);
+  assert.deepEqual(out.slice(1, 5), [null, null, null, null]);
+  assert.match(out[5] as string, /^[0-9a-f]{40}$/);
+  assert.notEqual(out[0], out[5]);
+  assert.deepEqual(await treesOf(repo, [null]), [null], 'no git call needed');
+});
+
+test('snapshotStagingCommit: HEAD moves on the staging tree; the backup ref is chained (two parents); same tree → null', async () => {
+  const { root, repo, staging } = await setup({ 'a.txt': 'a' });
+  const c1 = await commit(repo, staging);
+  fs.writeFileSync(`${staging}/a.txt`, 'pending 1');
+  const t1 = (await diffOf(repo, staging, root, c1)).tree;
+  const REF = 'refs/oblimint/staging-before-restore' as const;
+  const b1 = await snapshotStagingCommit({ repoDir: repo, ref: REF, tree: t1, message: 'before restore 1', author });
+  assert.match(b1 as string, /^[0-9a-f]{40}$/);
+  assert.equal(await headCommit(repo), c1, 'the backup ref never moves HEAD');
+  const parents = async (ref: string) => (await runGit(['rev-list', '--parents', '-n', '1', ref], { gitDir: repo })).stdout.toString().trim().split(' ').slice(1);
+  assert.deepEqual(await parents(REF), [c1]);
+  fs.writeFileSync(`${staging}/a.txt`, 'pending 2');
+  const t2 = (await diffOf(repo, staging, root, c1)).tree;
+  const b2 = await snapshotStagingCommit({ repoDir: repo, ref: REF, tree: t2, message: 'before restore 2', author });
+  assert.deepEqual(await parents(REF), [c1, b1 as string], 'chained: every copy stays reachable');
+  assert.equal((await runGit(['show', `${b2}:a.txt`], { gitDir: repo })).stdout.toString(), 'pending 2');
+  assert.equal((await runGit(['show', `${b1}:a.txt`], { gitDir: repo })).stdout.toString(), 'pending 1');
+  // HEAD: parent = HEAD, then nothing to record for the same tree.
+  const h = await snapshotStagingCommit({ repoDir: repo, ref: 'HEAD', tree: t2, message: 'restore', author });
+  assert.equal(await headCommit(repo), h);
+  assert.deepEqual(await parents('HEAD'), [c1]);
+  assert.equal(await snapshotStagingCommit({ repoDir: repo, ref: 'HEAD', tree: t2, message: 'again', author }), null);
+  assert.equal((await stagingChanges(repo, staging, [], [], path.join(root, 'st2.index'))).length, 0, 'pending changes now measured against the snapshot');
+  // Compare-and-swap: a ref moved behind our back is never overwritten.
+  await assert.rejects(runGit(['update-ref', REF, c1, (h as string)], { gitDir: repo }));
 });

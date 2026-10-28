@@ -746,3 +746,460 @@ test('adapter run past its publication or deferred: publish / approve another re
   const r3 = await settle(s.siteId, (await m.releaseService.publish(s.siteId, { trigger: 'manual', userId })).id);
   assert.equal(r3.status, 'ready');
 });
+
+// ── Feature A: rollback detection, guard, copy of a release into the staging ──
+
+const siteRow = (siteId: number) => m.db('sites').where({ id: siteId }).first();
+const wsRelease = new Map<string, number>();
+const restoreCalls = { ensure: 0, remove: 0, apply: [] as number[] };
+let applyDelayMs = 0;
+
+/** hostd fakes of a copy into the staging: the workspace is releases/<n>, applyToStaging copies / deletes in the staging. */
+function installRestoreFakes(): void {
+  restoreCalls.ensure = 0;
+  restoreCalls.remove = 0;
+  restoreCalls.apply.length = 0;
+  applyDelayMs = 0;
+  m.setReleaseDeps({
+    ensureWorkspace: async (_n, spec) => { restoreCalls.ensure++; wsRelease.set(`${spec.siteId}:${spec.workspaceId}`, spec.releaseNumber); return { files: 0, bytes: 0 }; },
+    removeWorkspace: async (_n, spec) => { restoreCalls.remove++; wsRelease.delete(`${spec.siteId}:${spec.workspaceId}`); },
+    applyToStaging: async (_n, spec, source, changes) => {
+      restoreCalls.apply.push(changes.length);
+      if (applyDelayMs) await new Promise((r) => setTimeout(r, applyDelayMs));
+      const n = wsRelease.get(`${spec.siteId}:${(source as { workspaceId: number }).workspaceId}`);
+      assert.ok(n, 'workspace ensured before the copy');
+      const rel = `${m.localPaths.releases(spec.accountId, spec.siteId)}/${n}`;
+      const stg = m.localPaths.siteStaging(spec.accountId, spec.slug);
+      let written = 0;
+      let deleted = 0;
+      for (const c of changes) {
+        const dst = path.join(stg, c.path);
+        if (c.op === 'delete') { fs.rmSync(dst, { recursive: true, force: true }); deleted++; continue; }
+        fs.mkdirSync(path.dirname(dst), { recursive: true });
+        fs.copyFileSync(path.join(rel, c.path), dst);
+        written++;
+      }
+      return { written, deleted, conflicts: [] };
+    },
+  });
+}
+
+/** A candidate commit (adapter) on top of `base` with some files changed. */
+async function candidateFrom(siteId: number, staging: string, base: string, files: Record<string, string>): Promise<string> {
+  const { runGit } = await import('./git');
+  const repo = m.localPaths.repo(accountId, siteId);
+  const idx = path.join(os.tmpdir(), `cand-${siteId}-${Date.now()}.index`);
+  const env = { GIT_INDEX_FILE: idx, GIT_AUTHOR_NAME: 'adapter', GIT_AUTHOR_EMAIL: 'a@oblimint.local', GIT_COMMITTER_NAME: 'adapter', GIT_COMMITTER_EMAIL: 'a@oblimint.local' };
+  await runGit(['read-tree', base], { gitDir: repo, env });
+  for (const [p, content] of Object.entries(files)) {
+    const oid = (await runGit(['hash-object', '-w', '--stdin'], { gitDir: repo, input: content })).stdout.toString().trim();
+    await runGit(['update-index', '--add', '--cacheinfo', `100644,${oid},${p}`], { gitDir: repo, workTree: staging, env });
+  }
+  const tree = (await runGit(['write-tree'], { gitDir: repo, env })).stdout.toString().trim();
+  const sha = (await runGit(['commit-tree', tree, '-p', base, '-m', 'adapter update'], { gitDir: repo, env })).stdout.toString().trim();
+  fs.rmSync(idx, { force: true });
+  return sha;
+}
+
+const CLEAN_SCAN = { scanner: 'test', verdict: 'clean' as const, findings: [] };
+
+async function publishAdapter(siteId: number, staging: string, files: Record<string, string>) {
+  const cur = await m.db('releases').where({ id: await currentId(siteId) }).first('id', 'commit_sha');
+  const sha = await candidateFrom(siteId, staging, cur.commit_sha, files);
+  const rel = await m.releaseService.publishCommit(siteId, {
+    commitSha: sha, baseReleaseId: cur.id, trigger: 'adapter', userId: null, message: 'adapter update', scan: CLEAN_SCAN, approvedBy: null,
+  });
+  return settle(siteId, rel.id);
+}
+
+test('Feature A — the rollback flag: set by a human, kept further back, cleared forward / by a staging publication; kept by revert, rebuild, adapter', { skip: SKIP }, async () => {
+  const { liveStates } = await import('./liveState');
+  const s = await newSite({ files: { 'index.php': 'v1' }, dataPaths: [['cache', 'ephemeral']] });
+  const r1 = await publish(s.siteId);
+  fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+  const r2 = await publish(s.siteId);
+  fs.writeFileSync(`${s.staging}/index.php`, 'v3');
+  const r3 = await publish(s.siteId);
+  let row = await siteRow(s.siteId);
+  assert.equal(row.current_release_via, 'publish');
+  assert.equal(row.current_release_by, userId);
+  assert.ok(row.current_release_at);
+  assert.equal(row.rolled_back_from_release_id, null);
+
+  await m.releaseService.rollback(s.siteId, r2.id, userId);
+  row = await siteRow(s.siteId);
+  assert.equal(row.rolled_back_from_release_id, r3.id, 'rollback 3 → 2');
+  assert.equal(row.current_release_via, 'rollback');
+  await m.releaseService.rollback(s.siteId, r1.id, userId);
+  assert.equal((await siteRow(s.siteId)).rolled_back_from_release_id, r3.id, '2 → 1 keeps 3');
+  await m.releaseService.rollback(s.siteId, r3.id, userId);
+  assert.equal((await siteRow(s.siteId)).rolled_back_from_release_id, null, 'forward to 3: cleared');
+  await m.releaseService.rollback(s.siteId, r2.id, userId);
+  assert.equal((await siteRow(s.siteId)).rolled_back_from_release_id, r3.id);
+
+  // An automatic revert (adapter) never touches the flag.
+  await m.releaseService.revertTo(s.siteId, r1.id, 'adaptateur wordpress #9 : healthcheck : HTTP 500');
+  row = await siteRow(s.siteId);
+  assert.equal(row.rolled_back_from_release_id, r3.id);
+  assert.equal(row.current_release_via, 'revert');
+  assert.equal(row.current_release_by, null);
+  assert.match(row.current_release_reason, /healthcheck/);
+  const st = (await liveStates([s.siteId])).get(s.siteId)!;
+  assert.equal(st.rolledBack, true);
+  assert.equal(st.rolledBackFrom?.number, r3.number);
+  assert.equal(st.live?.number, r1.number);
+  assert.equal(st.latest?.number, r3.number, 'newest published one, display only');
+
+  // A rebuild (data path deleted) keeps it.
+  const rebuilt = await m.releaseService.applyDataPathChange(s.siteId, {
+    next: [], userId, apply: async () => { await m.db('site_data_paths').where({ site_id: s.siteId }).del(); },
+  });
+  assert.ok(rebuilt.rebuiltReleaseId);
+  row = await siteRow(s.siteId);
+  assert.equal(row.current_release_via, 'rebuild');
+  assert.equal(row.rolled_back_from_release_id, r3.id);
+
+  // An adapter release keeps it (its staging reflection covers its own paths only, A7).
+  const ad = await publishAdapter(s.siteId, s.staging, { 'plugin.php': 'p2' });
+  assert.equal(ad.status, 'ready', JSON.stringify(ad.log));
+  row = await siteRow(s.siteId);
+  assert.equal(row.current_release_via, 'publish');
+  assert.equal(row.rolled_back_from_release_id, r3.id);
+  const status = await m.releaseService.stagingStatus(s.siteId);
+  assert.equal(status.rolledBack, true);
+  assert.equal(status.baseIsLive, false);
+  assert.ok(status.warningItems.some((w) => w.code === 'liveOlderThanBase' && w.baseNumber === r3.number));
+  assert.ok((status.liveChanges?.count ?? 0) > 0, 'what a publication would change on the live site');
+
+  // A publication from the staging is an assumed decision: cleared.
+  fs.writeFileSync(`${s.staging}/index.php`, 'v4');
+  const r5 = await publish(s.siteId);
+  assert.equal(r5.status, 'ready');
+  assert.equal((await siteRow(s.siteId)).rolled_back_from_release_id, null);
+});
+
+test('Feature A — guard liveRolledBack: adapter release after a rollback (A7), 70 MiB file detected, restored staging passes', { skip: SKIP }, async () => {
+  installRestoreFakes();
+  const s = await newSite({ files: { 'index.php': 'v1', 'lib.php': 'l1' } });
+  await publish(s.siteId);
+  fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+  const r2 = await publish(s.siteId);
+  fs.writeFileSync(`${s.staging}/index.php`, 'v3');
+  fs.writeFileSync(`${s.staging}/big.bin`, Buffer.alloc(70 * 1024 * 1024, 7));
+  const r3 = await publish(s.siteId);
+  assert.equal(r3.status, 'ready');
+  await m.releaseService.rollback(s.siteId, r2.id, userId);
+  const r4 = await publishAdapter(s.siteId, s.staging, { 'lib.php': 'l2' });
+  assert.equal(r4.status, 'ready');
+  // The staging still holds release 3: refused, with the paths.
+  await assert.rejects(m.releaseService.publish(s.siteId, { trigger: 'api', userId, rollbackGuard: 'refuse' }), (e: any) => {
+    assert.equal(e.code, 'liveRolledBack');
+    assert.equal(e.details.rolledBackFrom, r3.number);
+    assert.equal(e.details.liveRelease, r4.number);
+    // lib.php too: the staging holds release 3's version where the live one (adapter) differs.
+    assert.deepEqual([...e.details.paths].sort(), ['big.bin', 'index.php', 'lib.php']);
+    return true;
+  });
+  assert.equal(m.internals.locks.has(s.siteId), false);
+  // Copy the live release into the staging: the guard has nothing left to protect.
+  const res = await m.releaseService.restoreToStaging(s.siteId, r4.id, { userId, apiKeyId: null, discardPending: false });
+  assert.equal(res.status, 'done');
+  if (res.status !== 'done') return;
+  assert.equal(res.remaining, 0);
+  assert.equal(res.previousStagingCommit, null);
+  assert.equal(fs.readFileSync(`${s.staging}/index.php`, 'utf8'), 'v2');
+  assert.equal(fs.readFileSync(`${s.staging}/lib.php`, 'utf8'), 'l2');
+  assert.equal(fs.existsSync(`${s.staging}/big.bin`), false);
+  assert.equal((await siteRow(s.siteId)).rolled_back_from_release_id, null);
+  assert.equal(restoreCalls.ensure, 1);
+  assert.equal(restoreCalls.remove, 1, 'workspace always removed');
+  await assert.rejects(m.releaseService.publish(s.siteId, { trigger: 'api', userId, rollbackGuard: 'refuse' }), (e: any) => e.code === 'noChanges');
+  fs.writeFileSync(`${s.staging}/extra.php`, 'x');
+  const r5 = await settle(s.siteId, (await m.releaseService.publish(s.siteId, { trigger: 'api', userId, rollbackGuard: 'refuse' })).id);
+  assert.equal(r5.status, 'ready');
+});
+
+test('Feature A — restoreToStaging of the live release with stale data links: no hostd data call, tree kept; pending changes; discardPending backup; no notifyChange, no release log line', { skip: SKIP }, async () => {
+  installRestoreFakes();
+  const { publishScheduler } = await import('./publishScheduler');
+  const { runGit } = await import('./git');
+  const s = await newSite({ files: { 'index.php': 'v1' }, dataPaths: [['uploads', 'persistent']] });
+  await publish(s.siteId);
+  fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+  const r2 = await publish(s.siteId);
+  // Stale data links: the data path row goes away without a rebuild.
+  await m.db('site_data_paths').where({ site_id: s.siteId }).del();
+  fs.writeFileSync(`${s.staging}/index.php`, 'work in progress');
+  for (const k of Object.keys(calls) as Array<keyof typeof calls>) calls[k].length = 0;
+  const logBefore = JSON.stringify((await m.db('releases').where({ id: r2.id }).first('log')).log);
+  await assert.rejects(m.releaseService.restoreToStaging(s.siteId, r2.id, { userId, apiKeyId: null, discardPending: false }), (e: any) => {
+    assert.equal(e.code, 'stagingHasPendingChanges');
+    assert.equal(e.details.count, 1);
+    assert.deepEqual(e.details.paths, ['index.php']);
+    return true;
+  });
+  const res = await m.releaseService.restoreToStaging(s.siteId, r2.id, { userId, apiKeyId: null, discardPending: true });
+  assert.equal(res.status, 'done');
+  if (res.status !== 'done') return;
+  assert.match(res.previousStagingCommit ?? '', /^[0-9a-f]{40}$/);
+  const repo = m.localPaths.repo(accountId, s.siteId);
+  const backup = (await runGit(['rev-parse', 'refs/oblimint/staging-before-restore'], { gitDir: repo })).stdout.toString().trim();
+  assert.equal(backup, res.previousStagingCommit);
+  assert.equal((await runGit(['show', `${backup}:index.php`], { gitDir: repo })).stdout.toString(), 'work in progress', 'the discarded work is kept');
+  assert.equal(fs.readFileSync(`${s.staging}/index.php`, 'utf8'), 'v2');
+  assert.equal(fs.existsSync(`${s.releases}/2`), true, 'the live tree is never removed (A1)');
+  assert.deepEqual([calls.ensure, calls.seed, calls.clear], [[], [], []], 'no hostd call on the data (A2)');
+  assert.equal(JSON.stringify((await m.db('releases').where({ id: r2.id }).first('log')).log), logBefore, 'no line in the release log (C11)');
+  assert.equal(publishScheduler.lastChange(s.siteId), null, 'never notifies the auto-publish scheduler');
+  const st = await m.releaseService.stagingStatus(s.siteId);
+  assert.equal(st.pendingChanges, 0, 'HEAD recorded on the restored tree');
+  assert.equal(st.baseIsLive, true);
+  assert.equal(st.restore?.status, 'done');
+});
+
+test('Feature A — restoreToStaging: pruned release materialized then pruned again; batches; running then done; refusals', { skip: SKIP }, async () => {
+  installRestoreFakes();
+  const keep = m.config.hosting.releasesKeep;
+  const tuning = { ...m.internals.restoreTuning };
+  m.config.hosting.releasesKeep = 1;
+  try {
+    const s = await newSite({ files: { 'index.php': 'v1', 'a.php': 'a', 'b.php': 'b', 'c.php': 'c' } });
+    const r1 = await publish(s.siteId);
+    fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+    for (const f of ['a.php', 'b.php', 'c.php']) fs.rmSync(`${s.staging}/${f}`);
+    const r2 = await publish(s.siteId);
+    fs.writeFileSync(`${s.staging}/index.php`, 'v3');
+    const r3 = await publish(s.siteId);
+    assert.equal((await m.db('releases').where({ id: r1.id }).first('on_disk')).on_disk, false, 'release 1 pruned');
+    // 4 paths differ, batches of 3.
+    m.internals.restoreTuning.batchSize = 3;
+    const res = await m.releaseService.restoreToStaging(s.siteId, r1.id, { userId, apiKeyId: null, discardPending: false });
+    assert.equal(res.status, 'done');
+    assert.deepEqual(restoreCalls.apply, [3, 1]);
+    assert.equal(fs.readFileSync(`${s.staging}/b.php`, 'utf8'), 'b');
+    assert.equal((await m.db('releases').where({ id: r1.id }).first('on_disk')).on_disk, false, 'pruned again');
+    assert.equal(fs.existsSync(`${s.releases}/1`), false);
+    // Not published: refused (failed / rejected / awaiting approval).
+    probeOk = false;
+    fs.writeFileSync(`${s.staging}/index.php`, 'broken');
+    const failed = await publish(s.siteId);
+    probeOk = true;
+    assert.equal(failed.status, 'failed');
+    await assert.rejects(m.releaseService.restoreToStaging(s.siteId, failed.id, { userId, apiKeyId: null, discardPending: true }), (e: any) => e.code === 'releaseNotReady');
+    // A staging too big to compare safely.
+    m.internals.restoreTuning.scanMax = 1;
+    await assert.rejects(m.releaseService.restoreToStaging(s.siteId, r3.id, { userId, apiKeyId: null, discardPending: true }), (e: any) => e.code === 'stagingTooLarge');
+    m.internals.restoreTuning.scanMax = tuning.scanMax;
+    assert.equal(m.internals.locks.has(s.siteId), false);
+    // Slow copy: answered 'running', then the state turns 'done'; a second copy meanwhile is refused.
+    m.internals.restoreTuning.waitMs = 20;
+    applyDelayMs = 400;
+    const running = await m.releaseService.restoreToStaging(s.siteId, r3.id, { userId, apiKeyId: null, discardPending: true });
+    assert.equal(running.status, 'running');
+    assert.equal((await m.releaseService.stagingStatus(s.siteId)).restore?.status, 'running');
+    await assert.rejects(m.releaseService.restoreToStaging(s.siteId, r3.id, { userId, apiKeyId: null, discardPending: true }), (e: any) => e.code === 'restoreInProgress');
+    await assert.rejects(m.releaseService.publish(s.siteId, { trigger: 'manual', userId }), (e: any) => e.code === 'publishInProgress');
+    const t0 = Date.now();
+    while (m.internals.restoreStates.get(s.siteId)?.status === 'running' && Date.now() - t0 < 10_000) await new Promise((r) => setTimeout(r, 50));
+    const done = (await m.releaseService.stagingStatus(s.siteId)).restore;
+    assert.equal(done?.status, 'done');
+    assert.equal(done?.result?.releaseNumber, r3.number);
+    assert.equal(fs.readFileSync(`${s.staging}/index.php`, 'utf8'), 'v3');
+    assert.equal(m.internals.locks.has(s.siteId), false);
+  } finally {
+    Object.assign(m.internals.restoreTuning, tuning);
+    m.config.hosting.releasesKeep = keep;
+    applyDelayMs = 0;
+  }
+});
+
+test('Feature A — more than 5000 paths restored, then the publication passes', { skip: SKIP }, async () => {
+  installRestoreFakes();
+  const files: Record<string, string> = { 'index.php': 'v1' };
+  for (let i = 0; i < 5100; i++) files[`f/${i % 50}/n${i}.txt`] = String(i);
+  const s = await newSite({ files });
+  const r1 = await publish(s.siteId);
+  fs.rmSync(`${s.staging}/f`, { recursive: true, force: true });
+  fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+  await publish(s.siteId);
+  await m.releaseService.rollback(s.siteId, r1.id, userId);
+  await assert.rejects(m.releaseService.publish(s.siteId, { trigger: 'api', userId, rollbackGuard: 'refuse' }), (e: any) => e.code === 'liveRolledBack' && e.details.count === 5101 && e.details.paths.length === 20);
+  const res = await m.releaseService.restoreToStaging(s.siteId, r1.id, { userId, apiKeyId: null, discardPending: false });
+  assert.equal(res.status, 'done');
+  if (res.status !== 'done') return;
+  assert.equal(res.written, 5101);
+  assert.equal(res.remaining, 0);
+  fs.writeFileSync(`${s.staging}/index.php`, 'v3');
+  const r = await settle(s.siteId, (await m.releaseService.publish(s.siteId, { trigger: 'api', userId, rollbackGuard: 'refuse' })).id);
+  assert.equal(r.status, 'ready');
+});
+
+test('Feature A — auto-publication held by a rollback: not re-armed, heldInfo, warning, cleared by a publication', { skip: SKIP }, async () => {
+  const sched = await import('./publishScheduler');
+  sched.setSchedulerDeps({ loadSettings: async () => ({ mode: 'auto', debounceSec: 0 }) });
+  try {
+    const s = await newSite({ files: { 'index.php': 'v1' }, mode: 'auto' });
+    const r1 = await publish(s.siteId);
+    fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+    const r2 = await publish(s.siteId);
+    await m.releaseService.rollback(s.siteId, r1.id, userId);
+    sched.publishScheduler.notifyChange(s.siteId);
+    await sched.publishScheduler.idle();
+    const t0 = Date.now();
+    while (!sched.publishScheduler.heldInfo(s.siteId) && Date.now() - t0 < 10_000) await new Promise((r) => setTimeout(r, 50));
+    const held = sched.publishScheduler.heldInfo(s.siteId);
+    assert.equal(held?.releaseNumber, r2.number);
+    assert.equal(held?.count, 1);
+    assert.equal(sched.publishScheduler.deadline(s.siteId), null, 'not re-armed');
+    assert.equal(await m.db('releases').where({ site_id: s.siteId }).count('* as n').first().then((x: any) => Number(x.n)), 2, 'nothing published');
+    const st = await m.releaseService.stagingStatus(s.siteId);
+    assert.ok(st.warningItems.some((w) => w.code === 'autoPublishHeld' && w.releaseNumber === r2.number && w.count === 1));
+    // A human publishes anyway (panel confirmation): held and flag cleared.
+    const r3 = await settle(s.siteId, (await m.releaseService.publish(s.siteId, { trigger: 'manual', userId, rollbackGuard: 'off' })).id);
+    assert.equal(r3.status, 'ready');
+    assert.equal(sched.publishScheduler.heldInfo(s.siteId), null);
+    assert.equal((await siteRow(s.siteId)).rolled_back_from_release_id, null);
+  } finally {
+    sched.publishScheduler.stop();
+    sched.setSchedulerDeps(null);
+    sched.publishScheduler.stop();
+  }
+});
+
+test('Feature A — migration 016 backfill: rebuild recognized by its commit (not its message), the flag only after a rollback', { skip: SKIP }, async () => {
+  const mig = await import('../../db/migrations/016_current_release_provenance');
+  const mk = async (name: string) => {
+    const [row] = await m.db('sites').insert({
+      tenant_id: 1, account_id: accountId, name, slug: `${name}-${Date.now() % 100000}`, base: 'apache-php8.3', publish_mode: 'manual', status: 'active', healthcheck_path: '/',
+    }).returning('id');
+    return Number(row.id ?? row);
+  };
+  const rel = async (siteId: number, number: number, sha: string, at: string, message = 'Publication') => {
+    const [row] = await m.db('releases').insert({
+      site_id: siteId, number, status: 'ready', trigger: 'manual', message, author_user_id: userId, commit_sha: sha, log: '[]', on_disk: false, published_at: at,
+    }).returning('id');
+    return Number(row.id ?? row);
+  };
+  const A = 'a'.repeat(40);
+  const B = 'b'.repeat(40);
+  // Same commit as an older ready release, ordinary message: a rebuild.
+  const sRebuild = await mk('mig-rebuild');
+  await rel(sRebuild, 1, A, '2026-01-01T00:00:00Z');
+  await rel(sRebuild, 2, B, '2026-01-02T00:00:00Z');
+  const third = await rel(sRebuild, 3, A, '2026-01-03T00:00:00Z');
+  await m.db('sites').where({ id: sRebuild }).update({ current_release_id: third });
+  // Rolled back by a human (audit), then by an automatic revert.
+  const sRollback = await mk('mig-rollback');
+  const rb1 = await rel(sRollback, 1, A, '2026-01-01T00:00:00Z');
+  const rb2 = await rel(sRollback, 2, B, '2026-01-02T00:00:00Z');
+  await m.db('sites').where({ id: sRollback }).update({ current_release_id: rb1 });
+  await m.db('audit_logs').insert({ tenant_id: 1, user_id: userId, action: 'release.rollback', resource_type: 'release', resource_path: String(rb1), details: JSON.stringify({ siteId: sRollback }), created_at: '2026-01-03T00:00:00Z' });
+  const sRevert = await mk('mig-revert');
+  const rv1 = await rel(sRevert, 1, A, '2026-01-01T00:00:00Z');
+  await rel(sRevert, 2, B, '2026-01-02T00:00:00Z');
+  await m.db('sites').where({ id: sRevert }).update({ current_release_id: rv1 });
+  await m.db('audit_logs').insert({ tenant_id: 1, action: 'release.revert', resource_type: 'release', resource_path: String(rv1), details: JSON.stringify({ siteId: sRevert, reason: 'adaptateur x : migrations' }), created_at: '2026-01-03T00:00:00Z' });
+
+  await mig.down(m.db);
+  await mig.up(m.db);
+  const get = (id: number) => m.db('sites').where({ id }).first('current_release_via', 'current_release_by', 'current_release_reason', 'rolled_back_from_release_id');
+  const a = await get(sRebuild);
+  assert.equal(a.current_release_via, 'rebuild');
+  assert.equal(a.rolled_back_from_release_id, null);
+  const b = await get(sRollback);
+  assert.equal(b.current_release_via, 'rollback');
+  assert.equal(b.current_release_by, userId);
+  assert.equal(b.rolled_back_from_release_id, rb2);
+  const c = await get(sRevert);
+  assert.equal(c.current_release_via, 'revert');
+  assert.equal(c.current_release_reason, 'adaptateur x : migrations');
+  assert.equal(c.rolled_back_from_release_id, null, 'never after an automatic revert');
+});
+
+test('Feature A — restoreToStaging and executable bits: a legacy 0644 tree is rebuilt (not live) or its paths reported (live, modeLost)', { skip: SKIP || (process.platform === 'win32' ? 'no executable bit on Windows' : false) }, async () => {
+  installRestoreFakes();
+  const s = await newSite({ files: { 'index.php': 'v1', 'bin/run.sh': '#!/bin/sh\necho 1\n' } });
+  fs.chmodSync(`${s.staging}/bin/run.sh`, 0o755);
+  const r1 = await publish(s.siteId);
+  fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+  fs.writeFileSync(`${s.staging}/bin/run.sh`, '#!/bin/sh\necho 2\n');
+  const r2 = await publish(s.siteId);
+  assert.equal(fs.statSync(`${s.releases}/2/bin/run.sh`).mode & 0o777, 0o755, 'new trees keep the bit');
+  await m.releaseService.rollback(s.siteId, r1.id, userId);
+  // Trees materialized before the executable bit was kept: every file 0644.
+  for (const n of [1, 2]) for (const f of ['index.php', 'bin/run.sh']) fs.chmodSync(`${s.releases}/${n}/${f}`, 0o644);
+  const mode = (p: string) => fs.statSync(`${s.staging}/${p}`).mode & 0o777;
+
+  // The live release: its tree is never replaced (A1), the paths that lost their bit are reported.
+  const live = await m.releaseService.restoreToStaging(s.siteId, r1.id, { userId, apiKeyId: null, discardPending: false });
+  assert.equal(live.status, 'done');
+  if (live.status !== 'done') return;
+  assert.equal(fs.readFileSync(`${s.staging}/bin/run.sh`, 'utf8'), '#!/bin/sh\necho 1\n');
+  assert.equal(mode('bin/run.sh'), 0o644);
+  assert.deepEqual(live.modeLost, ['bin/run.sh']);
+  assert.equal(live.modeLostCount, 1);
+  assert.deepEqual(live.remainingPaths, ['bin/run.sh']);
+  assert.equal(fs.statSync(`${s.releases}/1/bin/run.sh`).mode & 0o777, 0o644, 'the live tree is untouched');
+  assert.equal((await siteRow(s.siteId)).rolled_back_from_release_id, null);
+
+  // Fixed by hand in the staging; then a release that is not live: its stale tree is rebuilt from git.
+  fs.chmodSync(`${s.staging}/bin/run.sh`, 0o755);
+  // HEAD was not recorded (a path still differed): the staging counts as unpublished work vs HEAD.
+  const old = await m.releaseService.restoreToStaging(s.siteId, r2.id, { userId, apiKeyId: null, discardPending: true });
+  assert.equal(old.status, 'done');
+  if (old.status !== 'done') return;
+  assert.equal(fs.readFileSync(`${s.staging}/bin/run.sh`, 'utf8'), '#!/bin/sh\necho 2\n');
+  assert.equal(mode('bin/run.sh'), 0o755);
+  assert.deepEqual(old.modeLost, []);
+  assert.equal(old.remaining, 0);
+  assert.equal((await m.db('releases').where({ id: r2.id }).first('on_disk')).on_disk, true);
+  assert.equal(fs.statSync(`${s.releases}/2/bin/run.sh`).mode & 0o777, 0o755, 'rebuilt with the bit');
+  assert.equal((await m.releaseService.stagingStatus(s.siteId)).pendingChanges, 0, 'HEAD recorded on the restored tree');
+});
+
+test('Feature A — held auto-publication: dropped and re-armed by a forward rollback, never shown without a pending rollback or in manual mode', { skip: SKIP }, async () => {
+  const sched = await import('./publishScheduler');
+  sched.setSchedulerDeps({ loadSettings: async () => ({ mode: 'auto', debounceSec: 0 }) });
+  const count = (siteId: number) => m.db('releases').where({ site_id: siteId }).count('* as n').first().then((x: any) => Number(x.n));
+  const waitFor = async (cond: () => Promise<boolean> | boolean, what: string) => {
+    const t0 = Date.now();
+    while (!(await cond())) {
+      if (Date.now() - t0 > 20_000) throw new Error(`timeout: ${what}`);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  try {
+    const s = await newSite({ files: { 'index.php': 'v1' }, mode: 'auto' });
+    const r1 = await publish(s.siteId);
+    fs.writeFileSync(`${s.staging}/index.php`, 'v2');
+    const r2 = await publish(s.siteId);
+    await m.releaseService.rollback(s.siteId, r1.id, userId);
+    sched.publishScheduler.notifyChange(s.siteId);
+    await sched.publishScheduler.idle();
+    await waitFor(() => !!sched.publishScheduler.heldInfo(s.siteId), 'held');
+    // Work written meanwhile, then the human goes forward again: no rollback pending any more.
+    fs.writeFileSync(`${s.staging}/extra.php`, 'x');
+    await m.releaseService.rollback(s.siteId, r2.id, userId);
+    assert.equal((await siteRow(s.siteId)).rolled_back_from_release_id, null);
+    assert.equal(sched.publishScheduler.heldInfo(s.siteId), null, 'dropped');
+    await waitFor(async () => (await count(s.siteId)) === 3 && !m.internals.locks.has(s.siteId), 're-armed auto publication');
+    const r3 = await m.db('releases').where({ site_id: s.siteId }).orderBy('number', 'desc').first();
+    const done = await settle(s.siteId, r3.id);
+    assert.equal(done.status, 'ready');
+    assert.equal(done.trigger, 'auto');
+
+    // stagingStatus: a stale held entry (no pending rollback, or a manual site) is never reported.
+    await m.releaseService.rollback(s.siteId, r1.id, userId);
+    sched.publishScheduler.notifyChange(s.siteId);
+    await sched.publishScheduler.idle();
+    await waitFor(() => !!sched.publishScheduler.heldInfo(s.siteId), 'held again');
+    assert.ok((await m.releaseService.stagingStatus(s.siteId)).warningItems.some((w) => w.code === 'autoPublishHeld'));
+    await m.db('sites').where({ id: s.siteId }).update({ publish_mode: 'manual' });
+    assert.ok(!(await m.releaseService.stagingStatus(s.siteId)).warningItems.some((w) => w.code === 'autoPublishHeld'));
+    assert.equal(sched.publishScheduler.heldInfo(s.siteId), null);
+  } finally {
+    sched.publishScheduler.stop();
+    sched.setSchedulerDeps(null);
+    sched.publishScheduler.stop();
+  }
+});

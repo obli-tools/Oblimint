@@ -16,7 +16,7 @@ import { lsTree, type TreeEntry } from './repo';
 //     we created ourselves (never written through a link);
 //   - symlink entries (120000) become symlinks with their stored target, never
 //     resolved; gitlinks (160000) are skipped with a warning;
-//   - modes are normalized (files 0644, dirs 0755);
+//   - modes are normalized (files 0644, executable entries 100755 0755, dirs 0755);
 //   - a file whose blob equals the one of the SAME path in the base release
 //     (normally the current one) is HARDLINKED to it instead of rewritten:
 //     release trees are never modified after creation (R3), so sharing inodes
@@ -161,7 +161,7 @@ export async function materializeRelease(input: MaterializeInput): Promise<Mater
     const baseDir = input.base ? path.posix.join(input.releasesDir, String(input.base.number)) : null;
     if (input.base && baseDir && fs.existsSync(baseDir) && !links.isLink(baseDir)) {
       for (const e of await lsTree(input.repoDir, input.base.commit)) {
-        if (e.type === 'blob' && (e.mode === '100644' || e.mode === '100755')) baseBlobs.set(e.path, e.oid);
+        if (e.type === 'blob' && (e.mode === '100644' || e.mode === '100755')) baseBlobs.set(e.path, `${e.mode}:${e.oid}`);
       }
     }
 
@@ -184,14 +184,16 @@ export async function materializeRelease(input: MaterializeInput): Promise<Mater
 
     // Hardlinks for unchanged blobs, the rest through cat-file.
     const toWrite = new Map<string, string[]>(); // oid → paths
+    const executable = new Set(files.filter((e) => e.mode === '100755').map((e) => e.path));
     const realDirs = new Map<string, boolean>(); // base-relative dir → every component is a real directory
     for (const e of files) {
       const dest = path.posix.join(tmpDir, e.path);
-      if (baseDir && baseBlobs.get(e.path) === e.oid && parentsAreRealDirs(baseDir, e.path, links, realDirs)) {
+      if (baseDir && baseBlobs.get(e.path) === `${e.mode}:${e.oid}` && parentsAreRealDirs(baseDir, e.path, links, realDirs)) {
         const src = path.posix.join(baseDir, e.path);
         try {
           const st = fs.lstatSync(src);
-          if (st.isFile()) {
+          // Same mode on disk too (a tree materialized before the executable bit was kept has 0644).
+          if (st.isFile() && ((st.mode & 0o100) !== 0) === executable.has(e.path)) {
             fs.linkSync(src, dest);
             res.linked++;
             res.files++;
@@ -203,7 +205,7 @@ export async function materializeRelease(input: MaterializeInput): Promise<Mater
       if (list) list.push(e.path); else toWrite.set(e.oid, [e.path]);
       res.files++;
     }
-    if (toWrite.size) res.written += await writeBlobs(input.repoDir, tmpDir, toWrite);
+    if (toWrite.size) res.written += await writeBlobs(input.repoDir, tmpDir, toWrite, executable);
 
     // Symlink targets: read in one batch too, then created (never resolved).
     if (symlinks.length) {
@@ -449,8 +451,12 @@ function catFileBatch(
   });
 }
 
-/** Writes each blob to its first path (O_EXCL|O_NOFOLLOW, 0644), the other paths hardlinked to it. */
-async function writeBlobs(repoDir: string, root: string, byOid: Map<string, string[]>): Promise<number> {
+/**
+ * Writes each blob to its first path (O_EXCL|O_NOFOLLOW, 0644 or 0755 for an
+ * executable entry), the other paths hardlinked to it (same mode) or copied
+ * (the same content with the other mode).
+ */
+async function writeBlobs(repoDir: string, root: string, byOid: Map<string, string[]>, executable: Set<string> = new Set()): Promise<number> {
   const oids = [...byOid.keys()];
   let fd: number | null = null;
   let written = 0;
@@ -469,8 +475,16 @@ async function writeBlobs(repoDir: string, root: string, byOid: Map<string, stri
         // Durable before the tree is renamed into place (see header).
         if (fd !== null) { fs.fsyncSync(fd); fs.closeSync(fd); fd = null; }
         const first = path.posix.join(root, currentPaths[0]);
-        try { fs.chmodSync(first, 0o644); } catch { /* Windows */ }
-        for (const p of currentPaths.slice(1)) fs.linkSync(first, path.posix.join(root, p));
+        const firstExec = executable.has(currentPaths[0]);
+        try { fs.chmodSync(first, firstExec ? 0o755 : 0o644); } catch { /* Windows */ }
+        for (const p of currentPaths.slice(1)) {
+          const dest = path.posix.join(root, p);
+          if (executable.has(p) === firstExec) { fs.linkSync(first, dest); continue; }
+          fs.copyFileSync(first, dest, fs.constants.COPYFILE_EXCL);
+          try { fs.chmodSync(dest, executable.has(p) ? 0o755 : 0o644); } catch { /* Windows */ }
+          const cfd = fs.openSync(dest, 'r');
+          try { fs.fsyncSync(cfd); } finally { fs.closeSync(cfd); }
+        }
         written += currentPaths.length;
       },
     );

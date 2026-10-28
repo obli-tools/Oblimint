@@ -61,7 +61,15 @@
       "rollback": "Restore this release",
       "rollbackConfirm": "Put release #{{number}} back online? The switch is instant; if its health check fails, the current release is kept.",
       "rollbackShort": "Restore",
-      "rolledBack": "Release #{{number}} is back online"
+      "rolledBack": "Release #{{number}} is back online",
+      "restoreStaging": "Copy into the staging",
+      "restoreStagingShort": "Copy",
+      "restoreStagingConfirm": "Make the staging folder exactly the code of release #{{number}}? Nothing goes live; data paths are not touched. In automatic publication mode, the next upload publishes it.",
+      "restoreStagingRunning": "Copy of release #{{number}} into the staging started",
+      "restoreStagingDone": "Release #{{number}} copied into the staging",
+      "restoreStagingModeLost": "{{count}} file(s) were copied without their executable bit ({{paths}}…): make them executable again in the staging (chmod +x over SFTP) before publishing.",
+      "discardPending": "Discard the unpublished changes",
+      "discardPendingConfirm": "The staging holds {{count}} unpublished change(s). Discard them? A copy is kept on the server."
     },
     "current": "current",
     "diff": {
@@ -117,7 +125,10 @@
       "messagePlaceholder": "What changes in this release?",
       "needsApproval": "This site publishes with approval: the release will wait for an approval before going live.",
       "queued": "Release #{{number}} queued",
-      "title": "Publish {{name}}"
+      "title": "Publish {{name}}",
+      "overrideRollback": "Publish anyway",
+      "rolledBackWarning": "The live release #{{liveRelease}} is a rollback of #{{rolledBackFrom}}: the staging still holds {{count}} file(s) of #{{rolledBackFrom}}. Publishing it as is puts the abandoned changes back online.",
+      "rolledBackHint": "To keep the rollback, copy the live release into the staging (Releases tab) instead."
     },
     "scan": {
       "clean": "Clean",
@@ -146,7 +157,8 @@
       "manual": "manual",
       "window": "window",
       "adapter": "adapter"
-    }
+    },
+    "rolledBackFrom": "Rollback (from #{{number}})"
   },
   "runtime": {
     "catalog": {
@@ -353,7 +365,15 @@
       "siteDeleting": "The site is being deleted.",
       "slugTaken": "This identifier is already used by another site of the account.",
       "stagingEmpty": "The staging folder is empty: there is nothing to publish.",
-      "validation": "The submitted data is invalid."
+      "validation": "The submitted data is invalid.",
+      "liveRolledBack": "The live release is a rollback: the staging still holds code of the abandoned release, publishing would put it back online.",
+      "releaseCommitMissing": "The history of this release is missing from the repository.",
+      "stagingHasPendingChanges": "The staging holds unpublished changes: publish or discard them first.",
+      "stagingTooLarge": "The staging holds too many entries to be compared safely.",
+      "restoreInProgress": "A copy of a release into the staging is already running for this site.",
+      "releaseNotOnDisk": "The live release is not on disk: publish again or contact an administrator.",
+      "hostdBusy": "The host agent is busy: try again in a minute.",
+      "adapterBusy": "An application update runs on this site: try again once it is over."
     },
     "fields": {
       "account": "Hosting account",
@@ -435,7 +455,16 @@
         "stagingMissing": "The staging folder does not exist yet.",
         "nestedRepo": "Nested git repository (excluded from publications): {{path}}",
         "symlink": "Symbolic link: {{path}}",
-        "moreSymlinks": "… and {{count}} more symbolic link(s)"
+        "moreSymlinks": "… and {{count}} more symbolic link(s)",
+        "liveOlderThanBase": "Rollback: the live release #{{releaseNumber}} is older than #{{baseNumber}}, whose code the staging still holds. Publishing it as is would undo the rollback: copy the live release into the staging first.",
+        "baseNotPublished": "The staging was last committed as release #{{baseNumber}}, which is not live ({{status}}).",
+        "autoPublishHeld": "Automatic publication held: the staging would put back online {{count}} file(s) of release #{{releaseNumber}}, undone by a rollback. Publish manually or copy the live release into the staging."
+      },
+      "restore": {
+        "running": "Copying release #{{number}} into the staging…",
+        "failed": "The copy of release #{{number}} into the staging failed.",
+        "done": "Release #{{number}} copied into the staging ({{remaining}} path(s) still differing).",
+        "modeLost": "{{count}} file(s) were copied without their executable bit ({{paths}}…): make them executable again in the staging (chmod +x over SFTP) before publishing."
       }
     },
     "status": {

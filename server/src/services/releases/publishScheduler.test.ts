@@ -129,3 +129,55 @@ test('a transient backend failure re-arms the auto publication, a bounded number
   publishScheduler.cancel(1);
   assert.equal(publishScheduler.retryAfterTransientFailure(1), true);
 });
+
+const rolledBack = () => new AppError(409, 'held', 'liveRolledBack', { rolledBackFrom: 7, count: 2 });
+
+test('held (liveRolledBack): not re-armed; the next outcome (noChanges, manual mode) clears it', async () => {
+  publishImpl = async () => { throw rolledBack(); };
+  publishScheduler.notifyChange(1, new Date());
+  await flush();
+  await advance(30_000);
+  assert.deepEqual(calls, [1]);
+  assert.equal(publishScheduler.deadline(1), null, 'not re-armed');
+  assert.deepEqual(publishScheduler.heldInfo(1), { at: new Date(Date.now()).toISOString(), releaseNumber: 7, count: 2 });
+  // The tenant put the live files back over SFTP: the next fire gives noChanges.
+  publishImpl = async () => { throw new AppError(409, 'nothing', 'noChanges'); };
+  publishScheduler.notifyChange(1, new Date());
+  await flush();
+  await advance(30_000);
+  assert.deepEqual(calls, [1, 1]);
+  assert.equal(publishScheduler.heldInfo(1), null, 'cleared by noChanges');
+  // Held again, then the site goes manual before the next fire: cleared, nothing published.
+  publishImpl = async () => { throw rolledBack(); };
+  publishScheduler.notifyChange(1, new Date());
+  await flush();
+  await advance(30_000);
+  assert.ok(publishScheduler.heldInfo(1));
+  publishScheduler.notifyChange(1, new Date());
+  await flush();
+  modes[1] = 'manual';
+  await advance(30_000);
+  assert.deepEqual(calls, [1, 1, 1]);
+  assert.equal(publishScheduler.heldInfo(1), null, 'cleared by manual mode');
+});
+
+test('releaseHeld (forward rollback): cleared and re-armed, the pending changes are published', async () => {
+  publishImpl = async () => { throw rolledBack(); };
+  publishScheduler.notifyChange(1, new Date());
+  await flush();
+  await advance(30_000);
+  assert.ok(publishScheduler.heldInfo(1));
+  const seen = publishScheduler.lastChange(1)?.getTime();
+  publishImpl = async () => ({});
+  publishScheduler.releaseHeld(1);
+  await flush();
+  assert.equal(publishScheduler.heldInfo(1), null);
+  assert.equal(publishScheduler.deadline(1)?.getTime(), Date.now() + 30_000, 're-armed');
+  assert.equal(publishScheduler.lastChange(1)?.getTime(), seen, 'no staging change recorded');
+  await advance(30_000);
+  assert.deepEqual(calls, [1, 1]);
+  // Nothing held: no re-arm.
+  publishScheduler.releaseHeld(1);
+  await flush();
+  assert.equal(publishScheduler.deadline(1), null);
+});
