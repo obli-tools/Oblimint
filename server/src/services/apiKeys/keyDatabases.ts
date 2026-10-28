@@ -1,12 +1,15 @@
 import type { Request, Response } from 'express';
 import type { Readable } from 'stream';
 import type {
-  ApiV1Database, ApiV1DbCredentials, ApiV1DbEnvTarget, ApiV1DbInstance, ApiV1DbUser, DbCatalog, DbDatabase, DbEngine, DbGrantInput, DbInstance, DbUser,
+  ApiV1Database, ApiV1DbCredentials, ApiV1DbEnvTarget, ApiV1DbInstance, ApiV1DbQueryResult, ApiV1DbUser, DbCatalog, DbDatabase, DbEngine, DbGrantInput,
+  DbInstance, DbUser, DbxTable, DbxTableInfo,
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
-import { databaseService, loadInstance } from '../databases/databases.service';
-import type { DbInstanceRow } from '../databases/rows';
+import { auditService } from '../audit.service';
+import { databaseService, loadDatabaseRow, loadInstance } from '../databases/databases.service';
+import { explorerService } from '../databases/explorer/explorer.service';
+import type { DbDatabaseRow, DbInstanceRow } from '../databases/rows';
 import { requireScope, type ApiKeyContext } from './apiKeys.service';
 import { keyApi, type SiteArea } from './keyApi';
 import { keyEnv } from './keyEnv';
@@ -54,6 +57,20 @@ async function databaseOf(ctx: ApiKeyContext, instanceId: number, dbId: number):
   if (!row || !reaches(ctx, await created(ctx, 'database'), row.id)) throw notFound('Database');
   return row;
 }
+
+/**
+ * The SQL explorer through a key: databases.manage on the instance for the key's
+ * user (as in the panel) and the database within the key's reach. The key gets
+ * its own explorer session (ephemeral SQL user, that database only).
+ */
+async function explorerTarget(ctx: ApiKeyContext, instanceId: number, dbId: number): Promise<{ instance: DbInstanceRow; database: DbDatabaseRow }> {
+  await keyInstance(ctx, instanceId);
+  const instance = await loadInstance(ctx.actor, instanceId, 'databases.manage');
+  const reached = await databaseOf(ctx, instance.id, dbId);
+  return { instance, database: await loadDatabaseRow(instance, reached.id) };
+}
+
+const keyOwner = (ctx: ApiKeyContext): `k${number}` => `k${ctx.id}`;
 
 async function userOf(ctx: ApiKeyContext, instanceId: number, userId: number): Promise<{ id: number; username: string }> {
   const row = await db('db_users').where({ id: userId, instance_id: instanceId, account_id: ctx.accountId }).first('id', 'username') as { id: number; username: string } | undefined;
@@ -185,6 +202,42 @@ export const keyDatabases = {
     const user = await userOf(ctx, row.id, userId);
     if (!(await created(ctx, 'user')).has(user.id)) throw new AppError(403, 'A key deletes only the database users it created', 'keyNotCreator');
     await databaseService.deleteUser(req, ctx.actor, row.id, user.id);
+  },
+
+  /** Tables and views of a database (estimated rows, size). */
+  async tables(ctx: ApiKeyContext, instanceId: number, dbId: number): Promise<DbxTable[]> {
+    const t = await explorerTarget(ctx, instanceId, dbId);
+    return explorerService.tables(t.instance, t.database, keyOwner(ctx), true);
+  },
+
+  /** Columns, keys, indexes, foreign keys (and the CREATE statement on MySQL / MariaDB) of a table. */
+  async describeTable(ctx: ApiKeyContext, instanceId: number, dbId: number, table: string): Promise<DbxTableInfo> {
+    const t = await explorerTarget(ctx, instanceId, dbId);
+    return explorerService.table(t.instance, t.database, keyOwner(ctx), table);
+  },
+
+  /**
+   * ONE SQL statement. Read-only by default: a reading statement only, in a
+   * read-only transaction rolled back; write: true runs it for real. Rows and
+   * bytes capped, time-limited, audited (statement cut, never the results).
+   */
+  async query(ctx: ApiKeyContext, req: Request, instanceId: number, dbId: number, body: { sql: string; write?: boolean; maxRows?: number; timeoutS?: number }): Promise<ApiV1DbQueryResult> {
+    const t = await explorerTarget(ctx, instanceId, dbId);
+    const write = body.write === true;
+    const cut = body.sql.length > 500 ? `${body.sql.slice(0, 500)}…` : body.sql;
+    const log = (details: Record<string, unknown>) => auditService.logReqAs(req, t.instance.tenant_id, 'db.key.query', {
+      resourceType: 'database', resourcePath: `${t.instance.id}/${t.database.id}`, details: { database: t.database.name, write, sql: cut, ...details },
+    });
+    try {
+      const { statement: _statement, ...r } = await explorerService.keyQuery(t.instance, t.database, keyOwner(ctx), body.sql, {
+        write, maxRows: body.maxRows, timeoutS: body.timeoutS,
+      });
+      await log({ ok: true, rows: r.rowCount, affectedRows: r.affectedRows, truncated: r.truncated });
+      return r;
+    } catch (err) {
+      await log({ ok: false, code: err instanceof AppError ? err.code : null });
+      throw err;
+    }
   },
 
   /** gzip SQL dump streamed to `res`. */

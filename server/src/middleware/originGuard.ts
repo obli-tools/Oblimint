@@ -98,6 +98,8 @@ function hasBody(req: Request): boolean {
  */
 export const RAW_UPLOAD_PATHS: readonly RegExp[] = [
   /^\/api\/databases\/instances\/\d+\/databases\/\d+\/restore$/,
+  // Integrated SQL explorer: an .sql / .sql.gz / .csv file imported statement by statement.
+  /^\/api\/databases\/instances\/\d+\/databases\/\d+\/explorer\/import$/,
   // P4b (docs/P4b-PLAN.md §5.3): ZIP source of an app stack (streamed by yauzl).
   /^\/api\/apps\/stacks\/\d+\/source\/zip$/,
   // Web file explorer: one chunk of a chunked upload (application/octet-stream).

@@ -55,6 +55,9 @@ const sectionSchemas = {
   }).strict(),
   dbAdmin: z.object({
     hostname: hostname.nullable(),
+    // Integrated SQL explorer caps (MiB).
+    explorerImportMaxMb: z.number().int().min(1).max(16384),
+    explorerExportMaxMb: z.number().int().min(1).max(65536),
   }).strict(),
   access: z.object({
     probeHostV4: hostname.nullable(),

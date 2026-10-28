@@ -63,7 +63,19 @@ function fakeDriver(): ExplorerDriver {
     insert: async () => { calls.push('insert'); },
     update: async (_i, key) => { calls.push(`update:${key.id}`); return 1; },
     remove: async (_i, keys) => { calls.push(`delete:${keys.length}`); return keys.length; },
-    run: async (sql) => { calls.push(`run:${sql}`); return { results: [], stopped: false }; },
+    run: async (sql, o) => { calls.push(`run:${sql}:${o?.timeoutS ?? ''}`); return { results: [], stopped: false }; },
+    runList: async (st) => { calls.push(`runList:${st.join(' | ')}`); return { results: [], stopped: false }; },
+    runOne: async (sql, o) => { calls.push(`runOne:${o.readOnly ? 'ro' : 'rw'}:${o.maxRows}:${o.timeoutS}:${sql}`); return { columns: ['n'], rows: [[1]], truncated: false, affectedRows: null }; },
+    connectionId: () => 77,
+    columns: async () => new Map([['items', [{ name: 'id', type: 'int' }, { name: 'label', type: 'varchar(20)' }]], ['v', [{ name: 'n', type: 'int' }]]]),
+    objects: async () => [],
+    objectDefinition: async () => null,
+    search: async (i, cols, term) => { calls.push(`search:${i.table.id}:${cols.join(',')}:${term}`); return { columns: ['id', 'label'], rows: [[1, term]] }; },
+    stream: async () => 0,
+    exec: async () => 0,
+    insertRows: async (_t, _c, r) => r.length,
+    setTimeout: async () => undefined,
+    cancel: async (id) => { calls.push(`cancel:${id}`); return true; },
     close: async () => { calls.push('close'); },
   };
 }
@@ -75,7 +87,9 @@ beforeEach(() => {
   calls = [];
   failNext = null;
   setExplorerDeps({
-    connect: async () => { connects++; return { driver: fakeDriver(), username: `oblsso_${connects}` }; },
+    connect: async () => { connects++; return { driver: fakeDriver(), username: `oblsso_${connects}`, password: 'pw' }; },
+    open: async () => fakeDriver(),
+    caps: async () => ({ importMax: 1e6, exportMax: 1e6 }),
     release: async (_i, u) => { released.push(u); },
     now: () => now,
   });
@@ -127,4 +141,56 @@ test('SQL errors become 400 sqlError with the engine message', async () => {
   failNext = new Error("Unknown column 'nope' in 'field list'");
   await assert.rejects(explorerService.rows(instance, database, 5, 'items', { offset: 0, limit: 10 }),
     (e: AppError) => e.statusCode === 400 && e.code === 'sqlError' && e.message.includes('nope'));
+});
+
+test('API keys: one statement, read-only unless write, caps clamped; key sessions are their own', async () => {
+  const r = await explorerService.keyQuery(instance, database, 'k9', 'SELECT 1', { write: false, maxRows: 99_999, timeoutS: 999 });
+  assert.equal(r.readOnly, true);
+  assert.deepEqual(calls.filter((c) => c.startsWith('runOne')), ['runOne:ro:500:60:SELECT 1']);
+  await assert.rejects(explorerService.keyQuery(instance, database, 'k9', 'SELECT 1; DELETE FROM items', { write: false }), (e: AppError) => e.code === 'oneStatement');
+  await assert.rejects(explorerService.keyQuery(instance, database, 'k9', 'DELETE FROM items', { write: false }), (e: AppError) => e.code === 'readOnlyStatement');
+  await assert.rejects(explorerService.keyQuery(instance, database, 'k9', '/*!50000 DELETE FROM items */', { write: false }), (e: AppError) => e.code === 'readOnlyStatement');
+  await assert.rejects(explorerService.keyQuery(instance, database, 'k9', 'CALL p()', { write: false }), (e: AppError) => e.code === 'readOnlyStatement');
+  await assert.rejects(explorerService.keyQuery(instance, database, 'k9', 'START TRANSACTION', { write: false }), (e: AppError) => e.code === 'readOnlyStatement');
+  await explorerService.keyQuery(instance, database, 'k9', '-- why\n(SELECT 2)', { write: false });
+  await explorerService.keyQuery(instance, database, 'k9', 'DELETE FROM items WHERE id = 1', { write: true });
+  assert.ok(calls.includes('runOne:rw:500:15:DELETE FROM items WHERE id = 1'));
+  assert.equal(connects, 1);
+  await explorerService.info(instance, database, 5);
+  assert.equal(connects, 2, 'a panel user and a key never share a session');
+});
+
+test('console: timeout clamped, cancellation through a side connection; DDL regenerated server-side', async () => {
+  await explorerService.query(instance, database, 5, 'SELECT 1', 9999);
+  assert.ok(calls.includes('run:SELECT 1:300'));
+  assert.deepEqual(await explorerService.cancel(instance, database, 5), { cancelled: false }, 'nothing running');
+  const preview = await explorerService.ddlPreview(instance, database, 5, { op: 'addColumn', table: 'items', column: { name: 'qty', type: 'int', nullable: false, default: { kind: 'literal', value: '0' } } });
+  assert.deepEqual(preview.statements, ["ALTER TABLE `items` ADD COLUMN `qty` int NOT NULL DEFAULT '0'"]);
+  await explorerService.ddlApply(instance, database, 5, { op: 'dropTable', table: 'items', confirm: 'items' });
+  assert.ok(calls.includes('runList:DROP TABLE `items`'));
+  await assert.rejects(explorerService.ddlApply(instance, database, 5, { op: 'dropTable', table: 'items', confirm: 'nope' }), (e: AppError) => e.code === 'confirmMismatch');
+  await assert.rejects(explorerService.ddlPreview(instance, database, 5, { op: 'dropColumn', table: 'nope', column: 'x' }), (e: AppError) => e.code === 'tableNotFound');
+});
+
+test('search: text columns only, bounded; maintenance statements built from the catalog', async () => {
+  const r = await explorerService.search(instance, database, 5, { term: 'abc', mode: 'contains' });
+  assert.equal(r.hits.length, 1);
+  assert.deepEqual(r.hits[0].searchedColumns, ['label']);
+  assert.equal(r.tablesSkipped, 1, 'the view has no text column');
+  assert.ok(calls.includes('search:items:label:abc'));
+  await explorerService.maintenance(instance, database, 5, 'optimize', ['items']);
+  assert.ok(calls.includes('runList:OPTIMIZE TABLE `items`'));
+  await assert.rejects(explorerService.maintenance(instance, database, 5, 'vacuum', ['items']), (e: AppError) => e.code === 'validation');
+});
+
+test('exports: one-shot tickets bound to the session; a query export must be one reading statement', async () => {
+  const tk = await explorerService.prepareExport(instance, database, 5, { format: 'csv', tables: ['items'] }, '/x');
+  assert.match(tk.token, /^[0-9a-f]{48}$/);
+  assert.match(tk.filename, /^shop-items-\d{8}-\d{4}\.csv$/);
+  await assert.rejects(explorerService.prepareExport(instance, database, 5, { format: 'csv', sql: 'DELETE FROM items' }, '/x'), (e: AppError) => e.code === 'readOnlyStatement');
+  await assert.rejects(explorerService.prepareExport(instance, database, 5, { format: 'csv', tables: ['items', 'v'] }, '/x'), (e: AppError) => e.code === 'validation');
+  await assert.rejects(explorerService.prepareExport(instance, database, 5, { format: 'sql', tables: ['items'], structure: false, data: false }, '/x'), (e: AppError) => e.code === 'validation');
+  // Another owner cannot use the ticket; a ticket is consumed by the first attempt.
+  await assert.rejects(explorerService.runExport(instance, database, 6, tk.token, {} as never), (e: AppError) => e.code === 'exportExpired');
+  await assert.rejects(explorerService.runExport(instance, database, 5, tk.token, {} as never), (e: AppError) => e.code === 'exportExpired');
 });

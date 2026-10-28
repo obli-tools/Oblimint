@@ -41,6 +41,10 @@ export interface PreviewSettings {
 export interface DbAdminSettings {
   /** Host name of phpMyAdmin / Adminer (served by the edge), e.g. db.<preview domain>. null = admin UIs off. */
   hostname: string | null;
+  /** Integrated SQL explorer: largest import (MiB uploaded, gzip counted compressed). */
+  explorerImportMaxMb: number;
+  /** Integrated SQL explorer: largest export (MiB written). */
+  explorerExportMaxMb: number;
 }
 
 export interface AccessSettings {
@@ -337,7 +341,7 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
   releasePreviews: {
     enabled: true, defaultTtlMinutes: 60, maxTtlMinutes: 480, maxPerAccount: 2, maxTotal: 20, memoryMb: 512, cpus: 1, minIntervalSeconds: 60, dbCloneMaxMb: 2048,
   },
-  dbAdmin: { hostname: null },
+  dbAdmin: { hostname: null, explorerImportMaxMb: 256, explorerExportMaxMb: 4096 },
   access: {
     probeHostV4: null,
     probeHostV6: null,

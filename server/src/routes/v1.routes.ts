@@ -9,6 +9,7 @@ import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from '../services/apiKey
 import type { ApiKeyContext } from '../services/apiKeys/apiKeys.service';
 import {
   CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_PATH_MAX, SITE_ENV_MAX_VALUE, SITE_ENV_MAX_VARS,
+  DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S,
 } from '@oblimint/shared';
 import { keyDatabases } from '../services/apiKeys/keyDatabases';
 import { keyEnv } from '../services/apiKeys/keyEnv';
@@ -73,6 +74,9 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   DELETE /databases/:iid/databases/:dbId {confirm: name} → { deleted: true } (its own only)      databases.manage
 //   GET    /databases/:iid/databases/:dbId/dump         → application/gzip                          databases.manage
 //   POST   /databases/:iid/databases/:dbId/import       raw SQL (plain / gzip), or JSON {siteId, path, area?} → { restored: true } databases.manage
+//   GET    /databases/:iid/databases/:dbId/tables       → DbxTable[]                                databases.manage
+//   GET    /databases/:iid/databases/:dbId/tables/:table → DbxTableInfo                             databases.manage
+//   POST   /databases/:iid/databases/:dbId/query {sql, write?, maxRows?, timeoutS?} → ApiV1DbQueryResult (read-only unless write) databases.manage
 //   POST   /databases/:iid/users  {username, password?, grants?, env?} → ApiV1DbCredentials (201) databases.manage (+ sites.manage for env)
 //   PUT    /databases/:iid/users/:uid {grants}          → ApiV1DbUser                               databases.manage
 //   POST   /databases/:iid/users/:uid/password {password?, env?} → ApiV1DbCredentials             databases.manage
@@ -403,6 +407,19 @@ router.post('/databases/:iid/databases/:dbId/import', h(async (req, res) => {
     return;
   }
   ok(res, await keyDatabases.importSql(ctx, req, iid(req), dbId));
+}));
+router.get('/databases/:iid/databases/:dbId/tables', h(async (req, res) => {
+  ok(res, await keyDatabases.tables(ctxOf(req), iid(req), Number(req.params.dbId)));
+}));
+router.get('/databases/:iid/databases/:dbId/tables/:table', h(async (req, res) => {
+  ok(res, await keyDatabases.describeTable(ctxOf(req), iid(req), Number(req.params.dbId), z.string().min(1).max(512).parse(req.params.table)));
+}));
+router.post('/databases/:iid/databases/:dbId/query', h(async (req, res) => {
+  const b = parseBody(z.object({
+    sql: z.string().min(1).max(256 * 1024), write: z.boolean().optional(),
+    maxRows: z.number().int().min(1).max(DBX_KEY_MAX_ROWS).optional(), timeoutS: z.number().int().min(1).max(DBX_KEY_MAX_TIMEOUT_S).optional(),
+  }).strict(), req.body);
+  ok(res, await keyDatabases.query(ctxOf(req), req, iid(req), Number(req.params.dbId), b));
 }));
 router.post('/databases/:iid/users', h(async (req, res) => {
   const b = parseBody(z.object({ username: z.string().min(1).max(32), password: z.string().max(128).nullable().optional(), grants: grants.optional(), env: envTarget.optional() }).strict(), req.body);
