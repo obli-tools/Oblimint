@@ -1,6 +1,6 @@
 {
   "name": "@oblimint/server",
-  "version": "0.1.47",
+  "version": "0.1.48",
   "private": true,
   "main": "dist/src/index.js",
   "scripts": {
