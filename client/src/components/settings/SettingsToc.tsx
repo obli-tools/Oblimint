@@ -140,6 +140,11 @@ export function useSettingsToc(containerRef: RefObject<HTMLElement>) {
 
 type Toc = ReturnType<typeof useSettingsToc>;
 
+/** The summary is worth showing: at least two families of sections. */
+function hasGroups(toc: Toc): boolean {
+  return toc.entries.filter((e) => e.group === null).length >= 2;
+}
+
 /** Group of the active entry (itself, or the group it belongs to). */
 function activeGroup(toc: Toc): string | null {
   const e = toc.entries.find((x) => x.id === toc.active);
@@ -151,7 +156,7 @@ export function SettingsTocNav({ toc }: { toc: Toc }) {
   const { t } = useTranslation();
   const group = activeGroup(toc);
   // A single family (staff with the notification channels only): nothing to summarise.
-  if (toc.entries.filter((e) => e.group === null).length < 2) return null;
+  if (!hasGroups(toc)) return null;
   return (
     <nav aria-label={t('settings.toc.title') || 'On this page'} className="sticky top-6 max-h-[calc(100dvh-9rem)] overflow-y-auto pb-4">
       <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-widest text-text-muted">{t('settings.toc.title') || 'On this page'}</p>
@@ -211,7 +216,7 @@ export function SettingsPageLayout({ toc, contentRef, children }: { toc: Toc; co
   return (
     <PageContainer className="flex gap-8">
       <div ref={contentRef} className="min-w-0 flex-1 space-y-8">{children}</div>
-      <aside className="hidden w-56 shrink-0 xl:block"><SettingsTocNav toc={toc} /></aside>
+      {hasGroups(toc) && <aside className="hidden w-56 shrink-0 xl:block"><SettingsTocNav toc={toc} /></aside>}
     </PageContainer>
   );
 }

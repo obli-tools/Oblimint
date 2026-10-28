@@ -29,15 +29,13 @@ const TTL_MIN = 15;
 const TTL_MAX = 1440;
 
 /**
- * Firewall section of the account page (?tab=access&section=firewall, old ?tab=security): who may reach the
- * account's own ports (SFTP of the file server, external SQL ports). Mode
- * open / allow-list / auto after 2FA, rules, « my IPs » probes, automatic
- * grants, bans. Editing needs `files.manage`; the server stays the authority.
+ * Access settings of an account (firewall, rules, grants, bans): loading with
+ * a sequence guard, live refresh on the access and file-server events, and
+ * `changed` to take a server answer in place. Shared by the account's
+ * firewall section and the Bans page.
  */
-export function AccountSecurityTab({ accountId }: { accountId: number }) {
+function useAccountAccess(accountId: number) {
   const { t } = useTranslation();
-  const { can } = useHostingMe();
-  const canEdit = can('files.manage', accountId);
   const [info, setInfo] = useState<AccountAccessInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,18 +60,35 @@ export function AccountSecurityTab({ accountId }: { accountId: number }) {
   useEffect(() => { setLoading(true); void load(); }, [load]);
   useHostingEvents([HostingSocketEvents.ACCESS_UPDATED, HostingSocketEvents.FILESRV_UPDATED], () => { void load(); }, (_e, p) => payloadNumber(p, 'accountId') === accountId);
 
-  const changed = (next: AccountAccessInfo) => { seq.current++; setInfo(next); setError(null); };
+  const reload = useCallback(() => { setLoading(true); void load(); }, [load]);
+  const changed = useCallback((next: AccountAccessInfo) => { seq.current++; setInfo(next); setError(null); }, []);
+  return { info, loading, error, load, reload, changed };
+}
 
-  if (loading && !info) return <div className="flex justify-center py-8"><LoadingSpinner /></div>;
-  if (!info) {
-    return (
-      <div className="space-y-4">
-        <EmptyState icon={<AlertTriangle />} text={error ?? (t('security.loadFailed') || 'Failed to load the access settings')} action={
-          <Button size="sm" variant="secondary" onClick={() => { setLoading(true); void load(); }}><RefreshCw size={13} className="mr-1.5" />{t('common.refresh') || 'Refresh'}</Button>
-        } />
-      </div>
-    );
-  }
+/** Loading / error state of the access settings (spinner, then the error with Refresh). */
+function AccessLoadState({ loading, error, onRetry }: { loading: boolean; error: string | null; onRetry: () => void }) {
+  const { t } = useTranslation();
+  if (loading) return <div className="flex justify-center py-8"><LoadingSpinner /></div>;
+  return (
+    <EmptyState icon={<AlertTriangle />} text={error ?? (t('security.loadFailed') || 'Failed to load the access settings')} action={
+      <Button size="sm" variant="secondary" onClick={onRetry}><RefreshCw size={13} className="mr-1.5" />{t('common.refresh') || 'Refresh'}</Button>
+    } />
+  );
+}
+
+/**
+ * Firewall section of the account page (?tab=access&section=firewall, old ?tab=security): who may reach the
+ * account's own ports (SFTP of the file server, external SQL ports). Mode
+ * open / allow-list / auto after 2FA, rules, « my IPs » probes, automatic
+ * grants, bans. Editing needs `files.manage`; the server stays the authority.
+ */
+export function AccountSecurityTab({ accountId }: { accountId: number }) {
+  const { t } = useTranslation();
+  const { can } = useHostingMe();
+  const canEdit = can('files.manage', accountId);
+  const { info, loading, error, load, reload, changed } = useAccountAccess(accountId);
+
+  if (!info) return <AccessLoadState loading={loading} error={error} onRetry={reload} />;
 
   return (
     <div className="space-y-4">
@@ -96,35 +111,11 @@ export function AccountSecurityTab({ accountId }: { accountId: number }) {
  * coherence plan D13): the same card as the account's firewall section.
  */
 export function AccountAccessBans({ accountId }: { accountId: number }) {
-  const { t } = useTranslation();
   const { can } = useHostingMe();
   const canEdit = can('files.manage', accountId);
-  const [info, setInfo] = useState<AccountAccessInfo | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { info, loading, error, load, reload } = useAccountAccess(accountId);
 
-  const seq = useRef(0);
-  const load = useCallback(async () => {
-    const id = ++seq.current;
-    try {
-      const data = await firewallApi.getAccess(accountId);
-      if (id !== seq.current) return;
-      setInfo(data);
-      setError(null);
-    } catch (err) {
-      if (id !== seq.current) return;
-      setInfo(null);
-      setError(opsErrorMessage(t, err, 'security', t('security.loadFailed') || 'Failed to load the access settings'));
-    } finally {
-      if (id === seq.current) setLoading(false);
-    }
-  }, [accountId, t]);
-
-  useEffect(() => { setLoading(true); void load(); }, [load]);
-  useHostingEvents([HostingSocketEvents.ACCESS_UPDATED], () => { void load(); }, (_e, p) => payloadNumber(p, 'accountId') === accountId);
-
-  if (loading && !info) return <div className="flex justify-center py-8"><LoadingSpinner /></div>;
-  if (!info) return <EmptyState icon={<AlertTriangle />} text={error ?? (t('security.loadFailed') || 'Failed to load the access settings')} />;
+  if (!info) return <AccessLoadState loading={loading} error={error} onRetry={reload} />;
   return <BansCard info={info} canEdit={canEdit} onReload={() => { void load(); }} />;
 }
 

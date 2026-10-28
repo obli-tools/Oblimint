@@ -7,6 +7,7 @@ import { proxyApi } from '@/api/proxy.api';
 import { PageContainer } from '@/components/common/PageContainer';
 import { AccountLink, DetailHeader } from '@/components/common/DetailHeader';
 import { AccountScopeBar, scopeSubtitle, useAccountScope } from '@/components/common/AccountScope';
+import { SettingsLink } from '@/components/common/SettingsLink';
 import { headerBtnCls } from '@/components/hosting/hostingUi';
 import { DomainNames, EdgeUnitPill } from '@/components/proxy/proxyUi';
 import { TrafficOverview } from '@/components/traffic/TrafficOverview';
@@ -46,7 +47,12 @@ export function TrafficPage() {
             <AccountLink key="account" accountId={host.accountId} username={host.accountUsername} to={`/traffic?account=${host.accountId}`} />,
             <DomainNames key="domains" domains={host.domains} max={4} />,
           ] : undefined}
-          actions={<Link to={`/proxy/hosts/${hostId}`} className={headerBtnCls}><Waypoints size={14} />{t('traffic.openHost') || 'Proxy host'}</Link>}
+          actions={(
+            <>
+              <SettingsLink anchor="settings-monitoring" />
+              <Link to={`/proxy/hosts/${hostId}`} className={headerBtnCls}><Waypoints size={14} />{t('traffic.openHost') || 'Proxy host'}</Link>
+            </>
+          )}
         />
         <RangeTabs value={range} onChange={setRange} />
         <TrafficReportView key={`${hostId}-${range}`} hostId={hostId} range={range} />
@@ -59,6 +65,9 @@ export function TrafficPage() {
       <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
         <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.traffic') || 'Traffic'}</h1>
         <span className="text-xs font-mono tracking-wider text-text-muted">{scopeSubtitle(scope, t('proxy.allAccountsShort') || 'all accounts')}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <SettingsLink anchor="settings-monitoring" />
+        </div>
       </div>
       <p className="-mt-3 text-sm text-text-muted">{t('traffic.description') || 'Requests, status codes and latency of each proxy host, from the access log of the web front end.'}</p>
       <AccountScopeBar scope={scope}>

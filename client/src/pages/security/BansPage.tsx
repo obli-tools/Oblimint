@@ -85,7 +85,8 @@ export function BansPage() {
 
       <SegmentedTabs<Tab> tabs={tabs} value={tab} onChange={setTab} ariaLabel={t('nav.bans') || 'Bans'} fill={false} />
 
-      {tab === 'web' && <WebBansPanel key={`web-${tick}`} scope={scope} />}
+      {/* The web tab keeps its filters and page on refresh: reloaded in place, not remounted. */}
+      {tab === 'web' && <WebBansPanel scope={scope} refreshTick={tick} />}
       {tab === 'access' && <AccessBansPanel key={`access-${tick}`} scope={scope} />}
       {tab === 'mail' && platformAdmin && <MailBansPanel key={`mail-${tick}`} />}
     </PageContainer>
@@ -120,7 +121,7 @@ function AccessBansPanel({ scope }: { scope: AccountScope }) {
  * promotion): stats, filters, GeoIP, ban / unban, promotion to a platform ban
  * (docs/P4b-PLAN.md §9, §13).
  */
-function WebBansPanel({ scope }: { scope: AccountScope }) {
+function WebBansPanel({ scope, refreshTick }: { scope: AccountScope; refreshTick: number }) {
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
   const { canManage, platformAdmin } = useProxyAccess();
@@ -176,6 +177,15 @@ function WebBansPanel({ scope }: { scope: AccountScope }) {
   }, [accountId, tenantId, scopeFilter, active, source, hostId, q, offset, t]);
 
   useEffect(() => { setLoading(true); void load(); }, [load]);
+  // Refresh button of the page: same filters, same page.
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  useEffect(() => {
+    if (!refreshTick) return;
+    setLoading(true);
+    void loadRef.current();
+    if (platformAdmin) bansApi.firewall().then(setFirewall).catch(() => setFirewall(null));
+  }, [refreshTick]); // eslint-disable-line react-hooks/exhaustive-deps
   useHostingEvents([HostingSocketEvents.BAN_UPDATED], () => { void load(); }, undefined, 1500);
 
   useEffect(() => {
