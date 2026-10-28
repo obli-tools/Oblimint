@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import type { WebmailSsoTicket } from '@oblimint/shared';
+import { WEBMAIL_SSO_FRAGMENT } from '@oblimint/shared';
 import { db } from '../../../db';
 import { AppError } from '../../../middleware/errorHandler';
 import { logger } from '../../../utils/logger';
@@ -22,6 +23,8 @@ import { activeMailDriver } from '../registry';
 import { isUnderPanel, webmailEdgeContributor, webmailHostRefusal } from './edgeContributor';
 import { webmailTokens, type WebmailCredentials } from './ssoTokens';
 import { removeWebmail, webmailInfraComponent, webmailRunning, wantedWebmailKind } from './webmailInfra';
+import { oblimintWebmailListening, resetOblimintWebmailCache } from './oblimint/server';
+import { dbWebmailSessionStore } from './oblimint/session';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Webmail + single sign-on (docs/P4-PLAN.md §9.7, MA4 / MA6 / MA13, B3).
@@ -76,6 +79,10 @@ export interface WebmailDeps {
   syncNow(domain: string, timeoutMs: number): Promise<boolean>;
   /** The webmail container runs. */
   running(): Promise<boolean>;
+  /** The Oblimint webmail listener is up (kind oblimint). */
+  oblimintRunning(): boolean;
+  /** Ends Oblimint webmail sessions: of one mailbox, or all (null). Never throws. */
+  endOblimintSessions(mailboxId: number | null): Promise<number>;
   /** Subnets of the mail network (allowNets). */
   subnets(): Promise<string[]>;
   now(): number;
@@ -112,6 +119,8 @@ const defaultDeps: WebmailDeps = {
   requestSync: (reason) => mailService.requestSync(reason),
   syncNow: defaultSyncNow,
   running: webmailRunning,
+  oblimintRunning: oblimintWebmailListening,
+  endOblimintSessions: (mailboxId) => (mailboxId === null ? dbWebmailSessionStore.removeAll() : dbWebmailSessionStore.removeMailbox(mailboxId)).catch(() => 0),
   subnets: mailNetworkSubnets,
   now: Date.now,
 };
@@ -214,7 +223,9 @@ async function applySettings(): Promise<void> {
       webmailTokens.clear();
       const n = await revokeWhere(() => undefined);
       if (n > 0) deps.requestSync('webmail changed');
+      await deps.endOblimintSessions(null);
     }
+    resetOblimintWebmailCache();
     lastKind = kind;
     if (kind) await webmailInfraComponent.ensure(log);
     else await removeWebmail(log);
@@ -247,6 +258,24 @@ export const webmailService = {
     const kind = settings.webmail;
     const url = await this.urlFor(mb.domain_name);
     if (!url) throw unavailable('No webmail host is served for this domain');
+
+    if (kind === 'oblimint') {
+      // Panel's own webmail: no credential, no engine sync — the webmail listener
+      // impersonates the mailbox on the engine (JMAP, Stalwart only).
+      if (driver.engine !== 'stalwart') throw unavailable('The Oblimint webmail needs the Stalwart mail engine');
+      if (!deps.oblimintRunning()) throw unavailable('The webmail is not running');
+      const { token, expiresAt: tokenExpiry } = webmailTokens.issue({
+        kind: 'oblimint', credentials: null, appPasswordId: null, mailboxId: mb.id, accountId: mb.account_id,
+      });
+      await auditService.logReqAs(req, mb.tenant_id, 'mail.webmail.sso', {
+        resourceType: 'mailbox',
+        resourcePath: String(mb.id),
+        details: { address: mb.address, webmail: kind },
+      });
+      // Token in the FRAGMENT: never sent to a server, never in an access log or a Referer.
+      return { url: `${url}#${WEBMAIL_SSO_FRAGMENT}=${encodeURIComponent(token)}`, expiresAt: tokenExpiry.toISOString() };
+    }
+
     if (!(await deps.running())) throw unavailable('The webmail is not running');
     // appPasswords() drops every credential without the mail network subnets (fail closed): no ticket then.
     if ((await mailNets()).length === 0) throw unavailable('The mail network is not available');
@@ -348,7 +377,8 @@ export const webmailService = {
   /** Trades a one-time token for the session credential; null = refused (unknown / expired / replayed / revoked / other webmail). */
   async redeem(token: unknown): Promise<WebmailCredentials | null> {
     const ticket = webmailTokens.redeem(token);
-    if (!ticket) return null;
+    // An Oblimint webmail token is never traded for a credential (it has none).
+    if (!ticket || ticket.kind === 'oblimint') return null;
     const settings = await platformSettings.section('mail');
     if (settings.webmail !== ticket.kind) return null;
     const row = await db('mail_app_passwords').where({ id: ticket.appPasswordId, mailbox_id: ticket.mailboxId })
@@ -356,6 +386,16 @@ export const webmailService = {
     if (!row) return null;
     logger.info({ mailboxId: ticket.mailboxId, accountId: ticket.accountId, webmail: ticket.kind }, 'webmail SSO token redeemed');
     return { ...ticket.credentials };
+  },
+
+  /** Oblimint webmail (in-process): one-time token → mailbox id; null = refused (unknown / expired / replayed / other webmail). */
+  async redeemOblimint(token: unknown): Promise<{ mailboxId: number } | null> {
+    const ticket = webmailTokens.redeem(token);
+    if (!ticket || ticket.kind !== 'oblimint') return null;
+    const settings = await platformSettings.section('mail');
+    if (settings.webmail !== 'oblimint') return null;
+    logger.info({ mailboxId: ticket.mailboxId, accountId: ticket.accountId, webmail: ticket.kind }, 'webmail SSO token redeemed');
+    return { mailboxId: ticket.mailboxId };
   },
 
   /** Webmail logout: revokes the session credential presented (constant work per live session). */
@@ -386,6 +426,8 @@ export const webmailService = {
     try {
       webmailTokens.revokeMailbox(mailboxId);
     } catch { /* memory only */ }
+    // Oblimint webmail sessions of the mailbox end now (deleted: CASCADE did it already).
+    if (reason !== 'deleted') void deps.endOblimintSessions(mailboxId);
     void (async () => {
       // 'deleted': the rows went with the mailbox (CASCADE); the sync drops them from the engine.
       const n = reason === 'deleted' ? 0 : await revokeWhere((q) => { q.where({ mailbox_id: mailboxId }); });

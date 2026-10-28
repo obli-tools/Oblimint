@@ -98,7 +98,7 @@ const sectionSchemas = {
   // P4 (docs/P4-PLAN.md §Réglages) — + spamTagScore < spamRejectScore (checked in update()).
   mail: z.object({
     hostname: hostname.nullable(),
-    webmail: z.enum(['roundcube', 'snappymail', 'none']),
+    webmail: z.enum(['roundcube', 'snappymail', 'oblimint', 'none']),
     webmailHostname: hostname.nullable(),
     webmailPerDomain: z.boolean(),
     autoconfig: z.boolean(),

@@ -31,15 +31,28 @@ export interface WebmailCredentials {
   expiresAt: string;
 }
 
-export interface WebmailTicket {
-  credentials: WebmailCredentials;
-  /** mail_app_passwords.id of the credential (still checked at redemption). */
-  appPasswordId: number;
-  mailboxId: number;
-  accountId: number;
-  /** Webmail the session was opened for (a kind change in between voids the token). */
-  kind: 'roundcube' | 'snappymail';
-}
+/**
+ * Webmail the session was opened for (a kind change in between voids the token):
+ *  - roundcube / snappymail: the container trades the token for a session credential;
+ *  - oblimint: the panel's own webmail redeems it in-process (no credential at all:
+ *    the panel impersonates the mailbox on the engine, webmail/oblimint/).
+ */
+export type WebmailTicket =
+  | {
+    kind: 'roundcube' | 'snappymail';
+    credentials: WebmailCredentials;
+    /** mail_app_passwords.id of the credential (still checked at redemption). */
+    appPasswordId: number;
+    mailboxId: number;
+    accountId: number;
+  }
+  | {
+    kind: 'oblimint';
+    credentials: null;
+    appPasswordId: null;
+    mailboxId: number;
+    accountId: number;
+  };
 
 /** Key shared with the webmail container (env OBLIMINT_WEBMAIL_KEY): HMAC-SHA256(sessionSecret, 'oblimint-webmail'). */
 export function webmailKey(secret = config.sessionSecret || 'oblimint-dev'): string {

@@ -34,6 +34,7 @@ import type { AnnotatedFlow, ModelEndpoint } from './policy';
 //     SSH, the panel's published port…) are dropped except HOST ports below.
 //
 //   P1  edge    → panel (oblimint-panel)           tcp panelPort      (panel + mail public paths)
+//   P1b edge    → panel (oblimint-panel)           tcp webmailPort    (Oblimint webmail listener)
 //   P2  edge    → phpMyAdmin / Adminer             tcp DBADMIN_PORT
 //   P3  edge    → webmail                          tcp WEBMAIL_PORT
 //   P4  edge    → oauth2-proxy sidecars            tcp AUTH_SIDECAR_PORT
@@ -96,6 +97,8 @@ export interface PlatformInput {
   panelRefs: readonly string[];
   panelPort: number;
   internalPort: number;
+  /** config.hosting.webmailPort (P1b; 0 / absent = no Oblimint webmail listener). */
+  webmailPort?: number;
 }
 
 export interface PlatformSegments {
@@ -186,6 +189,7 @@ export function buildPlatformSegments(input: PlatformInput, reservedBridges: Rea
     const dbadmin = of('dbadmin');
     for (const e of edge) {
       for (const p of panel) add(e, p, input.panelPort, 'edge');
+      if (input.webmailPort && input.webmailPort !== input.panelPort) for (const p of panel) add(e, p, input.webmailPort, 'edge');
       for (const d of dbadmin) add(e, d, PLATFORM_DBADMIN_PORT, 'edge');
       for (const w of of('webmail')) add(e, w, WEBMAIL_PORT, 'edge');
       for (const o of of('oauth2')) add(e, o, AUTH_SIDECAR_PORT, 'edge');

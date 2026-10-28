@@ -59,8 +59,12 @@ export const MAIL_PASSWORD_SCHEMES: readonly MailPasswordScheme[] = ['SHA512-CRY
 
 // ─── PLATFORM SETTINGS ENUMS (platform.ts MailSettings) ──────────────────────
 
-export type WebmailKind = 'roundcube' | 'snappymail' | 'none';
-export const WEBMAIL_KINDS: readonly WebmailKind[] = ['roundcube', 'snappymail', 'none'];
+/**
+ * roundcube / snappymail: shared webmail container (IMAP); oblimint: the
+ * panel's own webmail (JMAP, Stalwart engine only, shared/src/webmail.ts).
+ */
+export type WebmailKind = 'roundcube' | 'snappymail' | 'oblimint' | 'none';
+export const WEBMAIL_KINDS: readonly WebmailKind[] = ['roundcube', 'snappymail', 'oblimint', 'none'];
 export type DmarcPolicy = 'none' | 'quarantine' | 'reject';
 export type MtaStsMode = 'off' | 'testing' | 'enforce';
 export type DkimAlgorithm = 'rsa-2048' | 'ed25519';

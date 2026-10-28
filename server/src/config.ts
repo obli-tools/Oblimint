@@ -149,6 +149,11 @@ export const config = {
     siteMaxCpus: numEnv('OBLIMINT_SITE_MAX_CPUS', DEFAULT_SITE_MAX_CPUS),
     /** Internal HTTP listener for the file-server hooks (never published on the host; 0 = disabled). */
     internalPort: intEnv('OBLIMINT_INTERNAL_PORT', 8081),
+    /**
+     * Listener of the Oblimint webmail (settings mail.webmail = 'oblimint'):
+     * plain HTTP, reached by the edge only (never published on the host; 0 = disabled).
+     */
+    webmailPort: intEnv('OBLIMINT_WEBMAIL_PORT', 8082),
     /** Hook calls accepted only from the account's own file server address
      *  (services/docker/hookSource.ts). 'off' = token only (escape hatch). */
     hookSourceCheck: process.env.OBLIMINT_HOOK_SOURCE_CHECK !== 'off',

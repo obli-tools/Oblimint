@@ -38,7 +38,7 @@ import {
 } from './passwords';
 import { purgeForeignTombstones } from './purge';
 import { activeMailDriver, activeMailDriverIn, activeMailEngine, mailDriverFor } from './registry';
-import { parseDnsSettings, parseExternalConfig, parseTargets, type MailAliasRow, type MailboxRow } from './rows';
+import { parseAutoresponder, parseDnsSettings, parseExternalConfig, parseTargets, type MailAliasRow, type MailboxRow } from './rows';
 import {
   clearMailSyncApplied, mailSyncInfo, recordMailSyncError, requestMailSync, runMailExclusive, runSyncNow, startMailSync, stopMailSync,
 } from './sync';
@@ -661,6 +661,28 @@ export const mailService = {
       details: { address: mb.address, enabled: value.enabled, startsAt: value.startsAt, endsAt: value.endsAt, intervalDays: value.intervalDays },
     });
     return mailboxDetail(row);
+  },
+
+  /**
+   * The mailbox's own autoresponder from the Oblimint webmail (the session IS
+   * the mailbox: no panel actor). Same storage, sync and audit as
+   * setAutoresponder (`mail.mailbox.autoresponder`, user null, origin webmail).
+   * `value` is already validated (webmail/oblimint/vacation.ts).
+   */
+  async setAutoresponderAsMailbox(mailboxId: number, value: MailAutoresponder, ip: string | null): Promise<MailAutoresponder | null> {
+    const row0 = await reloadMailbox(mailboxId);
+    await db('mailboxes').where({ id: row0.id, tenant_id: row0.tenant_id }).update({ autoresponder: JSON.stringify(value), updated_at: new Date() });
+    const row = await reloadMailbox(mailboxId);
+    changed('mailbox', row, 'updated', `mailbox ${row.address} autoresponder (webmail)`);
+    await auditService.log({
+      tenantId: row.tenant_id,
+      action: 'mail.mailbox.autoresponder',
+      resourceType: 'mailbox',
+      resourcePath: String(row.id),
+      ipAddress: ip ?? undefined,
+      details: { address: row.address, origin: 'webmail', enabled: value.enabled, startsAt: value.startsAt, endsAt: value.endsAt, intervalDays: value.intervalDays },
+    });
+    return parseAutoresponder(row.autoresponder);
   },
 
   async deleteMailbox(req: Request, actor: HostingActor, id: number, confirm: string): Promise<void> {

@@ -122,3 +122,22 @@ test('body limit follows the platform message size (+10 MiB)', () => {
   const { vhosts } = planWebmailVhosts(input({ maxMessageSizeMb: 100 }));
   assert.ok(vhosts.every((v) => v.clientMaxBodyMb === 110));
 });
+
+test("kind 'oblimint': same hosts, location / → the panel's webmail listener; no listener = no location", async () => {
+  const { oblimintWebmailUpstream } = await import('./edgeContributor');
+  assert.equal(oblimintWebmailUpstream(8082), 'http://oblimint-panel:8082');
+  assert.equal(oblimintWebmailUpstream(0), null);
+  const { vhosts } = planWebmailVhosts(input({ kind: 'oblimint', oblimintUpstream: 'http://oblimint-panel:8082', certificates: ALL_CERTS }));
+  assert.equal(vhosts.length, 3);
+  for (const v of vhosts) {
+    validateVhost(v);
+    assert.deepEqual(v.locations, [{ pathPrefix: '/', upstream: 'http://oblimint-panel:8082', kind: 'webmail', siteId: null }]);
+    assert.equal(v.forceHttps, true);
+  }
+  const off = planWebmailVhosts(input({ kind: 'oblimint', oblimintUpstream: null, certificates: ALL_CERTS }));
+  for (const v of off.vhosts) assert.deepEqual(v.locations, []);
+  // Never under the panel host, whatever the kind.
+  const under = planWebmailVhosts(input({ kind: 'oblimint', oblimintUpstream: 'http://oblimint-panel:8082', platformHost: 'webmail.panel.platform.test', perDomain: false }));
+  assert.equal(under.vhosts.length, 0);
+  assert.ok(under.platformRefusal);
+});

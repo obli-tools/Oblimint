@@ -226,6 +226,7 @@ export async function observeNode(nodeId: number, opts: ObserveOptions): Promise
     proxyTargets,
     internalPort: Number(config.hosting.internalPort) || 0,
     panelPort: Number(config.port) || 0,
+    webmailPort: Number(config.hosting.webmailPort) || 0,
     platform,
   };
   return { model, missingFabrics, proxyTargetsError };

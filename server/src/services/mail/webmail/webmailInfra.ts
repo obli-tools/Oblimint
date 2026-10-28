@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import type Docker from 'dockerode';
-import type { InfraComponentStatus } from '@oblimint/shared';
+import type { InfraComponentStatus, WebmailKind } from '@oblimint/shared';
 import { config } from '../../../config';
 import { logger } from '../../../utils/logger';
 import { open, seal } from '../../../utils/secretBox';
@@ -20,6 +20,7 @@ import { activeMailDriver } from '../registry';
 import { ensureMailNetwork, mailNetworkSubnets } from '../network';
 import { webmailHostRefusal } from './edgeContributor';
 import { webmailKey } from './ssoTokens';
+import { oblimintWebmailListening } from './oblimint/server';
 import { WEBMAIL_GID, WEBMAIL_UID, webmailContainerSpec, type WebmailKindName } from './spec';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,17 +86,32 @@ export async function webmailRunning(): Promise<boolean> {
   }
 }
 
-/** settings mail.webmail when the active engine can serve it, else null. Never throws. */
-export async function wantedWebmailKind(): Promise<WebmailKindName | null> {
+/**
+ * settings mail.webmail when the active engine can serve it, else null
+ * ('oblimint' = the panel's own webmail: JMAP, Stalwart only). Never throws.
+ */
+export async function wantedWebmailKind(): Promise<Exclude<WebmailKind, 'none'> | null> {
   try {
     const s = await platformSettings.section('mail');
     if (s.webmail === 'none') return null;
     const driver = await activeMailDriver();
-    return driver.capabilities.supported && driver.capabilities.mailboxes ? s.webmail : null;
+    if (!driver.capabilities.supported || !driver.capabilities.mailboxes) return null;
+    if (s.webmail === 'oblimint' && driver.engine !== 'stalwart') return null;
+    return s.webmail;
   } catch (err) {
     logger.warn({ err: errText(err) }, 'webmail: settings / engine unreadable');
     return null;
   }
+}
+
+async function panelHostName(): Promise<string | null> {
+  return (await appConfigService.get('panel_hostname'))?.trim().toLowerCase() || null;
+}
+
+function reportHost(webmailHostname: string | null, perDomain: boolean, log: (line: string) => void, panelHost: string | null): void {
+  const refusal = webmailHostRefusal(webmailHostname, panelHost);
+  if (refusal) log(refusal);
+  if (!webmailHostname && !perDomain) log('No webmail host (mail.webmailHostname unset, webmail.<domain> off): no SSO session can be opened');
 }
 
 async function ensureContainer(docker: Docker, spec: Docker.ContainerCreateOptions, log: (line: string) => void): Promise<void> {
@@ -141,6 +157,15 @@ export const webmailInfraComponent: InfraComponentProvider = {
       await removeWebmail(log);
       return;
     }
+    if (settings.webmail === 'oblimint') {
+      // The panel's own webmail: no container (served by the panel's webmail listener).
+      await removeWebmail(log);
+      if (driver.engine !== 'stalwart') throw new Error(`the Oblimint webmail needs the Stalwart mail engine (active engine: ${driver.engine})`);
+      if (!oblimintWebmailListening()) log('The Oblimint webmail listener is not running (OBLIMINT_WEBMAIL_PORT = 0?)');
+      else log('Oblimint webmail served by the panel');
+      reportHost(settings.webmailHostname, settings.webmailPerDomain, log, await panelHostName());
+      return;
+    }
     const kind: WebmailKindName = settings.webmail;
     const imap = driver.imapEndpoint();
     if (!imap) throw new Error(`the mail engine ${driver.engine} exposes no IMAP endpoint`);
@@ -163,10 +188,7 @@ export const webmailInfraComponent: InfraComponentProvider = {
       });
       await ensureContainer(docker, spec, log);
     });
-    const panelHost = (await appConfigService.get('panel_hostname'))?.trim().toLowerCase() || null;
-    const refusal = webmailHostRefusal(settings.webmailHostname, panelHost);
-    if (refusal) log(refusal);
-    if (!settings.webmailHostname && !settings.webmailPerDomain) log('No webmail host (mail.webmailHostname unset, webmail.<domain> off): no SSO session can be opened');
+    reportHost(settings.webmailHostname, settings.webmailPerDomain, log, await panelHostName());
   },
 
   async status(docker: Docker | null, dockerError: string | null): Promise<InfraComponentStatus> {
@@ -187,6 +209,13 @@ export const webmailInfraComponent: InfraComponentProvider = {
           if (refusal) problems.push(refusal);
         }
       } catch { /* settings unreadable: container state only */ }
+      if (wanted === 'oblimint') {
+        // No container: the panel's listener serves it.
+        const up = oblimintWebmailListening();
+        if (!up) problems.push('Oblimint webmail listener not running');
+        const detail = [...problems, ...notes];
+        return { ...base, deployed: true, running: up, image: 'oblimint (panel)', version: null, detail: detail.length ? detail.join(' · ') : null };
+      }
       const info = await inspectContainer(docker, WEBMAIL_CONTAINER);
       if (!info && wanted) problems.push(`${WEBMAIL_CONTAINER}: absent`);
       else if (info && !info.State?.Running) {

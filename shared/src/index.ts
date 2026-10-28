@@ -9,6 +9,7 @@ export * from './cron';
 export * from './platform';
 export * from './maintenance';
 export * from './mail';
+export * from './webmail';
 // P4b (docs/P4b-PLAN.md)
 export * from './apps';
 export * from './network';

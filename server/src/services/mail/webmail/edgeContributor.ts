@@ -5,7 +5,8 @@ import { platformSettings } from '../../platformSettings';
 import { edgeCertPaths, isValidServerName, type EdgeVhost } from '../../edge/nginxConfig';
 import { certCovers, SERVED_ACCOUNT_STATUSES, type PlanCertificate } from '../../edge/vhostPlan';
 import type { EdgeContributor, EdgeContributorContext } from '../../edge/contributors';
-import { WEBMAIL_CONTAINER, WEBMAIL_PORT } from '../../hosting/naming';
+import { config } from '../../../config';
+import { PANEL_ALIAS, WEBMAIL_CONTAINER, WEBMAIL_PORT } from '../../hosting/naming';
 import { activeMailDriver } from '../registry';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,7 +17,8 @@ import { activeMailDriver } from '../registry';
 //   w-<mailDomId> webmail.<d> for every ACTIVE mail domain (enabled, domain
 //                 verified — D1 —, account served) when webmailPerDomain.
 // A vhost WITH TLS: location / → http://oblimint-webmail:8080 (kind
-// 'webmail'), HTTPS forced. TLS only with a valid PLATFORM certificate
+// 'webmail'), or for the Oblimint webmail (settings kind 'oblimint') the
+// panel's webmail listener http://oblimint-panel:<webmailPort>; HTTPS forced. TLS only with a valid PLATFORM certificate
 // covering the name (the platform webmail host via PlatformHosts.extra,
 // webmail.<d> via the mail.<d> certificate of module mail-dns-tls). No
 // self-signed fallback: the edge reserves it for the panel / dbadmin / probe
@@ -31,6 +33,11 @@ import { activeMailDriver } from '../registry';
 
 export const WEBMAIL_HEADERS: Record<string, string> = { 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer' };
 export const WEBMAIL_UPSTREAM = `http://${WEBMAIL_CONTAINER}:${WEBMAIL_PORT}`;
+
+/** Upstream of the Oblimint webmail (kind 'oblimint'): the panel's webmail listener, null when disabled (port 0). */
+export function oblimintWebmailUpstream(port: number = config.hosting.webmailPort): string | null {
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? `http://${PANEL_ALIAS}:${port}` : null;
+}
 /** Margin over the message size for the multipart overhead of an upload. */
 export const WEBMAIL_BODY_MARGIN_MB = 10;
 
@@ -54,6 +61,8 @@ export interface WebmailPlanInput {
   /** ACTIVE mail domains (loadActiveWebmailDomains). */
   domains: WebmailDomainRow[];
   maxMessageSizeMb: number;
+  /** Kind 'oblimint': the panel's webmail listener (oblimintWebmailUpstream()); null = not served (no location). */
+  oblimintUpstream?: string | null;
   certificates: PlanCertificate[];
   certFilesExist: (primaryName: string) => boolean;
   /** Names already served by planVhosts / earlier contributors. */
@@ -118,6 +127,8 @@ export function planWebmailVhosts(input: WebmailPlanInput, tlsPaths: typeof webm
   if (input.kind === 'none') return out;
   const claimed = new Set(input.claimed);
   const body = webmailBodyLimitMb(input.maxMessageSizeMb);
+  // roundcube / snappymail: the shared container; oblimint: the panel's webmail listener.
+  const upstream = input.kind === 'oblimint' ? (input.oblimintUpstream ?? null) : WEBMAIL_UPSTREAM;
   const vhost = (id: string, name: string, owner: { accountId: number; tenantId: number; suspended: boolean } | null): void => {
     if (claimed.has(name)) return;
     claimed.add(name);
@@ -130,7 +141,7 @@ export function planWebmailVhosts(input: WebmailPlanInput, tlsPaths: typeof webm
       forceHttps: !!tls,
       suspended: owner?.suspended ?? false,
       // No certificate: ACME only (no proxy to the webmail over plain HTTP).
-      locations: tls ? [{ pathPrefix: '/', upstream: WEBMAIL_UPSTREAM, kind: 'webmail', siteId: null }] : [],
+      locations: tls && upstream ? [{ pathPrefix: '/', upstream, kind: 'webmail', siteId: null }] : [],
       extraHeaders: { ...WEBMAIL_HEADERS },
       clientMaxBodyMb: body,
       accountId: owner?.accountId ?? null,
@@ -185,6 +196,8 @@ export async function engineHasMailboxes(): Promise<boolean> {
 export async function webmailPlanFor(ctx: Pick<EdgeContributorContext, 'certificates' | 'certFilesExist' | 'claimed'>): Promise<WebmailPlan> {
   const s = await platformSettings.section('mail');
   if (s.webmail === 'none' || !(await engineHasMailboxes())) return { vhosts: [], platformRefusal: null };
+  // The Oblimint webmail speaks JMAP: Stalwart only.
+  if (s.webmail === 'oblimint' && (await activeMailDriver().then((d) => d.engine, () => null)) !== 'stalwart') return { vhosts: [], platformRefusal: null };
   const panelHost = (await appConfigService.get('panel_hostname'))?.trim().toLowerCase() || null;
   return planWebmailVhosts({
     kind: s.webmail,
@@ -193,6 +206,7 @@ export async function webmailPlanFor(ctx: Pick<EdgeContributorContext, 'certific
     perDomain: s.webmailPerDomain,
     domains: s.webmailPerDomain ? await loadActiveWebmailDomains() : [],
     maxMessageSizeMb: s.maxMessageSizeMb,
+    oblimintUpstream: oblimintWebmailUpstream(),
     certificates: ctx.certificates,
     certFilesExist: ctx.certFilesExist,
     claimed: ctx.claimed,

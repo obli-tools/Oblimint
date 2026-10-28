@@ -25,7 +25,7 @@ import { buildPlatformSegments, PLATFORM_HOST_PORTS, type ModelPlatformNetwork }
 //   F4 panel → exposed ports of the app services on the front        front
 //   F5 site web containers → mail relay                              front tcp 2525
 //   F6 file server of the account → panel                            front tcp internalPort
-//   F7 edge  → panel (its upstream oblimint-panel)                   front tcp panelPort
+//   F7 edge  → panel (its upstream oblimint-panel)                   front tcp panelPort (+ webmailPort, F7b)
 //   L1 declared link source → target                                 any fabric both ends sit on
 //   L2 phpMyAdmin (MariaDB / MySQL) / Adminer (PostgreSQL) → DB inst. back  3306 / 5432
 // and NOTHING else. Feature B: a release / staging preview container (role
@@ -101,6 +101,8 @@ export interface SegmentModel {
   internalPort: number;
   /** config.port: the panel's HTTP(S) port, the edge's panel upstream (F7; 0/absent = no F7). */
   panelPort?: number;
+  /** config.hosting.webmailPort: the panel's webmail listener, the edge's upstream of the Oblimint webmail (F7b; 0/absent = none). */
+  webmailPort?: number;
   /** Platform networks of the node (network/platform.ts; absent = not filtered). */
   platform?: readonly ModelPlatformNetwork[];
 }
@@ -321,6 +323,9 @@ export function buildSegmentFlows(model: SegmentModel): { flows: AnnotatedFlow[]
         // DNS may answer the edge with that address: two platform containers, never a tenant.
         const panelPort = Number(model.panelPort) || 0;
         if (panelPort > 0) for (const e of edge) for (const p of panel) add(e, p, 'tcp', panelPort, 'edge');
+        // F7b: edge → the panel's webmail listener (webmail kind 'oblimint').
+        const webmailPort = Number(model.webmailPort) || 0;
+        if (webmailPort > 0 && webmailPort !== panelPort) for (const e of edge) for (const p of panel) add(e, p, 'tcp', webmailPort, 'edge');
       } else {
         // L2: phpMyAdmin → MariaDB / MySQL instances, Adminer → PostgreSQL instances (SSO sessions).
         for (const d of of((r) => r.kind === 'db')) {
@@ -364,6 +369,7 @@ export function buildPolicy(model: SegmentModel): BuiltPolicy {
   if (model.platform !== undefined) {
     const p = buildPlatformSegments({
       networks: model.platform, panelRefs: model.panelRefs, panelPort: Number(model.panelPort) || 0, internalPort: model.internalPort,
+      webmailPort: Number(model.webmailPort) || 0,
     }, new Set(bridges.map((b) => b.name)));
     bridges = [...bridges, ...p.bridges];
     flows = [...flows, ...p.flows];

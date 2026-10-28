@@ -10,6 +10,8 @@ import { logger } from '../utils/logger';
 export async function startWorkers(): Promise<void> {
   const { startInternalServer } = await import('../internal/internalServer');
   try { startInternalServer(); } catch (err) { logger.error({ err }, 'Internal hook server failed to start'); }
+  // Oblimint webmail listener (settings mail.webmail = 'oblimint'; answers "not enabled" otherwise).
+  try { (await import('../services/mail/webmail/oblimint/server')).startOblimintWebmail(); } catch (err) { logger.error({ err }, 'Oblimint webmail listener failed to start'); }
 
   // Results of a panel self-update (helper container): runs even with the workers off.
   try { (await import('../services/platformUpdates/platformUpdates.service')).scheduleSelfUpdateFinalization(); } catch (err) { logger.error({ err }, 'Self-update finalization failed to start'); }
@@ -196,4 +198,5 @@ export async function stopWorkers(): Promise<void> {
   for (const [, w] of await p5Workers()) { try { w.stop(); } catch { /* exiting */ } }
   const { stopInternalServer } = await import('../internal/internalServer');
   try { stopInternalServer(); } catch { /* exiting */ }
+  try { (await import('../services/mail/webmail/oblimint/server')).stopOblimintWebmail(); } catch { /* exiting */ }
 }

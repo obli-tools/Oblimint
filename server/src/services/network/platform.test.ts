@@ -200,3 +200,14 @@ test('platform networks: Docker network events trigger a push', () => {
   }
   assert.ok(!relevantEvent({ Type: 'network', Action: 'connect', Actor: { Attributes: { name: 'bridge' } } }));
 });
+
+test('platform networks: the Oblimint webmail listener (webmailPort) is an edge upstream of the panel, nothing else', () => {
+  const { state } = buildPolicy({ ...model([PANEL_NET, MAIL_NET, AUTH_NET]), webmailPort: 8082 });
+  const P = 'br-a1b2c3d4e5f6', M = 'br-0b0b0b0b0b0b';
+  const can = (src: string, dst: string, port: number, bridge: string) => evaluateFlow(state, src, dst, 'tcp', port, bridge);
+  assert.ok(can('172.20.0.5', '172.20.0.3', 8082, P), 'edge → panel:8082');
+  assert.ok(can('172.21.0.6', '172.21.0.5', 8082, M), 'edge → panel:8082 on the mail network');
+  assert.ok(!can('172.20.0.9', '172.20.0.3', 8082, P), 'phpMyAdmin → panel:8082 refused');
+  const none = buildPolicy(model([PANEL_NET])).state;
+  assert.ok(!evaluateFlow(none, '172.20.0.5', '172.20.0.3', 'tcp', 8082, P), 'no listener configured: no flow');
+});
