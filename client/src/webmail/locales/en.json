@@ -1,0 +1,153 @@
+{
+  "wm": {
+    "actions": {
+      "archive": "Archive",
+      "delete": "Delete",
+      "destroy": "Delete permanently",
+      "flag": "Flag",
+      "forward": "Forward",
+      "markRead": "Mark as read",
+      "markUnread": "Mark as unread",
+      "move": "Move to…",
+      "refresh": "Refresh",
+      "reply": "Reply",
+      "replyAll": "Reply all",
+      "spam": "Mark as spam",
+      "unflag": "Remove the flag"
+    },
+    "common": {
+      "back": "Back",
+      "cancel": "Cancel",
+      "close": "Close",
+      "loading": "Loading…",
+      "remove": "Remove",
+      "save": "Save"
+    },
+    "compose": {
+      "attach": "Attach files",
+      "badAddress": "Invalid address: {{list}}",
+      "bcc": "Bcc",
+      "bodyPlaceholder": "Write your message…",
+      "cc": "Cc",
+      "ccBcc": "Cc / Bcc",
+      "date": "Date",
+      "discard": "Discard",
+      "forwarded": "Forwarded message",
+      "from": "From",
+      "new": "New message",
+      "noDrafts": "This mailbox has no Drafts folder: messages cannot be sent from the webmail.",
+      "noRecipient": "Add at least one recipient.",
+      "noSubjectConfirm": "Send without a subject?",
+      "plain": "Plain text",
+      "rich": "Rich text",
+      "saveFailed": "Draft not saved",
+      "saved": "Draft saved",
+      "saving": "Saving…",
+      "send": "Send",
+      "sendFailed": "The message could not be sent.",
+      "sent": "Message sent",
+      "subject": "Subject",
+      "titleForward": "Forward",
+      "titleReply": "Reply",
+      "to": "To",
+      "tooLarge": "Attachments are limited to {{size}} per message.",
+      "uploading": "Wait for the attachments to finish uploading.",
+      "wrote": "On {{date}}, {{who}} wrote:"
+    },
+    "editor": {
+      "bold": "Bold",
+      "bullets": "Bulleted list",
+      "clear": "Clear formatting",
+      "italic": "Italic",
+      "link": "Link",
+      "linkPrompt": "Link address (https://…)",
+      "numbers": "Numbered list",
+      "underline": "Underline"
+    },
+    "errors": {
+      "generic": "Something went wrong",
+      "network": "The server could not be reached.",
+      "sessionEnded": "Your session has ended: sign in again."
+    },
+    "folders": {
+      "archive": "Archive",
+      "drafts": "Drafts",
+      "inbox": "Inbox",
+      "junk": "Spam",
+      "sent": "Sent",
+      "title": "Folders",
+      "trash": "Trash"
+    },
+    "list": {
+      "confirmDestroy": "Delete these messages permanently?",
+      "empty": "This folder is empty.",
+      "noSender": "(no sender)",
+      "noSubject": "(no subject)",
+      "select": "Select",
+      "selectAll": "Select all",
+      "selectNone": "Select none",
+      "selected": "{{count}} selected"
+    },
+    "login": {
+      "address": "Email address",
+      "invalid": "Wrong address or password.",
+      "password": "Password",
+      "submit": "Sign in",
+      "title": "Sign in to your mailbox",
+      "tooMany": "Too many failed attempts. Try again later.",
+      "unavailable": "The webmail is not available right now."
+    },
+    "logout": "Sign out",
+    "prefs": {
+      "dark": "Dark theme",
+      "language": "Language",
+      "light": "Light theme"
+    },
+    "read": {
+      "attachment": "attachment",
+      "bodyTitle": "Message",
+      "download": "Download",
+      "gone": "This conversation no longer exists.",
+      "imagesBlocked": "Remote images are blocked to protect your privacy.",
+      "next": "Older",
+      "none": "Select a message to read it.",
+      "previous": "Newer",
+      "showImages": "Show images"
+    },
+    "search": {
+      "advanced": "Advanced search",
+      "clear": "Clear the search",
+      "everywhere": "Search every folder",
+      "from": "From",
+      "hasAttachment": "Has an attachment",
+      "none": "No message matches.",
+      "placeholder": "Search mail",
+      "results": "Search results",
+      "subject": "Subject",
+      "submit": "Search",
+      "to": "To"
+    },
+    "sso": {
+      "continue": "Continue",
+      "invalid": "This link has expired or was already used: open the webmail again from the panel.",
+      "keep": "Keep my session",
+      "text": "A webmail session is already open in this browser ({{address}}). Continuing closes it and opens the mailbox requested from the Oblimint panel.",
+      "title": "Switch mailbox?",
+      "warning": "If you did not open this link yourself from the panel, keep your session."
+    },
+    "title": "Webmail",
+    "toast": {
+      "deleted": "Deleted",
+      "moved": "Moved to {{name}}"
+    },
+    "vacation": {
+      "enabled": "Send an automatic reply",
+      "from": "From (optional)",
+      "interval": "Answer the same sender at most every (days)",
+      "message": "Message",
+      "saved": "Vacation responder saved",
+      "title": "Vacation responder",
+      "until": "Until (optional)"
+    }
+  }
+}

@@ -683,6 +683,8 @@
       "webmail": "Webmail",
       "webmailHint": "Conteneur webmail partagé, ouvert depuis le panel sans mot de passe (authentification unique). Le changer redéploie le conteneur.",
       "noWebmail": "Pas de webmail",
+      "oblimintWebmail": "Oblimint (intégré, moteur Stalwart)",
+      "oblimintHint": "Webmail intégré servi par le panel lui-même sur l'hôte webmail (JMAP) : nécessite le moteur mail Stalwart, aucun conteneur. Les titulaires des boîtes se connectent avec leur adresse et leur mot de passe.",
       "webmailHostname": "Hôte webmail de la plateforme",
       "webmailHostnameHint": "Par exemple webmail.<domaine de la plateforme>. Vide : seulement webmail.<domaine> de chaque domaine mail.",
       "underPanel": "Jamais l'hôte du panel ({{panel}}) ni l'un de ses sous-domaines : le webmail partagerait les cookies du panel. Il ne serait pas servi.",

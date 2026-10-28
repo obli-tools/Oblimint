@@ -101,7 +101,8 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
       if (STATE_CHANGING_METHODS.has(req.method) && !sameOrigin(req.headers as Record<string, string>, deps.secure)) {
         return sendError(res, 403, 'csrf', 'Cross-site request refused');
       }
-      const background = req.get(WEBMAIL_BACKGROUND_HEADER) === '1';
+      // EventSource cannot set a header: the event stream is always a background call.
+      const background = req.get(WEBMAIL_BACKGROUND_HEADER) === '1' || req.path === '/events';
       const locals = res.locals as Locals;
       locals.ip = deps.clientIp(req);
       locals.wm = await deps.auth.load(readCookie(req.headers.cookie, sessionCookie), background);

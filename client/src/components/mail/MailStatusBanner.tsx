@@ -37,7 +37,7 @@ export function MailStatusBanner({ overview, error }: { overview: MailOverview |
           <Info size={13} className="shrink-0" />
           <span>{t('mail.banner.engine', { engine: engineLabel(overview.engine), defaultValue: 'Mail engine: {{engine}}' })}</span>
           {overview.hostname && <span className="font-mono">· {overview.hostname}</span>}
-          {overview.webmail.kind !== 'none' && <span>· {t('mail.banner.webmail', { kind: overview.webmail.kind === 'roundcube' ? 'Roundcube' : 'SnappyMail', defaultValue: 'webmail {{kind}}' })}</span>}
+          {overview.webmail.kind !== 'none' && <span>· {t('mail.banner.webmail', { kind: overview.webmail.kind === 'roundcube' ? 'Roundcube' : overview.webmail.kind === 'oblimint' ? 'Oblimint' : 'SnappyMail', defaultValue: 'webmail {{kind}}' })}</span>}
         </p>
       )}
       {suspended && (

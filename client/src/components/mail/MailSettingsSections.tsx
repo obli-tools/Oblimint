@@ -315,7 +315,7 @@ function MailEngineBlock() {
 }
 
 function webmailLabel(kind: WebmailKind): string {
-  return kind === 'roundcube' ? 'Roundcube' : kind === 'snappymail' ? 'SnappyMail' : '—';
+  return kind === 'roundcube' ? 'Roundcube' : kind === 'snappymail' ? 'SnappyMail' : kind === 'oblimint' ? 'Oblimint' : '—';
 }
 
 // ── Service: mail host, webmail ─────────────────────────────────────────────
@@ -367,8 +367,12 @@ function MailServiceBlock({ value, panelHost, panelUnknown, save }: { value: Mai
           <select id="ms-webmail" value={draft.webmail} onChange={(e) => set({ webmail: e.target.value as WebmailKind })} className={selectSettingsCls}>
             <option value="roundcube">Roundcube</option>
             <option value="snappymail">SnappyMail</option>
+            <option value="oblimint">{t('mailSettings.service.oblimintWebmail') || 'Oblimint (built in, Stalwart engine)'}</option>
             <option value="none">{t('mailSettings.service.noWebmail') || 'No webmail'}</option>
           </select>
+          {draft.webmail === 'oblimint' && (
+            <p className="mt-1 text-xs text-text-muted">{t('mailSettings.service.oblimintHint') || 'Built-in webmail served by the panel itself on the webmail host (JMAP): needs the Stalwart mail engine, no container. Mailbox owners sign in with their address and password.'}</p>
+          )}
         </Field>
         <Field
           label={t('mailSettings.service.webmailHostname') || 'Platform webmail host'}

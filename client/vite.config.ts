@@ -23,6 +23,14 @@ export default defineConfig({
   build: {
     // Same syntax baseline as Obliance (Vite "modules" baseline, no polyfills).
     target: ['es2020', 'chrome87', 'edge88', 'firefox78', 'safari14'],
+    rollupOptions: {
+      // Panel + the Oblimint webmail (webmail.html, served by the panel's webmail
+      // listener on the webmail host only — never on the panel host).
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        webmail: path.resolve(__dirname, 'webmail.html'),
+      },
+    },
   },
   server: {
     port: 5174,
@@ -43,6 +51,12 @@ export default defineConfig({
       '/socket.io': {
         target: API_TARGET,
         ws: true,
+      },
+      // Oblimint webmail (open http://localhost:5174/webmail.html): its own
+      // listener (OBLIMINT_WEBMAIL_PORT). Host kept: the listener checks Origin = Host.
+      '/wm-api': {
+        target: 'http://localhost:8082',
+        changeOrigin: false,
       },
     },
   },

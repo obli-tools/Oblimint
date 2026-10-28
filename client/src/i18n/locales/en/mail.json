@@ -683,6 +683,8 @@
       "webmail": "Webmail",
       "webmailHint": "Shared webmail container, opened from the panel without a password (single sign-on). Changing it redeploys the container.",
       "noWebmail": "No webmail",
+      "oblimintWebmail": "Oblimint (built in, Stalwart engine)",
+      "oblimintHint": "Built-in webmail served by the panel itself on the webmail host (JMAP): needs the Stalwart mail engine, no container. Mailbox owners sign in with their address and password.",
       "webmailHostname": "Platform webmail host",
       "webmailHostnameHint": "For example webmail.<platform domain>. Empty: only webmail.<domain> of each mail domain.",
       "underPanel": "Never the panel host ({{panel}}) nor one of its sub-domains: the webmail would share the panel cookies. It would not be served.",

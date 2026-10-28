@@ -1,0 +1,153 @@
+{
+  "wm": {
+    "actions": {
+      "archive": "Archiver",
+      "delete": "Supprimer",
+      "destroy": "Supprimer définitivement",
+      "flag": "Marquer d'un drapeau",
+      "forward": "Transférer",
+      "markRead": "Marquer comme lu",
+      "markUnread": "Marquer comme non lu",
+      "move": "Déplacer vers…",
+      "refresh": "Actualiser",
+      "reply": "Répondre",
+      "replyAll": "Répondre à tous",
+      "spam": "Signaler comme indésirable",
+      "unflag": "Retirer le drapeau"
+    },
+    "common": {
+      "back": "Retour",
+      "cancel": "Annuler",
+      "close": "Fermer",
+      "loading": "Chargement…",
+      "remove": "Retirer",
+      "save": "Enregistrer"
+    },
+    "compose": {
+      "attach": "Joindre des fichiers",
+      "badAddress": "Adresse invalide : {{list}}",
+      "bcc": "Cci",
+      "bodyPlaceholder": "Écrivez votre message…",
+      "cc": "Cc",
+      "ccBcc": "Cc / Cci",
+      "date": "Date",
+      "discard": "Abandonner",
+      "forwarded": "Message transféré",
+      "from": "De",
+      "new": "Nouveau message",
+      "noDrafts": "Cette boîte n'a pas de dossier Brouillons : impossible d'envoyer depuis le webmail.",
+      "noRecipient": "Ajoutez au moins un destinataire.",
+      "noSubjectConfirm": "Envoyer sans objet ?",
+      "plain": "Texte brut",
+      "rich": "Texte enrichi",
+      "saveFailed": "Brouillon non enregistré",
+      "saved": "Brouillon enregistré",
+      "saving": "Enregistrement…",
+      "send": "Envoyer",
+      "sendFailed": "Le message n'a pas pu être envoyé.",
+      "sent": "Message envoyé",
+      "subject": "Objet",
+      "titleForward": "Transférer",
+      "titleReply": "Répondre",
+      "to": "À",
+      "tooLarge": "Les pièces jointes sont limitées à {{size}} par message.",
+      "uploading": "Attendez la fin de l'envoi des pièces jointes.",
+      "wrote": "Le {{date}}, {{who}} a écrit :"
+    },
+    "editor": {
+      "bold": "Gras",
+      "bullets": "Liste à puces",
+      "clear": "Effacer la mise en forme",
+      "italic": "Italique",
+      "link": "Lien",
+      "linkPrompt": "Adresse du lien (https://…)",
+      "numbers": "Liste numérotée",
+      "underline": "Souligné"
+    },
+    "errors": {
+      "generic": "Une erreur est survenue",
+      "network": "Le serveur est injoignable.",
+      "sessionEnded": "Votre session est terminée : reconnectez-vous."
+    },
+    "folders": {
+      "archive": "Archives",
+      "drafts": "Brouillons",
+      "inbox": "Boîte de réception",
+      "junk": "Indésirables",
+      "sent": "Envoyés",
+      "title": "Dossiers",
+      "trash": "Corbeille"
+    },
+    "list": {
+      "confirmDestroy": "Supprimer définitivement ces messages ?",
+      "empty": "Ce dossier est vide.",
+      "noSender": "(sans expéditeur)",
+      "noSubject": "(sans objet)",
+      "select": "Sélectionner",
+      "selectAll": "Tout sélectionner",
+      "selectNone": "Tout désélectionner",
+      "selected": "{{count}} sélectionné(s)"
+    },
+    "login": {
+      "address": "Adresse e-mail",
+      "invalid": "Adresse ou mot de passe incorrect.",
+      "password": "Mot de passe",
+      "submit": "Se connecter",
+      "title": "Connexion à votre boîte mail",
+      "tooMany": "Trop de tentatives échouées. Réessayez plus tard.",
+      "unavailable": "Le webmail n'est pas disponible pour le moment."
+    },
+    "logout": "Se déconnecter",
+    "prefs": {
+      "dark": "Thème sombre",
+      "language": "Langue",
+      "light": "Thème clair"
+    },
+    "read": {
+      "attachment": "pièce jointe",
+      "bodyTitle": "Message",
+      "download": "Télécharger",
+      "gone": "Cette conversation n'existe plus.",
+      "imagesBlocked": "Les images distantes sont bloquées pour protéger votre vie privée.",
+      "next": "Plus ancien",
+      "none": "Sélectionnez un message pour le lire.",
+      "previous": "Plus récent",
+      "showImages": "Afficher les images"
+    },
+    "search": {
+      "advanced": "Recherche avancée",
+      "clear": "Effacer la recherche",
+      "everywhere": "Chercher dans tous les dossiers",
+      "from": "De",
+      "hasAttachment": "Avec pièce jointe",
+      "none": "Aucun message ne correspond.",
+      "placeholder": "Rechercher dans les messages",
+      "results": "Résultats de la recherche",
+      "subject": "Objet",
+      "submit": "Rechercher",
+      "to": "À"
+    },
+    "sso": {
+      "continue": "Continuer",
+      "invalid": "Ce lien a expiré ou a déjà servi : rouvrez le webmail depuis le panel.",
+      "keep": "Garder ma session",
+      "text": "Une session webmail est déjà ouverte dans ce navigateur ({{address}}). Continuer la fermera et ouvrira la boîte demandée depuis le panel Oblimint.",
+      "title": "Changer de boîte mail ?",
+      "warning": "Si vous n'avez pas ouvert ce lien vous-même depuis le panel, gardez votre session."
+    },
+    "title": "Webmail",
+    "toast": {
+      "deleted": "Supprimé",
+      "moved": "Déplacé vers {{name}}"
+    },
+    "vacation": {
+      "enabled": "Envoyer une réponse automatique",
+      "from": "Du (facultatif)",
+      "interval": "Répondre au même expéditeur au plus tous les (jours)",
+      "message": "Message",
+      "saved": "Répondeur enregistré",
+      "title": "Répondeur d'absence",
+      "until": "Au (facultatif)"
+    }
+  }
+}

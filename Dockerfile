@@ -55,6 +55,10 @@ ENV NODE_ENV=production \
 EXPOSE 8443
 # 8081 = internal hook listener for the per-account file servers (reached on
 # the account networks only — never publish it with -p).
+# 8082 = Oblimint webmail listener (settings mail.webmail = 'oblimint'; the
+# client bundle client/dist/webmail.html + assets/ is copied above), reached by
+# the edge only on the webmail host names — never publish it either
+# (OBLIMINT_WEBMAIL_PORT=0 disables it).
 # No VOLUME: the data dir ($OBLIMINT_DATA_DIR, /srv/oblimint by default) MUST
 # be bind-mounted from the SAME host path (sibling containers mount its
 # subdirectories by host path). A VOLUME here only created a stray anonymous

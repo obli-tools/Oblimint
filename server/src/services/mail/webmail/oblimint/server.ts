@@ -50,7 +50,7 @@ export function resetOblimintWebmailCache(): void {
   enabledCache = null;
 }
 
-async function findMailbox(where: { address?: string; id?: number }): Promise<MailboxAuthRow | null> {
+export async function findWebmailMailbox(where: { address?: string; id?: number }): Promise<MailboxAuthRow | null> {
   const q = db('mailboxes as m')
     .join('mail_domains as md', 'md.id', 'm.mail_domain_id')
     .join('domains as d', 'd.id', 'md.domain_id')
@@ -77,7 +77,7 @@ async function findMailbox(where: { address?: string; id?: number }): Promise<Ma
 }
 
 /** Largest upload: the mail domain's message size, else the platform's (MiB → bytes). */
-async function maxUploadBytes(mailboxId: number): Promise<number> {
+export async function maxUploadBytes(mailboxId: number): Promise<number> {
   const row = await db('mailboxes as m').join('mail_domains as md', 'md.id', 'm.mail_domain_id').where('m.id', mailboxId)
     .first('md.max_message_size_mb') as { max_message_size_mb: number | null } | undefined;
   const s = await platformSettings.section('mail');
@@ -102,8 +102,8 @@ export function createDefaultWebmailApp() {
     store: dbWebmailSessionStore,
     engine: webmailEngine,
     now: Date.now,
-    findMailboxByAddress: (address) => findMailbox({ address }),
-    findMailboxById: (id) => findMailbox({ id }),
+    findMailboxByAddress: (address) => findWebmailMailbox({ address }),
+    findMailboxById: (id) => findWebmailMailbox({ id }),
     redeemSso: async (token) => (await import('../webmail.service')).webmailService.redeemOblimint(token),
     isBanned: async (ip) => {
       try {

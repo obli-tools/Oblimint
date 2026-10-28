@@ -2,7 +2,7 @@
 import plugin from 'tailwindcss/plugin';
 
 export default {
-  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  content: ['./index.html', './webmail.html', './src/**/*.{js,ts,jsx,tsx}'],
   darkMode: 'class',
   // docs/obli-mobile.md §4 — `hover:` / `group-hover:` only apply on devices
   // that really hover (mouse / trackpad), so hover styles no longer "stick"

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Oblimint webmail (settings mail.webmail = 'oblimint'), served by the panel's
+         webmail listener on the dedicated webmail host — never on the panel host.
+         Strict CSP (server): no inline script, no third-party resource, no font CDN. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#0b0d1a" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Webmail</title>
+  </head>
+  <body class="bg-bg-primary text-text-primary">
+    <div id="root"></div>
+    <script type="module" src="/src/webmail/main.tsx"></script>
+  </body>
+</html>
