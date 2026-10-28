@@ -1,4 +1,4 @@
-import { normalizePathPrefix } from '@oblimint/shared';
+import { normalizePathPrefix, PREVIEW_CLAIM_PATH, PREVIEW_KEY_HEADER, previewCookieName } from '@oblimint/shared';
 import { banCheckLines } from '../security/honeypotRender';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,6 +69,26 @@ export interface EdgeLocation {
   kind: EdgeLocationKind;
   siteId: number | null;
   exact?: boolean;
+  /**
+   * Feature B (B5): `access_log off` — ONLY on the exact PREVIEW_CLAIM_PATH
+   * location of kind panel (its query string carries a one-shot token).
+   */
+  noAccessLog?: boolean;
+}
+
+/**
+ * Feature B: access gate of a release / staging preview vhost. The request
+ * passes when the cookie __Host-oblimint-pv-<previewId> or the header
+ * X-Oblimint-Preview-Key equals the secret (plain STRING comparison: the
+ * secret never appears in a regex, so never in an `nginx -t` message); both
+ * are stripped before the upstream.
+ */
+export interface EdgePreviewGate {
+  previewId: number;
+  /** 43-char base64url secret (validated). */
+  secret: string;
+  /** Live host names whose absolute redirects are rewritten to the preview host (≤ 5). */
+  redirectHosts: string[];
 }
 
 export interface EdgeVhost {
@@ -97,6 +117,8 @@ export interface EdgeVhost {
   /** Access log fields (null on platform vhosts). */
   accountId: number | null;
   tenantId: number | null;
+  /** Feature B: release preview gate (kind preview, HTTPS forced). */
+  previewGate?: EdgePreviewGate;
 }
 
 /** Container-side paths of the edge image (see the contract above). */
@@ -124,8 +146,12 @@ const SERVER_NAME_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[
 const UPSTREAM_RE = /^(https?):\/\/([a-z0-9-]+):([0-9]{1,5})$/;
 const VHOST_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const HEADER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
-// <primary name>/ (ACME) or _selfsigned/ (fallback of the platform vhosts: `_` is never in a server name).
-const CERT_FILE_RE = /^\/etc\/nginx\/oblimint\/certs\/(?:[a-z0-9.-]{1,253}|_selfsigned)\/(fullchain|privkey)\.pem$/;
+// <primary name>/ (ACME), _selfsigned/ (fallback of the platform vhosts: `_` is never in a server name)
+// or _selfsigned-preview/ (feature B: release previews without an ACME wildcard).
+const CERT_FILE_RE = /^\/etc\/nginx\/oblimint\/certs\/(?:[a-z0-9.-]{1,253}|_selfsigned|_selfsigned-preview)\/(fullchain|privkey)\.pem$/;
+/** Feature B: gate secret (43-char base64url = 256 bits). */
+export const PREVIEW_GATE_SECRET_RE = /^[A-Za-z0-9_-]{43}$/;
+export const PREVIEW_GATE_MAX_REDIRECT_HOSTS = 5;
 /** Exact location path: absolute, no trailing slash, plain segments. */
 const EXACT_PATH_RE = /^(?:\/[A-Za-z0-9._-]{1,64}){1,8}$/;
 /** Characters allowed in a header value once sanitized (rendered inside double quotes). */
@@ -202,7 +228,20 @@ export function validateVhost(v: EdgeVhost): void {
   const fallback = selfSignedCertPaths();
   const usesFallback = v.tls !== null && (v.tls.certPath === fallback.certPath || v.tls.keyPath === fallback.keyPath);
   if (usesFallback && !SELF_SIGNED_KINDS.includes(v.kind)) fail('the self-signed fallback certificate only serves platform vhosts');
-  if (v.selfSigned !== undefined && v.selfSigned !== usesFallback) fail('selfSigned does not match the certificate path');
+  // Feature B (B3): the preview self-signed certificate serves gated release previews only.
+  const previewSelf = selfSignedPreviewCertPaths();
+  const usesPreviewSelfSigned = v.tls !== null && (v.tls.certPath === previewSelf.certPath || v.tls.keyPath === previewSelf.keyPath);
+  if (usesPreviewSelfSigned && !(v.kind === 'preview' && v.previewGate)) fail('the preview self-signed certificate only serves release previews');
+  if (v.selfSigned !== undefined && v.selfSigned !== (usesFallback || usesPreviewSelfSigned)) fail('selfSigned does not match the certificate path');
+  if (v.previewGate !== undefined) {
+    const g = v.previewGate;
+    if (v.kind !== 'preview') fail('a preview gate only goes on a preview vhost');
+    if (!v.tls || !v.forceHttps) fail('a gated preview needs TLS and forced HTTPS');
+    if (!g || !Number.isInteger(g.previewId) || g.previewId <= 0) fail('invalid preview gate id');
+    if (typeof g.secret !== 'string' || !PREVIEW_GATE_SECRET_RE.test(g.secret)) fail('invalid preview gate secret');
+    if (!Array.isArray(g.redirectHosts) || g.redirectHosts.length > PREVIEW_GATE_MAX_REDIRECT_HOSTS
+      || g.redirectHosts.some((h) => !isValidServerName(h))) fail('invalid preview gate redirect hosts');
+  }
 
   if (!Array.isArray(v.locations)) fail('no locations');
   // D1: an unverified domain is never routed nor served over TLS.
@@ -225,6 +264,10 @@ export function validateVhost(v: EdgeVhost): void {
     if (!isValidUpstream(loc.upstream)) fail(`invalid upstream ${JSON.stringify(String(loc.upstream).slice(0, 80))}`);
     if (!LOCATION_KINDS.includes(loc.kind)) fail('invalid location kind');
     if (!isOptionalId(loc.siteId)) fail('invalid site id');
+    if (loc.noAccessLog !== undefined && loc.noAccessLog !== false
+      && !(loc.noAccessLog === true && loc.exact && loc.kind === 'panel' && prefix === PREVIEW_CLAIM_PATH)) {
+      fail('access_log off is only allowed on the preview claim location');
+    }
   }
 
   for (const [name, value] of Object.entries(v.extraHeaders ?? {})) {
@@ -386,11 +429,15 @@ function proxyLocation(v: EdgeVhost, loc: EdgeLocation, index: number): string {
   const upstream = sanitizeForNginx(loc.upstream);
   const variable = `$up_${index}`;
   const panel = loc.kind === 'panel';
+  const gated = !!v.previewGate && loc.kind === 'preview';
   const lines = [
     `${I1}location ${loc.exact ? '=' : '^~'} ${prefix} {`,
     ...logVariableLines(v, loc.kind, loc.siteId),
+    ...(loc.noAccessLog ? [`${I2}# One-shot claim token in the query string: never logged (B5).`, `${I2}access_log off;`] : []),
+    ...(gated ? previewGateLocationLines(v.previewGate!) : []),
     ...proxyDirectives(I2, variable, upstream, panel ? 3600 : 300),
     ...(panel ? panelCookieLines(I2) : []),
+    ...(gated ? previewGateProxyLines(v.previewGate!) : []),
   ];
   if (panel && !loc.exact && prefix === '/') {
     // Nested: a top-level regex location is never tried after a `^~` match.
@@ -416,10 +463,78 @@ function proxyLocation(v: EdgeVhost, loc: EdgeLocation, index: number): string {
   return lines.join('\n');
 }
 
+// ── Feature B: release preview gate ─────────────────────────────────────────
+
+/** Constant page of a locked preview (no script, no tenant data). */
+export const PREVIEW_LOCKED_BODY = '<!doctype html><html><head><meta charset="utf-8"><meta name="robots" content="noindex">'
+  + '<title>Preview locked</title></head><body style="font-family:sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem">'
+  + '<h1>Preview locked</h1><p>Open this preview from the panel, or use a share link.</p>'
+  + '<p lang="fr">Aper&ccedil;u verrouill&eacute; : ouvrez-le depuis le panel, ou avec un lien de partage.</p></body></html>';
+const PREVIEW_LOCKED_LOCATION = '@oblimint_pv_locked';
+
+/** Server-level lines: $oblimint_pv_ok (gate passed) and $oblimint_pv_cookie (Cookie header without the gate cookie). */
+function previewGateServerLines(g: EdgePreviewGate): string[] {
+  const id = Number(g.previewId);
+  const cookie = previewCookieName(id);
+  const secret = sanitizeForNginx(g.secret);
+  const header = `$http_${PREVIEW_KEY_HEADER.toLowerCase().replace(/-/g, '_')}`;
+  return [
+    `${I1}# Release preview gate: cookie (claim) or key header; both stripped before the upstream.`,
+    `${I1}set $oblimint_pv_ok "";`,
+    `${I1}set $oblimint_pv_c "";`,
+    // FIXED regex (never the secret): extract the cookie value, then compare strings.
+    `${I1}if ($http_cookie ~ "(?:^|;)\\s*${cookie}=([A-Za-z0-9_-]{43})(?:;|$)") { set $oblimint_pv_c $1; }`,
+    `${I1}if ($oblimint_pv_c = "${secret}") { set $oblimint_pv_ok "1"; }`,
+    `${I1}if (${header} = "${secret}") { set $oblimint_pv_ok "1"; }`,
+    `${I1}set $oblimint_pv_cookie $http_cookie;`,
+    `${I1}if ($http_cookie ~ "^(.*?)(?:^|;\\s*)${cookie}=[^;]*(.*)$") { set $oblimint_pv_cookie "$1$2"; }`,
+  ];
+}
+
+function previewGateLocationLines(_g: EdgePreviewGate): string[] {
+  return [
+    // A location-level error_page replaces the inherited ones: the server-level pages are repeated.
+    `${I2}error_page 502 504 ${ERROR_PAGES_PREFIX}502.html;`,
+    `${I2}error_page 503 ${ERROR_PAGES_PREFIX}503.html;`,
+    `${I2}error_page 404 ${ERROR_PAGES_PREFIX}404.html;`,
+    `${I2}error_page 401 = ${PREVIEW_LOCKED_LOCATION};`,
+    `${I2}if ($oblimint_pv_ok != "1") { return 401; }`,
+  ];
+}
+
+function previewGateProxyLines(g: EdgePreviewGate): string[] {
+  const lines = [
+    `${I2}proxy_set_header Cookie $oblimint_pv_cookie;`,
+    `${I2}proxy_set_header ${PREVIEW_KEY_HEADER} "";`,
+    `${I2}proxy_hide_header X-Robots-Tag;`,
+    `${I2}proxy_cookie_domain ~^.+$ $host;`,
+  ];
+  for (const h of g.redirectHosts) {
+    const name = sanitizeForNginx(h);
+    lines.push(`${I2}proxy_redirect https://${name}/ /;`, `${I2}proxy_redirect http://${name}/ /;`);
+  }
+  return lines;
+}
+
+function previewLockedLocation(v: EdgeVhost): string {
+  return [
+    `${I1}location ${PREVIEW_LOCKED_LOCATION} {`,
+    ...logVariableLines(v, 'preview', null),
+    `${I2}default_type text/html;`,
+    // add_header at location level drops the server-level ones: repeated.
+    `${I2}add_header Cache-Control "no-store" always;`,
+    `${I2}add_header X-Robots-Tag "noindex, nofollow" always;`,
+    `${I2}add_header Referrer-Policy "no-referrer" always;`,
+    `${I2}return 401 '${PREVIEW_LOCKED_BODY}';`,
+    `${I1}}`,
+  ].join('\n');
+}
+
 function serverBody(v: EdgeVhost): string {
   if (v.suspended) return suspendedBlock(v);
   if (v.kind === 'placeholder') return placeholderBlock(v);
   const parts = [errorPagesBlock()];
+  if (v.previewGate) parts.push(previewGateServerLines(v.previewGate).join('\n'), previewLockedLocation(v));
   const locations = sortLocations(v.locations);
   locations.forEach((loc, i) => parts.push(proxyLocation(v, loc, i)));
   if (!locations.some((l) => !l.exact && l.pathPrefix === '/')) {
@@ -517,6 +632,17 @@ export function selfSignedCertPaths(): { certPath: string; keyPath: string } {
   return {
     certPath: `${EDGE_CONTAINER_PATHS.certs}/${SELF_SIGNED_CERT_DIR}/fullchain.pem`,
     keyPath: `${EDGE_CONTAINER_PATHS.certs}/${SELF_SIGNED_CERT_DIR}/privkey.pem`,
+  };
+}
+
+/** Feature B: directory (under certs/) of the self-signed certificate of the release previews ([d, *.d]). */
+export const SELF_SIGNED_PREVIEW_CERT_DIR = '_selfsigned-preview';
+
+/** Release preview self-signed certificate paths as seen inside the edge container. */
+export function selfSignedPreviewCertPaths(): { certPath: string; keyPath: string } {
+  return {
+    certPath: `${EDGE_CONTAINER_PATHS.certs}/${SELF_SIGNED_PREVIEW_CERT_DIR}/fullchain.pem`,
+    keyPath: `${EDGE_CONTAINER_PATHS.certs}/${SELF_SIGNED_PREVIEW_CERT_DIR}/privkey.pem`,
   };
 }
 

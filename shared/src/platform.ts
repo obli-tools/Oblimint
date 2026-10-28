@@ -266,9 +266,33 @@ export interface NetworkSettings {
   mode: 'enforce' | 'monitor' | 'off';
 }
 
+/**
+ * Feature B — release / staging previews (shared/src/previews.ts). Its OWN
+ * section with flat keys (B4): a nested object inside `preview` would make a
+ * partial / invalid value fail the whole section, previewDomain included.
+ * Nothing runs without preview.previewDomain.
+ */
+export interface ReleasePreviewSettings {
+  enabled: boolean;
+  /** TTL proposed at start (minutes). */
+  defaultTtlMinutes: number;
+  /** Longest TTL of one start / extension (minutes; total lifetime ≤ 24 h anyway). */
+  maxTtlMinutes: number;
+  /** Active previews per account, and on the whole platform. */
+  maxPerAccount: number;
+  maxTotal: number;
+  /** Ceiling of the preview container (the plan limits apply when lower). */
+  memoryMb: number;
+  cpus: number;
+  /** Minimum delay between two previews of the same site (seconds). */
+  minIntervalSeconds: number;
+}
+
 export interface HostingSettings {
   dns: DnsSettings;
   preview: PreviewSettings;
+  /** Feature B */
+  releasePreviews: ReleasePreviewSettings;
   dbAdmin: DbAdminSettings;
   access: AccessSettings;
   usage: UsageSettings;
@@ -304,6 +328,9 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     resolvers: ['1.1.1.1', '8.8.8.8', '9.9.9.9'],
   },
   preview: { previewDomain: null, wildcardCertificate: false },
+  releasePreviews: {
+    enabled: true, defaultTtlMinutes: 60, maxTtlMinutes: 480, maxPerAccount: 2, maxTotal: 20, memoryMb: 512, cpus: 1, minIntervalSeconds: 60,
+  },
   dbAdmin: { hostname: null },
   access: {
     probeHostV4: null,

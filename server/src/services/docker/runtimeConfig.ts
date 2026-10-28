@@ -62,6 +62,41 @@ export function containerDocroot(docroot: string): string {
   return `${CONTAINER_PATHS.releases}/current${rel ? `/${rel}` : ''}`;
 }
 
+/** Fields shared by every container config of a site (everything but role, base, servedPrefixes). */
+function commonConfig(input: Pick<RuntimeConfigInput, 'site' | 'dataPaths'>): Omit<SiteRuntimeConfig, 'role' | 'base' | 'servedPrefixes'> {
+  const { site } = input;
+  const dataPaths = [...input.dataPaths]
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .map((d) => {
+      const ext = json<unknown>(d.allowedExtensions, null);
+      return {
+        path: d.path,
+        policy: d.policy,
+        allowedExtensions: Array.isArray(ext) ? ext.filter((e): e is string => typeof e === 'string') : null,
+      };
+    });
+  return {
+    version: 1 as const,
+    siteId: site.id,
+    accountId: site.accountId,
+    docroot: containerDocroot(site.docroot),
+    basePath: site.basePath || '/',
+    dataPaths,
+    php: phpSettings(site.phpSettings),
+    customNginx: site.customNginx && site.customNginx.trim() ? site.customNginx : null,
+    healthcheckPath: site.healthcheckPath || '/',
+  };
+}
+
+/**
+ * Feature B: config of a release / staging preview container (role 'preview'
+ * — the only roles images/siteconf accepts are primary | secondary | preview —
+ * no served prefix), written to previews/<id>/runtime/preview.json.
+ */
+export function buildPreviewRuntimeConfig(input: Pick<RuntimeConfigInput, 'site' | 'dataPaths'>, base: SiteBaseId): RuntimeConfigFile {
+  return { file: runtimeConfigFile('preview', null), config: { ...commonConfig(input), role: 'preview', base, servedPrefixes: [] } };
+}
+
 /** One SiteRuntimeConfig per container of the site (primary, secondaries, preview). */
 export function buildRuntimeConfigs(input: RuntimeConfigInput): RuntimeConfigFile[] {
   const { site } = input;

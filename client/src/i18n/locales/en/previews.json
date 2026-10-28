@@ -1,0 +1,91 @@
+{
+  "previews": {
+    "title": "Live preview",
+    "explain": "Runs the code of a release (or a scanned snapshot of the staging) in a temporary, isolated container on a private URL. Nothing goes live.",
+    "limits": "Data read-only (uploads, caches and file sessions fail), no database, no mail, Internet like the site, secret environment variables hidden. Staging snapshots are scanned first.",
+    "replaces": "Replaces the running preview of this site.",
+    "start": "Preview",
+    "startRelease": "Preview release #{{number}}",
+    "startStaging": "Preview the staging",
+    "starting": "Preview starting…",
+    "started": "Preview started",
+    "open": "Open",
+    "share": "Copy a share link",
+    "shareHint": "One-shot link, valid 10 minutes, through a confirmation page.",
+    "shareCopied": "Share link copied (one use, 10 min)",
+    "extend": "Extend",
+    "extended": "Preview extended",
+    "stop": "Stop",
+    "stopConfirm": "Stop the preview and delete its container?",
+    "stopped": "Preview stopped",
+    "none": "No preview running.",
+    "ttl": "Duration (minutes)",
+    "ttlHint": "Between {{min}} and {{max}} minutes.",
+    "expiresIn": "expires in {{time}}",
+    "expired": "expired",
+    "advanced": "Advanced (site managers)",
+    "envAll": "Pass every environment variable, secrets included",
+    "envAllHint": "Real side effects possible (payments, external APIs).",
+    "allowBlockedScan": "Run code blocked by the analysis (staff, audited)",
+    "target": {
+      "release": "Release #{{number}}",
+      "staging": "Staging snapshot"
+    },
+    "badge": "Preview #{{id}}",
+    "by": "by {{name}}",
+    "byKey": "key {{name}}",
+    "status": {
+      "building": "building",
+      "starting": "starting",
+      "running": "running",
+      "failed": "failed",
+      "stopping": "stopping",
+      "stopped": "stopped"
+    },
+    "stopReason": {
+      "user": "stopped by a user",
+      "expired": "expired",
+      "replaced": "replaced",
+      "failed": "failed",
+      "siteStopped": "site stopped",
+      "suspended": "account suspended",
+      "key": "key removed",
+      "siteDeleted": "site deleted"
+    },
+    "warnings": {
+      "scanWarnings": "The analysis reported findings: check them before publishing.",
+      "dataReadOnly": "Data paths are read-only: uploads, caches and file sessions fail.",
+      "ephemeralSkipped": "Some ephemeral data paths could not get a temporary folder.",
+      "noDatabase": "No database is connected: pages that need it fail.",
+      "secretsHidden": "Secret environment variables are not passed.",
+      "noMail": "Mail is disabled.",
+      "egressAllowed": "The preview reaches the Internet like the site (external APIs with real credentials included).",
+      "selfSignedCertificate": "Self-signed certificate: the browser asks for an exception.",
+      "notSegmented": "The account network is not segmented: the preview reaches the other containers of the account like the site."
+    },
+    "errorCodes": {
+      "scanBlocked": "Blocked by the analysis.",
+      "previewStartFailed": "The container did not start.",
+      "previewNotReady": "The container did not answer.",
+      "previewExited": "The container stopped.",
+      "buildTimeout": "The build took too long.",
+      "interrupted": "Interrupted by a panel restart.",
+      "publishInProgress": "A publication was running: try again.",
+      "releaseNotReady": "Commit of the release missing.",
+      "cancelled": "Cancelled.",
+      "previewBuildFailed": "The preview could not be built."
+    },
+    "settings": {
+      "title": "Release previews",
+      "explain": "Live previews of a release or of the staging, on the preview domain (needs a preview domain).",
+      "enabled": "Enabled",
+      "defaultTtlMinutes": "Default duration (min)",
+      "maxTtlMinutes": "Longest duration (min)",
+      "maxPerAccount": "Previews per account",
+      "maxTotal": "Previews on the platform",
+      "memoryMb": "Memory per preview (MiB)",
+      "cpus": "CPUs per preview",
+      "minIntervalSeconds": "Minimum delay between two previews of a site (s)"
+    }
+  }
+}

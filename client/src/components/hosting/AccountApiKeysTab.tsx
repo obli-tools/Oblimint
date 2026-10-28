@@ -33,6 +33,7 @@ export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'files.read': ['Read files', 'List and read the files of its sites (code and data).'],
   'files.write': ['Write files', 'Create, replace, move, delete, extract archives in its sites.'],
   'releases.publish': ['Publish', 'Publish the code as a new release (live) and roll back.'],
+  'previews.manage': ['Live previews', 'Start, fetch and stop a preview of a release or of the staging; needs files.read too (staging: releases.publish).'],
   'sites.manage': ['Site settings', 'Change the settings of its sites: name, docroot, publish mode, PHP, environment variables, data paths, secondary runtimes.'],
   'sites.create': ['Create sites', 'Create sites in the account: they join the key automatically.'],
   'domains.subdomain': ['Subdomains', 'Attach to its sites subdomains of a domain already in the account (never a new domain): only under the domains given to the key or, for a key limited to some sites, under domains serving its sites alone. Removes only the ones it created, and not one that also serves a site outside the key.'],
@@ -45,7 +46,7 @@ export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
 // Presets of the key form (API_KEY_PRESETS, shared/src/apiKeys.ts): label, what it gives and leaves out.
 const PRESET_FALLBACK: Record<ApiKeyPresetId, [string, string]> = {
   readonly: ['Read only', 'Reads the files and the logs of the chosen sites; writes nothing.'],
-  update: ['Updates only', 'For a CI: writes the files and publishes them. No site setting (publish mode, environment, data paths), cron job, database, route or subdomain. On a site in automatic publication the writes go live at once, and so do the files written in the data area.'],
+  update: ['Updates only', 'For a CI: writes the files, previews them and publishes them. No site setting (publish mode, environment, data paths), cron job, database, route or subdomain. On a site in automatic publication the writes go live at once, and so do the files written in the data area.'],
   site: ['Manage one site', 'Everything on exactly one site: files, publication, settings, logs, databases, cron jobs, routes of the domains serving it alone. No site creation, no subdomain, no domain given.'],
   multisite: ['Manage several sites', 'The same rights on several sites, or on every site. No domain given by default: give some below only if the key must route them.'],
   autonomous: ['Autonomous creation', 'Creates its own sites and works on them alone (no existing site): files, publication, settings, logs, databases, subdomains attached to its sites. The domains given below only serve as parents of its subdomains. No path route (it would also route the domains given, over the sites they serve); cron jobs (they run code) are to tick apart.'],

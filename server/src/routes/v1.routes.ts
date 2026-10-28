@@ -7,7 +7,9 @@ import { parseBody } from '../services/docker/parseBody';
 import { keyApi, type SiteArea } from '../services/apiKeys/keyApi';
 import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from '../services/apiKeys/middleware';
 import type { ApiKeyContext } from '../services/apiKeys/apiKeys.service';
-import { CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, SITE_ENV_MAX_VALUE, SITE_ENV_MAX_VARS } from '@oblimint/shared';
+import {
+  CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_PATH_MAX, SITE_ENV_MAX_VALUE, SITE_ENV_MAX_VARS,
+} from '@oblimint/shared';
 import { keyDatabases } from '../services/apiKeys/keyDatabases';
 import { keyEnv } from '../services/apiKeys/keyEnv';
 import type { SiteBaseId } from '@oblimint/shared';
@@ -43,6 +45,12 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   GET    /sites/:id/releases/:rid/files/content?path=   → the file, streamed (Content-Length; ≤ 64 MiB, 413 fileTooLarge) files.read
 //   POST   /sites/:id/releases/:rid/restore-staging {discardPending?} → StagingRestoreResult (200) | {status:'running'} (202)  files.write
 //                                                        (409 stagingHasPendingChanges | restoreInProgress | stagingTooLarge | releaseNotReady)
+//   POST   /sites/:id/preview  {release_id? | staging?: true, ttl_minutes?, wait?, include_key?} → PreviewStartResult (202)
+//                                                        previews.manage + files.read (staging: + releases.publish)
+//   GET    /sites/:id/preview                           → SitePreview | null                       previews.manage
+//   DELETE /sites/:id/preview                           → { stopped: true }                        previews.manage + files.read
+//   POST   /sites/:id/preview/link                      → PreviewLink (one-shot interstitial page)  previews.manage + files.read (creator: sites.manage)
+//   GET    /sites/:id/preview/fetch?path=&compare=1&host=&max_bytes=&method= → PreviewFetchResult previews.manage + files.read (compare: + sites.manage)
 //   GET    /sites/:id/logs?source=access|error|app&q=&limit=&since=&until=&status= → LogQueryResult  logs.read
 //   GET    /sites/:id/env                               → SiteEnvVar[] (secrets: value null)        sites.manage
 //   PATCH  /sites/:id/env  {set?: [{name, value?, secret?}], remove?: [name]} → {vars, changed} (others kept; restarts the site) sites.manage
@@ -112,6 +120,21 @@ const releaseFilesQuery = z.object({
   path: relPath.optional(), limit: z.coerce.number().int().min(1).max(5000).default(200), offset: z.coerce.number().int().min(0).default(0),
 }).passthrough();
 const releaseTextQuery = z.object({ path: relPath, encoding: z.enum(['utf8', 'base64']).default('utf8'), offset: z.coerce.number().int().min(0).default(0) }).passthrough();
+
+const previewStartBody = z.object({
+  release_id: z.number().int().positive().nullable().optional(),
+  staging: z.boolean().optional(),
+  ttl_minutes: z.number().int().min(1).max(1440).nullable().optional(),
+  wait: z.boolean().optional(),
+  include_key: z.boolean().optional(),
+}).strict();
+const previewFetchQuery = z.object({
+  path: z.string().min(1).max(PREVIEW_PATH_MAX),
+  compare: z.enum(['0', '1', 'true', 'false']).optional(),
+  host: z.enum(['preview', 'live']).optional(),
+  max_bytes: z.coerce.number().int().min(PREVIEW_FETCH_MIN_BYTES).max(PREVIEW_FETCH_MAX_BYTES).optional(),
+  method: z.enum(['GET', 'HEAD']).optional(),
+}).strict();
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const h = (fn: Handler) => (req: Request, res: Response, next: (err?: unknown) => void) => { fn(req, res).catch(next); };
@@ -227,6 +250,25 @@ router.post('/sites/:id/releases/:rid/restore-staging', heavyOpLimiter, h(async 
   const b = parseBody(restoreBody, req.body ?? {});
   const r = await keyApi.restoreReleaseToStaging(ctxOf(req), req, siteId(req), idParam(req, 'rid'), { discardPending: b.discardPending === true });
   ok(res, r, r.status === 'running' ? 202 : 200);
+}));
+// Feature B: live previews (previews.manage + files.read; staging: + releases.publish; compare: + sites.manage).
+router.post('/sites/:id/preview', heavyOpLimiter, h(async (req, res) => {
+  const b = parseBody(previewStartBody, req.body ?? {});
+  ok(res, await keyApi.previewStart(ctxOf(req), req, siteId(req), {
+    releaseId: b.release_id ?? null, staging: b.staging === true, ttlMinutes: b.ttl_minutes ?? null, wait: b.wait !== false, includeKey: b.include_key === true,
+  }), 202);
+}));
+router.get('/sites/:id/preview', h(async (req, res) => ok(res, await keyApi.previewGet(ctxOf(req), siteId(req)))));
+router.delete('/sites/:id/preview', h(async (req, res) => ok(res, await keyApi.previewStop(ctxOf(req), req, siteId(req)))));
+router.post('/sites/:id/preview/link', h(async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  ok(res, await keyApi.previewLink(ctxOf(req), req, siteId(req)));
+}));
+router.get('/sites/:id/preview/fetch', heavyOpLimiter, h(async (req, res) => {
+  const q = parseBody(previewFetchQuery, req.query);
+  ok(res, await keyApi.previewFetch(ctxOf(req), siteId(req), {
+    path: q.path, compare: q.compare === '1' || q.compare === 'true', host: q.host ?? null, maxBytes: q.max_bytes ?? null, method: q.method ?? null,
+  }));
 }));
 router.get('/sites/:id/logs', h(async (req, res) => {
   const q = req.query;

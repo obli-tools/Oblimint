@@ -20,8 +20,13 @@ import { config, dataDir } from '../../config';
 //           current -> <n>                       relative symlink, switched atomically
 //         runtime/                               root:root 0755  (→ /etc/oblimint/site, READ-ONLY)
 //           <role>[-<runtimeId>].json            SiteRuntimeConfig per container
+//         previews/                              root:root 0755  (feature B: release / staging previews, panel writes)
+//           <previewId>/releases/<n>/            immutable tree (n = release number, 0 = staging snapshot)
+//           <previewId>/releases/current -> <n>  relative symlink (→ /srv/releases, RO, in the preview container ONLY)
+//           <previewId>/runtime/preview.json     SiteRuntimeConfig role 'preview' — never msmtprc
+//           (outside releases/: prune / orphan sweeps never see it; same filesystem → hardlinks work)
 //
-//     dbsock/                                    root:gid  0750  (P2: parent of the socket dirs, root-owned: bind sources)
+//     dbsock/                                   root:gid  0750  (P2: parent of the socket dirs, root-owned: bind sources)
 //       mysql/                                   root:gid  0750  → /run/mysqld (RO) in EVERY site container; holds the symlink
 //                                                                mysqld.sock -> /run/oblimint-db/i-<default id>/mysqld.sock (hostd)
 //       postgresql/                              root:gid  0750  → /run/postgresql (RO) in every site container; symlink
@@ -120,6 +125,11 @@ export function hostingLayout(root: string) {
     release: (accountId: number, siteId: number, n: number) => joinPosix(site(accountId, siteId), 'releases', n),
     currentLink: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'releases', 'current'),
     runtime: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'runtime'),
+    // Feature B — release / staging previews (panel writes; see the tree above).
+    previews: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'previews'),
+    preview: (accountId: number, siteId: number, previewId: number) => joinPosix(site(accountId, siteId), 'previews', previewId),
+    previewReleases: (accountId: number, siteId: number, previewId: number) => joinPosix(site(accountId, siteId), 'previews', previewId, 'releases'),
+    previewRuntime: (accountId: number, siteId: number, previewId: number) => joinPosix(site(accountId, siteId), 'previews', previewId, 'runtime'),
     // P2 — database sockets / data (hostd creates them; see the tree above).
     dbSockets: (accountId: number) => joinPosix(account(accountId), 'dbsock'),
     dbSocketDefault: (accountId: number, family: 'mysql' | 'postgresql') => joinPosix(account(accountId), 'dbsock', family),

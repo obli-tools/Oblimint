@@ -9,6 +9,9 @@ import type { PipelineUnit } from './pipeline';
 // version, or a stub keeping its valid names, is served instead).
 //   d-<domainId>  site / placeholder   owner site-domain (id = domain id)
 //   p-<siteId>    preview              owner site-domain (id null: no domain row)
+//   pv-<previewId> release preview     owner site-domain (id null) — feature B; a kept
+//                                      pv-<old> (last valid version) proxies to the
+//                                      container of THAT preview only (gone: 502)
 //   panel, dbadmin, probe-*            owner platform
 //   m-*, w-* …    mail / webmail       owner contributed
 // No upstream is declared: site containers may be stopped (P1 behaviour,

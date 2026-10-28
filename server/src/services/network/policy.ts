@@ -28,7 +28,9 @@ import { buildPlatformSegments, PLATFORM_HOST_PORTS, type ModelPlatformNetwork }
 //   F7 edge  → panel (its upstream oblimint-panel)                   front tcp panelPort
 //   L1 declared link source → target                                 any fabric both ends sit on
 //   L2 phpMyAdmin (MariaDB / MySQL) / Adminer (PostgreSQL) → DB inst. back  3306 / 5432
-// and NOTHING else. Fail-safe: a container whose labels do not resolve to a
+// and NOTHING else. Feature B: a release / staging preview container (role
+// site-rpreview, 'sandbox') only receives F1 / F2 — never F3, F5 nor L1.
+// Fail-safe: a container whose labels do not resolve to a
 // segment OF THE FABRIC'S ACCOUNT (unknown, another account, a row that does
 // not exist) gets no flow at all. Only fabrics of 'segmented' accounts are
 // listed (legacy accounts are not filtered until migrated).
@@ -110,7 +112,8 @@ export type EndpointRole =
   | { kind: 'relay' }
   | { kind: 'filesrv' }
   | { kind: 'dbadmin'; admin: 'phpmyadmin' | 'adminer' }
-  | { kind: 'site'; siteId: number; web: boolean }
+  /** sandbox (feature B: release / staging preview): F1 / F2 in, nothing else (no F3, F5, L1). */
+  | { kind: 'site'; siteId: number; web: boolean; sandbox?: boolean }
   | { kind: 'db'; instanceId: number }
   | { kind: 'app'; stackId: number; service: string }
   | { kind: 'unknown' };
@@ -187,6 +190,10 @@ export function classifyEndpoint(model: SegmentModel, accountId: number, fabric:
       const siteId = positiveId(labels[LABELS.site]);
       return siteId !== null && model.sites.get(siteId) === accountId ? { kind: 'site', siteId, web: true } : { kind: 'unknown' };
     }
+    case 'site-rpreview': {
+      const siteId = positiveId(labels[LABELS.site]);
+      return siteId !== null && model.sites.get(siteId) === accountId ? { kind: 'site', siteId, web: true, sandbox: true } : { kind: 'unknown' };
+    }
     case 'tools': {
       const runId = positiveId(labels[P3_LABELS.adapterRun]);
       const siteId = runId === null ? undefined : model.adapterRuns.get(runId);
@@ -212,7 +219,7 @@ export function classifyEndpoint(model: SegmentModel, accountId: number, fabric:
 /** Segment label of a role ('site:12', 'db:3', 'app:5/web', 'edge', …). */
 export function segmentLabel(r: EndpointRole): string {
   switch (r.kind) {
-    case 'site': return `site:${r.siteId}`;
+    case 'site': return r.sandbox ? `site:${r.siteId}/preview` : `site:${r.siteId}`;
     case 'db': return `db:${r.instanceId}`;
     case 'app': return `app:${r.stackId}/${r.service}`;
     default: return r.kind;
@@ -228,7 +235,7 @@ interface Classified {
 /** Does a container belong to the segment a link end designates? */
 function inSegment(role: EndpointRole, ref: ModelLink['source']): boolean {
   switch (ref.kind) {
-    case 'site': return role.kind === 'site' && role.siteId === ref.id;
+    case 'site': return role.kind === 'site' && !role.sandbox && role.siteId === ref.id; // L1: never a preview
     case 'db': return role.kind === 'db' && role.instanceId === ref.id;
     case 'app': return role.kind === 'app' && role.stackId === ref.id && (ref.service === null || role.service === ref.service);
     default: return false;
@@ -295,7 +302,7 @@ export function buildSegmentFlows(model: SegmentModel): { flows: AnnotatedFlow[]
           if (t.accountId !== account.id) continue;
           const dsts = t.kind === 'app'
             ? of((r) => r.kind === 'app' && r.stackId === t.stackId && r.service === t.service)
-            : of((r) => r.kind === 'site' && r.web && r.siteId === t.siteId);
+            : of((r) => r.kind === 'site' && r.web && !r.sandbox && r.siteId === t.siteId); // never a preview
           for (const d of dsts) for (const e of edge) add(e, d, t.protocol === 'udp' ? 'udp' : 'tcp', t.port, 'edge');
         }
         // F4: panel → exposed ports of the app services on the front (wake-up, probes).
@@ -305,7 +312,9 @@ export function buildSegmentFlows(model: SegmentModel): { flows: AnnotatedFlow[]
           for (const p of ports) for (const pn of panel) add(pn, a, p.protocol === 'udp' ? 'udp' : 'tcp', p.port, 'panel');
         }
         // F5: site web containers → mail relay (SMTP AUTH).
-        for (const s of webSites) for (const r of relay) add(s, r, 'tcp', MAIL_RELAY_PORT, 'relay');
+        for (const s of webSites.filter((w) => !(w.role as Extract<EndpointRole, { kind: 'site' }>).sandbox)) {
+          for (const r of relay) add(s, r, 'tcp', MAIL_RELAY_PORT, 'relay');
+        }
         // F6: the account's file server → the panel's internal hook listener.
         if (model.internalPort > 0) for (const f of filesrv) for (const p of panel) add(f, p, 'tcp', model.internalPort, 'filesrv');
         // F7: edge → panel. The panel carries the alias oblimint-panel on every front fabric too, and Docker's

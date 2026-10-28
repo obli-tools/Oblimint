@@ -44,6 +44,28 @@ export async function siteEnvFor(siteIds: number[]): Promise<Map<number, Array<[
   return out;
 }
 
+/**
+ * Feature B: variables of a site for its release / staging preview container.
+ * 'public' (default) = non-secret variables only; 'all' (sites.manage, checked
+ * by the preview service) = every variable, as siteEnvFor.
+ */
+export async function siteEnvForPreview(siteId: number, mode: 'public' | 'all'): Promise<Array<[string, string]>> {
+  const q = db('site_env_vars').where({ site_id: siteId }).orderBy('name');
+  if (mode !== 'all') q.where({ secret: false });
+  const rows = await q as EnvRow[];
+  const out: Array<[string, string]> = [];
+  for (const r of rows) {
+    const v = openValue(r);
+    if (v !== null) out.push([r.name, v]);
+  }
+  return out;
+}
+
+/** Feature B: does the site have secret variables (warning secretsHidden)? */
+export async function siteHasSecretEnv(siteId: number): Promise<boolean> {
+  return !!(await db('site_env_vars').where({ site_id: siteId, secret: true }).first('id'));
+}
+
 function validate(vars: SiteEnvVarInput[]): void {
   if (vars.length > SITE_ENV_MAX_VARS) throw new AppError(400, `At most ${SITE_ENV_MAX_VARS} variables`, 'validation');
   const seen = new Set<string>();

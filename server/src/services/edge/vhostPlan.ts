@@ -1,7 +1,10 @@
-import type { DomainVerificationStatus, HostingAccount, PhpSettings } from '@oblimint/shared';
+import { PREVIEW_CLAIM_PATH, type DomainVerificationStatus, type HostingAccount, type PhpSettings } from '@oblimint/shared';
 import { isPlatformReservedDomain, platformHostList, type PlatformHostNames } from '../hosting/hostingValidation.service';
-import { ADMINER_CONTAINER, PHPMYADMIN_CONTAINER, previewHost, siteUpstream } from '../hosting/naming';
-import { edgeCertPaths, isValidServerName, selfSignedCertPaths, type EdgeLocation, type EdgeVhost } from './nginxConfig';
+import { ADMINER_CONTAINER, PHPMYADMIN_CONTAINER, previewHost, releasePreviewUpstream, siteUpstream } from '../hosting/naming';
+import {
+  edgeCertPaths, isValidServerName, PREVIEW_GATE_MAX_REDIRECT_HOSTS, PREVIEW_GATE_SECRET_RE, selfSignedCertPaths, selfSignedPreviewCertPaths,
+  type EdgeLocation, type EdgeVhost,
+} from './nginxConfig';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PURE mapping "database rows + platform settings → desired edge vhosts"
@@ -15,6 +18,9 @@ import { edgeCertPaths, isValidServerName, selfSignedCertPaths, type EdgeLocatio
 //                 previewHost(site, settings preview.previewDomain) — none
 //                 when no preview domain is configured (audit R-SAMESITE:
 //                 never under the panel host any more);
+//   pv-<previewId> feature B: release / staging preview (gated, HTTPS only,
+//                 ACME wildcard *.previewDomain or the dedicated self-signed
+//                 certificate; claim location → panel, access_log off);
 //   d-<domainId>  domain of an account in active|suspended|provisioning|error
 //                 (accounts being deleted are skipped): locations = site_routes
 //                 when the domain is VERIFIED, else a placeholder page
@@ -171,7 +177,29 @@ export interface EdgePlanInput {
   certFilesExist: (primaryName: string) => boolean;
   /** Platform names the self-signed fallback certificate on disk covers (null / absent = none). */
   selfSignedNames?: readonly string[] | null;
+  /** Feature B: active (starting | running, not expired) release / staging previews. */
+  releasePreviews?: PlanReleasePreview[];
+  /** Feature B: names the preview self-signed certificate covers ([d, *.d]) — null / absent = none. */
+  previewSelfSigned?: readonly string[] | null;
 }
+
+/** Feature B: one active release / staging preview (edge.service loadPlanInput). */
+export interface PlanReleasePreview {
+  id: number;
+  site_id: number;
+  account_id: number;
+  tenant_id: number;
+  host: string;
+  /** Gate secret (opened from site_previews.access_secret_sealed). */
+  secret: string;
+  account_status: HostingAccount['status'];
+  php_settings: PhpSettings | null;
+  /** Verified live domains routed at / to the site: absolute redirects to them are rewritten (≤ 5). */
+  redirectHosts: string[];
+}
+
+/** Feature B: headers of a release preview vhost (server level). */
+export const RELEASE_PREVIEW_HEADERS: Record<string, string> = { 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer' };
 
 function served(status: HostingAccount['status']): boolean {
   return SERVED_ACCOUNT_STATUSES.includes(status);
@@ -278,6 +306,42 @@ export function planVhosts(input: EdgePlanInput): EdgeVhost[] {
         clientMaxBodyMb: clientMaxBodyFor([s]),
         accountId: s.account_id,
         tenantId: s.tenant_id,
+      });
+    }
+
+    // ── Feature B: release / staging previews (gated, HTTPS only — no TLS, no vhost) ──
+    // Unit pv-<previewId>; upstream = the container OF THAT PREVIEW (A2): a pv-<old>
+    // vhost kept by the pipeline (last valid version) targets a container that no
+    // longer exists (502), never the next preview's.
+    const selfSignedOk = !!input.previewSelfSigned?.includes(`*.${previewDomain}`);
+    for (const p of [...(input.releasePreviews ?? [])].sort((a, b) => a.id - b.id)) {
+      if (!served(p.account_status) || p.account_status === 'suspended') continue;
+      const name = (p.host ?? '').toLowerCase();
+      if (!isValidServerName(name) || !name.endsWith(`.${previewDomain}`) || name.slice(0, -previewDomain.length - 1).includes('.')) continue;
+      if (!PREVIEW_GATE_SECRET_RE.test(p.secret ?? '')) continue;
+      const acme = wildcardCovers ? tlsFor(wildcard) : null;
+      const tls = acme ?? (selfSignedOk ? selfSignedPreviewCertPaths() : null);
+      if (!tls) continue;
+      const names = claim([name]);
+      if (!names.length) continue;
+      const redirectHosts = [...new Set((p.redirectHosts ?? []).map((h) => h.toLowerCase()).filter(isValidServerName))].slice(0, PREVIEW_GATE_MAX_REDIRECT_HOSTS);
+      vhosts.push({
+        id: `pv-${p.id}`,
+        kind: 'preview',
+        serverNames: names,
+        tls,
+        forceHttps: true,
+        ...(acme ? {} : { selfSigned: true }),
+        suspended: false,
+        locations: [
+          { pathPrefix: PREVIEW_CLAIM_PATH, exact: true, upstream: input.panelUpstream, kind: 'panel', siteId: null, noAccessLog: true },
+          { pathPrefix: '/', upstream: releasePreviewUpstream(p.site_id, p.id), kind: 'preview', siteId: p.site_id },
+        ],
+        extraHeaders: { ...RELEASE_PREVIEW_HEADERS },
+        clientMaxBodyMb: clientMaxBodyFor([{ php_settings: p.php_settings } as PlanSite]),
+        accountId: p.account_id,
+        tenantId: p.tenant_id,
+        previewGate: { previewId: p.id, secret: p.secret, redirectHosts },
       });
     }
   }

@@ -32,12 +32,12 @@ test('the presets are well-formed', () => {
 
 test('read only writes nothing', () => {
   assert.deepEqual(scopesOf('readonly'), ['files.read', 'logs.read']);
-  lacks('readonly', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain');
+  lacks('readonly', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain');
   assert.equal(apiKeyPreset('readonly').domains, 'none');
 });
 
-test('updates only: files and publication, no setting, cron, database, route or subdomain', () => {
-  assert.deepEqual(scopesOf('update'), ['files.read', 'files.write', 'releases.publish']);
+test('updates only: files, previews and publication, no setting, cron, database, route or subdomain', () => {
+  assert.deepEqual(scopesOf('update'), ['files.read', 'files.write', 'releases.publish', 'previews.manage']);
   lacks('update', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain', 'logs.read');
   const p = apiKeyPreset('update');
   assert.deepEqual(p.siteScopes, ['selected'], 'chosen sites only');
@@ -48,7 +48,7 @@ test('updates only: files and publication, no setting, cron, database, route or 
 test('managing one / several sites: no site creation, no subdomain, no domain by default', () => {
   for (const id of ['site', 'multisite'] as const) {
     lacks(id, 'sites.create', 'domains.subdomain');
-    for (const s of ['files.read', 'files.write', 'releases.publish', 'sites.manage', 'logs.read', 'databases.manage', 'routes.manage', 'cron.manage'] as const) {
+    for (const s of ['files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'logs.read', 'databases.manage', 'routes.manage', 'cron.manage'] as const) {
       assert.ok(scopesOf(id).includes(s), `${id} manages ${s}`);
     }
   }
@@ -70,6 +70,14 @@ test('autonomous creation: only its own sites, no route, no cron', () => {
   const p = apiKeyPreset('autonomous');
   assert.deepEqual([p.siteScopes, p.minSites, p.maxSites], [['selected'], 0, 0], 'no existing site: the ones it creates');
   assert.equal(p.domains, 'pick');
+});
+
+test('previews.manage always comes with files.read (a preview without it is useless)', () => {
+  for (const p of API_KEY_PRESETS) {
+    const s = apiKeyPresetScopes(p, ALL);
+    if (s.includes('previews.manage')) assert.ok(s.includes('files.read'), `${p.id}: previews.manage without files.read`);
+  }
+  for (const id of ['update', 'site', 'multisite', 'autonomous'] as const) assert.ok(scopesOf(id).includes('previews.manage'), id);
 });
 
 test('no preset asking for domains routes them', () => {

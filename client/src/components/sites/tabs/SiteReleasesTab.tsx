@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ChevronLeft, ChevronRight, CopyCheck, History, RotateCcw, Rocket, ShieldAlert, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, CopyCheck, Eye, History, RotateCcw, Rocket, ShieldAlert, X } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { HostingSocketEvents, type Release } from '@oblimint/shared';
+import { HostingSocketEvents, PREVIEWABLE_RELEASE_STATUSES, type Release } from '@oblimint/shared';
+import { PreviewCard, useSitePreview } from '../previews/PreviewCard';
+import { StartPreviewModal } from '../previews/StartPreviewModal';
 import { releasesApi } from '@/api/releases.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
@@ -33,10 +36,25 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
   const prompt = usePrompt();
-  const { can } = useHostingMe();
+  const { can, me } = useHostingMe();
   const canPublish = can('releases.publish', site.accountId);
   const canApprove = can('releases.approve', site.accountId);
   const canManageFiles = can('files.manage', site.accountId);
+  // Feature B: live previews.
+  const canReadCode = can('code.read', site.accountId);
+  const staffManager = me?.kind === 'staff' && can('sites.manage', site.accountId);
+  const { preview, reload: reloadPreview } = useSitePreview(site.id);
+  const [previewOf, setPreviewOf] = useState<Release | null>(null);
+  const [searchParams] = useSearchParams();
+  const deepRelease = Number(searchParams.get('release'));
+  useEffect(() => {
+    // Deep link ?tab=releases&release=<id> (notifications of approval / blocked scan).
+    if (Number.isInteger(deepRelease) && deepRelease > 0) setOpenId(deepRelease);
+  }, [deepRelease]);
+  const canPreview = (r: Release) => !!r.commitSha && !r.isCurrent && canReadCode
+    && (PREVIEWABLE_RELEASE_STATUSES as readonly string[]).includes(r.status)
+    && (site.publishMode !== 'approval' || r.status === 'ready' || canApprove)
+    && (!isScanBlocked(r) || staffManager);
 
   const [items, setItems] = useState<Release[]>([]);
   const [total, setTotal] = useState(0);
@@ -222,6 +240,14 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
         </Button>,
       );
     }
+    if (canPreview(r)) {
+      out.push(
+        <IconButton
+          key="preview" size="sm" label={t('previews.startRelease', { number: r.number, defaultValue: 'Preview release #{{number}}' })}
+          icon={<Eye className="h-3.5 w-3.5" />} onClick={() => setPreviewOf(r)} disabled={busy}
+        />,
+      );
+    }
     return out.length ? <>{out}</> : null;
   };
 
@@ -352,7 +378,18 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
         tick={drawerTick}
         onClose={() => setOpenId(null)}
         renderActions={(r) => renderActions(r, true)}
+        renderPreview={(r) => <PreviewCard site={site} preview={preview} releaseId={r.id} onChanged={reloadPreview} compact />}
       />
+
+      {previewOf && (
+        <StartPreviewModal
+          site={site}
+          release={previewOf}
+          current={preview}
+          onClose={() => setPreviewOf(null)}
+          onStarted={() => { setPreviewOf(null); setOpenId(previewOf.id); void reloadPreview(); }}
+        />
+      )}
     </div>
   );
 }

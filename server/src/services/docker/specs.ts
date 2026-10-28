@@ -4,7 +4,7 @@ import type Docker from 'dockerode';
 import type { PlanLimits, RuntimeRole, SiteBaseId } from '@oblimint/shared';
 import {
   accountNetwork, EDGE_CONTAINER, edgeImage, fileServerContainer, fileServerImage, HOSTD_CONTAINER, hostdImage,
-  LABELS, PANEL_NETWORK, previewContainer, secondaryContainer, siteContainer, siteImage, type ContainerRole,
+  LABELS, PANEL_NETWORK, previewContainer, releasePreviewContainer, secondaryContainer, siteContainer, siteImage, type ContainerRole,
 } from '../hosting/naming';
 import { config } from '../../config';
 import { CONTAINER_PATHS, hostingLayout, runtimeConfigFile } from '../hosting/paths';
@@ -20,6 +20,9 @@ import { TENANT_SECCOMP_OPT } from './seccomp';
 // oblimint.*, never the Docker socket, never /srv/oblimint/run or
 // /srv/oblimint/config nor the staging in a site container, no published port
 // except the file server's SFTP port (and 80/443 of the edge).
+// Feature B (release / staging preview, role site-rpreview): same hardening,
+// plus data READ-ONLY (tmpfs on the ephemeral paths), no database socket nor
+// network, releases bind WITHOUT propagation, RestartPolicy no, pids ≤ 128.
 //
 // Every spec carries the label oblimint.spec-hash = specHash(spec): the
 // reconcile recreates a container whose label differs from the desired hash
@@ -230,6 +233,99 @@ export function siteContainerSpec(input: SiteContainerInput): Docker.ContainerCr
       ...(input.env ?? []).map(([k, v]) => `${k}=${v}`),
     ],
     Labels: labels,
+    HostConfig: hostConfig,
+    NetworkingConfig: { EndpointsConfig: { [net]: { Aliases: [name] } } },
+  });
+}
+
+// ── Feature B: release / staging preview container ──────────────────────────
+
+export interface ReleasePreviewContainerInput {
+  siteId: number;
+  previewId: number;
+  accountId: number;
+  uid: number;
+  gid: number;
+  base: SiteBaseId;
+  limits: PlanLimits;
+  /** Host path of previews/<id>/releases → /srv/releases (RO, NO propagation: never sees a window overlay). */
+  previewReleasesDir: string;
+  /** Host path of previews/<id>/runtime → /etc/oblimint/site (RO, preview.json only). */
+  previewRuntimeDir: string;
+  /** Host path of data/<slug> → /srv/data (READ-ONLY: a preview never writes the live data). */
+  dataDir: string;
+  /** Ephemeral data paths (pre-checked real directories by the builder, ≤ 8): one tmpfs each. */
+  ephemeralPaths: string[];
+  env?: Array<[string, string]>;
+  /** Platform ceiling (settings releasePreviews.memoryMb / cpus). */
+  caps: { memoryMb: number; cpus: number };
+}
+
+export const PREVIEW_PIDS_LIMIT = 128;
+export const PREVIEW_EPHEMERAL_TMPFS_MB = 64;
+export const PREVIEW_MAX_EPHEMERAL_TMPFS = 8;
+
+/** A relative data path usable as a tmpfs target: normalized, no ',' nor ':' (Docker tmpfs option syntax). */
+export function isPreviewTmpfsPath(p: string): boolean {
+  if (typeof p !== 'string' || !p || p.length > 512 || p.includes(',') || p.includes(':') || p.includes('\0') || p.includes('\\')) return false;
+  if (p.startsWith('/') || p.endsWith('/')) return false;
+  return p.split('/').every((s) => s !== '' && s !== '.' && s !== '..');
+}
+
+/**
+ * Docker create options of a release / staging preview container (role
+ * site-rpreview): the hardening of siteContainerSpec, plus — data READ-ONLY
+ * (tmpfs on the ephemeral paths), NO database socket, releases without
+ * propagation, never restarted (RestartPolicy no: the planner never starts it
+ * again either, B1), limits = min(plan / node ceiling, preview caps), pids ≤ 128.
+ */
+export function releasePreviewContainerSpec(input: ReleasePreviewContainerInput): Docker.ContainerCreateOptions {
+  const name = releasePreviewContainer(input.siteId, input.previewId);
+  const net = accountNetwork(input.accountId);
+  const tmpfs: Record<string, string> = {
+    '/tmp': `${TMPFS_SHARED_FLAGS},size=128m`,
+    '/run': `${TMPFS_SHARED_FLAGS},size=16m`,
+  };
+  for (const p of input.ephemeralPaths.filter(isPreviewTmpfsPath).slice(0, PREVIEW_MAX_EPHEMERAL_TMPFS).sort()) {
+    tmpfs[`${CONTAINER_PATHS.data}/${p}`] = `${TMPFS_SHARED_FLAGS},size=${PREVIEW_EPHEMERAL_TMPFS_MB}m`;
+  }
+  const hostConfig: Docker.HostConfig = {
+    Mounts: [
+      { Type: 'bind', Source: posix(input.previewReleasesDir), Target: CONTAINER_PATHS.releases, ReadOnly: true },
+      { Type: 'bind', Source: posix(input.dataDir), Target: CONTAINER_PATHS.data, ReadOnly: true },
+      { Type: 'bind', Source: posix(input.previewRuntimeDir), Target: CONTAINER_PATHS.siteConfigDir, ReadOnly: true },
+    ],
+    Tmpfs: tmpfs,
+    ReadonlyRootfs: true,
+    CapDrop: ['ALL'],
+    SecurityOpt: [NO_NEW_PRIVILEGES, TENANT_SECCOMP_OPT],
+    PidsLimit: Math.min(input.limits.pidsLimit ?? DEFAULT_SITE_PIDS_LIMIT, PREVIEW_PIDS_LIMIT),
+    OomScoreAdj: TENANT_OOM_SCORE_ADJ,
+    RestartPolicy: { Name: 'no' },
+    NetworkMode: net,
+    LogConfig: LOG_CONFIG,
+  };
+  const eff = effectiveSiteLimits(input.limits);
+  const memoryMb = Math.min(eff.memoryMb ?? input.caps.memoryMb, input.caps.memoryMb);
+  const cpus = Math.min(eff.cpus ?? input.caps.cpus, input.caps.cpus);
+  hostConfig.Memory = Math.round(memoryMb * 1048576);
+  hostConfig.MemorySwap = hostConfig.Memory;
+  hostConfig.NanoCpus = Math.round(cpus * 1e9);
+  return withHash({
+    name,
+    Image: siteImage(input.base),
+    User: `${input.uid}:${input.gid}`,
+    Env: [
+      `OBLIMINT_SITE_CONFIG=${CONTAINER_PATHS.siteConfigDir}/${runtimeConfigFile('preview', null)}`,
+      ...(input.env ?? []).map(([k, v]) => `${k}=${v}`),
+    ],
+    Labels: {
+      [LABELS.internal]: 'true',
+      [LABELS.account]: String(input.accountId),
+      [LABELS.site]: String(input.siteId),
+      [LABELS.role]: 'site-rpreview',
+      [LABELS.preview]: String(input.previewId),
+    },
     HostConfig: hostConfig,
     NetworkingConfig: { EndpointsConfig: { [net]: { Aliases: [name] } } },
   });

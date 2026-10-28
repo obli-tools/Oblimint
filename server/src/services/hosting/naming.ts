@@ -27,6 +27,14 @@ export const siteContainer = (siteId: number): string => `oblimint-site-${siteId
 export const secondaryContainer = (siteId: number, runtimeId: number): string => `oblimint-site-${siteId}-rt-${runtimeId}`;
 export const previewContainer = (siteId: number): string => `oblimint-site-${siteId}-preview`;
 export const fileServerContainer = (accountId: number): string => `oblimint-files-${accountId}`;
+/**
+ * Release / staging preview container (feature B): ONE per preview, so a stale
+ * edge vhost (pv-<old id>, kept as last valid version) can never reach the
+ * container of the next preview (502).
+ */
+export const releasePreviewContainer = (siteId: number, previewId: number): string => `oblimint-site-${siteId}-rpv-${previewId}`;
+export const releasePreviewUpstream = (siteId: number, previewId: number): string =>
+  `http://${releasePreviewContainer(siteId, previewId)}:${SITE_CONTAINER_PORT}`;
 
 export const LABELS = {
   internal: 'oblimint.internal',
@@ -36,9 +44,14 @@ export const LABELS = {
   role: 'oblimint.role',
   /** sha256 of the normalized create spec: drift → recreate (reconcile). */
   specHash: 'oblimint.spec-hash',
+  /** site_previews.id of a release / staging preview container (role site-rpreview). */
+  preview: 'oblimint.preview',
 } as const;
 
-export type ContainerRole = 'site' | 'site-secondary' | 'site-preview' | 'filesrv' | 'edge' | 'hostd' | 'panel-postgres'
+export type ContainerRole = 'site' | 'site-secondary' | 'site-preview'
+  // Feature B: release / staging preview (sandbox, never restarted, never reloaded by a publication)
+  | 'site-rpreview'
+  | 'filesrv' | 'edge' | 'hostd' | 'panel-postgres'
   // P2
   | 'db' | 'pdns' | 'dbadmin'
   // P3: shared scanner (panel network), ephemeral adapter tools container (account networks)
@@ -142,6 +155,29 @@ export const siteRelayUsername = (siteId: number): string => `site-${siteId}`;
 /** Blue/green preview host on the dedicated preview domain (P2): <slug>-<id>.<previewDomain>. */
 export function previewHost(site: { id: number; slug: string }, previewDomain: string): string {
   return `${site.slug}-${site.id}.${previewDomain.toLowerCase()}`;
+}
+
+const DNS_LABEL_MAX = 63;
+const HOST_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+/**
+ * Feature B — host of a release / staging preview on the preview domain:
+ * <slugpart>-<siteId>-r<n>-pv.<previewDomain> (release n) or
+ * <slugpart>-<siteId>-s-pv.<previewDomain> (staging). Ends with "-pv": never
+ * collides with the blue/green host (<slug>-<id>, ends with digits). Unique per
+ * (site, target) since the site id is in it, whatever the slug truncation; one
+ * DNS label (≤ 63 chars, no "--"), so the wildcard *.previewDomain covers it.
+ * null when the result is not a valid host name.
+ */
+export function releasePreviewHost(site: { id: number; slug: string }, target: { kind: 'release'; number: number } | { kind: 'staging' },
+  previewDomain: string): string | null {
+  const suffix = target.kind === 'release' ? `-${site.id}-r${Math.trunc(target.number)}-pv` : `-${site.id}-s-pv`;
+  let slug = String(site.slug ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-{2,}/g, '-').replace(/^-+/, '');
+  slug = slug.slice(0, Math.max(0, DNS_LABEL_MAX - suffix.length)).replace(/-+$/, '');
+  if (!slug) slug = 'site';
+  const label = `${slug}${suffix}`.slice(0, DNS_LABEL_MAX);
+  const host = `${label}.${previewDomain.trim().toLowerCase().replace(/\.$/, '')}`;
+  return HOST_RE.test(host) && label.length <= DNS_LABEL_MAX ? host : null;
 }
 
 /** Image reference of a site base: OBLIMINT_SITE_IMAGE_PREFIX + base id + OBLIMINT_IMAGE_TAG. */

@@ -74,6 +74,8 @@ export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed> = {
   'files.read': 'files.manage',
   'files.write': 'files.manage',
   'releases.publish': 'releases.publish',
+  // Feature B: a preview runs code that is not live yet — the creator must be able to publish.
+  'previews.manage': 'releases.publish',
   'sites.manage': 'sites.manage',
   'sites.create': 'sites.manage',
   'logs.read': 'read',
@@ -88,6 +90,8 @@ const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
   'files.read': 'files.manage',
   'files.write': 'files.manage',
   'releases.publish': 'releases.publish',
+  // No capability of its own: the preview rights come from files.read (code.read) and releases.publish (staging).
+  'previews.manage': null,
   'sites.manage': 'sites.manage',
   'sites.create': 'sites.manage',
   'logs.read': null,
@@ -96,6 +100,14 @@ const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
   'databases.manage': 'databases.manage',
   'routes.manage': 'domains.manage',
 };
+
+/** Feature B (B9): stops the previews started through a key (never throws). */
+async function stopKeyPreviews(keyId: number): Promise<void> {
+  try {
+    const { previewService } = await import('../previews/previews.service');
+    await previewService.stopForKey(keyId);
+  } catch { /* logged by the preview service */ }
+}
 
 const KEY_RE = /^obk_([1-9]\d{0,9})_([A-Za-z0-9_-]{43})$/;
 const MIN_TTL_MS = 60 * 60 * 1000;
@@ -436,6 +448,11 @@ export const apiKeysService = {
     const { row, creator } = await managedKey(actor, account, keyId, { label: 'Key' });
     const n = await normalize(actor, account, body, false);
     const newOwner = !creator && await widens(row, n) ? actor.userId : null;
+    // Feature B (B9): a key losing previews.manage, or expired now, stops its previews first.
+    if ((n.scopes !== undefined && !n.scopes.includes('previews.manage'))
+      || (n.expiresAt instanceof Date && n.expiresAt.getTime() <= Date.now())) {
+      await stopKeyPreviews(row.id);
+    }
     await db.transaction(async (trx) => {
       const patch: Record<string, unknown> = { updated_at: trx.fn.now() };
       if (newOwner !== null) patch.created_by = newOwner;
@@ -481,6 +498,8 @@ export const apiKeysService = {
   async remove(req: Request, actor: HostingActor, accountId: number, keyId: number): Promise<void> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
     const { row } = await managedKey(actor, account, keyId, { label: 'Key' });
+    // Feature B (B9): its previews are stopped BEFORE the FK nulls created_by_key.
+    await stopKeyPreviews(row.id);
     await db('api_keys').where({ id: row.id }).del();
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.delete', {
       resourceType: 'account', resourcePath: String(account.id), details: { keyId: row.id, name: row.name },

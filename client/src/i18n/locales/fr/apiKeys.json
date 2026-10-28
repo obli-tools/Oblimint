@@ -99,6 +99,12 @@
           "label": "Routes",
           "hint": "Choisir lequel de ses sites (ou runtime d'un site) sert un chemin d'un domaine, ex. exemple.com/uploads/ ; seulement sur les domaines donnés à la clé ou, pour une clé limitée à certains sites, sur les domaines qui ne servent que ses sites. Une route vers un site hors de la clé n'est jamais modifiée ni supprimée."
         }
+      },
+      "previews": {
+        "manage": {
+          "label": "Aperçus en direct",
+          "hint": "Démarrer, consulter et arrêter un aperçu d'une release ou du staging ; nécessite aussi files.read (staging : releases.publish)"
+        }
       }
     },
     "guide": "Guide API & agents IA",

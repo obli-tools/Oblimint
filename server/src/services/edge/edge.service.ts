@@ -16,7 +16,8 @@ import { localPaths } from '../hosting/paths';
 import { json } from '../hosting/rows';
 import { notify } from '../usage/notifications.service';
 import { createDebouncedRunner, EDGE_NOT_RUNNING, type EdgeExecResult } from './confSync';
-import { ensureSelfSignedFallback } from './selfSignedFallback';
+import { ensurePreviewSelfSigned, ensureSelfSignedFallback } from './selfSignedFallback';
+import { open as openSecret } from '../../utils/secretBox';
 import { withContributedVhosts } from './contributors';
 import type { EdgeDirs } from './edgeTree';
 import { isValidServerName, type EdgeVhost } from './nginxConfig';
@@ -28,7 +29,8 @@ import {
 } from './unitsState';
 import { vhostToUnit } from './vhostUnits';
 import {
-  planVhosts, SERVED_ACCOUNT_STATUSES, type EdgePlanInput, type PlanCertificate, type PlanDomain, type PlanRoute, type PlanSite, type PlatformHosts,
+  planVhosts, SERVED_ACCOUNT_STATUSES, type EdgePlanInput, type PlanCertificate, type PlanDomain, type PlanReleasePreview, type PlanRoute, type PlanSite,
+  type PlatformHosts,
 } from './vhostPlan';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -219,7 +221,43 @@ async function loadPlanInput(): Promise<EdgePlanInput> {
   // HTTPS on every platform name, even without an ACME certificate (private name, issuance pending / failed).
   const selfSignedNames = await ensureSelfSignedFallback(localPaths.edgeCerts(),
     [platform.panel, platform.clientPanel ?? null, platform.dbAdmin, platform.probeV4, platform.probeV6]);
-  return { domains, routes, sites, certificates, platform, panelUpstream: panelUpstream(), certFilesExist, selfSignedNames };
+  // Feature B: active release / staging previews (starting | running, not expired).
+  const releasePreviews = platform.previewDomain ? await loadReleasePreviews(nodeId, statuses, domains, routes) : [];
+  const previewSelfSigned = releasePreviews.length ? await ensurePreviewSelfSigned(localPaths.edgeCerts(), platform.previewDomain) : null;
+  return {
+    domains, routes, sites, certificates, platform, panelUpstream: panelUpstream(), certFilesExist, selfSignedNames, releasePreviews, previewSelfSigned,
+  };
+}
+
+async function loadReleasePreviews(nodeId: number, statuses: string[], domains: PlanDomain[], routes: PlanRoute[]): Promise<PlanReleasePreview[]> {
+  const rows = await db('site_previews as p')
+    .join('hosting_accounts as a', 'a.id', 'p.account_id')
+    .join('sites as s', 's.id', 'p.site_id')
+    .where('a.node_id', nodeId)
+    .whereIn('a.status', statuses)
+    .whereIn('p.status', ['starting', 'running'])
+    .where('p.expires_at', '>', db.fn.now())
+    .select('p.id', 'p.site_id', 'p.account_id', 'p.tenant_id', 'p.host', 'p.access_secret_sealed', 'a.status as account_status',
+      's.php_settings') as Array<{ id: number; site_id: number; account_id: number; tenant_id: number; host: string;
+      access_secret_sealed: string; account_status: PlanReleasePreview['account_status']; php_settings: unknown }>;
+  const verified = new Map(domains.filter((d) => d.verification_status === 'verified').map((d) => [d.id, d.name.toLowerCase()]));
+  const out: PlanReleasePreview[] = [];
+  for (const r of rows) {
+    let secret: string;
+    try {
+      secret = openSecret('site-preview', r.access_secret_sealed);
+    } catch {
+      logger.warn({ previewId: r.id }, 'edge: preview secret cannot be opened (preview not served)');
+      continue;
+    }
+    const redirectHosts = [...new Set(routes.filter((x) => x.site_id === r.site_id && x.path_prefix === '/' && x.runtime_id === null)
+      .map((x) => verified.get(x.domain_id)).filter((n): n is string => !!n))].sort().slice(0, 5);
+    out.push({
+      id: r.id, site_id: r.site_id, account_id: r.account_id, tenant_id: r.tenant_id, host: r.host, secret,
+      account_status: r.account_status, php_settings: json(r.php_settings, null), redirectHosts,
+    });
+  }
+  return out;
 }
 
 async function buildVhostsWithInput(): Promise<{ vhosts: EdgeVhost[]; input: EdgePlanInput }> {

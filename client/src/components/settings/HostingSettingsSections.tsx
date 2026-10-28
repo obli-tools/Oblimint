@@ -59,6 +59,7 @@ export function HostingSettingsSections() {
       <PanelAddressSection panel={panel} onSaved={setPanel} />
       <DnsSection value={settings.dns} save={save} />
       <PreviewSection value={settings.preview} panelHost={panel?.panel_hostname ?? null} save={save} />
+      <ReleasePreviewsSection value={settings.releasePreviews} previewDomain={settings.preview.previewDomain} save={save} />
       <DbAdminSection value={settings.dbAdmin} panelHost={panel?.panel_hostname ?? null} previewDomain={settings.preview.previewDomain} save={save} />
       <AccessSection value={settings.access} panel={panel} save={save} />
       <UsageSection value={settings.usage} save={save} />
@@ -224,6 +225,77 @@ function PreviewSection({ value, panelHost, save }: { value: HostingSettings['pr
         label={t('platformSettings.preview.wildcard') || 'Wildcard certificate'}
         description={t('platformSettings.preview.wildcardHint') || 'One *.<domain> certificate through DNS-01: the zone of the preview domain must be hosted on our DNS server. Off: one certificate per preview host.'}
       />
+    </SettingsBlock>
+  );
+}
+
+// ── Release previews (feature B) ───────────────────────────────────────────
+
+function ReleasePreviewsSection({ value, previewDomain, save }: { value: HostingSettings['releasePreviews']; previewDomain: string | null; save: SaveFn }) {
+  const { t } = useTranslation();
+  const [draft, setDraft, dirty, reset] = useDraft({
+    enabled: value.enabled,
+    defaultTtlMinutes: String(value.defaultTtlMinutes),
+    maxTtlMinutes: String(value.maxTtlMinutes),
+    maxPerAccount: String(value.maxPerAccount),
+    maxTotal: String(value.maxTotal),
+    memoryMb: String(value.memoryMb),
+    cpus: String(value.cpus),
+    minIntervalSeconds: String(value.minIntervalSeconds),
+  });
+  const { saving, error, setError, run } = useSaver(save);
+  const set = (patch: Partial<typeof draft>) => { setDraft({ ...draft, ...patch }); setError(null); };
+  const range = (min: number, max: number) => t('platformSettings.errors.range', { min, max, defaultValue: 'Between {{min}} and {{max}}.' });
+  const defTtl = intInRange(draft.defaultTtlMinutes, 5, 1440);
+  const maxTtl = intInRange(draft.maxTtlMinutes, 5, 1440);
+  const perAccount = intInRange(draft.maxPerAccount, 1, 10);
+  const total = intInRange(draft.maxTotal, 1, 200);
+  const memory = intInRange(draft.memoryMb, 128, 4096);
+  const cpusNum = Number(draft.cpus);
+  const cpus = Number.isFinite(cpusNum) && cpusNum >= 0.25 && cpusNum <= 4 ? cpusNum : null;
+  const interval = intInRange(draft.minIntervalSeconds, 0, 3600);
+  const ttlOrder = defTtl !== null && maxTtl !== null && defTtl > maxTtl;
+  const valid = defTtl !== null && maxTtl !== null && perAccount !== null && total !== null && memory !== null && cpus !== null && interval !== null && !ttlOrder;
+  const num = (id: keyof typeof draft, label: string, min: number, max: number, parsed: number | null) => (
+    <Field label={label} htmlFor={`rp-${id}`} error={parsed === null ? range(min, max) : null}>
+      <NumberInput id={`rp-${id}`} value={String(draft[id])} onChange={(v) => set({ [id]: v } as Partial<typeof draft>)} min={min} max={max} invalid={parsed === null} />
+    </Field>
+  );
+
+  return (
+    <SettingsBlock
+      id="settings-release-previews"
+      icon={<Eye />}
+      title={t('previews.settings.title') || 'Release previews'}
+      description={t('previews.settings.explain') || 'Live previews of a release or of the staging, on the preview domain (needs a preview domain).'}
+      dirty={dirty} saving={saving} canSave={valid}
+      onSave={() => {
+        if (!valid) return;
+        void run('releasePreviews', {
+          enabled: draft.enabled, defaultTtlMinutes: defTtl!, maxTtlMinutes: maxTtl!, maxPerAccount: perAccount!, maxTotal: total!,
+          memoryMb: memory!, cpus: cpus!, minIntervalSeconds: interval!,
+        });
+      }}
+      onReset={reset} error={error ?? (ttlOrder ? range(5, maxTtl ?? 1440) : null)}
+    >
+      {!previewDomain && (
+        <p className="flex items-start gap-2 text-sm text-status-pending">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          {t('sites.errors.previewDomainMissing') || 'No preview domain is configured on this platform.'}
+        </p>
+      )}
+      <ToggleSwitch checked={draft.enabled} onChange={(v) => set({ enabled: v })} label={t('previews.settings.enabled') || 'Enabled'} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {num('defaultTtlMinutes', t('previews.settings.defaultTtlMinutes') || 'Default duration (min)', 5, 1440, defTtl)}
+        {num('maxTtlMinutes', t('previews.settings.maxTtlMinutes') || 'Longest duration (min)', 5, 1440, maxTtl)}
+        {num('maxPerAccount', t('previews.settings.maxPerAccount') || 'Previews per account', 1, 10, perAccount)}
+        {num('maxTotal', t('previews.settings.maxTotal') || 'Previews on the platform', 1, 200, total)}
+        {num('memoryMb', t('previews.settings.memoryMb') || 'Memory per preview (MiB)', 128, 4096, memory)}
+        <Field label={t('previews.settings.cpus') || 'CPUs per preview'} htmlFor="rp-cpus" error={cpus === null ? range(0.25, 4) : null}>
+          <input id="rp-cpus" type="number" step="0.25" min={0.25} max={4} value={draft.cpus} onChange={(e) => set({ cpus: e.target.value })} className={cn(settingsInputCls, 'font-mono', cpus === null && 'ring-2 ring-status-down/50')} />
+        </Field>
+        {num('minIntervalSeconds', t('previews.settings.minIntervalSeconds') || 'Minimum delay between two previews of a site (s)', 0, 3600, interval)}
+      </div>
     </SettingsBlock>
   );
 }

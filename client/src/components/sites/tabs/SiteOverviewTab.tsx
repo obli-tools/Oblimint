@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, Clock, FolderUp, RefreshCw, Rocket, ScanSearch, Timer, Wand2 } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Eye, FolderUp, RefreshCw, Rocket, ScanSearch, Timer, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TFunction } from 'i18next';
 import {
@@ -20,6 +20,8 @@ import { isNotImplemented, siteErrorMessage, toastSiteError } from '../siteError
 import { useHostingEvent } from '../useHostingEvent';
 import { cardCls, fieldCls, labelCls, sectionLabelCls } from '../styles';
 import type { SiteTabProps } from './types';
+import { PreviewCard, useSitePreview } from '../previews/PreviewCard';
+import { StartPreviewModal } from '../previews/StartPreviewModal';
 
 type GoTo = (tab: 'overview' | 'releases' | 'runtime' | 'routes' | 'data' | 'files', extra?: Record<string, string>) => void;
 
@@ -336,6 +338,12 @@ function StagingCard({ site, onPublish }: SiteTabProps) {
   }, [load]);
   useHostingEvent<{ siteId: number }>(HostingSocketEvents.RELEASE_UPDATED, (p) => { if (p.siteId === site.id) void load(); });
 
+  // Feature B: preview of the staging (code.read + releases.publish; approval mode: + releases.approve).
+  const { preview, reload: reloadPreview } = useSitePreview(site.id);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const canPreviewStaging = !!staging && staging.pendingChanges > 0 && can('code.read', site.accountId) && can('releases.publish', site.accountId)
+    && (site.publishMode !== 'approval' || can('releases.approve', site.accountId));
+
   const deadline = staging?.autoPublishAt ? new Date(staging.autoPublishAt).getTime() : null;
   const now = useNow(deadline !== null);
   const remaining = deadline !== null ? Math.max(0, (deadline - now) / 1000) : null;
@@ -405,13 +413,31 @@ function StagingCard({ site, onPublish }: SiteTabProps) {
             </ul>
           )}
 
-          {staging.pendingChanges > 0 && can('releases.publish', site.accountId) && (
-            <Button size="sm" onClick={onPublish} className="w-full sm:w-auto">
-              <Rocket size={14} className="mr-1" />
-              {t('releases.publish.button') || 'Publish'}
-            </Button>
-          )}
+          {(staging.pendingChanges > 0 && can('releases.publish', site.accountId)) || canPreviewStaging ? (
+            <div className="flex flex-wrap gap-2">
+              {staging.pendingChanges > 0 && can('releases.publish', site.accountId) && (
+                <Button size="sm" onClick={onPublish} className="w-full sm:w-auto">
+                  <Rocket size={14} className="mr-1" />
+                  {t('releases.publish.button') || 'Publish'}
+                </Button>
+              )}
+              {canPreviewStaging && (
+                <Button size="sm" variant="secondary" onClick={() => setPreviewOpen(true)} className="w-full sm:w-auto">
+                  <Eye size={14} className="mr-1" />
+                  {t('previews.startStaging') || 'Preview the staging'}
+                </Button>
+              )}
+            </div>
+          ) : null}
+          {preview?.target === 'staging' && <PreviewCard site={site} preview={preview} onChanged={reloadPreview} compact />}
         </div>
+      )}
+      {previewOpen && (
+        <StartPreviewModal
+          site={site} release={null} current={preview}
+          onClose={() => setPreviewOpen(false)}
+          onStarted={() => { setPreviewOpen(false); void reloadPreview(); }}
+        />
       )}
     </div>
   );

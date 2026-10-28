@@ -40,6 +40,17 @@ const sectionSchemas = {
     previewDomain: hostname.nullable(),
     wildcardCertificate: z.boolean(),
   }).strict(),
+  // Feature B: release / staging previews (own section, flat keys: B4) — + defaultTtlMinutes ≤ maxTtlMinutes (update()).
+  releasePreviews: z.object({
+    enabled: z.boolean(),
+    defaultTtlMinutes: z.number().int().min(5).max(1440),
+    maxTtlMinutes: z.number().int().min(5).max(1440),
+    maxPerAccount: z.number().int().min(1).max(10),
+    maxTotal: z.number().int().min(1).max(200),
+    memoryMb: z.number().int().min(128).max(4096),
+    cpus: z.number().min(0.25).max(4),
+    minIntervalSeconds: z.number().int().min(0).max(3600),
+  }).strict(),
   dbAdmin: z.object({
     hostname: hostname.nullable(),
   }).strict(),
@@ -252,6 +263,10 @@ export const platformSettings = {
       if (parsed.success && s === 'mail') {
         const v = parsed.data as unknown as { spamTagScore: number; spamRejectScore: number };
         if (v.spamTagScore >= v.spamRejectScore) throw new AppError(400, 'Validation failed — mail: spamTagScore must be < spamRejectScore', 'validation');
+      }
+      if (parsed.success && s === 'releasePreviews') {
+        const v = parsed.data as { defaultTtlMinutes: number; maxTtlMinutes: number };
+        if (v.defaultTtlMinutes > v.maxTtlMinutes) throw new AppError(400, 'Validation failed — releasePreviews: defaultTtlMinutes must be ≤ maxTtlMinutes', 'validation');
       }
       if (parsed.success && s === 'edge') {
         const v = parsed.data as { defaultBodySizeMb: number; maxBodySizeMb: number; streamPorts: Array<{ port: number; protocol: string }> };

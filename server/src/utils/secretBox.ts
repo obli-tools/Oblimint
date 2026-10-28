@@ -27,7 +27,9 @@ export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
   // Environment variables of the sites (values sealed at rest).
   | 'site-env'
   // Backups: destination credentials and the platform backup passphrase.
-  | 'backup';
+  | 'backup'
+  // Feature B: access gate secret of a release / staging preview (edge string comparison).
+  | 'site-preview';
 
 export class SecretBoxError extends Error {
   constructor(message: string) {

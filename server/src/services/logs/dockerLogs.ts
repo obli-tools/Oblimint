@@ -134,6 +134,8 @@ export function containerRoleOf(labels: Record<string, string> | undefined): str
   const role = labels?.[LABELS.role];
   if (role === 'site') return 'primary';
   if (role === 'site-preview') return 'preview';
+  // Feature B: release / staging preview (listed only with includePreview: code.read).
+  if (role === 'site-rpreview') return 'release-preview';
   if (role === 'site-secondary') {
     const rid = Number(labels?.[LABELS.runtime]);
     return Number.isInteger(rid) && rid > 0 ? `secondary-${rid}` : null;
@@ -141,13 +143,14 @@ export function containerRoleOf(labels: Record<string, string> | undefined): str
   return null;
 }
 
-const ROLE_ORDER = (r: string) => (r === 'primary' ? 0 : r === 'preview' ? 2 : 1);
+const ROLE_ORDER = (r: string) => (r === 'primary' ? 0 : r === 'preview' ? 2 : r === 'release-preview' ? 3 : 1);
 
 /**
  * Containers of a site (labels set by the panel: oblimint.site=<id> and a
- * site role; tenants never set labels), primary first.
+ * site role; tenants never set labels), primary first. The release preview
+ * container (feature B, B12) only with includePreview (the caller checked code.read).
  */
-export async function listSiteContainers(docker: Docker, siteId: number, accountId: number): Promise<SiteLogContainer[]> {
+export async function listSiteContainers(docker: Docker, siteId: number, accountId: number, includePreview = false): Promise<SiteLogContainer[]> {
   const list = await docker.listContainers({
     all: true,
     filters: { label: [`${LABELS.site}=${siteId}`, `${LABELS.account}=${accountId}`] },
@@ -157,6 +160,7 @@ export async function listSiteContainers(docker: Docker, siteId: number, account
     if (c.Labels?.[LABELS.site] !== String(siteId) || c.Labels?.[LABELS.account] !== String(accountId)) continue;
     const role = containerRoleOf(c.Labels);
     if (!role) continue;
+    if (role === 'release-preview' && !includePreview) continue;
     const name = (c.Names?.[0] ?? c.Id).replace(/^\//, '');
     out.push({ name, role, running: c.State === 'running', tty: false });
   }

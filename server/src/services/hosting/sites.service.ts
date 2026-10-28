@@ -212,6 +212,20 @@ async function removeSite(req: Request, actor: HostingActor, row: SiteRow): Prom
   emitSite(row, 'deleted');
 }
 
+/**
+ * Feature B (A6): after lockForTeardown, the preview builds of these sites are
+ * cancelled and awaited (≤ 30 s), their previews stopped and cleaned
+ * (siteDeleted). Never throws: the purge removes previews/ anyway.
+ */
+async function previewTeardown(siteIds: number[]): Promise<void> {
+  try {
+    const { previewService } = await import('../previews/previews.service');
+    for (const id of siteIds) await previewService.teardownSite(id);
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, siteIds }, 'previews: teardown failed (the purge removes them)');
+  }
+}
+
 export const sitesService = {
   async list(actor: HostingActor, filters: { accountId?: number | null; search?: string }): Promise<Site[]> {
     // Staff: 'read' needs a hosting capability or overview.read (§8).
@@ -348,6 +362,9 @@ export const sitesService = {
     return forActor(actor, await fetchSite(row.id));
   },
 
+  /** Feature B: see previewTeardown (exported for accounts.service). */
+  previewTeardown: (siteIds: number[]) => previewTeardown(siteIds),
+
   /** DELETE /sites/:id {confirm: slug}: containers + storage first (purge), rows kept on failure. */
   async remove(req: Request, actor: HostingActor, siteId: number, confirm: unknown): Promise<void> {
     const row = await loadSite(actor, siteId, 'sites.manage');
@@ -359,6 +376,8 @@ export const sitesService = {
       // No publication / rollback may run during the teardown (it would
       // recreate repo.git / releases/ behind it): 409 publishInProgress.
       unlock = await releaseService.lockForTeardown([row.id]);
+      // Feature B: preview builds cancelled and awaited, previews stopped (siteDeleted) before the purge.
+      await previewTeardown([row.id]);
       await removeSite(req, actor, row);
     } finally {
       unlock?.();

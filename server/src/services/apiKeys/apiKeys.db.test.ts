@@ -120,7 +120,7 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
 
   // ── grantable scopes (the key form's presets) and the preset recorded in the audit ──
   assert.deepEqual(await apiKeysService.grantable(ownerActor, acme), {
-    scopes: ['files.read', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'cron.manage', 'logs.read'], canGrantDomains: false,
+    scopes: ['files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'logs.read'], canGrantDomains: false,
   }, 'what sites.manage + files.manage + releases.publish allow, no domain');
   await assert.rejects(apiKeysService.grantable(readerActor, acme), (e: { statusCode: number }) => e.statusCode === 403, 'a reader manages no key');
   await assert.rejects(apiKeysService.grantable(ownerActor, other), (e: { statusCode: number }) => e.statusCode === 404);
@@ -130,11 +130,11 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
     assert.equal(d.keyId, keyId);
     return d.preset as string;
   };
-  const ci = await apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'ci-preset', scopes: ['files.read', 'files.write', 'releases.publish'], siteScope: 'selected', siteIds: [s1] });
+  const ci = await apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'ci-preset', scopes: ['files.read', 'files.write', 'releases.publish', 'previews.manage'], siteScope: 'selected', siteIds: [s1] });
   assert.equal(await presetOf(ci.id), 'update');
   await apiKeysService.remove(fakeReq(), ownerActor, acme, ci.id);
   const every = await apiKeysService.create(fakeReq(), ownerActor, acme, {
-    name: 'all-preset', scopes: ['files.read', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'cron.manage', 'logs.read'], siteScope: 'all',
+    name: 'all-preset', scopes: ['files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'logs.read'], siteScope: 'all',
   });
   assert.equal(await presetOf(every.id), 'all', 'everything the owner holds; no domain since he may not give any');
   await apiKeysService.remove(fakeReq(), ownerActor, acme, every.id);

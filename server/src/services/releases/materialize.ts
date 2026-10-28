@@ -59,6 +59,11 @@ export interface MaterializeInput {
   typedDataPaths?: string[];
   /** Base release to hardlink unchanged files from (on disk), null for none. */
   base: { number: number; commit: string } | null;
+  /**
+   * Directory of the base tree to hardlink from (default <releasesDir>/<base.number>).
+   * Feature B: a preview builds under previews/<id>/releases from the live tree releases/<n>.
+   */
+  baseDir?: string;
   links?: LinkOps;
   log?: (level: 'info' | 'warn', message: string) => void;
 }
@@ -158,7 +163,7 @@ export async function materializeRelease(input: MaterializeInput): Promise<Mater
 
     // Blobs of the base release, per path (regular files only).
     const baseBlobs = new Map<string, string>();
-    const baseDir = input.base ? path.posix.join(input.releasesDir, String(input.base.number)) : null;
+    const baseDir = input.base ? (input.baseDir ?? path.posix.join(input.releasesDir, String(input.base.number))) : null;
     if (input.base && baseDir && fs.existsSync(baseDir) && !links.isLink(baseDir)) {
       for (const e of await lsTree(input.repoDir, input.base.commit)) {
         if (e.type === 'blob' && (e.mode === '100644' || e.mode === '100755')) baseBlobs.set(e.path, `${e.mode}:${e.oid}`);

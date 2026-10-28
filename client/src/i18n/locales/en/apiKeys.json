@@ -99,6 +99,12 @@
           "label": "Routes",
           "hint": "Choose which of its sites (or runtime of a site) serves a path of a domain, e.g. example.com/uploads/; only on the domains given to the key or, for a key limited to some sites, on domains serving its sites alone. A route towards a site outside the key is never changed or removed."
         }
+      },
+      "previews": {
+        "manage": {
+          "label": "Live previews",
+          "hint": "Start, fetch and stop a preview of a release or of the staging; needs files.read too (staging: releases.publish)"
+        }
       }
     },
     "guide": "API & AI agent guide",

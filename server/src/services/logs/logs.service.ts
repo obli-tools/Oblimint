@@ -5,7 +5,7 @@ import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { engineFor } from '../docker/engine';
-import { loadSite, type HostingActor } from '../hosting/access';
+import { actorReadsCode, loadSite, type HostingActor } from '../hosting/access';
 import type { SiteRow } from '../hosting/rows';
 import { platformSettings } from '../platformSettings';
 import { subscribeEdgeLog } from '../usage/edgeLog';
@@ -91,12 +91,13 @@ function fileSlug(site: SiteRow): string {
 }
 
 /** Docker client of the site's node and the site's containers (409 siteNotRunning when none, 502 when Docker is down). */
-async function siteContainers(site: SiteRow): Promise<{ docker: Awaited<ReturnType<typeof engineFor>>; containers: SiteLogContainer[] }> {
+async function siteContainers(site: SiteRow, includePreview = false): Promise<{ docker: Awaited<ReturnType<typeof engineFor>>; containers: SiteLogContainer[] }> {
   let containers: SiteLogContainer[];
   let docker: Awaited<ReturnType<typeof engineFor>>;
   try {
     docker = await engineFor(await nodeOf(site));
-    containers = await listSiteContainers(docker, site.id, site.account_id);
+    // Feature B (B12): the release preview container only for whoever reads the code.
+    containers = await listSiteContainers(docker, site.id, site.account_id, includePreview);
   } catch (err) {
     if (err instanceof AppError) throw err;
     throw backendUnavailable(err, site.id);
@@ -107,9 +108,9 @@ async function siteContainers(site: SiteRow): Promise<{ docker: Awaited<ReturnTy
 
 /** Container logs of a site (error / app), filtered, merged by time, last `limit`. */
 async function containerQuery(
-  site: SiteRow, source: 'error' | 'app', o: { sinceMs: number | null; untilMs: number | null; q: string | null; limit: number },
+  site: SiteRow, source: 'error' | 'app', o: { sinceMs: number | null; untilMs: number | null; q: string | null; limit: number; includePreview?: boolean },
 ): Promise<{ lines: LogLine[]; truncated: boolean }> {
-  const { docker, containers } = await siteContainers(site);
+  const { docker, containers } = await siteContainers(site, o.includePreview === true);
   const tail = o.q ? FILTERED_TAIL : o.limit;
   const stream = streamOfSource(source);
   let truncated = false;
@@ -178,7 +179,7 @@ export const logsService = {
       const r = await queryAccess(siteDir(site), filter, limit);
       return { siteId: site.id, source, lines: r.lines, truncated: r.truncated };
     }
-    const r = await containerQuery(site, source, { sinceMs, untilMs, q: text, limit });
+    const r = await containerQuery(site, source, { sinceMs, untilMs, q: text, limit, includePreview: actorReadsCode(actor, site) });
     return { siteId: site.id, source, lines: r.lines, truncated: r.truncated };
   },
 
@@ -231,7 +232,7 @@ export const logsService = {
     // the memory held is one container's bounded tail, never every container at once.
     const now = Date.now();
     const sinceMs = now - 86_400_000;
-    const { docker, containers } = await siteContainers(site);
+    const { docker, containers } = await siteContainers(site, actorReadsCode(actor, site));
     const stream = streamOfSource(src);
     const write = async (s: string): Promise<boolean> => {
       if (res.destroyed) return false;

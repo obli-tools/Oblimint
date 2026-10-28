@@ -27,6 +27,9 @@ export async function startWorkers(): Promise<void> {
   const { usageService } = await import('../services/hosting/usage.service');
 
   try { await releaseService.recoverInterrupted(); } catch (err) { logger.error({ err }, 'Release recovery failed'); }
+  // Feature B: release / staging previews — expired ones out BEFORE the edge's first sync.
+  const { previewWorker } = await import('../services/previews/previewExpiry');
+  try { await previewWorker.recoverAtBoot(); } catch (err) { logger.error({ err }, 'Preview recovery failed'); }
   const starters: Array<[string, () => void]> = [
     ['reconcile', () => reconcileService.start()],
     ['filesrv', () => fileServerService.start()],
@@ -34,6 +37,7 @@ export async function startWorkers(): Promise<void> {
     ['edge', () => edgeService.start()],
     ['certificates', () => certificateService.start()],
     ['usage', () => usageService.start()],
+    ['previews', () => previewWorker.start()],
   ];
   // Platform updates (Nodes > Updates): registry checks, automatic updates in the window, self-update results.
   const { platformUpdatesWorker } = await import('../services/platformUpdates/platformUpdates.service');
@@ -182,6 +186,7 @@ export async function stopWorkers(): Promise<void> {
     import('../services/hosting/usage.service').then((m) => m.usageService),
     import('../services/platformUpdates/platformUpdates.service').then((m) => m.platformUpdatesWorker),
     import('../services/backups/backup.service').then((m) => m.backupService),
+    import('../services/previews/previewExpiry').then((m) => m.previewWorker),
   ]);
   for (const m of mods) { try { m.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p2Workers()) { try { w.stop(); } catch { /* exiting */ } }

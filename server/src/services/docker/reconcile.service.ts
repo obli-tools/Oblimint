@@ -1,6 +1,8 @@
-import { siteEnvFor } from '../hosting/siteEnv.service';
+import { siteEnvFor, siteEnvForPreview } from '../hosting/siteEnv.service';
 import type Docker from 'dockerode';
-import type { HostingAccount, PlanLimits, QuotaMode, SiteStatus } from '@oblimint/shared';
+import type { HostingAccount, PlanLimits, QuotaMode, SiteBaseId, SiteStatus } from '@oblimint/shared';
+import { platformSettings } from '../platformSettings';
+import { json } from '../hosting/rows';
 import { HostingSocketEvents } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -94,11 +96,30 @@ export interface SiteState {
   routes: Array<{ path_prefix: string; runtime_id: number | null }>;
   /** Environment variables (decrypted), sorted by name. */
   env?: Array<[string, string]>;
+  /** Feature B: release / staging preview in starting | running (null: none). */
+  releasePreview?: PlanSite['releasePreview'];
 }
 
 export interface AccountState {
   account: AccountRow & { limits: PlanLimits };
   sites: SiteState[];
+  /** Feature B: ceiling of the preview containers. */
+  previewCaps?: { memoryMb: number; cpus: number };
+}
+
+/** Feature B: active preview rows of an account, mapped for the planner (tolerates a missing table: pre-migration). */
+async function loadReleasePreviews(accountId: number, siteIds: number[]): Promise<Map<number, NonNullable<PlanSite['releasePreview']>>> {
+  const out = new Map<number, NonNullable<PlanSite['releasePreview']>>();
+  if (!siteIds.length) return out;
+  const rows = await db('site_previews').where({ account_id: accountId }).whereIn('site_id', siteIds)
+    .whereIn('status', ['starting', 'running']).select('id', 'site_id', 'base', 'options') as Array<{ id: number; site_id: number; base: SiteBaseId; options: unknown }>;
+  for (const r of rows) {
+    const opts = json<{ env?: string; ephemeralPaths?: unknown }>(r.options, {});
+    const ephemeralPaths = Array.isArray(opts.ephemeralPaths) ? opts.ephemeralPaths.map(String) : [];
+    const env = await siteEnvForPreview(r.site_id, opts.env === 'all' ? 'all' : 'public');
+    out.set(r.site_id, { id: r.id, base: r.base, ephemeralPaths, env });
+  }
+  return out;
 }
 
 /**
@@ -132,6 +153,10 @@ export async function loadAccountState(accountId: number): Promise<AccountState 
       siteEnvFor(ids),
     ])
     : [[], [], [], new Map<number, Array<[string, string]>>()];
+  const [previews, previewSettings] = await Promise.all([
+    loadReleasePreviews(accountId, ids),
+    platformSettings.section('releasePreviews').catch(() => null),
+  ]);
   return {
     account: { ...row, limits: planLimits(row.plan_limits) },
     sites: sites.map((site) => ({
@@ -140,7 +165,9 @@ export async function loadAccountState(accountId: number): Promise<AccountState 
       dataPaths: dataPaths.filter((d) => d.site_id === site.id),
       routes: routes.filter((r) => r.site_id === site.id).map((r) => ({ path_prefix: r.path_prefix, runtime_id: r.runtime_id })),
       env: env.get(site.id) ?? [],
+      releasePreview: previews.get(site.id) ?? null,
     })),
+    previewCaps: previewSettings ? { memoryMb: previewSettings.memoryMb, cpus: previewSettings.cpus } : undefined,
   };
 }
 
@@ -154,6 +181,7 @@ function toPlanSite(s: SiteState): PlanSite {
     runtimes: s.runtimes.map((r) => ({ id: r.id, base: r.base })),
     dataPaths: s.dataPaths.map((d) => d.path),
     env: s.env,
+    releasePreview: s.releasePreview ?? null,
   };
 }
 
@@ -232,6 +260,21 @@ async function observe(docker: Docker, accountId: number, panelRef: string | nul
   return { actual, network, edgePresent: !!edge };
 }
 
+/**
+ * Scope of a container action's issue: site:<id>, preview:<siteId> (feature B:
+ * a release preview's failure never touches the site's status — persistOutcome
+ * ignores it, the preview service reads it in report.issues), filesrv, account.
+ */
+export function reconcileScopeOf(a: { siteId: number | null; role: string | null }): string {
+  if (a.siteId !== null && a.role === 'site-rpreview') return `preview:${a.siteId}`;
+  return a.siteId !== null ? `site:${a.siteId}` : a.role === 'filesrv' ? 'filesrv' : 'account';
+}
+
+/** Does a container action count as a change of the site (RUNTIME_UPDATED + edge sync)? Never a release preview (its builder syncs). */
+export function touchesSite(a: { siteId: number | null; role: string | null }): boolean {
+  return a.siteId !== null && a.role !== 'site-rpreview';
+}
+
 export async function runPass(state: AccountState, docker: Docker, now = new Date(), panelRef = selfContainerRef()): Promise<PassOutcome> {
   const { account } = state;
   const out: PassOutcome = {
@@ -283,6 +326,7 @@ export async function runPass(state: AccountState, docker: Docker, now = new Dat
     panelRef,
     edgePresent: observed.edgePresent,
     now,
+    previewCaps: state.previewCaps,
   });
   for (const n of plan.notes) logger.debug({ accountId: account.id }, n);
 
@@ -299,10 +343,9 @@ export async function runPass(state: AccountState, docker: Docker, now = new Dat
     if (networkFailed || treeFailed) return true;
     return a.siteId !== null && siteFailed.has(a.siteId);
   };
-  const scopeOf = (a: { siteId: number | null; role: string | null }): string =>
-    a.siteId !== null ? `site:${a.siteId}` : a.role === 'filesrv' ? 'filesrv' : 'account';
+  const scopeOf = reconcileScopeOf;
   const touch = (a: { siteId: number | null; role: string | null }, running: boolean) => {
-    if (a.siteId !== null) out.touchedSites.add(a.siteId);
+    if (touchesSite(a)) out.touchedSites.add(a.siteId!);
     if (a.role === 'filesrv') out.fileServerRunning = running;
   };
 

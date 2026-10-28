@@ -1,0 +1,91 @@
+{
+  "previews": {
+    "title": "Aperçu en direct",
+    "explain": "Fait tourner le code d'une release (ou un instantané analysé du staging) dans un conteneur temporaire et isolé, sur une URL privée. Rien ne part en ligne.",
+    "limits": "Données en lecture seule (uploads, caches et sessions fichiers échouent), aucune base de données, pas de mail, Internet comme le site, variables d'environnement secrètes masquées. Les instantanés du staging sont analysés avant.",
+    "replaces": "Remplace l'aperçu en cours de ce site.",
+    "start": "Aperçu",
+    "startRelease": "Aperçu de la release #{{number}}",
+    "startStaging": "Aperçu du staging",
+    "starting": "Démarrage de l'aperçu…",
+    "started": "Aperçu démarré",
+    "open": "Ouvrir",
+    "share": "Copier un lien de partage",
+    "shareHint": "Lien à usage unique, valable 10 minutes, via une page de confirmation.",
+    "shareCopied": "Lien de partage copié (un usage, 10 min)",
+    "extend": "Prolonger",
+    "extended": "Aperçu prolongé",
+    "stop": "Arrêter",
+    "stopConfirm": "Arrêter l'aperçu et supprimer son conteneur ?",
+    "stopped": "Aperçu arrêté",
+    "none": "Aucun aperçu en cours.",
+    "ttl": "Durée (minutes)",
+    "ttlHint": "Entre {{min}} et {{max}} minutes.",
+    "expiresIn": "expire dans {{time}}",
+    "expired": "expiré",
+    "advanced": "Avancé (gestionnaires du site)",
+    "envAll": "Transmettre toutes les variables d'environnement, secrets compris",
+    "envAllHint": "Effets de bord réels possibles (paiements, API externes).",
+    "allowBlockedScan": "Exécuter du code bloqué par l'analyse (staff, audité)",
+    "target": {
+      "release": "Release #{{number}}",
+      "staging": "Instantané du staging"
+    },
+    "badge": "Aperçu #{{id}}",
+    "by": "par {{name}}",
+    "byKey": "clé {{name}}",
+    "status": {
+      "building": "construction",
+      "starting": "démarrage",
+      "running": "en marche",
+      "failed": "en échec",
+      "stopping": "arrêt",
+      "stopped": "arrêté"
+    },
+    "stopReason": {
+      "user": "arrêté par un utilisateur",
+      "expired": "expiré",
+      "replaced": "remplacé",
+      "failed": "en échec",
+      "siteStopped": "site arrêté",
+      "suspended": "compte suspendu",
+      "key": "clé supprimée",
+      "siteDeleted": "site supprimé"
+    },
+    "warnings": {
+      "scanWarnings": "L'analyse a relevé des points : vérifie-les avant de publier.",
+      "dataReadOnly": "Les chemins de données sont en lecture seule : uploads, caches et sessions fichiers échouent.",
+      "ephemeralSkipped": "Certains chemins de données éphémères n'ont pas pu recevoir de dossier temporaire.",
+      "noDatabase": "Aucune base de données n'est branchée : les pages qui en ont besoin échouent.",
+      "secretsHidden": "Les variables d'environnement secrètes ne sont pas transmises.",
+      "noMail": "L'envoi de mail est désactivé.",
+      "egressAllowed": "L'aperçu accède à Internet comme le site (API externes avec de vrais identifiants comprises).",
+      "selfSignedCertificate": "Certificat auto-signé : le navigateur demande une exception.",
+      "notSegmented": "Le réseau du compte n'est pas segmenté : l'aperçu atteint les autres conteneurs du compte comme le site."
+    },
+    "errorCodes": {
+      "scanBlocked": "Bloqué par l'analyse.",
+      "previewStartFailed": "Le conteneur n'a pas démarré.",
+      "previewNotReady": "Le conteneur n'a pas répondu.",
+      "previewExited": "Le conteneur s'est arrêté.",
+      "buildTimeout": "Construction trop longue.",
+      "interrupted": "Interrompu par un redémarrage du panel.",
+      "publishInProgress": "Une publication était en cours : réessaie.",
+      "releaseNotReady": "Commit de la release introuvable.",
+      "cancelled": "Annulé.",
+      "previewBuildFailed": "L'aperçu n'a pas pu être construit."
+    },
+    "settings": {
+      "title": "Aperçus de release",
+      "explain": "Aperçus en direct d'une release ou du staging, sur le domaine d'aperçu (un domaine d'aperçu est nécessaire).",
+      "enabled": "Activés",
+      "defaultTtlMinutes": "Durée par défaut (min)",
+      "maxTtlMinutes": "Durée maximale (min)",
+      "maxPerAccount": "Aperçus par compte",
+      "maxTotal": "Aperçus sur la plateforme",
+      "memoryMb": "Mémoire par aperçu (Mio)",
+      "cpus": "CPU par aperçu",
+      "minIntervalSeconds": "Délai minimal entre deux aperçus d'un site (s)"
+    }
+  }
+}

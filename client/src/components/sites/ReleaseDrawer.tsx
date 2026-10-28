@@ -27,6 +27,8 @@ export interface ReleaseDrawerProps {
   onClose: () => void;
   /** Approve / reject / restore buttons for this release. */
   renderActions?: (release: Release) => ReactNode;
+  /** Feature B: live preview card of this release (shown between the scan and the log). */
+  renderPreview?: (release: Release) => ReactNode;
 }
 
 /** Server limit of the override reason (ApproveRequest). */
@@ -38,7 +40,7 @@ const LEVEL_CLS: Record<ReleaseLogLine['level'], string> = {
   error: 'text-red-400',
 };
 
-export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, renderActions }: ReleaseDrawerProps) {
+export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, renderActions, renderPreview }: ReleaseDrawerProps) {
   const { t, i18n } = useTranslation();
   const severityLabel = (s: 'info' | 'warn' | 'critical') => (
     s === 'critical' ? (t('releases.scan.severity.critical') || 'critical')
@@ -224,6 +226,9 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
               )}
             </section>
           )}
+
+          {/* Feature B: the live preview of this release (between the scan and the log). */}
+          {renderPreview?.(release)}
 
           <section>
             <div className={sectionLabelCls}>{t('releases.drawer.log') || 'Log'}</div>

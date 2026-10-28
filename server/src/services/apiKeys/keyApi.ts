@@ -2,6 +2,7 @@ import type { Request } from 'express';
 import type { Readable } from 'stream';
 import type {
   ApiV1Me, ApiV1ParentDomain, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
+  PreviewFetchResult, PreviewLink, PreviewStartResult, SitePreview,
   ReleaseFileContent, ReleaseFileList, SiteCreate, StagingRestoreResult, StagingRestoreRunning, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
 } from '@oblimint/shared';
 import { apiKeyGuide } from '@oblimint/shared';
@@ -22,6 +23,7 @@ import type { DataPathInputBody, DataPathUpdateBody } from '../../validators/hos
 import { assertSource, logsService } from '../logs/logs.service';
 import { releaseService } from '../releases/release.service';
 import { liveStates } from '../releases/liveState';
+import { previewService } from '../previews/previews.service';
 import { apiKeysService, keyAllowsDomain, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,6 +42,16 @@ const normalizeName = (raw: unknown) => String(raw ?? '').trim().toLowerCase().r
 
 async function accountRow(ctx: ApiKeyContext): Promise<AccountRow> {
   return loadAccount(ctx.actor, ctx.accountId, 'read');
+}
+
+/** previews.manage, and files.read (a preview runs and shows the code): 403 codeReadForbidden with a hint otherwise. */
+function previewScopes(ctx: ApiKeyContext): void {
+  requireScope(ctx, 'previews.manage');
+  try {
+    requireScope(ctx, 'files.read');
+  } catch {
+    throw new AppError(403, 'Previews need the files.read scope too (the preview runs and shows the code)', 'codeReadForbidden', { hint: 'needs files.read too' });
+  }
 }
 
 /** A site of the key (404 outside its selection or its account). */
@@ -432,6 +444,65 @@ export const keyApi = {
         : { siteId: site.id, number: r.releaseNumber, discardPending, previousStagingCommit: r.previousStagingCommit, status: r.status },
     });
     return r;
+  },
+
+  // ── live previews (feature B: scope previews.manage + files.read; staging: + releases.publish) ──
+  /**
+   * Starts a preview of a release (releaseId) or of a scanned snapshot of the
+   * staging. wait: polls until running / failed (≤ 25 s). include_key: the gate
+   * header (audited preview.key). Never options that weaken the isolation, never
+   * unapproved code on a site in approval mode (a key has no releases.approve).
+   */
+  async previewStart(ctx: ApiKeyContext, req: Request, siteId: number, body: {
+    releaseId?: number | null; staging?: boolean; ttlMinutes?: number | null; wait?: boolean; includeKey?: boolean;
+  }): Promise<PreviewStartResult> {
+    previewScopes(ctx);
+    const site = await keySite(ctx, siteId);
+    const staging = body.staging === true;
+    if (staging === (body.releaseId !== undefined && body.releaseId !== null)) {
+      throw new AppError(400, 'Give either release_id or staging: true', 'validation');
+    }
+    if (staging) requireScope(ctx, 'releases.publish');
+    const r = await previewService.start(req, ctx.actor, site.id, {
+      target: staging ? 'staging' : 'release', releaseId: body.releaseId ?? null, ttlMinutes: body.ttlMinutes ?? null, options: null,
+    }, { keyId: ctx.id, includeKey: body.includeKey === true, withLink: true });
+    if (body.wait === false) return r;
+    for (let waited = 0; waited < 25_000; waited += 500) {
+      const p = await previewService.get(ctx.actor, site.id);
+      if (!p || p.id !== r.preview.id) break;
+      r.preview = p;
+      if (p.status !== 'building' && p.status !== 'starting') break;
+      await new Promise((ok) => setTimeout(ok, 500));
+    }
+    return r;
+  },
+
+  async previewGet(ctx: ApiKeyContext, siteId: number): Promise<SitePreview | null> {
+    requireScope(ctx, 'previews.manage');
+    const site = await keySite(ctx, siteId);
+    return previewService.get(ctx.actor, site.id);
+  },
+
+  async previewStop(ctx: ApiKeyContext, req: Request, siteId: number): Promise<{ stopped: true }> {
+    previewScopes(ctx);
+    const site = await keySite(ctx, siteId);
+    return previewService.stop(req, ctx.actor, site.id);
+  },
+
+  /** One-shot share link (interstitial page): the key's creator needs sites.manage on the account (decision 9). */
+  async previewLink(ctx: ApiKeyContext, req: Request, siteId: number): Promise<PreviewLink> {
+    previewScopes(ctx);
+    const site = await keySite(ctx, siteId);
+    return previewService.shareLink(req, ctx.actor, site.id, ctx.id);
+  },
+
+  async previewFetch(ctx: ApiKeyContext, siteId: number, q: {
+    path: unknown; compare?: boolean; host?: 'preview' | 'live' | null; maxBytes?: number | null; method?: 'GET' | 'HEAD' | null;
+  }): Promise<PreviewFetchResult> {
+    previewScopes(ctx);
+    if (q.compare) requireScope(ctx, 'sites.manage');
+    const site = await keySite(ctx, siteId);
+    return previewService.fetch(ctx.actor, site.id, q);
   },
 
   // ── subdomains (scope domains.subdomain) ──

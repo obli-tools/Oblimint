@@ -504,7 +504,7 @@ async function scanGate(run: Run, scan: ScanSummary, opts: { approvedBy: number 
         tenantId: ctx.site.tenant_id, accountId: ctx.account.id, key: `release:${release.id}`, severity: 'critical',
         title: `Publication bloquée : ${ctx.site.name}`,
         message: `La release #${release.number} du site ${ctx.site.name} est bloquée par l’analyse (${riskText(scan)}). Seule une dérogation du staff peut la publier.`,
-        link: `/sites/${ctx.site.id}?tab=releases`,
+        link: `/sites/${ctx.site.id}?tab=releases&release=${release.id}`,
       });
     }
     if (!opts.scanOverrideBy) {
@@ -964,10 +964,11 @@ export const releaseService = {
     }
   },
 
-  /** Deletes repo.git + releases/ + runtime/ of a site (destroySite). */
+  /** Deletes repo.git + releases/ + runtime/ + previews/ (feature B) of a site (destroySite). */
   async removeSiteStorage(accountId: number, siteId: number): Promise<void> {
     const siteDir = localPaths.site(accountId, siteId);
-    for (const p of [localPaths.repo(accountId, siteId), localPaths.releases(accountId, siteId), localPaths.runtime(accountId, siteId)]) {
+    for (const p of [localPaths.repo(accountId, siteId), localPaths.releases(accountId, siteId), localPaths.runtime(accountId, siteId),
+      localPaths.previews(accountId, siteId)]) {
       removeUnder(siteDir, p);
     }
     try { fs.rmdirSync(siteDir); } catch { /* not empty / absent: hostd owns the rest */ }
@@ -980,6 +981,44 @@ export const releaseService = {
    * recreate them as root-owned orphans. 409 publishInProgress when one runs.
    * Returns the function releasing the locks (call it in a finally).
    */
+  /**
+   * Feature B (A6): runs fn under the per-site pipeline lock (no publication,
+   * rollback, storage repair — clearStaleGitLocks — runs meanwhile).
+   * 409 publishInProgress when it is held.
+   */
+  async withSiteLock<T>(siteId: number, fn: () => Promise<T>): Promise<T> {
+    if (locks.has(siteId)) throw publishInProgress();
+    locks.add(siteId);
+    try {
+      return await fn();
+    } finally {
+      locks.delete(siteId);
+    }
+  },
+
+  /**
+   * Feature B: what a preview builds on — the live commit (scan / diff base)
+   * and the live tree on disk to hardlink from (null when none is on disk),
+   * plus the site's paths and data paths (filtered as for a publication).
+   */
+  async previewContext(siteId: number): Promise<{
+    site: SiteRow; account: SiteContext['account']; dataPaths: DataPathRow[]; paths: SiteContext['paths'];
+    liveCommit: string | null; liveTree: { number: number; commit: string; dir: string } | null;
+  }> {
+    const ctx = await loadContext(siteId);
+    const commit = await liveCommit(ctx).catch(() => null);
+    const base = await hardlinkBase(ctx, 0).catch(() => null);
+    return {
+      site: ctx.site, account: ctx.account, dataPaths: ctx.dataPaths, paths: ctx.paths, liveCommit: commit,
+      liveTree: base ? { ...base, dir: path.posix.join(ctx.paths.releases, String(base.number)) } : null,
+    };
+  },
+
+  /** Feature B (B6): scan summary of a commit against a base (blocked normalized as for a release). */
+  async scanCommit(siteId: number, accountId: number, stagingDir: string, commitSha: string, changedFiles: string[]): Promise<ScanSummary> {
+    return normalizeScan(await getScanner().scan({ siteId, accountId, stagingDir, commitSha, changedFiles }));
+  },
+
   async lockForTeardown(siteIds: number[]): Promise<() => void> {
     const ids = [...new Set(siteIds)];
     if (ids.some((id) => locks.has(id))) throw publishInProgress();

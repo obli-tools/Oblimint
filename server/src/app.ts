@@ -149,6 +149,10 @@ export function createApp(): express.Express {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const mailPublic = require('./routes/mailPublic.routes').default;
   app.use(mailPublic);
+  // Feature B: claim links of the release previews, on the preview hosts (edge location → panel,
+  // access_log off). No session; before the SPA fallback (GET *) and the session middleware.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  app.use(require('./routes/previewClaim.routes').default);
   // OAuth of the Claude connectors (services/apiKeys/oauth.ts): metadata under
   // /.well-known and the token endpoint, no session; before the SPA fallback.
   // eslint-disable-next-line @typescript-eslint/no-var-requires

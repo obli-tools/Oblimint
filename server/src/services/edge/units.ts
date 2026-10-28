@@ -24,7 +24,7 @@ import type { PlanCertificate, PlatformHosts } from './vhostPlan';
 //
 // Rules every producer follows (checked again by edge-robustness):
 //   - id: [a-z0-9][a-z0-9-]{0,63}, stable, unique (prefixes: d- p- panel
-//     dbadmin probe- m- w- (P1–P4), ph- proxy host, rd- redirection, dh- dead
+//     dbadmin probe- m- w- (P1–P4), pv- release preview (feature B), ph- proxy host, rd- redirection, dh- dead
 //     host, st- stream, g- global);
 //   - config: complete text of the unit — server units: one or more server{}
 //     blocks; global units: http{}-level (or stream{}-level) directives only

@@ -186,6 +186,16 @@ export const heavyOpLimiter = rateLimit({
   message: { success: false, error: 'Too many requests, please try again in a minute', code: 'rateLimited' },
 });
 
+// Feature B: claim links of the release previews (public, no session), 30 / min per address.
+export const previewClaimLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `pv-claim:${reqIpKey(req)}`,
+  message: 'Too many requests, please try again in a minute',
+});
+
 // Step-up proofs (current password / TOTP code on a factor change), keyed by
 // the signed-in account: 10 failures / 15 min.
 export const stepUpLimiter = rateLimit({

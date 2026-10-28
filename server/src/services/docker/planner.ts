@@ -6,7 +6,7 @@ import {
 } from '../hosting/naming';
 import { hostPaths, runtimeConfigFile, type HostingLayout } from '../hosting/paths';
 import { fileServerHookToken } from '../hosting/secrets';
-import { fileServerContainerSpec, siteContainerSpec, specHashLabel } from './specs';
+import { fileServerContainerSpec, releasePreviewContainerSpec, siteContainerSpec, specHashLabel } from './specs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PURE reconcile planner (docs/P1-PLAN.md §13): desired state of one account
@@ -22,7 +22,11 @@ import { fileServerContainerSpec, siteContainerSpec, specHashLabel } from './spe
 //    whose spec drifted is recreated the next time it must start;
 //  - file server: always → running; on-demand → running while
 //    filesrv_active_until > now (stopped otherwise); off → removed;
-//  - every container carrying the account label that is not desired is removed.
+//  - every container carrying the account label that is not desired is removed;
+//  - feature B: a release / staging preview (role site-rpreview) runs with its
+//    site; one container per preview id (another id → the old one is an
+//    orphan); an exited one is never started again (B1), not even recreated
+//    after a spec drift: only created.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PlanAccount {
@@ -48,6 +52,12 @@ export interface PlanSite {
   dataPaths: string[];
   /** Environment variables of the site (name, value), sorted by name. */
   env?: Array<[string, string]>;
+  /**
+   * Feature B: the release / staging preview of the site in starting | running
+   * (null / absent: none). Its tree and runtime config are written by the
+   * preview builder; ephemeralPaths were checked (real directories) at build.
+   */
+  releasePreview?: { id: number; base: SiteBaseId; ephemeralPaths: string[]; env: Array<[string, string]> } | null;
 }
 
 export interface ActualContainer {
@@ -81,7 +91,11 @@ export interface PlannerInput {
   layout?: HostingLayout;
   /** File server hook base URL builder (defaults to the panel alias + internal port + HMAC token). */
   hookBaseUrl?: (accountId: number) => string;
+  /** Feature B: ceiling of the preview containers (settings releasePreviews.memoryMb / cpus). */
+  previewCaps?: { memoryMb: number; cpus: number };
 }
+
+export const DEFAULT_PREVIEW_CAPS = { memoryMb: 512, cpus: 1 } as const;
 
 export interface DesiredContainer {
   name: string;
@@ -198,6 +212,29 @@ export function desiredContainers(input: PlannerInput, notes: string[] = []): De
     add('primary', site.base, null);
     for (const rt of [...site.runtimes].sort((a, b) => a.id - b.id)) add('secondary', rt.base, rt.id);
     if (site.previewBase) add('preview', site.previewBase, null);
+    // Feature B: release / staging preview — never on the database network, one container per preview id.
+    const rp = site.releasePreview;
+    if (rp) {
+      const spec = releasePreviewContainerSpec({
+        siteId: site.id,
+        previewId: rp.id,
+        accountId: account.id,
+        uid: account.uid,
+        gid: account.gid,
+        base: rp.base,
+        limits: account.limits,
+        previewReleasesDir: layout.previewReleases(account.id, site.id, rp.id),
+        previewRuntimeDir: layout.previewRuntime(account.id, site.id, rp.id),
+        dataDir: layout.siteData(account.id, site.slug),
+        ephemeralPaths: rp.ephemeralPaths,
+        env: rp.env,
+        caps: input.previewCaps ?? DEFAULT_PREVIEW_CAPS,
+      });
+      out.push({
+        name: spec.name!, role: 'site-rpreview', siteId: site.id, runtimeRole: null, runtimeId: null,
+        spec, hash: specHashLabel(spec), image: spec.Image!, run: siteRuns, extraNetworks: [],
+      });
+    }
   }
 
   const fsRun = fileServerShouldRun(account, input.now);
@@ -295,6 +332,10 @@ export function planAccount(input: PlannerInput): ReconcilePlan {
     const a = actualByName.get(d.name);
     if (!a) {
       actions.push({ kind: 'createContainer', ...ref(d), spec: d.spec, image: d.image, start: true, extraNetworks: d.extraNetworks });
+    } else if (d.role === 'site-rpreview' && !isRunningState(a.state)) {
+      // B1: an exited preview is NEVER started again, not even through a recreation after a spec
+      // drift (panel update, limits, env): left to the preview worker (failed previewExited).
+      continue;
     } else if ((a.labels[LABELS.specHash] ?? null) !== d.hash) {
       actions.push({ kind: 'recreateContainer', ...ref(d), spec: d.spec, image: d.image, start: true, extraNetworks: d.extraNetworks });
     } else {
@@ -302,6 +343,7 @@ export function planAccount(input: PlannerInput): ReconcilePlan {
       if (a.networks) {
         for (const n of d.extraNetworks) if (!a.networks.includes(n)) actions.push({ kind: 'attachNetwork', ...ref(d), network: n });
       }
+      // B1: an exited preview never gets here (above); created with start: true only.
       if (!isRunningState(a.state)) actions.push({ kind: 'startContainer', ...ref(d) });
     }
   }

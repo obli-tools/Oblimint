@@ -1,6 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { IncomingMessage } from 'http';
+import { PREVIEW_CLAIM_PATH } from '@oblimint/shared';
 import { config } from '../config';
+import { isPreviewClaimHost } from '../services/previews/previewClaimHost';
 
 // ── Cross-site / same-site request forgery guard ─────────────────────────────
 //
@@ -135,8 +137,30 @@ export const PUBLIC_OAUTH_PATHS: readonly RegExp[] = [
   /^\/oauth\/token$/,
 ];
 
+/**
+ * Feature B: the POST of a preview share link's interstitial page (form body
+ * t, p) on <host>.<previewDomain>/__oblimint_preview/claim. Allowed only for
+ * a same-origin form post on a host under the preview domain: no session is
+ * read there, the one-shot token itself authenticates the request.
+ * The interstitial page is served with Referrer-Policy: no-referrer (by the
+ * route and by the edge, whose `always` header wins), so a real browser sends
+ * `Origin: null` on that POST (Fetch, "append a request Origin header"):
+ * then `Sec-Fetch-Site: same-origin` (set by the browser, never by web
+ * content, independent of the referrer policy) proves the same origin.
+ */
+export function isPreviewClaimPost(req: Request): boolean {
+  if (req.method !== 'POST' || req.path !== PREVIEW_CLAIM_PATH) return false;
+  const host = (header(req, 'host') ?? '').trim().toLowerCase().replace(/:443$/, '');
+  if (!isPreviewClaimHost(host)) return false;
+  if (!req.is('application/x-www-form-urlencoded')) return false;
+  const origin = header(req, 'origin');
+  if (origin !== undefined && origin !== 'null') return origin.toLowerCase() === `https://${host}`;
+  return header(req, 'sec-fetch-site') === 'same-origin';
+}
+
 export function originGuard(req: Request, res: Response, next: NextFunction): void {
   if (SAFE_METHODS.has(req.method)) { next(); return; }
+  if (isPreviewClaimPost(req)) { next(); return; }
   if (req.method === 'POST' && PUBLIC_XML_PATHS.some((re) => re.test(req.path))) { next(); return; }
   if (req.method === 'POST' && PUBLIC_OAUTH_PATHS.some((re) => re.test(req.path))) { next(); return; }
   if (isForeignBrowserRequest(req)) {

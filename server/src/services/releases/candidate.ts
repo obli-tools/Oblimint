@@ -29,7 +29,10 @@ import { commitExists, filePatch, lsTree, parseNameStatus, scanStaging, escapeEx
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Candidate refs the panel may create / delete. */
-export const CANDIDATE_REF_RE = /^refs\/oblimint\/candidates\/(window|adapter)-[1-9]\d{0,9}$/;
+export const CANDIDATE_REF_RE = /^refs\/oblimint\/candidates\/(window|adapter|preview)-[1-9]\d{0,9}$/;
+
+/** Git's empty tree: the "from" side of the diff of a root candidate (feature B: staging snapshot of a site never published). */
+export const EMPTY_TREE_OID = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 /** Largest blob a candidate may carry (bigger files are listed as tooLarge). */
 export const CANDIDATE_MAX_BLOB_BYTES = 512 * 1024 * 1024;
@@ -265,16 +268,18 @@ export async function commitChanges(repoDir: string, from: string, to: string): 
   return parseNameStatus(r.stdout).map((e) => ({ path: e.path, change: KIND_OF[e.status] ?? 'modified' }));
 }
 
-async function finishCandidate(repoDir: string, baseCommit: string, tree: string, message: string, author: GitAuthor, refName: string, ignored: CandidateCommit['ignored']): Promise<CandidateCommit> {
-  const commit = (await runGit(['commit-tree', tree, '-p', baseCommit, '-F', '-'], {
+/** baseCommit null (feature B only): ROOT commit (no parent), changes counted from the empty tree. */
+async function finishCandidate(repoDir: string, baseCommit: string | null, tree: string, message: string, author: GitAuthor, refName: string, ignored: CandidateCommit['ignored']): Promise<CandidateCommit> {
+  const parents = baseCommit ? ['-p', baseCommit] : [];
+  const commit = (await runGit(['commit-tree', tree, ...parents, '-F', '-'], {
     gitDir: repoDir, input: message, env: identityEnv(author),
   })).stdout.toString('utf8').trim();
   if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new Error('git commit-tree returned no commit id');
   await runGit(['update-ref', '-m', 'oblimint candidate', refName, commit], { gitDir: repoDir });
-  const files = await commitChanges(repoDir, baseCommit, commit);
+  const files = await commitChanges(repoDir, baseCommit ?? EMPTY_TREE_OID, commit);
   const count = (k: ChangeKind) => files.filter((f) => f.change === k).length;
   return {
-    commit, baseCommit, refName, files,
+    commit, baseCommit: baseCommit ?? '', refName, files,
     added: count('added'), modified: count('modified') + count('typechange'), deleted: count('deleted'),
     ignored,
   };
@@ -400,7 +405,8 @@ export async function buildCandidate(input: BuildCandidateRepoInput): Promise<Ca
 
 export interface CommitWorkTreeRepoInput {
   repoDir: string;
-  baseCommit: string;
+  /** null (feature B: staging snapshot of a site without any commit) = root commit from an empty index. */
+  baseCommit: string | null;
   workTree: string;
   dataPaths: string[];
   message: string;
@@ -418,7 +424,7 @@ export interface CommitWorkTreeRepoInput {
 export async function commitWholeTree(input: CommitWorkTreeRepoInput): Promise<CandidateCommit> {
   const { repoDir, baseCommit, workTree } = input;
   assertCandidateRef(input.refName);
-  if (!(await commitExists(repoDir, baseCommit))) throw new Error(`base commit not found: ${baseCommit}`);
+  if (baseCommit !== null && !(await commitExists(repoDir, baseCommit))) throw new Error(`base commit not found: ${baseCommit}`);
   const scan = scanStaging(workTree, input.dataPaths);
   const index = tmpIndexPath('wt');
   const excludes = path.join(os.tmpdir(), `oblimint-wt-${process.pid}-${crypto.randomBytes(6).toString('hex')}.exclude`);
@@ -427,7 +433,7 @@ export async function commitWholeTree(input: CommitWorkTreeRepoInput): Promise<C
     fs.writeFileSync(excludes, `${lines.join('\n')}\n`, { mode: 0o600 });
     const env = { GIT_INDEX_FILE: index };
     const opts = { gitDir: repoDir, workTree, env };
-    await runGit(['read-tree', baseCommit], { gitDir: repoDir, env });
+    await runGit(baseCommit !== null ? ['read-tree', baseCommit] : ['read-tree', '--empty'], { gitDir: repoDir, env });
     const untrack = [...input.dataPaths, ...scan.nestedRepos];
     if (untrack.length) await runGit(['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', ...untrack], opts);
     await runGit(['-c', `core.excludesFile=${excludes.replace(/\\/g, '/')}`, 'add', '-A'], opts);

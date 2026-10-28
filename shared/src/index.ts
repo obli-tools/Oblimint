@@ -28,6 +28,8 @@ export * from './apiKeys';
 // Site environment variables
 export * from './siteEnv';
 export * from './backups';
+// Feature B: release / staging previews
+export * from './previews';
 export * from './apiGuide';
 // PHP advisories and end of life (exact version of the running containers)
 export * from './phpSecurity';

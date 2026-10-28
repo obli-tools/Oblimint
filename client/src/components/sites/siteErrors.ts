@@ -52,6 +52,25 @@ const SITE_ERROR_FALLBACKS = {
   releaseNotOnDisk: 'The live release is not on disk: publish again or contact an administrator.',
   hostdBusy: 'The host agent is busy: try again in a minute.',
   adapterBusy: 'An application update runs on this site: try again once it is over.',
+  // Feature B: release / staging previews
+  previewStagingForbidden: 'Previewing the staging needs the right to publish.',
+  previewApprovalRequired: 'This site publishes after approval: only an approver can preview code that was not approved.',
+  previewCompareForbidden: 'Comparing with the live site needs the right to manage the site.',
+  previewOptionForbidden: 'This option needs the right to manage the site (blocked code: platform staff only).',
+  previewShareForbidden: 'Share links need the right to manage the site.',
+  previewTooSoon: 'A preview of this site was started a moment ago: try again shortly.',
+  previewsDisabled: 'Previews are disabled on this platform.',
+  previewDomainMissing: 'No preview domain is configured on this platform.',
+  previewLimit: 'Too many previews are running for this account: stop one first.',
+  previewCapacity: 'The platform runs too many previews: try again later.',
+  previewBusy: 'Another preview of this site is starting.',
+  previewNotRunning: 'No preview is running for this site.',
+  previewLinkLimit: 'Too many share links for this preview.',
+  previewFetchBusy: 'Two fetches already run for this preview.',
+  previewHostInvalid: 'No valid preview host name for this site.',
+  scanBlocked: 'The analysis blocked this code: no preview.',
+  accountNotActive: 'The hosting account is not active.',
+  siteStopped: 'The site is stopped.',
 } as const;
 
 const RUNTIME_NOT_RESTORED_FALLBACK = 'The runtime change failed and the previous runtime could not be restored: the site may be down, contact an administrator.';

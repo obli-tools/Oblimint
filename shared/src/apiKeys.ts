@@ -22,6 +22,12 @@ export type ApiKeyScope =
   | 'files.read'
   | 'files.write'
   | 'releases.publish'
+  /**
+   * Live previews of a release (or of the staging with releases.publish too):
+   * start, stop, fetch a path. Needs files.read as well (the code is run and read).
+   * Never code that was not approved on a site in approval mode.
+   */
+  | 'previews.manage'
   | 'sites.manage'
   | 'sites.create'
   | 'logs.read'
@@ -42,7 +48,7 @@ export type ApiKeyScope =
   | 'routes.manage';
 
 export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
-  'files.read', 'files.write', 'releases.publish', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain', 'logs.read',
+  'files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain', 'logs.read',
 ];
 
 export type ApiKeySiteScope = 'all' | 'selected';
@@ -168,21 +174,22 @@ export interface ApiKeyPreset {
 
 /** Rights of a site's daily management (both « Gestion » presets). */
 const SITE_MANAGEMENT_SCOPES: readonly ApiKeyScope[] = [
-  'files.read', 'files.write', 'releases.publish', 'sites.manage', 'logs.read', 'databases.manage', 'routes.manage', 'cron.manage',
+  'files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'logs.read', 'databases.manage', 'routes.manage', 'cron.manage',
 ];
 
 export const API_KEY_PRESETS: readonly ApiKeyPreset[] = [
   // Supervision: reads code, data and logs; writes nothing.
   { id: 'readonly', scopes: ['files.read', 'logs.read'], siteScopes: ['selected', 'all'], minSites: 1, maxSites: null, domains: 'none' },
   // CI: pushes files to staging and publishes; no setting (publish mode, env, data paths), cron, database, route or subdomain.
-  { id: 'update', scopes: ['files.read', 'files.write', 'releases.publish'], siteScopes: ['selected'], minSites: 1, maxSites: null, domains: 'none' },
+  // + previews.manage: check a release / the staging in a throw-away preview before publishing.
+  { id: 'update', scopes: ['files.read', 'files.write', 'releases.publish', 'previews.manage'], siteScopes: ['selected'], minSites: 1, maxSites: null, domains: 'none' },
   // One site end to end; no site creation, no subdomain, no domain given (routes only on the domains serving it alone).
   { id: 'site', scopes: SITE_MANAGEMENT_SCOPES, siteScopes: ['selected'], minSites: 1, maxSites: 1, domains: 'none' },
   { id: 'multisite', scopes: SITE_MANAGEMENT_SCOPES, siteScopes: ['selected', 'all'], minSites: 2, maxSites: null, domains: 'optional' },
   // Creates its own sites and works on them only (no existing site); subdomains under the domains given (attached to
   // its site on creation); no route (the domains given would be routed too, existing sites' paths included), no cron.
   {
-    id: 'autonomous', scopes: ['sites.create', 'files.read', 'files.write', 'releases.publish', 'sites.manage', 'logs.read', 'databases.manage', 'domains.subdomain'],
+    id: 'autonomous', scopes: ['sites.create', 'files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'logs.read', 'databases.manage', 'domains.subdomain'],
     siteScopes: ['selected'], minSites: 0, maxSites: 0, domains: 'pick',
   },
   { id: 'all', scopes: 'all', siteScopes: ['all'], minSites: 0, maxSites: null, domains: 'all' },

@@ -26,6 +26,7 @@ import { isNotImplemented, siteErrorMessage, toastSiteError } from '../siteError
 import { useHostingEvent } from '../useHostingEvent';
 import { cardCls, fieldCls, sectionLabelCls } from '../styles';
 import type { SiteTabProps } from './types';
+import { PreviewCard, useSitePreview } from '../previews/PreviewCard';
 
 /**
  * Bases the plan of the site's account allows (null = the whole catalog, or
@@ -62,6 +63,7 @@ export function SiteRuntimeTab({ site, reloadSite, switchTo, onSwitchHandled }: 
   const { can } = useHostingMe();
   const canManage = can('sites.manage', site.accountId);
   const allowedBases = usePlanAllowedBases(site.accountId);
+  const { preview: releasePreview, reload: reloadReleasePreview } = useSitePreview(site.id);
 
   const [status, setStatus] = useState<SiteRuntimeStatus | null>(null);
   const [statusError, setStatusError] = useState('');
@@ -174,6 +176,9 @@ export function SiteRuntimeTab({ site, reloadSite, switchTo, onSwitchHandled }: 
           )}
         </div>
       )}
+
+      {/* Feature B: live preview of a release / of the staging (started from the Releases tab or the staging card). */}
+      <PreviewCard site={site} preview={releasePreview} onChanged={reloadReleasePreview} />
 
       {/* Base catalog */}
       <div className={cardCls}>

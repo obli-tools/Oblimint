@@ -332,6 +332,13 @@ async function removeAccount(req: Request, actor: HostingActor, row: AccountRow)
   let unlock: () => void;
   try {
     unlock = await releaseService.lockForTeardown(snapshot.sites.map((s) => s.id));
+    // Feature B: preview builds cancelled and awaited, previews stopped (siteDeleted).
+    try {
+      const { previewService } = await import('../previews/previews.service');
+      for (const s of snapshot.sites) await previewService.teardownSite(s.id);
+    } catch (err) {
+      logger.warn({ err: (err as Error).message, accountId: row.id }, 'previews: teardown failed (the purge removes them)');
+    }
   } catch (err) {
     const back: HostingAccountStatus = row.status === 'deleting' ? 'error' : row.status;
     await db('hosting_accounts').where({ id: row.id, tenant_id: row.tenant_id, status: 'deleting' })

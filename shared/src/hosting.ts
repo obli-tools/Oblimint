@@ -1184,6 +1184,8 @@ export const HostingSocketEvents = {
   RELEASE_UPDATED: 'RELEASE_UPDATED',
   /** { siteId } */
   RUNTIME_UPDATED: 'RUNTIME_UPDATED',
+  /** Feature B: { siteId, previewId, status } — release / staging preview changed (scoped tenant + account). */
+  PREVIEW_UPDATED: 'PREVIEW_UPDATED',
   /** { domainId, status } */
   CERTIFICATE_UPDATED: 'CERTIFICATE_UPDATED',
   /** { accountId, running } */

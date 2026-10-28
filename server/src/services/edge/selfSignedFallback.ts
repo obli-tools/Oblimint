@@ -3,7 +3,7 @@ import path from 'path';
 import { X509Certificate } from 'crypto';
 import selfsigned from 'selfsigned';
 import { logger } from '../../utils/logger';
-import { isValidServerName, SELF_SIGNED_CERT_DIR } from './nginxConfig';
+import { isValidServerName, SELF_SIGNED_CERT_DIR, SELF_SIGNED_PREVIEW_CERT_DIR } from './nginxConfig';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Self-signed fallback certificate of the PLATFORM vhosts (panel, DB admin,
@@ -17,7 +17,10 @@ import { isValidServerName, SELF_SIGNED_CERT_DIR } from './nginxConfig';
 // <edge>/certs/_selfsigned/{fullchain,privkey}.pem + names.json, until an
 // ACME certificate exists for the name (vhostPlan prefers it).
 // Regenerated when the set of names changes or 30 days before it expires.
-// Never used for a tenant domain or a preview (nginxConfig refuses it).
+// Never used for a tenant domain or a blue/green preview (nginxConfig refuses it).
+// Feature B: release previews get their OWN self-signed certificate
+// (_selfsigned-preview/, SANs [previewDomain, *.previewDomain]) when no ACME
+// wildcard covers the preview domain: ensurePreviewSelfSigned().
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SELF_SIGNED_VALIDITY_DAYS = 397;
@@ -36,13 +39,13 @@ export function fallbackNames(names: ReadonlyArray<string | null | undefined>): 
 }
 
 /** The certificate on disk (null: missing, unreadable, or its files disagree with names.json). */
-export function readSelfSigned(certsDir: string): SelfSignedState | null {
-  const dir = path.join(certsDir, SELF_SIGNED_CERT_DIR);
+export function readSelfSigned(certsDir: string, dirName: string = SELF_SIGNED_CERT_DIR): SelfSignedState | null {
+  const dir = path.join(certsDir, dirName);
   try {
     const certPem = fs.readFileSync(path.join(dir, 'fullchain.pem'), 'utf8');
     if (!fs.existsSync(path.join(dir, 'privkey.pem'))) return null;
     const meta = JSON.parse(fs.readFileSync(path.join(dir, META_FILE), 'utf8')) as { names?: unknown };
-    const names = Array.isArray(meta.names) ? fallbackNames(meta.names.map(String)) : [];
+    const names = Array.isArray(meta.names) ? (dirName === SELF_SIGNED_CERT_DIR ? fallbackNames(meta.names.map(String)) : [...new Set(meta.names.map((n) => String(n).toLowerCase()))].sort()) : [];
     const x509 = new X509Certificate(certPem);
     // The SANs of the certificate are the truth (names.json only caches them).
     const san = (x509.subjectAltName ?? '').split(',').map((e) => e.trim()).filter((e) => e.startsWith('DNS:')).map((e) => e.slice(4).toLowerCase());
@@ -63,7 +66,7 @@ export function needsRegeneration(current: SelfSignedState | null, names: readon
 function generate(names: readonly string[]): Promise<{ cert: string; key: string }> {
   return new Promise((resolve, reject) => {
     selfsigned.generate([
-      { name: 'commonName', value: names[0] },
+      { name: 'commonName', value: names.find((n) => !n.startsWith('*.')) ?? names[0] },
       { name: 'organizationName', value: 'Oblimint (self-signed fallback)' },
     ], {
       keySize: 2048,
@@ -79,7 +82,7 @@ function generate(names: readonly string[]): Promise<{ cert: string; key: string
   });
 }
 
-let inflight: Promise<string[] | null> | null = null;
+const inflight = new Map<string, Promise<string[] | null>>();
 
 /**
  * Makes sure the fallback certificate covers exactly `platformNames`.
@@ -90,15 +93,31 @@ let inflight: Promise<string[] | null> | null = null;
  */
 export async function ensureSelfSignedFallback(certsDir: string, platformNames: ReadonlyArray<string | null | undefined>,
   now = Date.now()): Promise<string[] | null> {
-  const names = fallbackNames(platformNames);
+  return ensureCertificate(certsDir, SELF_SIGNED_CERT_DIR, fallbackNames(platformNames), now);
+}
+
+/**
+ * Feature B: self-signed certificate of the release previews, SANs
+ * [previewDomain, *.previewDomain] in <certs>/_selfsigned-preview/. Returns the
+ * names it covers, or null (no valid preview domain, edge not deployed,
+ * generation failed). Never served with HSTS (selfSigned vhosts).
+ */
+export async function ensurePreviewSelfSigned(certsDir: string, previewDomain: string | null | undefined, now = Date.now()): Promise<string[] | null> {
+  const d = (previewDomain ?? '').trim().toLowerCase().replace(/\.$/, '');
+  if (!d || !isValidServerName(d) || `*.${d}`.length > 253) return null;
+  return ensureCertificate(certsDir, SELF_SIGNED_PREVIEW_CERT_DIR, [`*.${d}`, d].sort(), now);
+}
+
+async function ensureCertificate(certsDir: string, dirName: string, names: string[], now: number): Promise<string[] | null> {
   if (!names.length || !fs.existsSync(certsDir)) return null;
-  const current = readSelfSigned(certsDir);
+  const current = readSelfSigned(certsDir, dirName);
   if (!needsRegeneration(current, names, now)) return current!.names;
-  if (inflight) return inflight;
-  inflight = (async () => {
+  const running = inflight.get(dirName);
+  if (running) return running;
+  const p = (async () => {
     try {
       const { cert, key } = await generate(names);
-      const dir = path.join(certsDir, SELF_SIGNED_CERT_DIR);
+      const dir = path.join(certsDir, dirName);
       fs.mkdirSync(dir, { recursive: true, mode: 0o755 });
       const keyFile = path.join(dir, 'privkey.pem');
       const certFile = path.join(dir, 'fullchain.pem');
@@ -111,15 +130,16 @@ export async function ensureSelfSignedFallback(certsDir: string, platformNames: 
       fs.renameSync(`${keyFile}.tmp`, keyFile);
       fs.renameSync(`${certFile}.tmp`, certFile);
       fs.renameSync(`${metaFile}.tmp`, metaFile);
-      logger.info({ names }, 'edge: self-signed fallback certificate generated for the platform names');
+      logger.info({ names, dir: dirName }, 'edge: self-signed fallback certificate generated');
       return names;
     } catch (err) {
       logger.warn({ err: (err as Error).message, names }, 'edge: self-signed fallback certificate not generated');
       // A previous certificate still covering some names keeps serving them.
       return current ? current.names.filter((n) => names.includes(n)) : null;
     } finally {
-      inflight = null;
+      inflight.delete(dirName);
     }
   })();
-  return inflight;
+  inflight.set(dirName, p);
+  return p;
 }
