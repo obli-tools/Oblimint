@@ -14,6 +14,7 @@ import { copyText } from '@/utils/clipboard';
 import { cn } from '@/utils/cn';
 import { Tip } from '@/components/common/Tip';
 import { IconButton } from '@/components/common/IconButton';
+import { Pill } from '@/components/common/Pill';
 import { formatMb, tlsState, usageColor, usagePct, type TlsState } from './hostingFormat';
 
 // ── Shared class names (identical to the P0 pages) ──────────────────────────
@@ -32,27 +33,9 @@ export const headerBtnCls =
 export const headerAccentBtnCls =
   'inline-flex items-center gap-2 h-9 px-3.5 rounded-md bg-accent hover:bg-accent-hover text-[13px] font-medium text-white transition-colors whitespace-nowrap coarse:h-10 disabled:opacity-50';
 
-/** Small pill (status, mode…). */
-export function Pill({ tone = 'muted', children, className, title }: {
-  tone?: 'muted' | 'green' | 'amber' | 'red' | 'accent' | 'blue';
-  children: ReactNode;
-  className?: string;
-  title?: string;
-}) {
-  const tones = {
-    muted: 'bg-bg-tertiary text-text-muted',
-    green: 'bg-green-500/10 text-green-400',
-    amber: 'bg-amber-400/10 text-amber-400',
-    red: 'bg-status-down/10 text-status-down',
-    accent: 'bg-accent/10 text-accent',
-    blue: 'bg-sky-400/10 text-sky-400',
-  } as const;
-  return (
-    <span title={title} className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider whitespace-nowrap', tones[tone], className)}>
-      {children}
-    </span>
-  );
-}
+// The common chip and empty state (components/common), re-exported for the hosting modules.
+export { Pill } from '@/components/common/Pill';
+export { EmptyState } from '@/components/common/EmptyState';
 
 /** Card section (bg-secondary, rounded-xl) with a mono uppercase title. */
 export function Card({ title, actions, children, className, icon }: {
@@ -82,17 +65,6 @@ export function InfoRow({ label, children, mono = false }: { label: ReactNode; c
     <div className="min-w-0">
       <div className="text-[10px] font-mono uppercase tracking-[0.12em] text-text-muted">{label}</div>
       <div className={cn('mt-0.5 text-sm text-text-primary break-words', mono && 'font-mono text-[13px]')}>{children}</div>
-    </div>
-  );
-}
-
-/** Empty state block (icon + text + optional action). */
-export function EmptyState({ icon, text, action }: { icon: ReactNode; text: ReactNode; action?: ReactNode }) {
-  return (
-    <div className="flex flex-col items-center gap-2 rounded-xl bg-bg-secondary px-4 py-12 text-center text-text-muted">
-      <div className="opacity-40 [&>svg]:h-6 [&>svg]:w-6">{icon}</div>
-      <p className="text-sm">{text}</p>
-      {action}
     </div>
   );
 }

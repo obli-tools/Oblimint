@@ -91,7 +91,7 @@ export function HostKeyPanel({ source, presented, mismatch, onChanged }: {
       <div>
         <div className="mb-1 flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.12em] text-text-muted">
           <ShieldCheck size={12} />{t('migration.hostKey.pinnedKey') || 'Pinned key'}
-          {source.hostKeyPinnedAt && <span className="normal-case tracking-normal">· {formatDateTime(source.hostKeyPinnedAt, i18n.language)}</span>}
+          {source.hostKeyPinnedAt && <span>· {formatDateTime(source.hostKeyPinnedAt, i18n.language)}</span>}
         </div>
         {source.hostKey ? <HostKeyLine hostKey={source.hostKey} /> : <p className="text-xs text-text-muted">{t('migration.hostKey.none') || 'No key pinned: every connection is refused (MG3).'}</p>}
       </div>

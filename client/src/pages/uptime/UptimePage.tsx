@@ -4,7 +4,7 @@ import { HeartPulse, LayoutTemplate, Plus, RefreshCw } from 'lucide-react';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
 import { headerAccentBtnCls, headerBtnCls } from '@/components/hosting/hostingUi';
-import { AccountScopeBar, useAccountScope } from '@/components/apps/AccountScope';
+import { AccountScopeBar, useAccountScope } from '@/components/common/AccountScope';
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { MonitorsPanel } from '@/components/uptime/MonitorsPanel';
 import { StatusPagesPanel } from '@/components/uptime/StatusPagesPanel';

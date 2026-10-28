@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { ArrowLeft, FileText, ListOrdered, Pause, Play, RefreshCw, RotateCcw, ScrollText, Square } from 'lucide-react';
+import { FileText, ListOrdered, Pause, Play, RotateCcw, ScrollText, Square } from 'lucide-react';
 import {
   HostingSocketEvents, type MigrationAccountReport, type MigrationRun, type MigrationRunDetail, type MigrationUpdatedPayload,
 } from '@oblimint/shared';
 import { migrationApi } from '@/api/migration.api';
-import { IconButton } from '@/components/common/IconButton';
+import { DetailHeader } from '@/components/common/DetailHeader';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
@@ -55,7 +55,6 @@ function RunReport({ runId }: { runId: number }) {
  */
 export function MigrationRunPage() {
   const { t, i18n } = useTranslation();
-  const navigate = useNavigate();
   const confirm = useConfirm();
   const units = useByteUnits();
   const { id } = useParams();
@@ -136,37 +135,36 @@ export function MigrationRunPage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
-        <IconButton
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(`/manage/migration/plans/${run.planId}?tab=runs`); }}
-          size="lg" variant="plain" className="mt-0.5 rounded-lg hover:bg-bg-secondary" label={t('common.back') || 'Back'} icon={<ArrowLeft className="h-4 w-4" />}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary max-sm:text-xl">
-              {t('migration.run.title') || 'Migration run'} #{run.id} · <span className="font-mono">{run.cwpUsername}</span>
-            </h1>
+      <DetailHeader
+        backTo={`/manage/migration/plans/${run.planId}?tab=runs`}
+        title={<>{t('migration.run.title') || 'Migration run'} #{run.id} · <span className="font-mono">{run.cwpUsername}</span></>}
+        badges={(
+          <>
             <RunStatusPill status={run.status} />
-          </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
+          </>
+        )}
+        subtitle={(
+          <>
             <span>{runKindLabel(t, run.kind)}</span>
             {run.kind !== 'initial' && run.parts.map((p) => <Pill key={p}>{t(`migration.parts.${p}`, { defaultValue: p })}</Pill>)}
             {run.mirrorDeletes && <Pill tone="red">{t('migration.runs.mirrorDeletesShort') || 'mirror deletes'}</Pill>}
             <span>·</span>
             <Link to={`/manage/migration/plans/${run.planId}?tab=runs`} className="text-accent hover:underline">{t('migration.runs.plan') || 'Plan'} #{run.planId}</Link>
             {run.targetAccountId != null && <><span>·</span><Link to={`/accounts/${run.targetAccountId}`} className="text-accent hover:underline">{t('migration.runs.targetAccount') || 'Target account'} #{run.targetAccountId}</Link></>}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 max-lg:w-full">
-          <button type="button" className={headerBtnCls} onClick={() => { void load(); setTick((n) => n + 1); }}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
-          {(run.status === 'running' || run.status === 'queued') && <button type="button" className={headerBtnCls} disabled={busy != null} onClick={() => { void act('pause'); }}><Pause size={14} />{t('migration.run.pause') || 'Pause'}</button>}
-          {run.status === 'paused' && <button type="button" className={headerBtnCls} disabled={busy != null} onClick={() => { void act('resume'); }}><Play size={14} />{t('migration.run.resume') || 'Resume'}</button>}
-          {(run.status === 'failed' || run.status === 'cancelled') && <button type="button" className={headerBtnCls} disabled={busy != null} onClick={() => { void act('retry'); }}><RotateCcw size={14} />{t('migration.run.retry') || 'Retry'}</button>}
-          {(run.status === 'running' || run.status === 'queued' || run.status === 'paused') && (
-            <button type="button" className={cn(headerBtnCls, 'text-status-down')} disabled={busy != null} onClick={() => { void act('cancel'); }}><Square size={14} />{t('migration.run.cancelRun') || 'Stop the run'}</button>
-          )}
-        </div>
-      </div>
+          </>
+        )}
+        onRefresh={() => { void load(); setTick((n) => n + 1); }}
+        actions={(
+          <>
+            {(run.status === 'running' || run.status === 'queued') && <button type="button" className={headerBtnCls} disabled={busy != null} onClick={() => { void act('pause'); }}><Pause size={14} />{t('migration.run.pause') || 'Pause'}</button>}
+            {run.status === 'paused' && <button type="button" className={headerBtnCls} disabled={busy != null} onClick={() => { void act('resume'); }}><Play size={14} />{t('migration.run.resume') || 'Resume'}</button>}
+            {(run.status === 'failed' || run.status === 'cancelled') && <button type="button" className={headerBtnCls} disabled={busy != null} onClick={() => { void act('retry'); }}><RotateCcw size={14} />{t('migration.run.retry') || 'Retry'}</button>}
+            {(run.status === 'running' || run.status === 'queued' || run.status === 'paused') && (
+              <button type="button" className={cn(headerBtnCls, 'text-status-down')} disabled={busy != null} onClick={() => { void act('cancel'); }}><Square size={14} />{t('migration.run.cancelRun') || 'Stop the run'}</button>
+            )}
+          </>
+        )}
+      />
 
       <Card>
         <div className="mb-2 flex flex-wrap justify-between gap-2 text-xs text-text-muted">

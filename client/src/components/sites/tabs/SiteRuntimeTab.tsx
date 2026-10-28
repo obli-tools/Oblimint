@@ -8,6 +8,7 @@ import {
   type ContainerState, type HostingChangedPayload, type RuntimeRole, type RuntimeSwitchCheck, type RuntimeWarningCode, type SiteBaseId, type SiteRuntime,
   type SiteRuntimeStatus,
 } from '@oblimint/shared';
+import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { accountsApi } from '@/api/accounts.api';
 import { runtimeApi } from '@/api/runtime.api';
 import { sitesApi } from '@/api/sites.api';
@@ -140,7 +141,7 @@ export function SiteRuntimeTab({ site, reloadSite, switchTo, onSwitchHandled }: 
           </div>
         </div>
         {loading ? (
-          <p className="text-sm text-text-muted">{t('common.loading') || 'Loading...'}</p>
+          <div className="flex justify-center py-8"><LoadingSpinner /></div>
         ) : statusError ? (
           <p className="text-sm text-text-muted">{statusError}</p>
         ) : status && status.containers.length === 0 ? (
@@ -455,7 +456,7 @@ function SecondaryRuntimes({ site, canManage, allowedBases }: { site: SiteTabPro
       </p>
 
       {loading ? (
-        <p className="text-sm text-text-muted">{t('common.loading') || 'Loading...'}</p>
+        <div className="flex justify-center py-8"><LoadingSpinner /></div>
       ) : error ? (
         <p className="text-sm text-text-muted">{error}</p>
       ) : runtimes.length === 0 ? (

@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { ArrowLeft, Database, ExternalLink, Play, RefreshCw, RotateCw, Square, Trash2 } from 'lucide-react';
+import { Database, ExternalLink, Play, RotateCw, Square, Trash2 } from 'lucide-react';
 import { HostingSocketEvents, type DbCatalog, type DbInstance, type DbInstanceDetail } from '@oblimint/shared';
 import { databasesApi } from '@/api/databases.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
-import { IconButton } from '@/components/common/IconButton';
+import { AccountLink, DetailHeader } from '@/components/common/DetailHeader';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { TenantBadge } from '@/components/common/TenantBadge';
@@ -181,58 +181,53 @@ export function DbInstancePage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
-        <IconButton
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(accountHref(inst.accountId, 'databases')); }}
-          size="lg"
-          variant="plain"
-          className="mt-0.5 rounded-lg hover:bg-bg-secondary"
-          label={t('common.back') || 'Back'}
-          icon={<ArrowLeft className="h-4 w-4" />}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3 max-sm:gap-2">
-            <h1 className="min-w-0 break-all font-display text-2xl font-semibold tracking-wide text-text-primary max-sm:text-xl">{inst.name}</h1>
+      <DetailHeader
+        backTo={accountHref(inst.accountId, 'databases')}
+        title={inst.name}
+        badges={(
+          <>
             <DbStatusBadge status={inst.status} message={inst.statusMessage} />
             <DbEngineBadge engine={inst.engine} version={inst.version} />
             {inst.isDefault && <DbDefaultBadge />}
             <TenantBadge tenantId={inst.tenantId} size="md" />
-          </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
-            <Link to={accountHref(inst.accountId, 'databases')} className="font-mono hover:text-accent">{inst.accountUsername}</Link>
+          </>
+        )}
+        subtitle={(
+          <>
+            <AccountLink accountId={inst.accountId} username={inst.accountUsername} tab="databases" />
             <span>·</span>
             <span className="font-mono">{inst.profile} · {formatMb(inst.memoryLimitMb, units)}</span>
             <span>·</span>
             <span>{t('databases.instance.size', { size: formatBytes(t, inst.sizeBytes), defaultValue: '{{size}} of data' })}</span>
             {inst.sizeCheckedAt && <span className="text-[11px]">({new Date(inst.sizeCheckedAt).toLocaleString(i18n.language)})</span>}
-          </p>
-          {inst.status === 'error' && inst.statusMessage && (
-            <p className="mt-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{inst.statusMessage}</p>
-          )}
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 max-lg:order-last max-lg:w-full">
-          <IconButton label={t('common.refresh') || 'Refresh'} icon={<RefreshCw className="h-4 w-4" />} onClick={() => { void load(true); }} size="lg" variant="solid" className="rounded-lg" />
-          {manage && (inst.adminUiAvailable ? adminButton : (
-            <Tip content={t('databases.admin.unavailableHint') || 'The database admin UI is not available: a platform administrator must set its host name (Settings → DB admin) and start it.'}>
-              <span>{adminButton}</span>
-            </Tip>
-          ))}
-          {manage && (
-            <ActionMenu
-              triggerSize="lg"
-              triggerVariant="solid"
-              triggerClassName="rounded-lg"
-              disabled={busy !== null || deleting}
-              items={[
-                { key: 'start', icon: <Play className="h-4 w-4" />, label: t('databases.actions.start') || 'Start', onClick: () => { void act('start'); }, hidden: running, disabled: provisioning },
-                { key: 'restart', icon: <RotateCw className="h-4 w-4" />, label: t('databases.actions.restart') || 'Restart', onClick: () => { void act('restart'); }, hidden: !running, disabled: provisioning },
-                { key: 'stop', icon: <Square className="h-4 w-4" />, label: t('databases.actions.stop') || 'Stop', onClick: () => { void act('stop'); }, hidden: !running, disabled: provisioning },
-                { key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('databases.instance.delete') || 'Delete the instance', onClick: () => { void remove(); }, danger: true, separator: true },
-              ]}
-            />
-          )}
-        </div>
-      </div>
+          </>
+        )}
+        message={inst.status === 'error' ? inst.statusMessage : null}
+        onRefresh={() => { void load(true); }}
+        actions={(
+          <>
+            {manage && (inst.adminUiAvailable ? adminButton : (
+              <Tip content={t('databases.admin.unavailableHint') || 'The database admin UI is not available: a platform administrator must set its host name (Settings → DB admin) and start it.'}>
+                <span>{adminButton}</span>
+              </Tip>
+            ))}
+            {manage && (
+              <ActionMenu
+                triggerSize="lg"
+                triggerVariant="solid"
+                triggerClassName="rounded-lg"
+                disabled={busy !== null || deleting}
+                items={[
+                  { key: 'start', icon: <Play className="h-4 w-4" />, label: t('databases.actions.start') || 'Start', onClick: () => { void act('start'); }, hidden: running, disabled: provisioning },
+                  { key: 'restart', icon: <RotateCw className="h-4 w-4" />, label: t('databases.actions.restart') || 'Restart', onClick: () => { void act('restart'); }, hidden: !running, disabled: provisioning },
+                  { key: 'stop', icon: <Square className="h-4 w-4" />, label: t('databases.actions.stop') || 'Stop', onClick: () => { void act('stop'); }, hidden: !running, disabled: provisioning },
+                  { key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('databases.instance.delete') || 'Delete the instance', onClick: () => { void remove(); }, danger: true, separator: true },
+                ]}
+              />
+            )}
+          </>
+        )}
+      />
 
       {inst.status === 'provisioning' && (
         <p className="flex items-center gap-2 rounded-lg bg-sky-400/5 px-3 py-2 text-xs text-sky-300">

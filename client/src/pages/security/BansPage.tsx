@@ -14,13 +14,14 @@ import { PageContainer } from '@/components/common/PageContainer';
 import { TableScroll } from '@/components/common/TableScroll';
 import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { TenantBadge } from '@/components/common/TenantBadge';
+import { AccountScopeSelect, scopeSubtitle, useAccountScope } from '@/components/common/AccountScope';
 import { TenantFilterChips } from '@/components/common/TenantFilterChips';
 import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Pill, headerAccentBtnCls, headerBtnCls, selectCls, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { MailSearch, Pager } from '@/components/mail/MailListParts';
 import { useDebounced } from '@/components/mail/useDebounced';
-import { AccountSelect, ListState, useAccountScope, useProxyAccess } from '@/components/proxy/proxyUi';
+import { ListState, useProxyAccess } from '@/components/proxy/proxyUi';
 import { proxyLoadError, toastProxyError } from '@/components/proxy/proxyErrors';
 import { BAN_SOURCES, GeoLine, ObliguardPill, useBanSourceLabel } from '@/components/security/bansUi';
 import { BanCreateModal } from '@/components/security/BanCreateModal';
@@ -172,7 +173,7 @@ export function BansPage() {
     <PageContainer className="flex flex-col gap-5">
       <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
         <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.bans') || 'Bans'}</h1>
-        <span className="text-xs font-mono tracking-wider text-text-muted">{scope.selectedAccount ? scope.selectedAccount.username : (t('proxy.allAccountsShort') || 'all accounts')}</span>
+        <span className="text-xs font-mono tracking-wider text-text-muted">{scopeSubtitle(scope, t('proxy.allAccountsShort') || 'all accounts')}</span>
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => { setLoading(true); void load(); }} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
           {createBtn}
@@ -209,7 +210,7 @@ export function BansPage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <MailSearch value={search} onChange={setSearch} placeholder={t('bans.search') || 'IP, reason, city, organisation…'} />
-        <AccountSelect accounts={accounts} value={scope.accountParam} onChange={scope.setAccount} className="sm:w-52" />
+        <AccountScopeSelect scope={scope} className="sm:w-52" />
         <select aria-label={t('bans.scopeLabel') || 'Scope'} value={scopeFilter} onChange={(e) => setScopeFilter(e.target.value as WebBanScope | '')} className={cn(selectCls, 'w-full bg-bg-secondary sm:w-40')}>
           <option value="">{t('bans.scope.all') || 'Every scope'}</option>
           <option value="account">{t('bans.scope.account') || 'Account'}</option>

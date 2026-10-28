@@ -42,6 +42,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useUiStore, useEffectiveSidebar } from '@/store/uiStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { IconButton } from '@/components/common/IconButton';
+import { useRememberedAccount } from '@/components/common/AccountScope';
 
 // ── localStorage helpers ─────────────────────────────────────────────────────
 
@@ -79,7 +80,12 @@ interface NavItem {
   activePrefixes?: Array<string | RegExp>;
   /** Pages under `path` that belong to another entry. */
   inactivePatterns?: RegExp[];
+  /** Link target when it differs from `path` (account scope kept for the session). */
+  href?: string;
 }
+
+/** Cross-account pages reading `?account=` (coherence plan C1): their link carries the session's account. */
+const SCOPED_PATHS = new Set(['/sites', '/domains', '/files', '/databases', '/usage', '/mail', '/apps', '/proxy', '/network', '/traffic', '/uptime', '/automation', '/security/bans']);
 
 /** /sites/:id/windows/:windowId — the window review belongs to Maintenance, not Sites. */
 const WINDOW_REVIEW_RE = /^\/sites\/\d+\/windows\/\d+\/?$/;
@@ -99,7 +105,7 @@ function NavLink({ item }: { item: NavItem }) {
   const isActive = isItemActive(location.pathname, item);
   return (
     <Link
-      to={item.path}
+      to={item.href ?? item.path}
       aria-current={isActive ? 'page' : undefined}
       className={cn(
         'flex items-center gap-3 rounded-md px-3 py-2 text-[14px] transition-colors coarse:py-2.5',
@@ -165,7 +171,8 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
   const [navMenuOpen, setNavMenuOpen] = usePersisted<boolean>('sidebar:nav-open', true);
 
   // ── Nav items ──────────────────────────────────────────────────────────────
-  const navItems: NavItem[] = [
+  const rememberedAccount = useRememberedAccount();
+  const navItems: NavItem[] = ([
     { label: t('nav.dashboard') || 'Dashboard',          path: '/',          icon: <LayoutDashboard size={18} /> },
     { label: t('nav.accounts') || 'Accounts',            path: '/accounts',  icon: <UserSquare size={18} /> },
     { label: t('nav.sites') || 'Sites',                  path: '/sites',     icon: <Globe size={18} />, inactivePatterns: [WINDOW_REVIEW_RE] },
@@ -188,7 +195,7 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     { label: t('nav.uptime') || 'Uptime',                path: '/uptime',    icon: <Activity size={18} /> },
     { label: t('nav.automation') || 'Automation',        path: '/automation', icon: <Workflow size={18} /> },
     { label: t('nav.bans') || 'Bans',                    path: '/security/bans', icon: <ShieldBan size={18} /> },
-  ];
+  ] as NavItem[]).map((item) => (rememberedAccount != null && SCOPED_PATHS.has(item.path) ? { ...item, href: `${item.path}?account=${rememberedAccount}` } : item));
 
   // Admin-tier section — hidden entirely when the list is empty.
   const adminNavItems: NavItem[] = [
@@ -236,7 +243,7 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
                   <div className="mx-2 my-2 h-px bg-border" aria-hidden />
                 )}
                 <Link
-                  to={item.path}
+                  to={item.href ?? item.path}
                   title={item.label}
                   aria-label={item.label}
                   className={cn(

@@ -13,7 +13,6 @@
     "loadFailed": "Impossible de charger les instances",
     "empty": "Aucune instance pour l'instant.",
     "searchPlaceholder": "Rechercher une instance…",
-    "allAccounts": "Tous les comptes",
     "backToList": "Retour aux bases de données",
     "notRunningHint": "L'instance n'est pas démarrée : démarrez-la pour gérer ses bases.",
     "engine": "Moteur",

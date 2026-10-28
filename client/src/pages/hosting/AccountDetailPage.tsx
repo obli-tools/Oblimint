@@ -3,14 +3,13 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  AlertTriangle, Archive, ArrowLeft, BarChart3, ChevronRight, Database, FolderOpen, KeyRound, Gauge, Globe, HardDrive, Layers, LayoutGrid, Pause, Play, Plus,
+  AlertTriangle, Archive, BarChart3, ChevronRight, Database, FolderOpen, KeyRound, Gauge, Globe, HardDrive, Layers, LayoutGrid, Pause, Play, Plus,
   RefreshCw, Server, ShieldCheck, Trash2, Users,
 } from 'lucide-react';
-import type { Domain, HostingAccount, Plan, Site, SiteStatus } from '@oblimint/shared';
+import type { HostingAccount, Plan, Site } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
 import { accountsApi } from '@/api/accounts.api';
 import { plansApi } from '@/api/plans.api';
-import { domainsApi } from '@/api/domains.api';
 import { sitesApi } from '@/api/sites.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
@@ -19,10 +18,9 @@ import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedT
 import { AccountApiKeysTab } from '@/components/hosting/AccountApiKeysTab';
 import { AccountBackupsTab } from '@/components/hosting/AccountBackupsTab';
 import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu';
-import { IconButton } from '@/components/common/IconButton';
+import { DetailHeader } from '@/components/common/DetailHeader';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
-import { Drawer } from '@/components/common/Drawer';
 import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { TenantBadge } from '@/components/common/TenantBadge';
@@ -30,19 +28,17 @@ import { useConfirm } from '@/components/common/ConfirmDialog';
 import { FileAccessPanel } from '@/components/hosting/FileAccessPanel';
 import { AccountUsersTab } from '@/components/hosting/AccountUsersTab';
 import { PlanSummary } from '@/components/hosting/AccountCreateModal';
-import { DomainCreateModal, domainKindLabel } from '@/components/hosting/DomainCreateModal';
-import { DomainPanel } from '@/components/hosting/DomainPanel';
-import { VerificationBadge } from '@/components/dns/DnsBadges';
-import { DomainClaimsCard } from '@/components/dns/DomainClaims';
+import { DomainsList } from '@/components/hosting/DomainsList';
 import { AccountSecurityTab } from '@/components/security/AccountSecurityTab';
 import { AccountUsageTab } from '@/components/usage/AccountUsageTab';
 import { OverQuotaBanner, OverQuotaPill } from '@/components/usage/usageUi';
 import { AccountDatabasesPanel } from '@/components/databases/AccountDatabasesPanel';
 import {
-  AccountStatusBadge, Card, DiskBar, EmptyState, ForceHttpsIcon, InfoRow, Pill, TlsBadge, headerBtnCls,
+  AccountStatusBadge, Card, DiskBar, EmptyState, InfoRow, Pill,
   hostingErrorMessage, isStepUpHandled, labelCls, payloadNumber, selectCls, toastHostingError, useHostingEvents,
 } from '@/components/hosting/hostingUi';
 import { CreateSiteModal } from '@/components/sites/CreateSiteModal';
+import { BaseBadge, SiteStatusBadge } from '@/components/sites/SiteBadges';
 import { siteHref, type AccountTab } from '@/utils/links';
 
 // The tab ids are the deep-link contract of accountHref() (utils/links.ts).
@@ -150,7 +146,7 @@ export function AccountDetailPage() {
   if (!account) {
     return (
       <PageContainer className="flex flex-col gap-5">
-        <Link to="/accounts" className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-primary"><ArrowLeft size={14} />{t('accounts.backToList') || 'Hosting accounts'}</Link>
+        <DetailHeader backTo="/accounts" title={t('accounts.notFound') || 'Account not found'} />
         <EmptyState icon={<AlertTriangle />} text={loadError ?? (t('accounts.notFound') || 'Account not found')} />
       </PageContainer>
     );
@@ -179,28 +175,28 @@ export function AccountDetailPage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      <div className="flex items-center gap-3 max-sm:flex-wrap max-sm:gap-y-2">
-        <IconButton label={t('common.back') || 'Back'} icon={<ArrowLeft size={16} />} onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/accounts'); }} />
-        <h1 className="min-w-0 truncate font-display text-2xl font-semibold tracking-wide text-text-primary">
-          <span className="font-mono">{account.username}</span>
-        </h1>
-        <AccountStatusBadge status={account.status} message={account.statusMessage} />
-        {account.planName && <Pill tone="accent" className="normal-case tracking-normal"><Layers size={10} />{account.planName}</Pill>}
-        <OverQuotaPill state={account.overQuota} />
-        {isMaster && <TenantBadge tenantId={account.tenantId} tenantName={account.tenantName} size="md" />}
-        <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => { void load(); }} className={headerBtnCls} disabled={busy !== null}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
-          <ActionMenu items={menuItems} sheetTitle={account.username} disabled={busy !== null} />
-        </div>
-      </div>
-      {account.displayName && <p className="-mt-3 text-sm text-text-muted">{account.displayName}</p>}
+      <DetailHeader
+        backTo="/accounts"
+        // C3: the account is named by its primary domain, the system user follows.
+        title={<span className="font-mono">{account.primaryDomain || account.username}</span>}
+        badges={(
+          <>
+            <AccountStatusBadge status={account.status} message={account.statusMessage} />
+            {account.planName && <Pill tone="accent"><Layers size={10} />{account.planName}</Pill>}
+            <OverQuotaPill state={account.overQuota} />
+            {isMaster && <TenantBadge tenantId={account.tenantId} tenantName={account.tenantName} size="md" />}
+          </>
+        )}
+        subtitle={[
+          account.primaryDomain ? <span key="user" className="font-mono">{account.username}</span> : null,
+          account.displayName ? <span key="name">{account.displayName}</span> : null,
+        ]}
+        message={account.status === 'error' ? account.statusMessage : null}
+        onRefresh={() => { void load(); }}
+        refreshing={busy !== null}
+        actions={<ActionMenu items={menuItems} sheetTitle={account.username} disabled={busy !== null} triggerSize="lg" triggerVariant="solid" triggerClassName="rounded-lg" />}
+      />
 
-      {account.status === 'error' && account.statusMessage && (
-        <div className="flex items-start gap-2 rounded-lg border border-status-down/30 bg-status-down/5 p-3 text-xs text-status-down">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-          <span className="whitespace-pre-line break-words font-mono">{account.statusMessage}</span>
-        </div>
-      )}
       {account.status === 'suspended' && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-400">
           <Pause size={14} className="mt-0.5 shrink-0" />
@@ -214,7 +210,7 @@ export function AccountDetailPage() {
 
       {tab === 'overview' && <OverviewTab account={account} isStaff={isStaff} onRefreshUsage={() => { void act('usage', () => accountsApi.refreshUsage(account.id), 'accounts.usageRefreshed', 'Disk usage refreshed', 'accounts.actionFailed', 'Action failed'); }} refreshing={busy === 'usage'} />}
       {tab === 'sites' && <SitesTab account={account} />}
-      {tab === 'domains' && <DomainsTab account={account} />}
+      {tab === 'domains' && <DomainsList accountId={account.id} createDisabled={account.status === 'deleting'} />}
       {tab === 'databases' && <AccountDatabasesPanel accountId={account.id} />}
       {tab === 'usage' && <AccountUsageTab accountId={account.id} />}
       {tab === 'security' && <AccountSecurityTab accountId={account.id} />}
@@ -304,10 +300,6 @@ function OverviewTab({ account, isStaff, onRefreshUsage, refreshing }: {
 
 // ── Sites ───────────────────────────────────────────────────────────────────
 
-function siteStatusTone(s: SiteStatus) {
-  return ({ provisioning: 'blue', active: 'green', stopped: 'muted', error: 'red' } as const)[s];
-}
-
 function SitesTab({ account }: { account: HostingAccount }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -335,7 +327,6 @@ function SitesTab({ account }: { account: HostingAccount }) {
   const canCreate = can('sites.manage', account.id) && account.status !== 'suspended' && account.status !== 'deleting';
   // Created in place (account preset); then the new site, whose back button returns here.
   const createSite = () => setCreating(true);
-  const statusLabel = (s: SiteStatus) => t(`hostingCommon.siteStatus.${s}`) || s;
 
   return (
     <div className="space-y-3">
@@ -359,12 +350,12 @@ function SitesTab({ account }: { account: HostingAccount }) {
             <Link to={`/sites/${x.id}`} className="block rounded-xl bg-bg-secondary px-3 py-2.5 hover:bg-bg-tertiary/30">
               <div className="flex items-center gap-2">
                 <span className="truncate text-sm font-semibold text-text-primary">{x.name}</span>
-                <Pill tone={siteStatusTone(x.status)}>{statusLabel(x.status)}</Pill>
+                <SiteStatusBadge status={x.status} message={x.statusMessage} />
                 <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
               </div>
               <div className="mt-0.5 truncate font-mono text-[11px] text-text-muted">{x.slug}</div>
               <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-text-muted">
-                <span>{x.base}</span>
+                <BaseBadge base={x.base} compact />
                 <span>{t('accounts.sites.col.release') || 'Release'} {x.currentReleaseNumber != null ? `#${x.currentReleaseNumber}` : '—'}</span>
                 {x.primaryDomain && <span className="truncate">{x.primaryDomain}</span>}
               </div>
@@ -380,12 +371,10 @@ function SitesTab({ account }: { account: HostingAccount }) {
                 </>
               ),
             },
-            { id: 'base', header: t('accounts.sites.col.base') || 'Base', tdClassName: 'font-mono text-xs text-text-secondary', sort: (x) => x.base, cell: (x) => x.base },
+            { id: 'base', header: t('accounts.sites.col.base') || 'Base', sort: (x) => x.base, cell: (x) => <BaseBadge base={x.base} compact /> },
             {
               id: 'status', header: t('accounts.sites.col.status') || 'Status', sort: (x) => x.status,
-              cell: (x) => (x.statusMessage
-                ? <span title={x.statusMessage}><Pill tone={siteStatusTone(x.status)}>{statusLabel(x.status)}</Pill></span>
-                : <Pill tone={siteStatusTone(x.status)}>{statusLabel(x.status)}</Pill>),
+              cell: (x) => <SiteStatusBadge status={x.status} message={x.statusMessage} />,
             },
             { id: 'release', header: t('accounts.sites.col.release') || 'Release', tdClassName: 'font-mono text-xs text-text-secondary', sort: (x) => x.currentReleaseNumber ?? null, cell: (x) => (x.currentReleaseNumber != null ? `#${x.currentReleaseNumber}` : '—') },
             { id: 'domain', header: t('accounts.sites.col.domain') || 'Domain', tdClassName: 'font-mono text-xs text-text-secondary', sort: (x) => x.primaryDomain ?? '', cell: (x) => x.primaryDomain ?? '—' },
@@ -398,126 +387,6 @@ function SitesTab({ account }: { account: HostingAccount }) {
         initialAccountId={account.id}
         onClose={() => setCreating(false)}
         onCreated={(site) => { setCreating(false); navigate(siteHref(site.id)); }}
-      />
-    </div>
-  );
-}
-
-// ── Domains ─────────────────────────────────────────────────────────────────
-
-function DomainsTab({ account }: { account: HostingAccount }) {
-  const { t } = useTranslation();
-  const { can } = useHostingMe();
-  const [params, setParams] = useSearchParams();
-  const selectedId = Number(params.get('domain')) || null;
-  const [domains, setDomains] = useState<Domain[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [claimsKey, setClaimsKey] = useState(0);
-
-  const load = useCallback(async () => {
-    try {
-      setDomains(await domainsApi.list({ accountId: account.id }));
-      setError(null);
-    } catch (err) {
-      setDomains([]);
-      setError(hostingErrorMessage(t, err, t('domains.loadFailed') || 'Failed to load the domains'));
-    } finally {
-      setLoading(false);
-    }
-  }, [account.id, t]);
-
-  useEffect(() => { void load(); }, [load]);
-  useHostingEvents([
-    HostingSocketEvents.HOSTING_CHANGED, HostingSocketEvents.CERTIFICATE_UPDATED, HostingSocketEvents.DOMAIN_VERIFICATION_UPDATED,
-  ], () => { void load(); });
-
-  const select = (id: number | null) => {
-    const p = new URLSearchParams(params);
-    if (id == null) p.delete('domain'); else p.set('domain', String(id));
-    setParams(p, { replace: id == null });
-  };
-
-  const canCreate = can('domains.manage', account.id) && account.status !== 'deleting';
-  const selected = domains.find((d) => d.id === selectedId) ?? null;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        {canCreate && <Button size="sm" onClick={() => setCreating(true)}><Plus size={13} className="mr-1.5" />{t('domains.create') || 'Add a domain'}</Button>}
-      </div>
-      {/* Claims started from the create modal below are followed here (as on /domains). */}
-      <DomainClaimsCard accountId={account.id} refreshKey={claimsKey} onSucceeded={() => { void load(); }} />
-      {loading ? (
-        <div className="flex justify-center py-8"><LoadingSpinner /></div>
-      ) : error ? (
-        <EmptyState icon={<AlertTriangle />} text={error} />
-      ) : domains.length === 0 ? (
-        <EmptyState icon={<Globe />} text={t('accounts.domains.empty') || 'No domain in this account yet.'} />
-      ) : (
-        <GroupedTable<Domain>
-          singleGroupFlat
-          minWidth={720}
-          defaultSort={{ column: 'name' }}
-          selectedKey={selectedId}
-          groups={[{ key: 'all', label: '', sortLabel: '', nodes: domainTree(domains, (d) => d.name, (d) => d.id) }]}
-          onRowClick={(d) => select(d.id)}
-          renderCard={(d) => (
-            <button type="button" onClick={() => select(d.id)} className="block w-full rounded-xl bg-bg-secondary px-3 py-2.5 text-left hover:bg-bg-tertiary/30">
-              <div className="flex items-center gap-2">
-                <span className="truncate font-mono text-sm font-semibold text-text-primary">{d.name}</span>
-                <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-text-muted" />
-              </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
-                <VerificationBadge verification={d.verification} />
-                <span>{domainKindLabel(t, d.kind)}</span>
-                <span className="font-mono">{d.routes.length} {t('domains.col.routes') || 'Routes'}</span>
-                <TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} />
-                {d.forceHttps && <ForceHttpsIcon on />}
-              </div>
-            </button>
-          )}
-          columns={[
-            { id: 'name', header: t('domains.col.name') || 'Domain', tdClassName: 'font-mono font-medium text-text-primary', sort: (d) => d.name, cell: (d) => d.name },
-            { id: 'kind', header: t('domains.col.kind') || 'Kind', tdClassName: 'text-text-secondary', sort: (d) => d.kind, cell: (d) => domainKindLabel(t, d.kind) },
-            { id: 'ownership', header: t('domainOwnership.col') || 'Ownership', sort: (d) => d.verification?.status ?? '', cell: (d) => <VerificationBadge verification={d.verification} /> },
-            { id: 'routes', header: t('domains.col.routes') || 'Routes', thClassName: 'text-right', tdClassName: 'text-right font-mono tabular-nums', sort: (d) => d.routes.length, cell: (d) => d.routes.length },
-            { id: 'tls', header: t('domains.col.tls') || 'TLS', sort: (d) => d.certificate?.status ?? d.tlsMode, cell: (d) => <TlsBadge tlsMode={d.tlsMode} certificate={d.certificate} /> },
-            { id: 'https', header: t('domains.col.https') || 'HTTPS', sort: (d) => d.forceHttps, cell: (d) => <ForceHttpsIcon on={d.forceHttps} /> },
-          ]}
-        />
-      )}
-
-      <Drawer
-        open={selectedId != null}
-        onClose={() => select(null)}
-        side="right"
-        size="lg"
-        title={selected?.name ?? (t('domains.detailTitle') || 'Domain')}
-        icon={<Globe size={16} className="shrink-0 text-accent" />}
-        bodyClassName="p-4"
-      >
-        {selectedId != null && (
-          <DomainPanel
-            domainId={selectedId}
-            onChanged={(d) => setDomains((cur) => cur.map((x) => (x.id === d.id ? d : x)))}
-            onDeleted={() => { select(null); void load(); }}
-          />
-        )}
-      </Drawer>
-
-      <DomainCreateModal
-        open={creating}
-        accountId={account.id}
-        onClose={() => setCreating(false)}
-        onClaimCreated={() => setClaimsKey((n) => n + 1)}
-        onCreated={(d) => {
-          setCreating(false);
-          toast.success(t('domains.created', { name: d.name, defaultValue: 'Domain {{name}} added' }));
-          setDomains((cur) => [...cur, d]);
-          select(d.id);
-        }}
       />
     </div>
   );

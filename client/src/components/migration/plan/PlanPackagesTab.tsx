@@ -94,7 +94,7 @@ export function PlanPackagesTab({ editor, catalog }: { editor: PlanEditor; catal
         const choice = pkgs[id] ?? { action: rows[0]?.action ?? 'create' };
         const tenants = [...new Set(rows.map((r) => r.tenantId))];
         return (
-          <Card key={id} title={<span className="normal-case tracking-normal">{rows[0]?.name ?? `#${id}`} <span className="font-mono text-text-muted">· CWP #{id}</span></span>} icon={<Package size={14} className="text-accent" />}>
+          <Card key={id} title={<span>{rows[0]?.name ?? `#${id}`} <span className="font-mono text-text-muted">· CWP #{id}</span></span>} icon={<Package size={14} className="text-accent" />}>
             <div className="grid gap-3 md:grid-cols-[14rem_1fr]">
               <div>
                 <label className={labelCls} htmlFor={`pa-${id}`}>{t('migration.packages.action') || 'Target plan'}</label>

@@ -554,8 +554,6 @@
       "stacks": "Applications"
     },
     "scope": {
-      "account": "Hosting account",
-      "allAccounts": "All accounts",
       "allAccountsShort": "all accounts",
       "pickAccount": "Choose an account…"
     },

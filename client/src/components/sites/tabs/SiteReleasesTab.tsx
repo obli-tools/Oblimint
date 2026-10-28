@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, ChevronLeft, ChevronRight, CopyCheck, Eye, History, RotateCcw, Rocket, ShieldAlert, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, CopyCheck, Eye, History, RotateCcw, Rocket, ShieldAlert, X } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { HostingSocketEvents, PREVIEWABLE_RELEASE_STATUSES, type Release } from '@oblimint/shared';
+import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { EmptyState } from '@/components/common/EmptyState';
 import { PreviewCard, useSitePreview } from '../previews/PreviewCard';
 import { StartPreviewModal } from '../previews/StartPreviewModal';
 import { releasesApi } from '@/api/releases.api';
@@ -268,14 +270,11 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
       </div>
 
       {error ? (
-        <div className="rounded-xl bg-bg-secondary px-4 py-6 text-center text-sm text-text-muted">{error}</div>
+        <EmptyState icon={<AlertTriangle />} text={error} />
       ) : loading && items.length === 0 ? (
-        <p className="text-sm text-text-muted">{t('common.loading') || 'Loading...'}</p>
+        <div className="flex justify-center py-8"><LoadingSpinner /></div>
       ) : items.length === 0 ? (
-        <div className="rounded-xl bg-bg-secondary px-6 py-10 text-center">
-          <History className="mx-auto mb-3 h-8 w-8 text-text-muted" />
-          <p className="text-sm text-text-secondary">{t('releases.empty') || 'No release yet: upload the site to the staging folder, then publish.'}</p>
-        </div>
+        <EmptyState icon={<History />} text={t('releases.empty') || 'No release yet: upload the site to the staging folder, then publish.'} />
       ) : (
         <GroupedTable<Release>
           storageKey="site-releases"

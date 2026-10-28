@@ -263,27 +263,8 @@
     "phpRunning": "PHP version running in the container"
   },
   "siteRoutes": {
-    "add": "Add",
-    "addTitle": "Add a route",
-    "added": "Route added",
     "basePathNote": "A sub-site must know where it lives: the base path of this site is {{basePath}} (Overview tab).",
-    "deleteConfirm": "Remove the route {{route}}? This address will no longer serve the site.",
-    "deleted": "Route removed",
-    "empty": "No domain points to this site yet.",
-    "explain": "A route sends a domain + path prefix to this site. When several prefixes match a request, the longest one wins.",
-    "fields": {
-      "address": "Address",
-      "domain": "Domain",
-      "prefix": "Prefix",
-      "runtime": "Runtime"
-    },
-    "manageDomains": "Manage domains",
-    "noDomain": "This account has no domain yet.",
-    "pickDomain": "Choose a domain.",
-    "prefixInvalid": "Invalid prefix: \"/\" or a path such as /shop/.",
-    "primary": "primary",
-    "primaryOption": "Primary ({{base}})",
-    "secondaryOption": "Secondary ({{base}})"
+    "manageDomains": "Manage domains"
   },
   "sites": {
     "actions": {
@@ -413,9 +394,6 @@
     "files": {
       "data": "The writable data of the site (uploads, caches…), one folder per data path. Changes here are live immediately, but PHP is never executed from it.",
       "staging": "The code of the site. Upload it here: nothing is live until it is published as a release (automatically or with the \"Publish\" button). The live code can never be modified in place."
-    },
-    "filters": {
-      "allAccounts": "All accounts"
     },
     "form": {
       "basePathHint": "For a sub-site served under a prefix (e.g. /blog/): the path the application expects. \"/\" otherwise.",

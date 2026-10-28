@@ -303,7 +303,7 @@ export function DbUsersCard({ instance, manage, onChanged }: { instance: DbInsta
     : (
       <span className="flex flex-wrap gap-1">
         {u.grants.map((g) => (
-          <Pill key={g.databaseId} tone={g.level === 'all' ? 'accent' : 'blue'} className="normal-case tracking-normal">
+          <Pill key={g.databaseId} tone={g.level === 'all' ? 'accent' : 'blue'}>
             {g.databaseName} · {privilegeLabel(t, g.level)}
           </Pill>
         ))}

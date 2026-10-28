@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Plus, RefreshCw } from 'lucide-react';
 import { PageContainer } from '@/components/common/PageContainer';
 import { headerAccentBtnCls, headerBtnCls } from '@/components/hosting/hostingUi';
-import { AccountScopeBar, useAccountScope } from '@/components/apps/AccountScope';
+import { AccountScopeBar, useAccountScope } from '@/components/common/AccountScope';
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { NetworkLinksPanel } from '@/components/network/NetworkLinksPanel';
 import { NetworkSystemPanel } from '@/components/network/NetworkSystemPanel';

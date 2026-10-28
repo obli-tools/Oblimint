@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { ArrowLeft, ChevronDown, ChevronRight, Pencil, Play, RefreshCw, Trash2, Workflow as WorkflowIcon } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Play, Trash2, Workflow as WorkflowIcon } from 'lucide-react';
 import {
   HostingSocketEvents, type HostingAccount, type MonitoringUpdatedPayload, type Workflow, type WorkflowRun,
 } from '@oblimint/shared';
@@ -10,7 +10,7 @@ import { automationApi } from '@/api/automation.api';
 import { accountsApi } from '@/api/accounts.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
-import { IconButton } from '@/components/common/IconButton';
+import { DetailHeader } from '@/components/common/DetailHeader';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { useConfirm } from '@/components/common/ConfirmDialog';
@@ -142,29 +142,32 @@ export function WorkflowPage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
-        <IconButton onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/automation'); }} size="lg" variant="plain" className="mt-0.5 rounded-lg hover:bg-bg-secondary" label={t('common.back') || 'Back'} icon={<ArrowLeft className="h-4 w-4" />} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3 max-sm:gap-2">
-            <h1 className="min-w-0 break-all font-display text-2xl font-semibold tracking-wide text-text-primary max-sm:text-xl">{wf.name}</h1>
+      <DetailHeader
+        backTo="/automation"
+        title={wf.name}
+        badges={(
+          <>
             {wf.enabled ? <Pill tone="green">{t('automation.enabled') || 'active'}</Pill> : <Pill tone="muted">{t('automation.disabled') || 'disabled'}</Pill>}
             <RunStatusPill status={wf.lastStatus} />
-          </div>
-          <p className="mt-1 text-sm text-text-muted">{describeTrigger(t, wf.trigger, i18n.language)}</p>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 max-lg:order-last max-lg:w-full">
-          <IconButton label={t('common.refresh') || 'Refresh'} icon={<RefreshCw className="h-4 w-4" />} onClick={() => { void load(); void loadRuns(); }} size="lg" variant="solid" className="rounded-lg" />
-          {manage && (
-            <>
-              <button type="button" disabled={busy || running} onClick={() => { void run(); }} className={headerAccentBtnCls}><Play size={14} />{t('automation.runNow') || 'Run now'}</button>
-              <ActionMenu triggerSize="lg" triggerVariant="solid" triggerClassName="rounded-lg" items={[
-                { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(true) },
-                { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(); }, danger: true, separator: true },
-              ]} />
-            </>
-          )}
-        </div>
-      </div>
+          </>
+        )}
+        onRefresh={() => { void load(); void loadRuns(); }}
+        actions={(
+          <>
+            {manage && (
+              <>
+                <button type="button" disabled={busy || running} onClick={() => { void run(); }} className={headerAccentBtnCls}><Play size={14} />{t('automation.runNow') || 'Run now'}</button>
+                <ActionMenu triggerSize="lg" triggerVariant="solid" triggerClassName="rounded-lg" items={[
+                  { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(true) },
+                  { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(); }, danger: true, separator: true },
+                ]} />
+              </>
+            )}
+          </>
+        )}
+      >
+        <p className="mt-1 text-sm text-text-muted">{describeTrigger(t, wf.trigger, i18n.language)}</p>
+      </DetailHeader>
 
       <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title={t('automation.form.trigger') || 'Trigger'}>

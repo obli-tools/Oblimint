@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  ArrowLeft, CalendarClock, Cpu, Database, DoorOpen, Eye, FolderOpen, KeyRound, Globe, History, LayoutDashboard, Play, RefreshCw, Rocket, Route,
+  CalendarClock, Cpu, Database, DoorOpen, Eye, FolderOpen, KeyRound, Globe, History, LayoutDashboard, Play, Rocket, Route,
   ScrollText, Square, Trash2, ExternalLink, Wrench,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -12,7 +12,7 @@ import { maintenanceApi } from '@/api/maintenance.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
-import { IconButton } from '@/components/common/IconButton';
+import { DetailHeader, AccountLink } from '@/components/common/DetailHeader';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
 import { TenantBadge } from '@/components/common/TenantBadge';
@@ -32,7 +32,7 @@ import { SiteEnvTab } from '@/components/sites/tabs/SiteEnvTab';
 import { SiteCronTab } from '@/components/cron/SiteCronTab';
 import { SiteLogsTab } from '@/components/logs/SiteLogsTab';
 import { SiteMaintenanceTab } from '@/components/maintenance/SiteMaintenanceTab';
-import type { SiteTab } from '@/utils/links';
+import { accountHref, type SiteTab } from '@/utils/links';
 
 // The tab ids are the deep-link contract of siteHref() (utils/links.ts).
 type Tab = SiteTab;
@@ -214,19 +214,11 @@ export function SiteDetailPage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      {/* Header */}
-      <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
-        <IconButton
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/sites'); }}
-          size="lg"
-          variant="plain"
-          className="mt-0.5 rounded-lg hover:bg-bg-secondary"
-          label={t('common.back') || 'Back'}
-          icon={<ArrowLeft className="h-4 w-4" />}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3 max-sm:gap-2">
-            <h1 className="truncate font-display text-2xl font-semibold tracking-wide text-text-primary max-sm:text-xl">{site.name}</h1>
+      <DetailHeader
+        backTo={accountHref(site.accountId, 'sites')}
+        title={site.name}
+        badges={(
+          <>
             <SiteStatusBadge status={site.status} message={site.statusMessage} />
             <BaseBadge base={site.base} />
             {site.previewBase && (
@@ -246,64 +238,50 @@ export function SiteDetailPage() {
               </button>
             ) : null}
             <TenantBadge tenantId={site.tenantId} size="md" />
-          </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
-            <Link to={`/accounts/${site.accountId}`} className="font-mono hover:text-accent">{site.accountUsername}</Link>
-            <span>·</span>
-            <span className="font-mono">{site.slug}</span>
-            {site.currentReleaseNumber != null && (<><span>·</span><span className="font-mono">#{site.currentReleaseNumber}</span></>)}
-            {site.primaryDomain && (
-              <>
-                <span>·</span>
-                <a href={`https://${site.primaryDomain}/`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono hover:text-accent">
-                  {site.primaryDomain}<ExternalLink className="h-3 w-3" />
-                </a>
-              </>
+          </>
+        )}
+        subtitle={[
+          <AccountLink key="account" accountId={site.accountId} username={site.accountUsername} tab="sites" />,
+          <span key="slug" className="font-mono">{site.slug}</span>,
+          site.currentReleaseNumber != null && <span key="release" className="font-mono">#{site.currentReleaseNumber}</span>,
+          site.primaryDomain && (
+            <a key="domain" href={`https://${site.primaryDomain}/`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono hover:text-accent">
+              {site.primaryDomain}<ExternalLink className="h-3 w-3" />
+            </a>
+          ),
+          site.previewUrl && (
+            <a key="preview" href={site.previewUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-blue-400 hover:underline">
+              {t('runtime.preview.link') || 'preview'}<ExternalLink className="h-3 w-3" />
+            </a>
+          ),
+        ]}
+        message={site.status === 'error' ? site.statusMessage : null}
+        onRefresh={() => { void loadSite(true); void loadWindow(); setReleasesTick((n) => n + 1); }}
+        actions={(
+          <>
+            {canPublish && (
+              <Button size="sm" onClick={() => setPublishOpen(true)} className="coarse:min-h-10">
+                <Rocket size={14} className="mr-1" />
+                {t('releases.publish.button') || 'Publish'}
+              </Button>
             )}
-            {site.previewUrl && (
-              <>
-                <span>·</span>
-                <a href={site.previewUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-blue-400 hover:underline">
-                  {t('runtime.preview.link') || 'preview'}<ExternalLink className="h-3 w-3" />
-                </a>
-              </>
+            {canManage && (
+              <ActionMenu
+                triggerSize="lg"
+                triggerVariant="solid"
+                triggerClassName="rounded-lg"
+                disabled={busy}
+                items={[
+                  site.status === 'stopped'
+                    ? { key: 'start', icon: <Play className="h-4 w-4" />, label: t('sites.actions.start') || 'Start the site', onClick: () => void toggleRunning() }
+                    : { key: 'stop', icon: <Square className="h-4 w-4" />, label: t('sites.actions.stop') || 'Stop the site', onClick: () => void toggleRunning() },
+                  { key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('sites.actions.delete') || 'Delete the site', onClick: () => void remove(), danger: true, separator: true },
+                ]}
+              />
             )}
-          </p>
-          {site.status === 'error' && site.statusMessage && (
-            <p className="mt-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{site.statusMessage}</p>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2 max-lg:order-last max-lg:w-full">
-          <IconButton
-            label={t('common.refresh') || 'Refresh'}
-            icon={<RefreshCw className="h-4 w-4" />}
-            onClick={() => { void loadSite(true); void loadWindow(); setReleasesTick((n) => n + 1); }}
-            size="lg"
-            variant="solid"
-            className="rounded-lg"
-          />
-          {canPublish && (
-            <Button size="sm" onClick={() => setPublishOpen(true)} className="coarse:min-h-10">
-              <Rocket size={14} className="mr-1" />
-              {t('releases.publish.button') || 'Publish'}
-            </Button>
-          )}
-          {canManage && (
-            <ActionMenu
-              triggerSize="lg"
-              triggerVariant="solid"
-              triggerClassName="rounded-lg"
-              disabled={busy}
-              items={[
-                site.status === 'stopped'
-                  ? { key: 'start', icon: <Play className="h-4 w-4" />, label: t('sites.actions.start') || 'Start the site', onClick: () => void toggleRunning() }
-                  : { key: 'stop', icon: <Square className="h-4 w-4" />, label: t('sites.actions.stop') || 'Stop the site', onClick: () => void toggleRunning() },
-                { key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('sites.actions.delete') || 'Delete the site', onClick: () => void remove(), danger: true, separator: true },
-              ]}
-            />
-          )}
-        </div>
-      </div>
+          </>
+        )}
+      />
 
       <SegmentedTabs<Tab> tabs={tabs} value={tab} onChange={(next) => setTab(next)} ariaLabel={site.name} fill={false} />
 

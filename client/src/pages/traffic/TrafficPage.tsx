@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, Waypoints } from 'lucide-react';
+import { Waypoints } from 'lucide-react';
 import type { ProxyHost, ProxyTrafficRange } from '@oblimint/shared';
 import { proxyApi } from '@/api/proxy.api';
 import { PageContainer } from '@/components/common/PageContainer';
-import { TenantFilterChips } from '@/components/common/TenantFilterChips';
+import { AccountLink, DetailHeader } from '@/components/common/DetailHeader';
+import { AccountScopeBar, scopeSubtitle, useAccountScope } from '@/components/common/AccountScope';
 import { headerBtnCls } from '@/components/hosting/hostingUi';
-import { AccountSelect, DomainNames, EdgeUnitPill, useAccountScope } from '@/components/proxy/proxyUi';
+import { DomainNames, EdgeUnitPill } from '@/components/proxy/proxyUi';
 import { TrafficOverview } from '@/components/traffic/TrafficOverview';
 import { TrafficReportView } from '@/components/traffic/TrafficReport';
 import { RangeTabs, isTrafficRange } from '@/components/traffic/trafficUi';
@@ -37,17 +38,16 @@ export function TrafficPage() {
   if (hostId != null) {
     return (
       <PageContainer className="flex flex-col gap-5">
-        <Link to={`/traffic${range !== '24h' ? `?range=${range}` : ''}`} className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-primary">
-          <ArrowLeft size={14} />{t('nav.traffic') || 'Traffic'}
-        </Link>
-        <div className="flex items-center gap-3 max-sm:flex-wrap">
-          <h1 className="min-w-0 truncate font-display text-2xl font-semibold tracking-wide text-text-primary">{host?.name ?? `#${hostId}`}</h1>
-          {host && <EdgeUnitPill unit={host.edge} />}
-          <div className="ml-auto flex items-center gap-2">
-            <Link to={`/proxy/hosts/${hostId}`} className={headerBtnCls}><Waypoints size={14} />{t('traffic.openHost') || 'Proxy host'}</Link>
-          </div>
-        </div>
-        {host && <div className="-mt-3"><DomainNames domains={host.domains} max={4} /></div>}
+        <DetailHeader
+          backTo={`/traffic${range !== '24h' ? `?range=${range}` : ''}`}
+          title={host?.name ?? `#${hostId}`}
+          badges={host ? <EdgeUnitPill unit={host.edge} /> : undefined}
+          subtitle={host ? [
+            <AccountLink key="account" accountId={host.accountId} username={host.accountUsername} to={`/traffic?account=${host.accountId}`} />,
+            <DomainNames key="domains" domains={host.domains} max={4} />,
+          ] : undefined}
+          actions={<Link to={`/proxy/hosts/${hostId}`} className={headerBtnCls}><Waypoints size={14} />{t('traffic.openHost') || 'Proxy host'}</Link>}
+        />
         <RangeTabs value={range} onChange={setRange} />
         <TrafficReportView key={`${hostId}-${range}`} hostId={hostId} range={range} />
       </PageContainer>
@@ -58,14 +58,12 @@ export function TrafficPage() {
     <PageContainer className="flex flex-col gap-5">
       <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
         <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.traffic') || 'Traffic'}</h1>
-        <span className="text-xs font-mono tracking-wider text-text-muted">{scope.selectedAccount ? scope.selectedAccount.username : (t('proxy.allAccountsShort') || 'all accounts')}</span>
+        <span className="text-xs font-mono tracking-wider text-text-muted">{scopeSubtitle(scope, t('proxy.allAccountsShort') || 'all accounts')}</span>
       </div>
       <p className="-mt-3 text-sm text-text-muted">{t('traffic.description') || 'Requests, status codes and latency of each proxy host, from the access log of the web front end.'}</p>
-      <TenantFilterChips value={scope.tenantFilter.value} onChange={scope.setSingleTenant} />
-      <div className="flex flex-wrap items-center gap-2">
-        <AccountSelect accounts={scope.accounts} value={scope.accountParam} onChange={scope.setAccount} />
+      <AccountScopeBar scope={scope}>
         <div className="sm:ml-auto"><RangeTabs value={range} onChange={setRange} /></div>
-      </div>
+      </AccountScopeBar>
       <TrafficOverview key={`${scope.accountId ?? 'all'}-${scope.tenantId ?? ''}-${range}`} accountId={scope.accountId} tenantId={scope.tenantId} range={range} accounts={scope.accounts} showAccount={scope.accountId == null} />
     </PageContainer>
   );

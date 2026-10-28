@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  ArrowLeft, BarChart3, Code2, Gauge, Globe, KeyRound, Lock, Route, Settings2, ShieldAlert, Trash2, Waypoints,
+  BarChart3, Code2, Gauge, Globe, KeyRound, Lock, Route, Settings2, ShieldAlert, Trash2, Waypoints,
 } from 'lucide-react';
 import {
   HostingSocketEvents,
@@ -14,6 +14,7 @@ import { domainsApi } from '@/api/domains.api';
 import { bansApi } from '@/api/bans.api';
 import { proxyApi, proxyAppsLookup } from '@/api/proxy.api';
 import { Button } from '@/components/common/Button';
+import { AccountLink, DetailHeader } from '@/components/common/DetailHeader';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
@@ -252,7 +253,7 @@ export function ProxyHostEditorPage() {
   if (loadError) {
     return (
       <PageContainer className="flex flex-col gap-4">
-        <Link to="/proxy" className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-primary"><ArrowLeft size={14} />{t('nav.proxy') || 'Proxy'}</Link>
+        <DetailHeader backTo="/proxy" title={t('nav.proxy') || 'Proxy'} />
         <EmptyState icon={<Waypoints />} text={loadError} />
       </PageContainer>
     );
@@ -264,29 +265,26 @@ export function ProxyHostEditorPage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <Link to={`/proxy${form.accountId ? `?account=${form.accountId}` : ''}`} className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-primary">
-          <ArrowLeft size={14} />{t('nav.proxy') || 'Proxy'}
-        </Link>
-      </div>
-      <div className="flex items-center gap-3 max-sm:flex-wrap">
-        <h1 className="min-w-0 truncate font-display text-2xl font-semibold tracking-wide text-text-primary">
-          {isNew ? (quick ? (t('proxy.editor.quickTitle') || 'Expose the application') : (t('proxy.editor.newTitle') || 'New proxy host')) : (host?.name || form.name)}
-        </h1>
-        {host && <EdgeUnitPill unit={host.edge} />}
-        {host && <span className="font-mono text-xs text-text-muted">{host.accountUsername}</span>}
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          {host && <Link to={`/traffic/${host.id}`} className={headerBtnCls}><BarChart3 size={14} />{t('proxy.hosts.traffic') || 'Traffic'}</Link>}
-          {host && !readOnly && (
-            <Button size="sm" variant="ghost" onClick={() => { void remove(); }}><Trash2 size={14} className="mr-1.5" />{t('common.delete') || 'Delete'}</Button>
-          )}
-          {!readOnly && (
-            <Button size="sm" loading={saving} disabled={!canSave} onClick={() => { void save(); }}>
-              {isNew ? (t('common.create') || 'Create') : (t('common.save') || 'Save')}
-            </Button>
-          )}
-        </div>
-      </div>
+      <DetailHeader
+        // Fallback: the proxy hosts of its account (no proxy tab on the account page: a tile, phase 3).
+        backTo={`/proxy${form.accountId ? `?account=${form.accountId}` : ''}`}
+        title={isNew ? (quick ? (t('proxy.editor.quickTitle') || 'Expose the application') : (t('proxy.editor.newTitle') || 'New proxy host')) : (host?.name || form.name)}
+        badges={host ? <EdgeUnitPill unit={host.edge} /> : undefined}
+        subtitle={host ? [<AccountLink key="account" accountId={host.accountId} username={host.accountUsername} to={`/proxy?account=${host.accountId}`} />] : undefined}
+        actions={(
+          <>
+            {host && <Link to={`/traffic/${host.id}`} className={headerBtnCls}><BarChart3 size={14} />{t('proxy.hosts.traffic') || 'Traffic'}</Link>}
+            {host && !readOnly && (
+              <Button size="sm" variant="ghost" onClick={() => { void remove(); }}><Trash2 size={14} className="mr-1.5" />{t('common.delete') || 'Delete'}</Button>
+            )}
+            {!readOnly && (
+              <Button size="sm" loading={saving} disabled={!canSave} onClick={() => { void save(); }}>
+                {isNew ? (t('common.create') || 'Create') : (t('common.save') || 'Save')}
+              </Button>
+            )}
+          </>
+        )}
+      />
       {quick && isNew && (
         <p className="-mt-2 text-sm text-text-muted">{t('proxy.editor.quickHint', { service: quick.service, port: quick.port, defaultValue: 'Service {{service}}, port {{port}}: choose the domains; Let’s Encrypt, HTTP/2, WebSocket and the availability monitor are turned on.' })}</p>
       )}

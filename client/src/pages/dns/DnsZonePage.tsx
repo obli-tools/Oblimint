@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  ArrowLeft, Download, EyeOff, FileStack, KeyRound, Lock, Network, Pencil, Plus, RefreshCw, RotateCcw, Search, Trash2,
+  Download, EyeOff, FileStack, KeyRound, Lock, Network, Pencil, Plus, RotateCcw, Search, Trash2,
 } from 'lucide-react';
 import { HostingSocketEvents, type DnsRecord, type DnsRecordType, type DnsZoneDetail } from '@oblimint/shared';
 import { dnsApi } from '@/api/dns.api';
@@ -11,6 +11,7 @@ import { useHostingMe } from '@/store/hostingStore';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
+import { AccountLink, DetailHeader } from '@/components/common/DetailHeader';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
@@ -202,27 +203,22 @@ export function DnsZonePage() {
   return (
     <PageContainer className="flex flex-col gap-5">
       {/* Header */}
-      <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
-        <IconButton
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(fallbackHref); }}
-          size="lg"
-          variant="plain"
-          className="mt-0.5 rounded-lg hover:bg-bg-secondary"
-          label={t('common.back') || 'Back'}
-          icon={<ArrowLeft className="h-4 w-4" />}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3 max-sm:gap-2">
-            <h1 className="min-w-0 break-all font-display text-2xl font-semibold tracking-wide text-text-primary max-sm:text-xl">{zone.name}</h1>
+      <DetailHeader
+        backTo={fallbackHref}
+        title={zone.name}
+        badges={(
+          <>
             <ZoneStatusBadge status={zone.status} message={zone.statusMessage} />
             <ZoneKindBadge kind={zone.kind} />
             {zone.dnssec && <Pill tone="green"><KeyRound size={10} />DNSSEC</Pill>}
             {!manage && <Pill><Lock size={10} />{t('dns.zone.readOnly') || 'read-only'}</Pill>}
             <TenantBadge tenantId={zone.tenantId} size="md" />
-          </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
+          </>
+        )}
+        subtitle={(
+          <>
             {zone.accountId != null
-              ? <Link to={`/accounts/${zone.accountId}`} className="font-mono hover:text-accent">{zone.accountUsername}</Link>
+              ? <AccountLink accountId={zone.accountId} username={zone.accountUsername} tab="domains" />
               : <span>{t('dns.zones.platform') || 'platform'}</span>}
             <span>·</span>
             <span className="font-mono">{t('dns.zone.serial') || 'serial'} {zone.serial}</span>
@@ -230,31 +226,31 @@ export function DnsZonePage() {
             <span className="font-mono">TTL {zone.defaultTtl}</span>
             <span>·</span>
             <span>{t('dns.zone.lastSync', { date: fmt(zone.lastSyncedAt), defaultValue: 'synced {{date}}' })}</span>
-          </p>
-          {zone.status === 'error' && zone.statusMessage && (
-            <p className="mt-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{zone.statusMessage}</p>
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2 max-lg:order-last max-lg:w-full">
-          <IconButton label={t('common.refresh') || 'Refresh'} icon={<RefreshCw className="h-4 w-4" />} onClick={() => { void load(true); }} size="lg" variant="solid" className="rounded-lg" />
-          {editable && (
-            <Button size="sm" onClick={() => setEditing('new')} className="coarse:min-h-10">
-              <Plus size={14} className="mr-1" />{t('dns.records.add') || 'Add a record'}
-            </Button>
-          )}
-          <ActionMenu
-            triggerSize="lg"
-            triggerVariant="solid"
-            triggerClassName="rounded-lg"
-            items={[
-              { key: 'export', icon: <Download className="h-4 w-4" />, label: t('dns.zone.export') || 'Export (BIND)', onClick: () => { void exportZone(); } },
-              { key: 'template', icon: <FileStack className="h-4 w-4" />, label: t('dns.templates.applyTitle') || 'Apply a template', onClick: () => setTemplateOpen(true), hidden: !editable || me?.kind !== 'staff' },
-              { key: 'reset', icon: <RotateCcw className="h-4 w-4" />, label: t('dns.reset.title') || 'Reset the zone', onClick: () => setResetOpen(true), hidden: !manage },
-              { key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('dns.zone.delete') || 'Delete the zone', onClick: () => { void removeZone(); }, danger: true, separator: true, hidden: !manage },
-            ]}
-          />
-        </div>
-      </div>
+          </>
+        )}
+        message={zone.status === 'error' ? zone.statusMessage : null}
+        onRefresh={() => { void load(true); }}
+        actions={(
+          <>
+            {editable && (
+              <Button size="sm" onClick={() => setEditing('new')} className="coarse:min-h-10">
+                <Plus size={14} className="mr-1" />{t('dns.records.add') || 'Add a record'}
+              </Button>
+            )}
+            <ActionMenu
+              triggerSize="lg"
+              triggerVariant="solid"
+              triggerClassName="rounded-lg"
+              items={[
+                { key: 'export', icon: <Download className="h-4 w-4" />, label: t('dns.zone.export') || 'Export (BIND)', onClick: () => { void exportZone(); } },
+                { key: 'template', icon: <FileStack className="h-4 w-4" />, label: t('dns.templates.applyTitle') || 'Apply a template', onClick: () => setTemplateOpen(true), hidden: !editable || me?.kind !== 'staff' },
+                { key: 'reset', icon: <RotateCcw className="h-4 w-4" />, label: t('dns.reset.title') || 'Reset the zone', onClick: () => setResetOpen(true), hidden: !manage },
+                { key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('dns.zone.delete') || 'Delete the zone', onClick: () => { void removeZone(); }, danger: true, separator: true, hidden: !manage },
+              ]}
+            />
+          </>
+        )}
+      />
 
       {!hosted && <ExpectedRecordsCard zone={zone} />}
 

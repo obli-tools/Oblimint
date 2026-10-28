@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Database, Info, Pencil, Plus, Rocket, Trash2, Wand2 } from 'lucide-react';
+import { AlertTriangle, Database, Info, Pencil, Plus, Rocket, Trash2, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   appProfileDef, normalizeRelPath, type DataPathPolicy, type SiteDataPath,
 } from '@oblimint/shared';
+import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { EmptyState } from '@/components/common/EmptyState';
 import { sitesApi } from '@/api/sites.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
@@ -123,14 +125,11 @@ export function SiteDataPathsTab({ site, onPublish }: SiteTabProps) {
       </div>
 
       {loading ? (
-        <p className="text-sm text-text-muted">{t('common.loading') || 'Loading...'}</p>
+        <div className="flex justify-center py-8"><LoadingSpinner /></div>
       ) : error ? (
-        <div className="rounded-xl bg-bg-secondary px-4 py-6 text-center text-sm text-text-muted">{error}</div>
+        <EmptyState icon={<AlertTriangle />} text={error} />
       ) : paths.length === 0 ? (
-        <div className="rounded-xl bg-bg-secondary px-6 py-10 text-center">
-          <Database className="mx-auto mb-3 h-8 w-8 text-text-muted" />
-          <p className="text-sm text-text-secondary">{t('dataPaths.empty') || 'No data path: the whole site is read only.'}</p>
-        </div>
+        <EmptyState icon={<Database />} text={t('dataPaths.empty') || 'No data path: the whole site is read only.'} />
       ) : (
         <GroupedTable<SiteDataPath>
           storageKey="site-data-paths"

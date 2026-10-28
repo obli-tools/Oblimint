@@ -75,8 +75,8 @@ function DnsServerStrip() {
   );
 }
 
-/** Zones tab of « Domains & DNS ». */
-export function DnsZonesTab() {
+/** Zones tab of « Domains & DNS » (optionally cut down to the account scope of the page). */
+export function DnsZonesTab({ accountId = null, tenantId }: { accountId?: number | null; tenantId?: number } = {}) {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { can } = useHostingMe();
@@ -110,9 +110,10 @@ export function DnsZonesTab() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return zones;
-    return zones.filter((z) => z.name.includes(q) || (z.accountUsername ?? '').toLowerCase().includes(q));
-  }, [zones, search]);
+    const scoped = zones.filter((z) => (accountId == null || z.accountId === accountId) && (tenantId == null || z.tenantId === tenantId));
+    if (!q) return scoped;
+    return scoped.filter((z) => z.name.includes(q) || (z.accountUsername ?? '').toLowerCase().includes(q));
+  }, [zones, search, accountId, tenantId]);
 
   const accountDir = useAccountDirectory();
   const canCreate = can('dns.manage');

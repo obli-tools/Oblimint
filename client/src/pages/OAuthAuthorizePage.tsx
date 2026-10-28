@@ -8,7 +8,7 @@ import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/common/Button';
 import { Logo } from '@/components/common/Logo';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
-import { SCOPE_FALLBACK } from '@/components/hosting/AccountApiKeysTab';
+import { SCOPE_FALLBACK } from '@/components/hosting/KeyModal';
 import { clearOAuthReturn, rememberOAuthReturn } from '@/utils/oauthReturn';
 
 // /oauth/authorize — consent page of a « Connecteur Claude » (server:

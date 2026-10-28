@@ -1,6 +1,5 @@
 {
   "accounts": {
-    "backToList": "Comptes d'hébergement",
     "capabilities": {
       "domains_manage": "Gérer les domaines",
       "domains_manage_hint": "Ajouter des domaines et modifier leurs routes.",
@@ -259,7 +258,6 @@
     "routes": {
       "add": "Ajouter une route",
       "chooseSite": "Choisir un site…",
-      "deleteConfirm": "Supprimer la route {{prefix}} ?",
       "deleteFailed": "Échec de la suppression de la route",
       "empty": "Aucune route : le domaine répond 404.",
       "hint": "Chaque préfixe de chemin du domaine est servi par un site (ou l'un de ses runtimes secondaires). Le préfixe le plus long l'emporte : /shop/ passe avant /.",
@@ -273,7 +271,14 @@
       "saved": "Route enregistrée",
       "secondary": "secondaire",
       "site": "Site",
-      "title": "Routes"
+      "title": "Routes",
+      "domain": "Domaine",
+      "chooseDomain": "Choisir un domaine…",
+      "deleteConfirmAddress": "Supprimer la route {{route}} ? Cette adresse ne servira plus le site.",
+      "deleted": "Route supprimée",
+      "siteHint": "Une route envoie un domaine + un préfixe de chemin vers ce site (ou l’un de ses runtimes secondaires). Quand plusieurs préfixes correspondent à une requête, le plus long l’emporte.",
+      "siteEmpty": "Aucun domaine ne pointe encore vers ce site.",
+      "noDomain": "Ce compte n’a encore aucun domaine."
     },
     "routesCount": "{{count}} route(s)",
     "saveFailed": "Échec de l'enregistrement du domaine",
@@ -284,7 +289,8 @@
     "tls": {
       "letsencrypt": "Let's Encrypt",
       "none": "Aucun (HTTP seul)"
-    }
+    },
+    "searchOnePlaceholder": "Rechercher un domaine…"
   },
   "fileAccess": {
     "activated": "Accès SFTP ouvert",
@@ -432,15 +438,18 @@
     "perMonth": "/mois",
     "servedByAny": "un hôte proxy, une redirection ou un hôte mort",
     "show": "Afficher",
-    "siteStatus": {
-      "active": "Actif",
-      "error": "Erreur",
-      "provisioning": "Provisionnement",
-      "stopped": "Arrêté"
-    },
     "tenant": "Espace",
     "unlimited": "illimité",
-    "unmaintained": "runtime non maintenu"
+    "unmaintained": "runtime non maintenu",
+    "scope": {
+      "account": "Compte d’hébergement",
+      "allAccounts": "Tous les comptes",
+      "pickAccount": "Choisir un compte…"
+    },
+    "rights": {
+      "notHeld": "non détenu",
+      "notHeldHint": "Vous ne détenez pas ce droit : vous ne pouvez pas le donner."
+    }
   },
   "infra": {
     "component": {

@@ -7,6 +7,7 @@ import {
   APP_PROFILES, HostingSocketEvents, appProfileDef, normalizePathPrefix, normalizeRelPath, siteBaseDef,
   type AppProfileId, type PhpSettings, type ProfileDetection, type PublishMode, type SiteUpdate, type StagingStatus,
 } from '@oblimint/shared';
+import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { releasesApi } from '@/api/releases.api';
 import { sitesApi } from '@/api/sites.api';
 import { useHostingMe } from '@/store/hostingStore';
@@ -358,7 +359,7 @@ function StagingCard({ site, onPublish }: SiteTabProps) {
       <p className="mb-3 font-mono text-xs text-text-muted break-all">/staging/{site.slug}/</p>
 
       {loading ? (
-        <p className="text-sm text-text-muted">{t('common.loading') || 'Loading...'}</p>
+        <div className="flex justify-center py-8"><LoadingSpinner /></div>
       ) : error ? (
         <p className="text-sm text-text-muted">{error}</p>
       ) : staging && (

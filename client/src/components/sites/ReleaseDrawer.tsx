@@ -170,7 +170,7 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
               <div className={cn(sectionLabelCls, 'flex items-center gap-2')}>
                 {t('releases.scan.title') || 'Pre-publication scan'}
                 <ScanVerdictChip verdict={release.scan.verdict} />
-                {release.scan.risk && <RiskBadge risk={release.scan.risk} className="normal-case tracking-normal" />}
+                {release.scan.risk && <RiskBadge risk={release.scan.risk} />}
                 <span className="normal-case tracking-normal text-text-muted/70">{release.scan.scanner}</span>
               </div>
               {blocked && !release.scan.override && (

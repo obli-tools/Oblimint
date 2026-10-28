@@ -4,7 +4,7 @@ import { CalendarClock, KeyRound, Plus, RefreshCw, Server, Workflow as WorkflowI
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
 import { headerAccentBtnCls, headerBtnCls } from '@/components/hosting/hostingUi';
-import { AccountScopeBar, useAccountScope } from '@/components/apps/AccountScope';
+import { AccountScopeBar, useAccountScope } from '@/components/common/AccountScope';
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { WorkflowsPanel } from '@/components/automation/WorkflowsPanel';
 import { SshKeysPanel } from '@/components/automation/SshKeysPanel';

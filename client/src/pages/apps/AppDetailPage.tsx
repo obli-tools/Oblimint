@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  Activity, ArrowLeft, ArrowUpCircle, Boxes, Code2, Container, Download, Globe, History, LayoutDashboard, Moon, Play, Power, RefreshCw,
+  Activity, ArrowUpCircle, Boxes, Code2, Container, Download, Globe, History, LayoutDashboard, Moon, Play, Power,
   Repeat, Rocket, RotateCw, ScrollText, Settings2, Square, Sun, TerminalSquare, Trash2,
 } from 'lucide-react';
 import {
@@ -11,7 +11,7 @@ import {
 } from '@oblimint/shared';
 import { appsApi } from '@/api/apps.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
-import { IconButton } from '@/components/common/IconButton';
+import { AccountLink, DetailHeader } from '@/components/common/DetailHeader';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
@@ -174,66 +174,57 @@ export function AppDetailPage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
-        <IconButton
-          // Fallback: the applications of its account (no apps tab on the account page yet).
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(`/apps?account=${stack.accountId}`); }}
-          size="lg" variant="plain" className="mt-0.5 rounded-lg hover:bg-bg-secondary" label={t('common.back') || 'Back'} icon={<ArrowLeft className="h-4 w-4" />}
-        />
-        <CatalogIcon icon={stack.catalog?.icon ?? null} size={40} className="mt-0.5 max-sm:hidden" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3 max-sm:gap-2">
-            <h1 className="min-w-0 break-all font-display text-2xl font-semibold tracking-wide text-text-primary max-sm:text-xl">{stack.displayName}</h1>
+      <DetailHeader
+        // Fallback: the applications of its account (no apps tab on the account page yet).
+        backTo={`/apps?account=${stack.accountId}`}
+        leading={<CatalogIcon icon={stack.catalog?.icon ?? null} size={40} className="mt-0.5 max-sm:hidden" />}
+        title={stack.displayName}
+        badges={(
+          <>
             <AppStatusBadge status={stack.status} message={stack.statusMessage} />
             {stack.updateAvailable && <UpdateAvailableBadge />}
             <TenantBadge tenantId={stack.tenantId} size="md" />
-          </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
-            <span className="font-mono">{stack.accountUsername}</span>
-            <span>·</span>
-            <span className="font-mono">{stack.name}</span>
-            <span>·</span>
-            <span className="inline-flex items-center gap-1"><SourceTypeIcon type={stack.sourceType} size={13} />{stack.catalog ? stack.catalog.name : sourceTypeLabel(t, stack.sourceType)}</span>
-            <span>·</span>
-            <span className="font-mono">{t('apps.detail.servicesCount', { running: stack.runningCount, total: stack.serviceCount, defaultValue: '{{running}} / {{total}} services' })}</span>
-          </p>
-          {stack.description && <p className="mt-1 text-sm text-text-secondary">{stack.description}</p>}
-          {(stack.status === 'error' || stack.status === 'partial') && stack.statusMessage && (
-            <p className="mt-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{stack.statusMessage}</p>
-          )}
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 max-lg:order-last max-lg:w-full">
-          <IconButton label={t('common.refresh') || 'Refresh'} icon={<RefreshCw className="h-4 w-4" />} onClick={() => { void load(); setTick((n) => n + 1); }} size="lg" variant="solid" className="rounded-lg" />
-          {manage && (
-            <>
-              {stack.status === 'sleeping' ? (
-                <button type="button" disabled={locked} onClick={() => { void sleepWake(true); }} className={headerAccentBtnCls}><Sun size={14} />{t('apps.actions.wake') || 'Wake up'}</button>
-              ) : (
-                <button type="button" disabled={locked} onClick={() => { void act(draft ? 'deploy' : 'redeploy'); }} className={headerAccentBtnCls}>
-                  <Rocket size={14} />{draft ? (t('apps.actions.deploy') || 'Deploy') : (t('apps.actions.redeploy') || 'Redeploy')}
-                </button>
-              )}
-              {!draft && (running
-                ? <button type="button" disabled={locked} onClick={() => { void act('stop'); }} className={headerBtnCls}><Square size={14} />{t('apps.actions.stop') || 'Stop'}</button>
-                : stack.status !== 'sleeping' && <button type="button" disabled={locked} onClick={() => { void act('start'); }} className={headerBtnCls}><Play size={14} />{t('apps.actions.start') || 'Start'}</button>)}
-              <ActionMenu
-                triggerSize="lg"
-                triggerVariant="solid"
-                triggerClassName="rounded-lg"
-                items={[
-                  { key: 'edit', icon: <Code2 size={14} />, label: t('apps.list.editCompose') || 'Edit the compose', onClick: () => navigate(`/apps/${stack.id}/edit`) },
-                  { key: 'restart', icon: <RotateCw size={14} />, label: t('apps.actions.restart') || 'Restart', onClick: () => { void act('restart'); }, disabled: locked || draft, separator: true },
-                  { key: 'recreate', icon: <Repeat size={14} />, label: t('apps.actions.recreate') || 'Recreate', description: t('apps.actions.recreateHint') || 'New containers, same configuration', onClick: () => { void act('recreate'); }, disabled: locked || draft },
-                  { key: 'pull', icon: <Download size={14} />, label: t('apps.actions.pull') || 'Pull images', description: t('apps.actions.pullHint') || 'Download the images without restarting', onClick: () => { void act('pull'); }, disabled: locked },
-                  { key: 'sleep', icon: <Moon size={14} />, label: t('apps.actions.sleep') || 'Put to sleep', onClick: () => { void sleepWake(false); }, disabled: locked || !running, hidden: stack.status === 'sleeping' },
-                  { key: 'down', icon: <Power size={14} />, label: t('apps.actions.down') || 'Remove containers', onClick: () => { void act('down'); }, disabled: locked || draft, danger: true, separator: true },
-                  { key: 'delete', icon: <Trash2 size={14} />, label: t('apps.actions.delete') || 'Delete', onClick: () => setDeleting(true), disabled: stack.status === 'deleting', danger: true },
-                ]}
-              />
-            </>
-          )}
-        </div>
-      </div>
+          </>
+        )}
+        subtitle={[
+          <AccountLink key="account" accountId={stack.accountId} username={stack.accountUsername} />,
+          <span key="name" className="font-mono">{stack.name}</span>,
+          <span key="source" className="inline-flex items-center gap-1"><SourceTypeIcon type={stack.sourceType} size={13} />{stack.catalog ? stack.catalog.name : sourceTypeLabel(t, stack.sourceType)}</span>,
+          <span key="services" className="font-mono">{t('apps.detail.servicesCount', { running: stack.runningCount, total: stack.serviceCount, defaultValue: '{{running}} / {{total}} services' })}</span>,
+        ]}
+        message={stack.status === 'error' || stack.status === 'partial' ? stack.statusMessage : null}
+        onRefresh={() => { void load(); setTick((n) => n + 1); }}
+        actions={manage ? (
+          <>
+            {stack.status === 'sleeping' ? (
+              <button type="button" disabled={locked} onClick={() => { void sleepWake(true); }} className={headerAccentBtnCls}><Sun size={14} />{t('apps.actions.wake') || 'Wake up'}</button>
+            ) : (
+              <button type="button" disabled={locked} onClick={() => { void act(draft ? 'deploy' : 'redeploy'); }} className={headerAccentBtnCls}>
+                <Rocket size={14} />{draft ? (t('apps.actions.deploy') || 'Deploy') : (t('apps.actions.redeploy') || 'Redeploy')}
+              </button>
+            )}
+            {!draft && (running
+              ? <button type="button" disabled={locked} onClick={() => { void act('stop'); }} className={headerBtnCls}><Square size={14} />{t('apps.actions.stop') || 'Stop'}</button>
+              : stack.status !== 'sleeping' && <button type="button" disabled={locked} onClick={() => { void act('start'); }} className={headerBtnCls}><Play size={14} />{t('apps.actions.start') || 'Start'}</button>)}
+            <ActionMenu
+              triggerSize="lg"
+              triggerVariant="solid"
+              triggerClassName="rounded-lg"
+              items={[
+                { key: 'edit', icon: <Code2 size={14} />, label: t('apps.list.editCompose') || 'Edit the compose', onClick: () => navigate(`/apps/${stack.id}/edit`) },
+                { key: 'restart', icon: <RotateCw size={14} />, label: t('apps.actions.restart') || 'Restart', onClick: () => { void act('restart'); }, disabled: locked || draft, separator: true },
+                { key: 'recreate', icon: <Repeat size={14} />, label: t('apps.actions.recreate') || 'Recreate', description: t('apps.actions.recreateHint') || 'New containers, same configuration', onClick: () => { void act('recreate'); }, disabled: locked || draft },
+                { key: 'pull', icon: <Download size={14} />, label: t('apps.actions.pull') || 'Pull images', description: t('apps.actions.pullHint') || 'Download the images without restarting', onClick: () => { void act('pull'); }, disabled: locked },
+                { key: 'sleep', icon: <Moon size={14} />, label: t('apps.actions.sleep') || 'Put to sleep', onClick: () => { void sleepWake(false); }, disabled: locked || !running, hidden: stack.status === 'sleeping' },
+                { key: 'down', icon: <Power size={14} />, label: t('apps.actions.down') || 'Remove containers', onClick: () => { void act('down'); }, disabled: locked || draft, danger: true, separator: true },
+                { key: 'delete', icon: <Trash2 size={14} />, label: t('apps.actions.delete') || 'Delete', onClick: () => setDeleting(true), disabled: stack.status === 'deleting', danger: true },
+              ]}
+            />
+          </>
+        ) : undefined}
+      >
+        {stack.description && <p className="mt-1 text-sm text-text-secondary">{stack.description}</p>}
+      </DetailHeader>
 
       <SegmentedTabs<Tab> tabs={tabs} value={shownTab} onChange={setTab} ariaLabel={stack.displayName} fill={false} />
 

@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { ArrowLeft, HeartPulse, Pause, Pencil, Play, RefreshCw, Trash2, Zap } from 'lucide-react';
+import { HeartPulse, Pause, Pencil, Play, Trash2, Zap } from 'lucide-react';
 import { HostingSocketEvents, type HostingAccount, type MonitoringUpdatedPayload, type UptimeCheckPoint, type UptimeMonitor } from '@oblimint/shared';
 import { uptimeApi, type UptimeRange } from '@/api/uptime.api';
 import { accountsApi } from '@/api/accounts.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
-import { IconButton } from '@/components/common/IconButton';
+import { DetailHeader } from '@/components/common/DetailHeader';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
@@ -143,33 +143,36 @@ export function UptimeMonitorPage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
-        <IconButton onClick={() => { if (window.history.length > 1) navigate(-1); else navigate('/uptime'); }} size="lg" variant="plain" className="mt-0.5 rounded-lg hover:bg-bg-secondary" label={t('common.back') || 'Back'} icon={<ArrowLeft className="h-4 w-4" />} />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3 max-sm:gap-2">
-            <h1 className="min-w-0 break-all font-display text-2xl font-semibold tracking-wide text-text-primary max-sm:text-xl">{monitor.name}</h1>
+      <DetailHeader
+        backTo="/uptime"
+        title={monitor.name}
+        badges={(
+          <>
             <UptimeStatusPill status={monitor.enabled ? monitor.status : 'paused'} />
             {monitor.auto && <Pill tone="accent">{t('uptime.auto') || 'auto'}</Pill>}
-          </div>
-          <p className="mt-1 break-all font-mono text-xs text-text-muted">{monitor.kind.toUpperCase()} · {monitorTarget(monitor)}</p>
-          {monitor.status === 'down' && monitor.lastError && <p className="mt-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{monitor.lastError}</p>}
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 max-lg:order-last max-lg:w-full">
-          <IconButton label={t('common.refresh') || 'Refresh'} icon={<RefreshCw className="h-4 w-4" />} onClick={() => { void load(); void loadChecks(); }} size="lg" variant="solid" className="rounded-lg" />
-          {manage && (
-            <>
-              <button type="button" disabled={busy} onClick={() => { void checkNow(); }} className={headerAccentBtnCls}><Zap size={14} />{t('uptime.checkNow') || 'Check now'}</button>
-              <ActionMenu triggerSize="lg" triggerVariant="solid" triggerClassName="rounded-lg" items={[
-                { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(true) },
-                monitor.enabled
-                  ? { key: 'pause', icon: <Pause size={14} />, label: t('uptime.pause') || 'Pause', onClick: () => { void setEnabled(false); } }
-                  : { key: 'resume', icon: <Play size={14} />, label: t('uptime.resume') || 'Resume', onClick: () => { void setEnabled(true); } },
-                { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(); }, danger: true, separator: true },
-              ]} />
-            </>
-          )}
-        </div>
-      </div>
+          </>
+        )}
+        onRefresh={() => { void load(); void loadChecks(); }}
+        actions={(
+          <>
+            {manage && (
+              <>
+                <button type="button" disabled={busy} onClick={() => { void checkNow(); }} className={headerAccentBtnCls}><Zap size={14} />{t('uptime.checkNow') || 'Check now'}</button>
+                <ActionMenu triggerSize="lg" triggerVariant="solid" triggerClassName="rounded-lg" items={[
+                  { key: 'edit', icon: <Pencil size={14} />, label: t('common.edit') || 'Edit', onClick: () => setEditing(true) },
+                  monitor.enabled
+                    ? { key: 'pause', icon: <Pause size={14} />, label: t('uptime.pause') || 'Pause', onClick: () => { void setEnabled(false); } }
+                    : { key: 'resume', icon: <Play size={14} />, label: t('uptime.resume') || 'Resume', onClick: () => { void setEnabled(true); } },
+                  { key: 'delete', icon: <Trash2 size={14} />, label: t('common.delete') || 'Delete', onClick: () => { void remove(); }, danger: true, separator: true },
+                ]} />
+              </>
+            )}
+          </>
+        )}
+      >
+        <p className="mt-1 break-all font-mono text-xs text-text-muted">{monitor.kind.toUpperCase()} · {monitorTarget(monitor)}</p>
+        {monitor.status === 'down' && monitor.lastError && <p className="mt-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{monitor.lastError}</p>}
+      </DetailHeader>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Card><InfoRow label={t('uptime.uptime24h') || '24 h'}><span className="font-mono text-lg" style={{ color: uptimeColor(monitor.uptime24h) }}>{formatPct(monitor.uptime24h)}</span></InfoRow></Card>

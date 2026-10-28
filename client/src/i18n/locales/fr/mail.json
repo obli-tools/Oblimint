@@ -3,7 +3,6 @@
     "title": "Mail",
     "description": "Domaines mail et leurs enregistrements DNS, boîtes, alias, envoi des sites et journaux.",
     "account": "Compte d'hébergement",
-    "allAccounts": "Tous les comptes",
     "allAccountsShort": "tous les comptes",
     "chooseAccount": "Choisir un compte…",
     "chooseDomain": "Choisir un domaine…",

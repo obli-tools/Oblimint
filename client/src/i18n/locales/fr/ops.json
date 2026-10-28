@@ -188,7 +188,8 @@
       "oneWorkspace": "Espace de travail affiché :",
       "oneWorkspaceHint": "choisissez une pastille pour un autre espace de travail.",
       "oneWorkspaceHintAdmin": "choisissez une pastille pour un autre espace de travail ; les totaux de la plateforme sont plus bas.",
-      "subtitle": "Trafic, disque et ressources des comptes."
+      "subtitle": "Trafic, disque et ressources des comptes.",
+      "openAccount": "Ouvrir le compte"
     },
     "platform": {
       "accounts": "Comptes",

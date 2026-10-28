@@ -1,6 +1,5 @@
 {
   "accounts": {
-    "backToList": "Hosting accounts",
     "capabilities": {
       "domains_manage": "Manage domains",
       "domains_manage_hint": "Add domains and edit their routes.",
@@ -259,7 +258,6 @@
     "routes": {
       "add": "Add a route",
       "chooseSite": "Choose a site…",
-      "deleteConfirm": "Remove the route {{prefix}}?",
       "deleteFailed": "Failed to remove the route",
       "empty": "No route: the domain answers 404.",
       "hint": "Each path prefix of the domain is served by a site (or one of its secondary runtimes). The longest matching prefix wins: /shop/ beats /.",
@@ -273,7 +271,14 @@
       "saved": "Route saved",
       "secondary": "secondary",
       "site": "Site",
-      "title": "Routes"
+      "title": "Routes",
+      "domain": "Domain",
+      "chooseDomain": "Choose a domain…",
+      "deleteConfirmAddress": "Remove the route {{route}}? This address will no longer serve the site.",
+      "deleted": "Route removed",
+      "siteHint": "A route sends a domain + path prefix to this site (or one of its secondary runtimes). When several prefixes match a request, the longest one wins.",
+      "siteEmpty": "No domain points to this site yet.",
+      "noDomain": "This account has no domain yet."
     },
     "routesCount": "{{count}} route(s)",
     "saveFailed": "Failed to save the domain",
@@ -284,7 +289,8 @@
     "tls": {
       "letsencrypt": "Let's Encrypt",
       "none": "None (HTTP only)"
-    }
+    },
+    "searchOnePlaceholder": "Search a domain…"
   },
   "fileAccess": {
     "activated": "SFTP access opened",
@@ -432,15 +438,18 @@
     "perMonth": "/month",
     "servedByAny": "a proxy host, a redirection or a dead host",
     "show": "Show",
-    "siteStatus": {
-      "active": "Active",
-      "error": "Error",
-      "provisioning": "Provisioning",
-      "stopped": "Stopped"
-    },
     "tenant": "Workspace",
     "unlimited": "unlimited",
-    "unmaintained": "unmaintained runtime"
+    "unmaintained": "unmaintained runtime",
+    "scope": {
+      "account": "Hosting account",
+      "allAccounts": "All accounts",
+      "pickAccount": "Choose an account…"
+    },
+    "rights": {
+      "notHeld": "not held",
+      "notHeldHint": "You do not hold this right: you cannot grant it."
+    }
   },
   "infra": {
     "component": {

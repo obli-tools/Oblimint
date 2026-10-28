@@ -1,20 +1,16 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useCallback, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, Clock, Loader2, PauseCircle, RotateCcw, ShieldAlert, Unplug } from 'lucide-react';
 import { isMasterTenant, type CertificateListItem, type EdgeUnitState, type EdgeUnitStatusKind, type HostingAccount, type ProxyBoundDomain } from '@oblimint/shared';
-import { accountsApi } from '@/api/accounts.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
-import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
-import { useTenantFilter } from '@/hooks/useTenantFilter';
 import { Button } from '@/components/common/Button';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { Tip } from '@/components/common/Tip';
 import { EmptyState, Pill, labelCls, selectCls } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
-import { applyParamsPatch, pickSingleTenant, unitTone } from './proxyFormat';
+import { unitTone } from './proxyFormat';
 
 // Shared React pieces of the proxy / bans / traffic / edge UI. OWNED BY MODULE `ui-proxy`.
 
@@ -39,75 +35,6 @@ export function useProxyAccess() {
     return entries.some((caps) => caps!.includes('proxy.manage'));
   }, [me]);
   return { me, isStaff, platformAdmin, platformStaff, canManage };
-}
-
-/**
- * Account scope of a list page (MailPage pattern): `?account=` + god-view
- * single workspace `?tenants=`, the visible hosting accounts, and a URL
- * updater that applies several keys in one navigation.
- */
-export function useAccountScope() {
-  const isMaster = useIsMasterTenant();
-  const currentTenantId = useTenantStore((s) => s.currentTenantId);
-  const tenantFilter = useTenantFilter();
-  const tenantId = isMaster && tenantFilter.ids.length > 0 ? tenantFilter.ids[0] : undefined;
-  const [params, setParams] = useSearchParams();
-  const accountParam = Number(params.get('account')) || null;
-  const [accounts, setAccounts] = useState<HostingAccount[]>([]);
-  const [accountsLoaded, setAccountsLoaded] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setAccountsLoaded(false);
-    accountsApi.list(tenantId ? { tenantId } : {})
-      .then((list) => { if (!cancelled) setAccounts(list); })
-      .catch(() => { if (!cancelled) setAccounts([]); })
-      .finally(() => { if (!cancelled) setAccountsLoaded(true); });
-    return () => { cancelled = true; };
-  }, [currentTenantId, tenantId]);
-
-  const accountId = accountParam ?? (accounts.length === 1 ? accounts[0].id : null);
-  const update = useCallback((patch: Record<string, string | null>) => {
-    setParams((prev) => applyParamsPatch(prev, patch), { replace: true });
-  }, [setParams]);
-  const setAccount = (id: number | null) => update({ account: id == null ? null : String(id) });
-  const setSingleTenant = (next: Set<number>) => {
-    const picked = pickSingleTenant(tenantFilter.value, next);
-    update({ tenants: picked == null ? null : String(picked), account: null });
-  };
-  const multiTenantUrl = isMaster && tenantFilter.ids.length > 1 ? tenantFilter.ids[0] : null;
-  useEffect(() => {
-    if (multiTenantUrl != null) update({ tenants: String(multiTenantUrl) });
-  }, [multiTenantUrl, update]);
-  const selectedAccount = useMemo(() => accounts.find((a) => a.id === accountId) ?? null, [accounts, accountId]);
-
-  return {
-    isMaster, tenantId, tenantFilter, params, update, accounts, accountsLoaded, accountParam, accountId, selectedAccount,
-    setAccount, setSingleTenant, showTenant: isMaster && tenantId == null,
-  };
-}
-
-/** "All accounts" / one account selector of the list pages. */
-export function AccountSelect({ accounts, value, onChange, allLabel, className }: {
-  accounts: HostingAccount[];
-  value: number | null;
-  onChange: (id: number | null) => void;
-  allLabel?: string;
-  className?: string;
-}) {
-  const { t } = useTranslation();
-  if (accounts.length <= 1) return null;
-  return (
-    <select
-      aria-label={t('proxy.account') || 'Hosting account'}
-      value={value ?? ''}
-      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-      className={cn(selectCls, 'w-full bg-bg-secondary sm:w-64', className)}
-    >
-      <option value="">{allLabel ?? (t('proxy.allAccounts') || 'All accounts')}</option>
-      {accounts.map((a) => <option key={a.id} value={a.id}>{a.username}{a.displayName ? ` — ${a.displayName}` : ''}</option>)}
-    </select>
-  );
 }
 
 /** Account picker inside a creation form (required, only accounts the caller manages). */

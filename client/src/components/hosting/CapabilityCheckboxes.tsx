@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import type { ClientCapability } from '@oblimint/shared';
 import { CLIENT_CAPABILITIES } from '@oblimint/shared';
+import { RightsChecklist } from '@/components/common/RightsChecklist';
 import { Pill } from './hostingUi';
 
 export function capabilityLabel(t: TFunction, c: ClientCapability): string {
@@ -40,28 +41,18 @@ function capabilityHint(t: TFunction, c: ClientCapability): string {
   return t(`accounts.capabilities.${c.replace('.', '_')}_hint`) || fallback[c];
 }
 
-/** Checkbox list of the client capabilities (in CLIENT_CAPABILITIES order). */
+/** Checklist of the client capabilities (in CLIENT_CAPABILITIES order) — the common rights editor. */
 export function CapabilityCheckboxes({ value, onChange, disabled = false }: {
   value: ClientCapability[]; onChange: (next: ClientCapability[]) => void; disabled?: boolean;
 }) {
   const { t } = useTranslation();
-  const toggle = (c: ClientCapability) => {
-    const set = new Set(value);
-    if (set.has(c)) set.delete(c); else set.add(c);
-    onChange(CLIENT_CAPABILITIES.filter((x) => set.has(x)));
-  };
   return (
-    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-      {CLIENT_CAPABILITIES.map((c) => (
-        <label key={c} className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-1 coarse:py-2">
-          <input type="checkbox" className="mt-0.5 accent-accent" checked={value.includes(c)} disabled={disabled} onChange={() => toggle(c)} />
-          <span className="min-w-0">
-            <span className="block text-sm text-text-primary">{capabilityLabel(t, c)}</span>
-            <span className="block text-[11px] text-text-muted">{capabilityHint(t, c)}</span>
-          </span>
-        </label>
-      ))}
-    </div>
+    <RightsChecklist<ClientCapability>
+      items={CLIENT_CAPABILITIES.map((c) => ({ id: c, label: capabilityLabel(t, c), hint: capabilityHint(t, c) }))}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+    />
   );
 }
 
@@ -71,7 +62,7 @@ export function CapabilityChips({ value }: { value: ClientCapability[] }) {
   if (value.length === 0) return <span className="text-xs text-text-muted">{t('accounts.users.readOnly') || 'read only'}</span>;
   return (
     <div className="flex flex-wrap gap-1">
-      {value.map((c) => <Pill key={c} tone="accent" className="normal-case tracking-normal">{capabilityLabel(t, c)}</Pill>)}
+      {value.map((c) => <Pill key={c} tone="accent">{capabilityLabel(t, c)}</Pill>)}
     </div>
   );
 }

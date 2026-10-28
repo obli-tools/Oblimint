@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ExternalLink, KeyRound, Mail, RefreshCw, Trash2 } from 'lucide-react';
+import { ExternalLink, KeyRound, Mail, Trash2 } from 'lucide-react';
 import { HostingSocketEvents, type MailboxDetail, type MailDomain, type MailUpdatedPayload, type WebmailKind } from '@oblimint/shared';
 import { mailApi } from '@/api/mail.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
-import { IconButton } from '@/components/common/IconButton';
+import { DetailHeader } from '@/components/common/DetailHeader';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { TenantBadge } from '@/components/common/TenantBadge';
@@ -117,23 +117,17 @@ export function MailboxPage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
-        <IconButton
-          // Fallback: the mail domain of the mailbox, not the global list.
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(`/mail/domains/${box.mailDomainId}`); }}
-          size="lg"
-          variant="plain"
-          className="mt-0.5 rounded-lg hover:bg-bg-secondary"
-          label={t('common.back') || 'Back'}
-          icon={<ArrowLeft className="h-4 w-4" />}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3 max-sm:gap-2">
-            <h1 className="min-w-0 break-all font-display text-2xl font-semibold tracking-wide text-text-primary max-sm:text-xl">{box.address}</h1>
+      <DetailHeader
+        backTo={`/mail/domains/${box.mailDomainId}`}
+        title={box.address}
+        badges={(
+          <>
             <MailboxFlags box={box} />
             <TenantBadge tenantId={box.tenantId} size="md" />
-          </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
+          </>
+        )}
+        subtitle={(
+          <>
             {box.displayName && <><span>{box.displayName}</span><span>·</span></>}
             <Link to={`/mail/domains/${box.mailDomainId}`} className="font-mono hover:text-accent">{box.domain}</Link>
             <span>·</span>
@@ -141,29 +135,31 @@ export function MailboxPage() {
             {box.passwordSetAt && (
               <span className="text-xs">{t('mail.mailbox.passwordSetAt', { date: new Date(box.passwordSetAt).toLocaleDateString(i18n.language), defaultValue: 'password set {{date}}' })}</span>
             )}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 max-lg:order-last max-lg:w-full">
-          <IconButton label={t('common.refresh') || 'Refresh'} icon={<RefreshCw className="h-4 w-4" />} onClick={() => { void load(true); }} size="lg" variant="solid" className="rounded-lg" />
-          {manage && (webmailOff || !box.enabled ? (
-            <Tip content={webmailOff ? (t('mail.webmail.none') || 'No webmail is configured on this platform.') : (t('mail.webmail.disabledBox') || 'This mailbox is disabled.')}>
-              <span>{webmailButton}</span>
-            </Tip>
-          ) : webmailButton)}
-          {manage && (
-            <ActionMenu
-              triggerSize="lg"
-              triggerVariant="solid"
-              triggerClassName="rounded-lg"
-              disabled={actions.busy !== null}
-              items={[
-                { key: 'password', icon: <KeyRound className="h-4 w-4" />, label: t('mail.password.change') || 'Change the password', onClick: () => actions.changePassword(box) },
-                { key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('mail.mailboxes.delete') || 'Delete', onClick: () => { void actions.remove(box); }, danger: true, separator: true },
-              ]}
-            />
-          )}
-        </div>
-      </div>
+          </>
+        )}
+        onRefresh={() => { void load(true); }}
+        actions={(
+          <>
+            {manage && (webmailOff || !box.enabled ? (
+              <Tip content={webmailOff ? (t('mail.webmail.none') || 'No webmail is configured on this platform.') : (t('mail.webmail.disabledBox') || 'This mailbox is disabled.')}>
+                <span>{webmailButton}</span>
+              </Tip>
+            ) : webmailButton)}
+            {manage && (
+              <ActionMenu
+                triggerSize="lg"
+                triggerVariant="solid"
+                triggerClassName="rounded-lg"
+                disabled={actions.busy !== null}
+                items={[
+                  { key: 'password', icon: <KeyRound className="h-4 w-4" />, label: t('mail.password.change') || 'Change the password', onClick: () => actions.changePassword(box) },
+                  { key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('mail.mailboxes.delete') || 'Delete', onClick: () => { void actions.remove(box); }, danger: true, separator: true },
+                ]}
+              />
+            )}
+          </>
+        )}
+      />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="flex flex-col gap-5">

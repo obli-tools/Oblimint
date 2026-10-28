@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, ArrowLeft, AtSign, Forward, Mail, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, AtSign, Forward, Mail, Trash2 } from 'lucide-react';
 import { HostingSocketEvents, type MailDnsStatus, type MailDomainDetail, type MailEngine, type MailUpdatedPayload } from '@oblimint/shared';
 import { mailApi } from '@/api/mail.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { ActionMenu } from '@/components/common/ActionMenu';
-import { IconButton } from '@/components/common/IconButton';
+import { AccountLink, DetailHeader } from '@/components/common/DetailHeader';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
@@ -168,60 +168,55 @@ export function MailDomainPage() {
 
   return (
     <PageContainer className="flex flex-col gap-5">
-      <div className="flex items-start gap-4 max-lg:flex-wrap max-lg:gap-3">
-        <IconButton
-          // Fallback: the mail of its account (no mail tab on the account page yet).
-          onClick={() => { if (window.history.length > 1) navigate(-1); else navigate(`/mail?account=${domain.accountId}`); }}
-          size="lg"
-          variant="plain"
-          className="mt-0.5 rounded-lg hover:bg-bg-secondary"
-          label={t('common.back') || 'Back'}
-          icon={<ArrowLeft className="h-4 w-4" />}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-3 max-sm:gap-2">
-            <h1 className="min-w-0 break-all font-display text-2xl font-semibold tracking-wide text-text-primary max-sm:text-xl">{domain.name}</h1>
+      <DetailHeader
+        backTo={`/mail?account=${domain.accountId}`}
+        title={domain.name}
+        badges={(
+          <>
             <MailDomainStatusBadge status={domain.status} message={domain.statusMessage} />
             <TenantBadge tenantId={domain.tenantId} size="md" />
-          </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-text-muted">
-            <Link to={`/mail?account=${domain.accountId}`} className="font-mono hover:text-accent">{domain.accountUsername}</Link>
+          </>
+        )}
+        subtitle={(
+          <>
+            <AccountLink accountId={domain.accountId} username={domain.accountUsername} to={`/mail?account=${domain.accountId}`} />
             <span>·</span>
             <span>{t('mail.domains.counts', { mailboxes: domain.mailboxCount, aliases: domain.aliasCount, defaultValue: '{{mailboxes}} mailbox(es) · {{aliases}} alias(es)' })}</span>
             {domain.usedBytes != null && <><span>·</span><span>{formatBytes(t, domain.usedBytes)}</span></>}
             {dns && <DnsDots dots={dotsFromRecords(dns.records, ptrStatuses)} />}
+          </>
+        )}
+        message={domain.status === 'error' ? domain.statusMessage : null}
+        onRefresh={() => { void load(true); void loadDns(); }}
+        actions={(
+          <>
+            {manage && (
+              <ActionMenu
+                triggerSize="lg"
+                triggerVariant="solid"
+                triggerClassName="rounded-lg"
+                disabled={busy}
+                items={[
+                  {
+                    key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('mail.domain.delete') || 'Disable mail on the domain', onClick: () => { void remove(); }, danger: true, disabled: notEmpty && !staff,
+                    description: notEmpty && !staff ? (t('mail.domain.deleteNotEmpty') || 'Delete its mailboxes and aliases first.') : undefined,
+                  },
+                ]}
+              />
+            )}
+          </>
+        )}
+      >
+        {domain.status === 'pending' && (
+          <p className="mt-2 flex items-start gap-2 rounded-lg bg-sky-400/5 px-3 py-2 text-xs text-sky-300">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            <span>
+              {t('mail.domains.pendingHint') || 'The ownership of this domain is not verified yet: the mail domain stays pending (no mail is received or sent) until the verification succeeds on the Domains page.'}{' '}
+              <Link to={domainHref(domain.domainId, domain.accountId)} className="font-medium underline">{t('mail.domains.create.domainsLink') || 'Domains'}</Link>
+            </span>
           </p>
-          {domain.status === 'pending' && (
-            <p className="mt-2 flex items-start gap-2 rounded-lg bg-sky-400/5 px-3 py-2 text-xs text-sky-300">
-              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-              <span>
-                {t('mail.domains.pendingHint') || 'The ownership of this domain is not verified yet: the mail domain stays pending (no mail is received or sent) until the verification succeeds on the Domains page.'}{' '}
-                <Link to={domainHref(domain.domainId, domain.accountId)} className="font-medium underline">{t('mail.domains.create.domainsLink') || 'Domains'}</Link>
-              </span>
-            </p>
-          )}
-          {domain.status === 'error' && domain.statusMessage && (
-            <p className="mt-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{domain.statusMessage}</p>
-          )}
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 max-lg:order-last max-lg:w-full">
-          <IconButton label={t('common.refresh') || 'Refresh'} icon={<RefreshCw className="h-4 w-4" />} onClick={() => { void load(true); void loadDns(); }} size="lg" variant="solid" className="rounded-lg" />
-          {manage && (
-            <ActionMenu
-              triggerSize="lg"
-              triggerVariant="solid"
-              triggerClassName="rounded-lg"
-              disabled={busy}
-              items={[
-                {
-                  key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('mail.domain.delete') || 'Disable mail on the domain', onClick: () => { void remove(); }, danger: true, disabled: notEmpty && !staff,
-                  description: notEmpty && !staff ? (t('mail.domain.deleteNotEmpty') || 'Delete its mailboxes and aliases first.') : undefined,
-                },
-              ]}
-            />
-          )}
-        </div>
-      </div>
+        )}
+      </DetailHeader>
 
       <MailDnsRecordsCard status={dns} error={dnsError} checking={checking} onCheck={() => { void check(); }} />
 

@@ -11,17 +11,18 @@ import { accountsApi } from '@/api/accounts.api';
 import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
-import { useTenantFilter } from '@/hooks/useTenantFilter';
 import { PageContainer } from '@/components/common/PageContainer';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useAccountDirectory } from '@/components/common/accountGroups';
-import { TenantFilterChips } from '@/components/common/TenantFilterChips';
+import { AccountScopeBar, useAccountScope } from '@/components/common/AccountScope';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { AccountStatusBadge, Card, EmptyState, headerBtnCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { BarChart, ChartLegend, LineChart, Sparkline } from '@/components/usage/UsageCharts';
 import { HeroCard, HeroFeatured, MiniStat } from '@/components/usage/HeroCards';
 import { opsErrorMessage } from '@/components/usage/opsErrors';
+import { AccountUsageTab } from '@/components/usage/AccountUsageTab';
+import { accountHref } from '@/utils/links';
 import { fillMonthDays, formatCount, isoMonth, quotaColor, quotaPct, sumBy } from '@/components/usage/usageFormat';
 import {
   MonthPicker, OverQuotaBanner, OverQuotaPill, QuotaLine, UsageAlertsList, dayLabel, hourLabel, monthLabel, resourceSeries, useByteFormat,
@@ -57,9 +58,10 @@ function StaffUsage() {
   // GET /usage/platform: platform admin in the god view (master tenant).
   const isAdmin = useAuthStore((s) => s.user?.role === 'admin') && isMaster;
   const currentTenantId = useTenantStore((s) => s.currentTenantId);
-  const tenantFilter = useTenantFilter('tenant');
+  // Account scope of the cross-account pages; the workspace chips keep their ?tenant= key.
   // God view: one workspace at a time (the endpoint takes a single tenantId).
-  const tenantId = isMaster && tenantFilter.ids.length > 0 ? tenantFilter.ids[0] : undefined;
+  const scope = useAccountScope({ tenantParam: 'tenant' });
+  const { tenantId } = scope;
   const [month, setMonth] = useState(() => isoMonth());
   const [usage, setUsage] = useState<Loaded<TenantUsage> | null>(null);
   const [alerts, setAlerts] = useState<UsageAlert[]>([]);
@@ -84,12 +86,6 @@ function StaffUsage() {
   useEffect(() => { void load(); }, [load, currentTenantId]);
   useHostingEvents([HostingSocketEvents.USAGE_ALERT], () => { void load(); }, undefined, 1500);
 
-  const setSingleTenant = (next: Set<number>) => {
-    // Keep only the chip just clicked (single selection over the multi-select chips).
-    const added = [...next].filter((x) => !tenantFilter.value.has(x));
-    tenantFilter.setValue(new Set(added.length > 0 ? [added[added.length - 1]] : [...next].slice(0, 1)));
-  };
-
   const data = usage?.data ?? null;
   // The tenant section always covers ONE workspace (the chip, else the server falls back to the
   // current one): its alerts must match, never the alerts of every workspace.
@@ -108,7 +104,15 @@ function StaffUsage() {
           </>
         }
       />
-      <TenantFilterChips value={tenantFilter.value} onChange={setSingleTenant} />
+      <AccountScopeBar scope={scope}>
+        {scope.accountParam != null && (
+          <Link to={accountHref(scope.accountParam, 'usage')} className="text-xs text-accent hover:underline">{t('usage.page.openAccount') || 'Open the account'}</Link>
+        )}
+      </AccountScopeBar>
+      {scope.accountParam != null ? (
+        // One account chosen: its own consumption (the same view as its account page).
+        <AccountUsageTab key={scope.accountParam} accountId={scope.accountParam} />
+      ) : (<>
       {isMaster && tenantId == null && data && (
         <p className="-mt-2 flex flex-wrap items-center gap-2 text-xs text-text-muted">
           {t('usage.page.oneWorkspace') || 'Workspace shown:'}
@@ -148,6 +152,7 @@ function StaffUsage() {
           )}
         </>
       )}
+      </>)}
     </PageContainer>
   );
 }

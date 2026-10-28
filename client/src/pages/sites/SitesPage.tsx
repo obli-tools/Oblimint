@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ChevronRight, ExternalLink, Globe, Plus, RefreshCw, Search } from 'lucide-react';
-import { HostingSocketEvents, appProfileDef, type HostingAccount, type HostingChangedPayload, type Site, type SitePhpRuntime } from '@oblimint/shared';
+import { HostingSocketEvents, appProfileDef, type HostingChangedPayload, type Site, type SitePhpRuntime } from '@oblimint/shared';
 import { sitesApi } from '@/api/sites.api';
-import { accountsApi } from '@/api/accounts.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
 import { PageContainer } from '@/components/common/PageContainer';
+import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { EmptyState } from '@/components/common/EmptyState';
+import { AccountScopeBar, useAccountScope } from '@/components/common/AccountScope';
 import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { groupRowsByAccount } from '@/components/common/accountGroups';
 import { CreateSiteModal } from '@/components/sites/CreateSiteModal';
@@ -21,15 +23,16 @@ import { headerAccentBtnCls, headerBtnCls } from '@/components/hosting/hostingUi
 export function SitesPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  // Account scope of the cross-account pages (?account=, god view ?tenants=).
+  const scope = useAccountScope();
+  const { accounts, params: searchParams, update } = scope;
+  const accountFilter = scope.accountParam;
   const { can, me } = useHostingMe();
   const publishModeLabel = usePublishModeLabel();
 
-  const [sites, setSites] = useState<Site[]>([]);
-  const [accounts, setAccounts] = useState<HostingAccount[]>([]);
+  const [allSites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [accountFilter, setAccountFilter] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
@@ -40,7 +43,7 @@ export function SitesPage() {
 
   // URL convention of the global pages: /sites?create=1&account=<id> opens the
   // create modal with the account preselected (`accountId` is kept as an alias
-  // of `account` for older links); the params are cleared afterwards.
+  // of `account` for older links); `create` is cleared afterwards, the account stays as the scope.
   // Only honoured once /hosting/me is known and for callers who may create.
   const mayCreate = can('sites.manage');
   useEffect(() => {
@@ -51,12 +54,9 @@ export function SitesPage() {
       setCreateAccountId(Number.isInteger(acc) && acc > 0 ? acc : null);
       setCreateOpen(true);
     }
-    const next = new URLSearchParams(searchParams);
-    next.delete('create');
-    next.delete('account');
-    next.delete('accountId');
-    setSearchParams(next, { replace: true });
-  }, [searchParams, setSearchParams, me, mayCreate]);
+    const alias = searchParams.get('accountId');
+    update({ create: null, accountId: null, ...(alias && !searchParams.get('account') ? { account: alias } : {}) });
+  }, [searchParams, update, me, mayCreate]);
 
   useEffect(() => {
     const h = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -90,10 +90,6 @@ export function SitesPage() {
   }, []);
   useEffect(() => { fetchPhpRuntime(); }, [fetchPhpRuntime]);
 
-  useEffect(() => {
-    accountsApi.list().then(setAccounts).catch(() => setAccounts([]));
-  }, []);
-
   useHostingEvent<HostingChangedPayload>(HostingSocketEvents.HOSTING_CHANGED, (p) => {
     if (p.entity === 'site' || p.entity === 'account' || p.entity === 'domain') void fetchSites(true);
     if (p.entity === 'site') fetchPhpRuntime();
@@ -102,6 +98,8 @@ export function SitesPage() {
     if (sites.some((s) => s.id === p.siteId)) void fetchSites(true);
   });
 
+  // God view, one workspace: the site list is cut down here (sites carry their workspace).
+  const sites = useMemo(() => (scope.tenantId != null ? allSites.filter((x) => x.tenantId === scope.tenantId) : allSites), [allSites, scope.tenantId]);
   const canCreate = mayCreate;
   const accountName = useMemo(() => new Map(accounts.map((a) => [a.id, a.username])), [accounts]);
   const accountDir = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
@@ -145,19 +143,8 @@ export function SitesPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        {accounts.length > 1 && (
-          <select
-            value={accountFilter ?? ''}
-            onChange={(e) => setAccountFilter(e.target.value ? Number(e.target.value) : null)}
-            className={`${fieldCls} sm:w-64`}
-            aria-label={t('sites.fields.account') || 'Hosting account'}
-          >
-            <option value="">{t('sites.filters.allAccounts') || 'All accounts'}</option>
-            {accounts.map((a) => <option key={a.id} value={a.id}>{a.username}{a.displayName ? ` — ${a.displayName}` : ''}</option>)}
-          </select>
-        )}
-        <div className="relative sm:w-72">
+      <AccountScopeBar scope={scope}>
+        <div className="relative w-full sm:w-72">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
           <input
             type="search"
@@ -170,7 +157,7 @@ export function SitesPage() {
             spellCheck={false}
           />
         </div>
-      </div>
+      </AccountScopeBar>
 
       {loadError && (
         <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{loadError}</div>
@@ -207,20 +194,18 @@ export function SitesPage() {
       )}
 
       {loading && sites.length === 0 ? (
-        <p className="text-sm text-text-muted">{t('common.loading') || 'Loading...'}</p>
+        <div className="flex justify-center py-12"><LoadingSpinner /></div>
       ) : sites.length === 0 && !loadError ? (
-        <div className="rounded-xl bg-bg-secondary px-6 py-12 text-center">
-          <Globe className="mx-auto mb-3 h-8 w-8 text-text-muted" />
-          <p className="text-sm text-text-secondary">
-            {debouncedSearch || accountFilter ? (t('common.noMatch') || 'No match') : (t('sites.empty') || 'No site yet.')}
-          </p>
-          {canCreate && !debouncedSearch && !accountFilter && (
-            <Button size="sm" className="mt-4" onClick={() => { setCreateAccountId(null); setCreateOpen(true); }}>
+        <EmptyState
+          icon={<Globe />}
+          text={debouncedSearch || accountFilter ? (t('common.noMatch') || 'No match') : (t('sites.empty') || 'No site yet.')}
+          action={canCreate && !debouncedSearch && !accountFilter ? (
+            <Button size="sm" className="mt-2" onClick={() => { setCreateAccountId(null); setCreateOpen(true); }}>
               <Plus size={14} className="mr-1" />
               {t('sites.create.button') || 'New site'}
             </Button>
-          )}
-        </div>
+          ) : undefined}
+        />
       ) : sites.length > 0 && (
         <GroupedTable<Site>
           storageKey="sites"

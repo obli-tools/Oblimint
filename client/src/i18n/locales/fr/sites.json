@@ -263,27 +263,8 @@
     "phpRunning": "Version de PHP exécutée dans le conteneur"
   },
   "siteRoutes": {
-    "add": "Ajouter",
-    "addTitle": "Ajouter une route",
-    "added": "Route ajoutée",
     "basePathNote": "Un sous-site doit savoir où il vit : le chemin de base de ce site est {{basePath}} (onglet Vue d'ensemble).",
-    "deleteConfirm": "Supprimer la route {{route}} ? Cette adresse ne servira plus le site.",
-    "deleted": "Route supprimée",
-    "empty": "Aucun domaine ne pointe encore vers ce site.",
-    "explain": "Une route envoie un domaine + un préfixe de chemin vers ce site. Quand plusieurs préfixes correspondent à une requête, le plus long l'emporte.",
-    "fields": {
-      "address": "Adresse",
-      "domain": "Domaine",
-      "prefix": "Préfixe",
-      "runtime": "Runtime"
-    },
-    "manageDomains": "Gérer les domaines",
-    "noDomain": "Ce compte n'a encore aucun domaine.",
-    "pickDomain": "Choisissez un domaine.",
-    "prefixInvalid": "Préfixe invalide : « / » ou un chemin comme /boutique/.",
-    "primary": "principal",
-    "primaryOption": "Principal ({{base}})",
-    "secondaryOption": "Secondaire ({{base}})"
+    "manageDomains": "Gérer les domaines"
   },
   "sites": {
     "actions": {
@@ -413,9 +394,6 @@
     "files": {
       "data": "Les données inscriptibles du site (envois, caches…), un dossier par chemin de données. Les modifications y sont immédiatement en ligne, mais le PHP n'y est jamais exécuté.",
       "staging": "Le code du site. Déposez-le ici : rien n'est en ligne tant qu'il n'est pas publié en release (automatiquement ou avec le bouton « Publier »). Le code en ligne ne peut jamais être modifié sur place."
-    },
-    "filters": {
-      "allAccounts": "Tous les comptes"
     },
     "form": {
       "basePathHint": "Pour un sous-site servi sous un préfixe (ex. /blog/) : le chemin attendu par l'application. « / » sinon.",

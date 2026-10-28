@@ -13,7 +13,6 @@
     "loadFailed": "Failed to load the database instances",
     "empty": "No database instance yet.",
     "searchPlaceholder": "Search an instance…",
-    "allAccounts": "All accounts",
     "backToList": "Back to the databases",
     "notRunningHint": "The instance is not running: start it to manage its databases.",
     "engine": "Engine",

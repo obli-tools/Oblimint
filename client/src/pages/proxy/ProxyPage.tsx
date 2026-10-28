@@ -3,9 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { Ban, Cable, CornerUpRight, FileCode2, Fingerprint, ListChecks, RefreshCw, ShieldCheck, Waypoints } from 'lucide-react';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
-import { TenantFilterChips } from '@/components/common/TenantFilterChips';
+import { AccountScopeBar, scopeSubtitle, useAccountScope } from '@/components/common/AccountScope';
 import { headerBtnCls } from '@/components/hosting/hostingUi';
-import { AccountSelect, useAccountScope, useProxyAccess } from '@/components/proxy/proxyUi';
+import { useProxyAccess } from '@/components/proxy/proxyUi';
 import { ProxyHostsPanel } from '@/components/proxy/ProxyHostsPanel';
 import { RedirectionsPanel } from '@/components/proxy/RedirectionsPanel';
 import { DeadHostsPanel } from '@/components/proxy/DeadHostsPanel';
@@ -59,7 +59,7 @@ export function ProxyPage() {
       <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
         <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.proxy') || 'Proxy'}</h1>
         <span className="text-xs font-mono tracking-wider text-text-muted">
-          {scope.selectedAccount ? scope.selectedAccount.username : (t('proxy.allAccountsShort') || 'all accounts')}
+          {scopeSubtitle(scope, t('proxy.allAccountsShort') || 'all accounts')}
         </span>
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => setTick((n) => n + 1)} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>
@@ -69,11 +69,7 @@ export function ProxyPage() {
         {t('proxy.description') || 'Publish applications, sites or external machines on your verified domains, with HTTPS, access control, sub-routes and protection against scanners.'}
       </p>
 
-      <TenantFilterChips value={scope.tenantFilter.value} onChange={scope.setSingleTenant} />
-
-      <div className="flex flex-wrap items-center gap-2">
-        <AccountSelect accounts={accounts} value={scope.accountParam} onChange={scope.setAccount} />
-      </div>
+      <AccountScopeBar scope={scope} />
 
       <SegmentedTabs<Tab> tabs={tabs} value={tab} onChange={setTab} ariaLabel={t('nav.proxy') || 'Proxy'} fill={false} />
 

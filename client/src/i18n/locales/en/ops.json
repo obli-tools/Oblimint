@@ -188,7 +188,8 @@
       "oneWorkspace": "Workspace shown:",
       "oneWorkspaceHint": "pick a chip for another workspace.",
       "oneWorkspaceHintAdmin": "pick a chip for another workspace; the platform totals are below.",
-      "subtitle": "Traffic, disk and resources of the accounts."
+      "subtitle": "Traffic, disk and resources of the accounts.",
+      "openAccount": "Open the account"
     },
     "platform": {
       "accounts": "Accounts",

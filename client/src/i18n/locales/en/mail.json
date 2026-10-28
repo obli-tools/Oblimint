@@ -3,7 +3,6 @@
     "title": "Mail",
     "description": "Mail domains and their DNS records, mailboxes, aliases, outbound mail of the sites and logs.",
     "account": "Hosting account",
-    "allAccounts": "All accounts",
     "allAccountsShort": "all accounts",
     "chooseAccount": "Choose an account…",
     "chooseDomain": "Choose a domain…",
