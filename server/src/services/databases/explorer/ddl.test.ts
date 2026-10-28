@@ -142,3 +142,22 @@ test('PostgreSQL: schema-qualified, ALTER COLUMN pieces, identity, constraints, 
   const view = { ...v, table: { ...v.table, kind: 'view' as const, materialized: true } };
   assert.deepEqual(buildDdl({ op: 'dropTable', table: 'v', confirm: 'v' }, { family: 'postgresql', table: view }).statements, ['DROP MATERIALIZED VIEW "public"."v"']);
 });
+
+test('MySQL: modifyColumn refuses generated / invisible columns (CHANGE COLUMN would drop the expression / the flag)', () => {
+  const t = info('mysql', 'items', [
+    col('id', 'int(11)', { nullable: false, primary: true }),
+    col('a', 'int(11)'),
+    col('b', 'int(11)', { extra: 'STORED GENERATED' }),
+    col('v', 'int(11)', { extra: 'VIRTUAL GENERATED' }),
+    col('h', 'int(11)', { extra: 'INVISIBLE' }),
+    col('at', 'datetime', { extra: 'DEFAULT_GENERATED on update CURRENT_TIMESTAMP' }),
+  ]);
+  const ctx = { family: 'mysql' as const, table: t };
+  for (const c of ['b', 'v', 'h']) {
+    assert.throws(() => buildDdl({ op: 'modifyColumn', table: 'items', column: c, def: { name: c, type: 'bigint', nullable: true } }, ctx),
+      (e) => code(e) === 'invalidDdl' && /console/.test((e as AppError).message), c);
+  }
+  // A plain column, or a default expression (DEFAULT_GENERATED), is still changed with the form.
+  assert.equal(buildDdl({ op: 'modifyColumn', table: 'items', column: 'a', def: { name: 'a', type: 'bigint', nullable: true } }, ctx).statements.length, 1);
+  assert.equal(buildDdl({ op: 'modifyColumn', table: 'items', column: 'at', def: { name: 'at', type: 'datetime', nullable: true } }, ctx).statements.length, 1);
+});

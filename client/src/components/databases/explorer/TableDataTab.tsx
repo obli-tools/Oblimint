@@ -195,6 +195,9 @@ export function TableDataTab({ instanceId, dbId, info, onChanged, initialFilters
           <Button size="sm" variant="secondary" onClick={addFilter}>{t('dbx.data.addFilter') || 'Add'}</Button>
         </div>
       )}
+      {data?.truncated && (
+        <p className="border-b border-white/[0.04] px-3 py-1 text-[11px] text-status-pending">{t('dbx.data.truncated') || 'This page is too large to be shown whole (8 MiB): only its first rows are displayed. Choose a smaller page.'}</p>
+      )}
       {error ? <p className="p-4 text-sm text-status-down">{error}</p>
         : !data ? <div className="flex justify-center p-8"><LoadingSpinner /></div>
           : (

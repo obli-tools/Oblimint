@@ -604,8 +604,8 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   assert.deepEqual(ran, ['ro:SELECT secret FROM items', 'rw:DELETE FROM items WHERE id = 1']);
   const qAudits = await db('audit_logs').where({ action: 'db.key.query', tenant_id: tA }).orderBy('id').select('details', 'resource_path') as Array<{ details: any; resource_path: string }>; // eslint-disable-line @typescript-eslint/no-explicit-any
   assert.deepEqual(qAudits.map((r) => [r.details.ok, r.details.write, r.details.sql, r.details.code ?? null]), [
-    [false, false, 'SELECT 1', 'instanceNotRunning'], // reached, refused: audited too (a database out of reach is not)
-    [true, false, 'SELECT secret FROM items', null], [false, false, 'DELETE FROM items', 'readOnlyStatement'], [true, true, 'DELETE FROM items WHERE id = 1', null],
+    [false, false, 'SELECT ?', 'instanceNotRunning'], // (literals masked) reached, refused: audited too (a database out of reach is not)
+    [true, false, 'SELECT secret FROM items', null], [false, false, 'DELETE FROM items', 'readOnlyStatement'], [true, true, 'DELETE FROM items WHERE id = ?', null], // literals masked
   ]);
   assert.ok(qAudits.every((r) => r.resource_path === `${instId}/${mineDbId}` && !JSON.stringify(r.details).includes('value-never-audited')), 'never the results');
   // The MCP tool, with its argument checks.

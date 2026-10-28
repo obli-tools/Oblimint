@@ -271,7 +271,7 @@ export function SqlConsole({ instanceId, dbId, family, engine, initialSql, injec
                 )}
               </div>
               {r.error && <p className="border-t border-white/[0.04] px-3 py-2 font-mono text-[12px] text-status-down">{r.error}</p>}
-              {r.truncated && <p className="border-t border-white/[0.04] px-3 py-1 text-[11px] text-status-pending">{t('dbx.console.truncated', { rows: DBX_MAX_QUERY_ROWS, defaultValue: 'Only the first {{rows}} rows are shown (add a LIMIT, or export the result).' })}</p>}
+              {r.truncated && <p className="border-t border-white/[0.04] px-3 py-1 text-[11px] text-status-pending">{t('dbx.console.truncated', { rows: DBX_MAX_QUERY_ROWS, defaultValue: 'Not every row is shown: at most {{rows}} rows per result and 8 MiB per run (add a LIMIT, or export the result).' })}</p>}
               {r.columns && r.rows && (
                 <div className="flex max-h-[420px] min-h-0 flex-col border-t border-white/[0.04]">
                   <DataGrid columns={r.columns} rows={r.rows} emptyText={t('dbx.console.noRows') || 'No rows.'} />

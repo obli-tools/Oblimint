@@ -10,8 +10,8 @@ import type {
 } from '@oblimint/shared';
 import {
   DBX_EXPORT_DEFAULT_MAX_MB, DBX_EXPORT_TICKET_S, DBX_IMPORT_DEFAULT_MAX_MB, DBX_KEY_MAX_BYTES, DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S,
-  DBX_MAINTENANCE_OPS, DBX_MAX_PAGE, DBX_MAX_TIMEOUT_S, DBX_MIN_TIMEOUT_S, DBX_SEARCH_BUDGET_S, DBX_SEARCH_MAX_TABLES, DBX_SEARCH_ROWS_PER_TABLE,
-  DBX_STATEMENT_TIMEOUT_S, dbFamilyOf,
+  DBX_MAINTENANCE_OPS, DBX_MAX_PAGE, DBX_MAX_TIMEOUT_S, DBX_MIN_TIMEOUT_S, DBX_SEARCH_BUDGET_S, DBX_SEARCH_MAX_BYTES, DBX_SEARCH_MAX_TABLES,
+  DBX_SEARCH_ROWS_PER_TABLE, DBX_STATEMENT_TIMEOUT_S, DBX_TEXT_PREVIEW, dbFamilyOf, dbxTransactionalEngine,
 } from '@oblimint/shared';
 import { AppError } from '../../../middleware/errorHandler';
 import { logger } from '../../../utils/logger';
@@ -26,8 +26,8 @@ import { createRestoreRewriter, restoreSqlStream } from '../restore';
 import type { DbDatabaseRow, DbInstanceRow } from '../rows';
 import { createEphemeralUser, releaseEphemeralUser } from '../sso';
 import { buildDdl, tableRef, type DdlContext } from './ddl';
-import { connectMysql, connectPostgres, type ExplorerDriver } from './drivers';
-import { splitStatements, stripLeadingComments } from './sqlStream';
+import { connectMysql, connectPostgres, RowBudget, type ExplorerDriver } from './drivers';
+import { firstKeyword, maskSqlLiterals, splitStatements } from './sqlStream';
 import { byteCap, explorerDumpArgv, exportFilename, exportRows, runCsvImport, runSqlImport, type DumpOptions } from './transfer';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,6 +53,8 @@ const MAX_SIDE_CONNECTIONS = 3;
 const EXPORT_TIMEOUT_S = 30 * 60;
 /** Per statement of an import. */
 const IMPORT_STATEMENT_TIMEOUT_S = 600;
+/** Export tickets not yet used, per session (the oldest is dropped past it). */
+const MAX_TICKETS_PER_SESSION = 5;
 const SCHEMA_MAX_TABLES = 2000;
 
 /** Owner of a session: a panel user id, or `k<keyId>` for an API key. */
@@ -129,7 +131,12 @@ const defaultDeps: ExplorerDeps = {
 };
 
 let deps: ExplorerDeps = defaultDeps;
-const sessions = new Map<string, Promise<Session>>();
+/**
+ * Sessions by key. The entry is set SYNCHRONOUSLY when a session starts being created (before any await),
+ * so concurrent first calls share one creation; accountId counts it against the account limit meanwhile.
+ */
+interface SessionEntry { accountId: number; p: Promise<Session> }
+const sessions = new Map<string, SessionEntry>();
 let sweeper: NodeJS.Timeout | null = null;
 
 interface Ticket {
@@ -169,12 +176,13 @@ function sqlError(err: unknown): AppError {
 const isConnectionError = (err: unknown) => err instanceof AppError && err.code === 'dbUnreachable';
 const sessionKey = (owner: SessionOwner, i: DbInstanceRow, d: DbDatabaseRow) => `${owner}:${i.id}:${d.id}`;
 
-async function closeSession(key: string): Promise<void> {
-  const p = sessions.get(key);
+/** Closes the session of `key` (only that entry when given: a newer one created meanwhile is left alone). */
+async function closeSession(key: string, only?: SessionEntry): Promise<void> {
+  const e = sessions.get(key);
+  if (!e || (only && e !== only)) return;
   sessions.delete(key);
-  if (!p) return;
   let s: Session;
-  try { s = await p; } catch { return; }
+  try { s = await e.p; } catch { return; }
   if (s.importJob?.status.state === 'running') s.importJob.cancel = true;
   try { await s.driver.close(); } catch { /* already gone */ }
   await deps.release(s.instance, s.username);
@@ -182,10 +190,10 @@ async function closeSession(key: string): Promise<void> {
 
 async function sweep(): Promise<void> {
   const now = deps.now();
-  for (const [key, p] of [...sessions]) {
-    const s = await p.catch(() => null);
-    if (!s) { sessions.delete(key); continue; }
-    if (s.busy === 0 && s.side === 0 && (now - s.lastUsed > SESSION_IDLE_MS || now - s.createdAt > SESSION_MAX_MS)) await closeSession(key);
+  for (const [key, e] of [...sessions]) {
+    const s = await e.p.catch(() => null);
+    if (!s) { if (sessions.get(key) === e) sessions.delete(key); continue; }
+    if (s.busy === 0 && s.side === 0 && (now - s.lastUsed > SESSION_IDLE_MS || now - s.createdAt > SESSION_MAX_MS)) await closeSession(key, e);
   }
   for (const [k, t] of tickets) if (t.expires < now) tickets.delete(k);
   if (!sessions.size && sweeper) { clearInterval(sweeper); sweeper = null; }
@@ -199,17 +207,17 @@ export async function closeAllExplorerSessions(): Promise<void> {
 async function session(instance: DbInstanceRow, database: DbDatabaseRow, owner: SessionOwner): Promise<Session> {
   if (instance.status !== 'running') throw new AppError(409, 'The database instance is not running', 'instanceNotRunning');
   const key = sessionKey(owner, instance, database);
-  const existing = sessions.get(key);
-  if (existing) {
-    const s = await existing.catch(() => null);
+  for (;;) {
+    const existing = sessions.get(key);
+    if (!existing) break;
+    const s = await existing.p.catch(() => null);
     if (s && (deps.now() - s.createdAt < SESSION_MAX_MS || s.busy > 0 || s.side > 0)) return s;
-    await closeSession(key);
+    await closeSession(key, existing);
+    // Another call may have started a new session meanwhile: checked again.
   }
+  // From here to sessions.set: no await (one creation per key, the account count stays exact).
   let count = 0;
-  for (const p of sessions.values()) {
-    const s = await p.catch(() => null);
-    if (s?.accountId === instance.account_id) count++;
-  }
+  for (const e of sessions.values()) if (e.accountId === instance.account_id) count++;
   if (count >= MAX_SESSIONS_PER_ACCOUNT) throw new AppError(429, 'Too many explorer sessions on this account: close another one or try again in a few minutes', 'tooManySessions');
   const p = (async (): Promise<Session> => {
     const { driver, username, password } = await deps.connect(instance, database);
@@ -219,8 +227,9 @@ async function session(instance: DbInstanceRow, database: DbDatabaseRow, owner: 
       createdAt: now, lastUsed: now, busy: 0, side: 0, running: null, importJob: null, tables: null, infos: new Map(), version: null,
     };
   })();
-  sessions.set(key, p);
-  p.catch(() => { if (sessions.get(key) === p) sessions.delete(key); });
+  const entry: SessionEntry = { accountId: instance.account_id, p };
+  sessions.set(key, entry);
+  p.catch(() => { if (sessions.get(key) === entry) sessions.delete(key); });
   if (!sweeper) { sweeper = setInterval(() => { void sweep(); }, 60_000); sweeper.unref(); }
   try {
     return await p;
@@ -317,6 +326,13 @@ function checkKey(info: DbxTableInfo, key: DbxRowKey): void {
 
 const clampTimeout = (s: number | undefined, max = DBX_MAX_TIMEOUT_S) => Math.min(max, Math.max(DBX_MIN_TIMEOUT_S, Math.floor(s ?? DBX_STATEMENT_TIMEOUT_S)));
 
+/** A statement as audited: literals masked (sqlStream maskSqlLiterals), cut. */
+export function auditSql(family: DbFamily, sql: string, max = 500): string {
+  // Masked on a bounded prefix (an unterminated literal at the cut is masked whole).
+  const m = maskSqlLiterals(sql.length > max * 4 ? sql.slice(0, max * 4) : sql, family);
+  return m.length > max ? `${m.slice(0, max)}…` : m;
+}
+
 // ── read-only statements (API keys, query exports) ───────────────────────────
 
 const READ_KEYWORDS: Record<DbFamily, Set<string>> = {
@@ -324,11 +340,15 @@ const READ_KEYWORDS: Record<DbFamily, Set<string>> = {
   postgresql: new Set(['select', 'with', 'show', 'explain', 'table', 'values']),
 };
 
-/** First keyword of a statement (leading comments and parentheses skipped; a MySQL executable comment is no keyword). */
-export function firstKeyword(sql: string): string {
-  const s = stripLeadingComments(sql).replace(/^[\s(]+/, '');
-  return (/^[A-Za-z]+/.exec(s)?.[0] ?? '').toLowerCase();
-}
+export { firstKeyword };
+
+/**
+ * Never read-only, whatever the engine accepts in a read-only transaction: they would outlive the
+ * rollback (PREPARE, LISTEN, session settings, locks) or end / leave the transaction. Outside
+ * READ_KEYWORDS anyway: listed so that the refusal says why, and kept refused if that list grows.
+ */
+const NEVER_READ_ONLY = new Set(['prepare', 'execute', 'deallocate', 'commit', 'rollback', 'abort', 'begin', 'start', 'end', 'savepoint', 'release', 'set',
+  'reset', 'lock', 'unlock', 'listen', 'unlisten', 'notify', 'do', 'call', 'handler', 'load', 'discard', 'declare', 'fetch', 'move', 'close', 'xa']);
 
 /**
  * ONE statement, and (readOnly) a reading one: a statement that would end the
@@ -339,7 +359,11 @@ export function singleStatement(family: DbFamily, sql: string, readOnly: boolean
   const list = splitStatements(sql, family);
   if (list.length !== 1) throw new AppError(400, list.length ? 'One statement at a time' : 'No statement', 'oneStatement');
   const st = list[0].sql;
-  if (readOnly && !READ_KEYWORDS[family].has(firstKeyword(st))) {
+  const kw = firstKeyword(st, family);
+  if (readOnly && NEVER_READ_ONLY.has(kw)) {
+    throw new AppError(400, `Read-only: ${kw.toUpperCase()} never runs read-only (pass write: true to run it)`, 'readOnlyStatement');
+  }
+  if (readOnly && !READ_KEYWORDS[family].has(kw)) {
     throw new AppError(400, `Read-only: only ${[...READ_KEYWORDS[family]].map((k) => k.toUpperCase()).join(', ')} statements (pass write: true to change data)`, 'readOnlyStatement');
   }
   return st;
@@ -491,6 +515,8 @@ export const explorerService = {
     const cols = await s.driver.columns();
     const deadline = deps.now() + DBX_SEARCH_BUDGET_S * 1000;
     const hits: DbxSearchHit[] = [];
+    // One byte budget for the whole search (every table), values cut to previews.
+    const budget = new RowBudget(DBX_SEARCH_MAX_BYTES, DBX_TEXT_PREVIEW);
     let searched = 0;
     let skipped = 0;
     let timedOut = false;
@@ -503,10 +529,8 @@ export const explorerService = {
         if (!text.length) { skipped++; continue; }
         searched++;
         try {
-          const r = await s.driver.search({ table: t } as DbxTableInfo, text, term, req.mode, DBX_SEARCH_ROWS_PER_TABLE + 1);
-          if (r.rows.length) {
-            hits.push({ table: t.id, searchedColumns: text, columns: r.columns, rows: r.rows.slice(0, DBX_SEARCH_ROWS_PER_TABLE), more: r.rows.length > DBX_SEARCH_ROWS_PER_TABLE });
-          }
+          const r = await s.driver.search({ table: t } as DbxTableInfo, text, term, req.mode, DBX_SEARCH_ROWS_PER_TABLE, budget);
+          if (r.rows.length) hits.push({ table: t.id, searchedColumns: text, columns: r.columns, rows: r.rows, more: r.truncated });
         } catch (err) {
           if (isConnectionError(sqlError(err))) throw err;
           skipped++; // timeout or unreadable table: skipped
@@ -559,9 +583,12 @@ export const explorerService = {
       t = {
         filename: exportFilename(d.name, req.sql ? 'query' : tables[0].id, req.format, gzip), format: req.format, gzip, sql, readOnly, dump: null,
         delimiter, header: req.csvHeader !== false,
-        what: req.sql ? { query: req.sql.length > 500 ? `${req.sql.slice(0, 500)}…` : req.sql } : { tables: [tables[0].id] },
+        what: req.sql ? { query: auditSql(s.family, req.sql) } : { tables: [tables[0].id] },
       };
     }
+    // Unused tickets of the session stay few: the oldest goes.
+    const mine = [...tickets].filter(([, x]) => x.sessionKey === s.key);
+    for (const [k] of mine.slice(0, Math.max(0, mine.length - MAX_TICKETS_PER_SESSION + 1))) tickets.delete(k);
     const token = crypto.randomBytes(24).toString('hex');
     tickets.set(token, { ...t, sessionKey: s.key, expires: deps.now() + DBX_EXPORT_TICKET_S * 1000 });
     return { token, filename: t.filename, url: `${urlBase}/${token}` };
@@ -619,20 +646,35 @@ export const explorerService = {
   async startImport(i: DbInstanceRow, d: DbDatabaseRow, owner: SessionOwner, body: Readable, contentType: string | undefined, contentLength: number | null, o: DbxImportOptions): Promise<DbxImportStatus> {
     return withSession(i, d, owner, async (s) => {
       if (s.importJob?.status.state === 'running') throw new AppError(409, 'An import is already running on this database', 'importRunning');
-      const { importMax } = await deps.caps();
-      if (contentLength !== null && contentLength > importMax) throw new AppError(413, `File larger than the import limit (${Math.round(importMax / 1048576)} MiB)`, 'importTooLarge');
-      const info = o.format === 'csv' ? await infoOf(s, o.table ?? '') : null;
-      if (info && info.table.kind !== 'table') throw new AppError(409, 'CSV goes into a table, not a view', 'notEditable');
+      // The job is the session's at once (no await since the check): a concurrent start sees it running.
+      const previous = s.importJob;
       const status: DbxImportStatus = {
-        id: crypto.randomBytes(8).toString('hex'), state: 'running', format: o.format, table: info?.table.id ?? null, bytesRead: 0, totalBytes: contentLength,
+        id: crypto.randomBytes(8).toString('hex'), state: 'running', format: o.format, table: null, bytesRead: 0, totalBytes: contentLength,
         statements: 0, rows: 0, errorCount: 0, errors: [], startedAt: new Date(deps.now()).toISOString(), finishedAt: null, message: null,
       };
       const job: ImportJob = { status, cancel: false };
       s.importJob = job;
+      let importMax: number;
+      let info: DbxTableInfo | null;
+      try {
+        ({ importMax } = await deps.caps());
+        if (contentLength !== null && contentLength > importMax) throw new AppError(413, `File larger than the import limit (${Math.round(importMax / 1048576)} MiB)`, 'importTooLarge');
+        info = o.format === 'csv' ? await infoOf(s, o.table ?? '') : null;
+        if (info && info.table.kind !== 'table') throw new AppError(409, 'CSV goes into a table, not a view', 'notEditable');
+      } catch (err) {
+        if (s.importJob === job) s.importJob = previous;
+        throw err;
+      }
+      status.table = info?.table.id ?? null;
+      if (info && s.family === 'mysql' && !dbxTransactionalEngine(info.table.engine)) {
+        status.message = `${info.table.engine} table: not transactional, the rows inserted before an error are kept`;
+      }
       const ctl = { status, cancelled: () => job.cancel };
       const counted = body.pipe(counter((n) => { status.bytesRead = n; }));
       body.on('error', (err) => counted.destroy(err));
-      let input: Readable = restoreSqlStream(counted, contentType, { maxBytes: importMax, maxInflatedBytes: importMax * 8 });
+      // The limit is the SQL / CSV text processed: a compressed upload buys no more (a small .gz of a huge
+      // file would otherwise run for hours under the same limit).
+      let input: Readable = restoreSqlStream(counted, contentType, { maxBytes: importMax, maxInflatedBytes: importMax });
       if (o.format === 'sql' && s.family === 'mysql') {
         // DEFINER clauses removed: the session user may not name another definer.
         const src = input;
@@ -646,7 +688,7 @@ export const explorerService = {
           else {
             await runCsvImport(side, s.family, info!, input, ctl, {
               delimiter: o.csvDelimiter ?? ',', header: o.csvHeader !== false, columns: o.columns ?? null, emptyNull: o.csvEmptyNull === true,
-              continueOnError: o.continueOnError === true,
+              continueOnError: o.continueOnError === true, transactional: s.family === 'postgresql' || dbxTransactionalEngine(info!.table.engine),
             });
           }
         });
@@ -674,13 +716,13 @@ export const explorerService = {
 
   importStatus: async (i: DbInstanceRow, d: DbDatabaseRow, owner: SessionOwner): Promise<DbxImportStatus | null> => {
     const p = sessions.get(sessionKey(owner, i, d));
-    const s = p ? await p.catch(() => null) : null;
+    const s = p ? await p.p.catch(() => null) : null;
     return s?.importJob?.status ?? null;
   },
 
   cancelImport: async (i: DbInstanceRow, d: DbDatabaseRow, owner: SessionOwner): Promise<boolean> => {
     const p = sessions.get(sessionKey(owner, i, d));
-    const s = p ? await p.catch(() => null) : null;
+    const s = p ? await p.p.catch(() => null) : null;
     if (!s?.importJob || s.importJob.status.state !== 'running') return false;
     s.importJob.cancel = true;
     return true;

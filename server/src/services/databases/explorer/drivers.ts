@@ -4,17 +4,26 @@ import type {
   DbFamily, DbxCell, DbxColumn, DbxFilter, DbxForeignKey, DbxIncomingKey, DbxIndex, DbxObject, DbxObjectKind, DbxQueryResult, DbxRowKey, DbxRows,
   DbxRowsRequest, DbxTable, DbxTableInfo,
 } from '@oblimint/shared';
-import { DBX_BINARY_PREVIEW, DBX_MAX_QUERY_ROWS, DBX_STATEMENT_TIMEOUT_S, DBX_TEXT_MAX, DBX_TEXT_PREVIEW } from '@oblimint/shared';
+import {
+  DBX_BINARY_PREVIEW, DBX_MAX_QUERY_ROWS, DBX_PAGE_MAX_BYTES, DBX_QUERY_MAX_BYTES, DBX_STATEMENT_TIMEOUT_S, DBX_TEXT_MAX, DBX_TEXT_PREVIEW,
+} from '@oblimint/shared';
 import { SSO_USER_PREFIX } from '../sql';
 import { splitSql } from './splitSql';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SQL drivers of the database explorer: one connection per explorer session
 // (plus short-lived side connections of the same ephemeral user for exports,
-// imports and query cancellation), over the instance's local socket. Every
-// statement is time-limited (engine setting), result rows are capped
-// (DBX_MAX_QUERY_ROWS: the rest is read and discarded), big values are cut
-// (DBX_TEXT_MAX / DBX_BINARY_PREVIEW) except in exports (raw values).
+// imports and query cancellation), over the instance's local socket.
+//   - Time: every statement runs under a limit set again right before it (a
+//     routine may have changed the session setting), and a watchdog kills it
+//     from a side connection past the limit (+ grace) — the only bound where
+//     the engine has none (MySQL max_execution_time: SELECT only; SET
+//     STATEMENT … FOR; a routine).
+//   - Size: rows are read one by one (never buffered by the client library)
+//     and kept within a row count AND a byte budget per response (RowBudget:
+//     every statement / result set of a console run, a grid page, a search);
+//     big values are cut (DBX_TEXT_MAX / DBX_BINARY_PREVIEW; API keys:
+//     DBX_TEXT_PREVIEW) except in exports (raw values, streamed).
 // Identifiers come from the catalog (the caller resolves a table id against
 // tables() first) and are quoted; values are always bound parameters.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,15 +84,15 @@ export interface ExplorerDriver {
   /** Objects: views, routines, triggers, events. */
   objects(): Promise<DbxObject[]>;
   objectDefinition(o: DbxObject): Promise<string | null>;
-  /** Up to `limit` rows of `info` where a text column matches. */
-  search(info: DbxTableInfo, columns: string[], term: string, mode: 'contains' | 'exact', limit: number): Promise<{ columns: string[]; rows: DbxCell[][] }>;
+  /** Up to `limit` rows of `info` where a text column matches, within `budget` (truncated: more rows, or the budget is spent). */
+  search(info: DbxTableInfo, columns: string[], term: string, mode: 'contains' | 'exact', limit: number, budget: RowBudget): Promise<{ columns: string[]; rows: DbxCell[][]; truncated: boolean }>;
   /** Streams the rows of a SELECT (readOnly: in a read-only transaction). Side connections only (holds the connection). */
   stream(sql: string, sink: RowSink, opts: { readOnly: boolean; timeoutS: number }): Promise<number>;
   /** Import: one statement, rows discarded. */
   exec(sql: string): Promise<number | null>;
   /** Import: INSERT INTO target (columns) VALUES … for a batch (values bound). `target` / `columnsSql` already quoted. */
   insertRows(target: string, columnsSql: string | null, rows: unknown[][]): Promise<number>;
-  /** Sets the statement time limit of the connection (seconds, 0 = none). */
+  /** Time limit of the next statements of this connection (seconds, 0 = none): engine setting before each one + watchdog. */
   setTimeout(seconds: number): Promise<void>;
   /** Cancels the running statement of another connection of the same user (KILL QUERY / pg_cancel_backend). */
   cancel(connectionId: number): Promise<boolean>;
@@ -93,12 +102,87 @@ export interface ExplorerDriver {
 /** Exact counts below this estimate (above: the engine estimate, approximate). */
 const EXACT_COUNT_BELOW = 200_000;
 
-export function longText(s: string): DbxCell {
-  return s.length > DBX_TEXT_MAX ? { long: true, text: s.slice(0, DBX_TEXT_PREVIEW), size: s.length } : s;
+/** A text value, cut past `max` characters (to DBX_TEXT_PREVIEW at most). */
+export function longText(s: string, max = DBX_TEXT_MAX): DbxCell {
+  return s.length > max ? { long: true, text: s.slice(0, Math.min(max, DBX_TEXT_PREVIEW)), size: s.length } : s;
 }
 
 export function binaryCell(buf: Buffer): DbxCell {
   return { binary: true, hex: buf.subarray(0, DBX_BINARY_PREVIEW).toString('hex'), size: buf.length, truncated: buf.length > DBX_BINARY_PREVIEW };
+}
+
+/** PostgreSQL bytea text (\x…) → cell, without decoding more than the preview. */
+export function byteaCell(v: string): DbxCell {
+  const size = Math.floor((v.length - 2) / 2);
+  return { binary: true, hex: v.slice(2, 2 + DBX_BINARY_PREVIEW * 2).toLowerCase(), size, truncated: size > DBX_BINARY_PREVIEW };
+}
+
+/**
+ * Bytes of rows (JSON, approximate: rowBytes) a response may still keep, shared by every statement and
+ * result set of that response; textMax: text values longer than it are cut (DBX_TEXT_PREVIEW at most).
+ */
+export class RowBudget {
+  constructor(public left: number, readonly textMax: number = DBX_TEXT_MAX) {}
+}
+
+/** Catalog queries (server-built, small): no byte budget. */
+const UNBOUNDED = () => new RowBudget(Number.POSITIVE_INFINITY);
+
+interface RowSet { rows: DbxCell[][]; truncated: boolean }
+
+/** A row of a result set can still be kept (row cap; a set cut once keeps nothing more: no gap). */
+const accepts = (set: RowSet, cap: number) => {
+  if (set.rows.length >= cap || set.truncated) { set.truncated = true; return false; }
+  return true;
+};
+
+/**
+ * Keeps a row within the byte budget. Past it the set is truncated; a set's FIRST row larger than what is
+ * left comes back with its values cut to fit (never 0 rows while some budget is left).
+ */
+export function keepRow(set: RowSet, row: DbxCell[], budget: RowBudget): void {
+  const b = rowBytes(row);
+  if (b <= budget.left) { set.rows.push(row); budget.left -= b; return; }
+  set.truncated = true;
+  if (!set.rows.length && budget.left > 0) {
+    set.rows.push(fitRow(row, budget.left));
+    budget.left = 0;
+  }
+}
+
+/** The row with its text values cut so that it fits about `bytes` (16 characters per value at least). */
+export function fitRow(row: DbxCell[], bytes: number): DbxCell[] {
+  const per = Math.max(16, Math.floor(bytes / Math.max(1, row.length)) - 48);
+  return row.map((c) => {
+    if (typeof c === 'string') return c.length > per ? { long: true, text: c.slice(0, per), size: c.length } : c;
+    if (c && typeof c === 'object' && 'long' in c) return c.text.length > per ? { ...c, text: c.text.slice(0, per) } : c;
+    return c;
+  });
+}
+
+/** Seconds past the limit before the watchdog kills a statement (the engine's own limit acts first). */
+export const WATCHDOG_GRACE_S = 2;
+
+/**
+ * Backstop of the statement time limit: arm() before a statement, the returned function when it ends.
+ * Past limit + grace, kill() runs (KILL QUERY / pg_cancel_backend from a side connection); it receives
+ * `stillRunning` to check, once connected, that the same statement is still the one running.
+ */
+export function createWatchdog(kill: (stillRunning: () => boolean) => Promise<void>, graceMs = WATCHDOG_GRACE_S * 1000) {
+  return {
+    kills: 0,
+    arm(limitS: number): () => void {
+      if (!(limitS > 0)) return () => undefined;
+      let running = true;
+      const timer = setTimeout(() => {
+        if (!running) return;
+        this.kills++;
+        void kill(() => running).catch(() => undefined);
+      }, limitS * 1000 + graceMs);
+      timer.unref?.();
+      return () => { running = false; clearTimeout(timer); };
+    },
+  };
 }
 
 const errMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -155,13 +239,13 @@ export const qMy = (id: string) => `\`${id.replace(/`/g, '``')}\``;
 const MY_BINARY_TYPES = new Set(['binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob', 'geometry', 'point', 'linestring', 'polygon',
   'multipoint', 'multilinestring', 'multipolygon', 'geometrycollection', 'bit']);
 
-/** mysql2 values → cells: Buffers (BLOB, BINARY, BIT) as hex, parsed JSON / geometry back to text. */
-export function myCell(v: unknown): DbxCell {
+/** mysql2 values → cells: Buffers (BLOB, BINARY, BIT) as hex, parsed JSON / geometry back to text (cut past textMax). */
+export function myCell(v: unknown, textMax = DBX_TEXT_MAX): DbxCell {
   if (v === null || v === undefined) return null;
   if (Buffer.isBuffer(v)) return binaryCell(v);
-  if (typeof v === 'string') return longText(v);
+  if (typeof v === 'string') return longText(v, textMax);
   if (typeof v === 'number' || typeof v === 'boolean') return v;
-  return longText(JSON.stringify(v));
+  return longText(JSON.stringify(v), textMax);
 }
 
 /** Raw export value of mysql2 (Buffers kept). */
@@ -178,15 +262,17 @@ export interface MysqlConnectOptions {
 }
 
 export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerDriver> {
-  const conn = mysql.createConnection({
+  const connOpts = {
     ...(opts.socketPath ? { socketPath: opts.socketPath } : { host: opts.host, port: opts.port }),
     user: opts.user, password: opts.password, database: opts.database,
     multipleStatements: false, dateStrings: true, supportBigNumbers: true, bigNumberStrings: true, connectTimeout: 10_000, charset: 'utf8mb4',
-  });
+  };
+  const conn = mysql.createConnection(connOpts);
   // A fatal error (server gone) must never be an unhandled 'error' event: the next query fails, the session is recreated.
   conn.on('error', () => { /* see above */ });
   await new Promise<void>((resolve, reject) => conn.connect((err) => (err ? reject(err) : resolve())));
-  const run1 = (sql: string, values: unknown[] = [], cap = DBX_MAX_QUERY_ROWS) => new Promise<StreamResult>((resolve, reject) => {
+  /** One statement; rows read one by one, kept within `cap` and the budget (the others are read and dropped). */
+  const run1 = (sql: string, values: unknown[] = [], cap = DBX_MAX_QUERY_ROWS, budget: RowBudget = UNBOUNDED()) => new Promise<StreamResult>((resolve, reject) => {
     const res: StreamResult = { columns: null, rows: [], truncated: false, affectedRows: null, insertId: null };
     let current: ResultSet | null = null;
     const q = conn.query({ sql, values, rowsAsArray: true });
@@ -200,8 +286,7 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
     q.on('result', (row: unknown) => {
       if (Array.isArray(row)) {
         const target = current ?? res;
-        if (target.rows.length < cap) target.rows.push(row.map(myCell));
-        else target.truncated = true;
+        if (accepts(target, cap)) keepRow(target, row.map((v) => myCell(v, budget.textMax)), budget);
       } else if (row && typeof row === 'object') {
         const h = row as { affectedRows?: number; insertId?: number | string };
         res.affectedRows = h.affectedRows ?? null;
@@ -211,19 +296,36 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
     q.on('end', () => resolve(res));
   });
   const exclusive = serial();
-  const rows = <T = unknown[]>(sql: string, values: unknown[] = []) => run1(sql, values, 100_000).then((r) => r.rows as unknown as T[]);
-  let timeoutNow = -1;
-  const setTimeoutS = async (s: number) => {
-    if (s === timeoutNow) return;
-    await run1(opts.mariadb ? `SET SESSION max_statement_time = ${Math.max(0, Math.floor(s))}` : `SET SESSION max_execution_time = ${Math.max(0, Math.floor(s)) * 1000}`);
-    timeoutNow = s;
+
+  // ── time limit ──
+  /** Limit of the statements run now (seconds; withLimit / setTimeout change it for a call). */
+  let limitS = DBX_STATEMENT_TIMEOUT_S;
+  const engineLimit = (s: number) => run1(opts.mariadb ? `SET SESSION max_statement_time = ${s}` : `SET SESSION max_execution_time = ${s * 1000}`, [], 0);
+  const watchdog = createWatchdog(async (stillRunning) => {
+    const id = conn.threadId;
+    if (!id) return;
+    const side = mysql.createConnection({ ...connOpts, connectTimeout: 5000 });
+    side.on('error', () => undefined);
+    try {
+      await new Promise<void>((resolve, reject) => side.connect((err) => (err ? reject(err) : resolve())));
+      if (stillRunning()) await new Promise<void>((resolve, reject) => side.query('KILL QUERY ?', [id], (err) => (err ? reject(err) : resolve())));
+    } finally {
+      side.destroy();
+    }
+  });
+  /** A statement under the limit: the engine setting set again right before it (never cached), the watchdog armed. */
+  const timed = async (sql: string, values: unknown[] = [], cap = DBX_MAX_QUERY_ROWS, budget: RowBudget = UNBOUNDED()) => {
+    const s = Math.max(0, Math.floor(limitS));
+    await engineLimit(s);
+    const done = watchdog.arm(s);
+    try { return await run1(sql, values, cap, budget); } finally { done(); }
   };
-  await setTimeoutS(DBX_STATEMENT_TIMEOUT_S);
-  const withTimeout = async <T>(o: RunOptions | undefined, fn: () => Promise<T>): Promise<T> => {
-    const want = o?.timeoutS ?? DBX_STATEMENT_TIMEOUT_S;
-    await setTimeoutS(want);
-    try { return await fn(); } finally { if (want !== DBX_STATEMENT_TIMEOUT_S) await setTimeoutS(DBX_STATEMENT_TIMEOUT_S).catch(() => undefined); }
+  const withLimit = async <T>(seconds: number | undefined, fn: () => Promise<T>): Promise<T> => {
+    const before = limitS;
+    limitS = seconds ?? DBX_STATEMENT_TIMEOUT_S;
+    try { return await fn(); } finally { limitS = before; }
   };
+  const rows = <T = unknown[]>(sql: string, values: unknown[] = []) => timed(sql, values, 100_000).then((r) => r.rows as unknown as T[]);
 
   const where = (filters: DbxFilter[] | undefined, values: unknown[]) => {
     const parts: string[] = [];
@@ -250,8 +352,9 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
     event: { what: 'EVENT', field: 'Create Event' },
   };
 
-  const driver: ExplorerDriver = {
+  const driver: ExplorerDriver & { watchdog: typeof watchdog } = {
     family: 'mysql',
+    watchdog,
     connectionId: () => conn.threadId ?? null,
     version: () => exclusive(async () => String((await rows<[string]>('SELECT VERSION()'))[0]?.[0] ?? '') || null),
 
@@ -329,7 +432,7 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
       const values: unknown[] = [];
       const w = where(req.filters, values);
       const order = req.sort ? ` ORDER BY ${qMy(req.sort)} ${req.dir === 'desc' ? 'DESC' : 'ASC'}` : info.primaryKey.length ? ` ORDER BY ${info.primaryKey.map(qMy).join(', ')}` : '';
-      const r = await run1(`SELECT * FROM ${qMy(info.table.name)}${w}${order} LIMIT ? OFFSET ?`, [...values, req.limit, req.offset], req.limit);
+      const r = await timed(`SELECT * FROM ${qMy(info.table.name)}${w}${order} LIMIT ? OFFSET ?`, [...values, req.limit, req.offset], req.limit, new RowBudget(DBX_PAGE_MAX_BYTES));
       let total: number | null = null;
       let approximate = false;
       const estimate = info.table.rows;
@@ -337,7 +440,10 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
       else {
         try { total = Number((await rows<[string]>(`SELECT COUNT(*) FROM ${qMy(info.table.name)}${w}`, values))[0]?.[0] ?? 0); } catch { total = estimate; approximate = true; }
       }
-      return { columns: r.columns ?? info.columns.map((c) => c.name), rows: r.rows, total, approximate, offset: req.offset, limit: req.limit };
+      return {
+        columns: r.columns ?? info.columns.map((c) => c.name), rows: r.rows, total, approximate, offset: req.offset, limit: req.limit,
+        ...(r.truncated && r.rows.length < req.limit ? { truncated: true } : {}),
+      };
     }),
 
     insert: (info, vals) => exclusive(async () => {
@@ -345,13 +451,13 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
       const sql = cols.length
         ? `INSERT INTO ${qMy(info.table.name)} (${cols.map(qMy).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
         : `INSERT INTO ${qMy(info.table.name)} () VALUES ()`;
-      await run1(sql, cols.map((c) => vals[c]));
+      await timed(sql, cols.map((c) => vals[c]), 0);
     }),
 
     update: (info, key, vals) => exclusive(async () => {
       const values: unknown[] = Object.values(vals);
       const set = Object.keys(vals).map((c) => `${qMy(c)} = ?`).join(', ');
-      const r = await run1(`UPDATE ${qMy(info.table.name)} SET ${set} WHERE ${keyWhere(info, key, values)} LIMIT 1`, values);
+      const r = await timed(`UPDATE ${qMy(info.table.name)} SET ${set} WHERE ${keyWhere(info, key, values)} LIMIT 1`, values, 0);
       return r.affectedRows ?? 0;
     }),
 
@@ -361,7 +467,7 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
       try {
         for (const key of keys) {
           const values: unknown[] = [];
-          const r = await run1(`DELETE FROM ${qMy(info.table.name)} WHERE ${keyWhere(info, key, values)} LIMIT 1`, values);
+          const r = await timed(`DELETE FROM ${qMy(info.table.name)} WHERE ${keyWhere(info, key, values)} LIMIT 1`, values, 0);
           n += r.affectedRows ?? 0;
         }
         await run1('COMMIT');
@@ -374,21 +480,25 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
 
     run: (sql, o) => driver.runList(splitSql(sql, 'mysql'), o),
 
-    runList: (statements, o) => exclusive(() => withTimeout(o, () => runStatements(statements, (s) => run1(s)))),
+    runList: (statements, o) => exclusive(() => withLimit(o?.timeoutS, () => {
+      const budget = new RowBudget(DBX_QUERY_MAX_BYTES);
+      return runStatements(statements, (s) => timed(s, [], DBX_MAX_QUERY_ROWS, budget));
+    })),
 
-    runOne: (sql, o) => exclusive(() => withTimeout(o, async () => {
+    runOne: (sql, o) => exclusive(() => withLimit(o.timeoutS, async () => {
       if (o.readOnly) {
         // Session characteristic too: a statement that ends the transaction cannot leave read-only mode.
         await run1('SET SESSION TRANSACTION READ ONLY');
         await run1('START TRANSACTION READ ONLY');
       }
       try {
-        const r = await run1(sql, [], o.maxRows + 1);
-        return capRows(r, o);
+        return oneResult(await timed(sql, [], o.maxRows, new RowBudget(o.maxBytes, DBX_TEXT_PREVIEW)));
       } finally {
         if (o.readOnly) {
           await run1('ROLLBACK').catch(() => undefined);
           await run1('SET SESSION TRANSACTION READ WRITE').catch(() => undefined);
+          // What a rollback leaves: user locks (GET_LOCK) of the statement (no RELEASE_ALL_LOCKS on old engines).
+          await run1('SELECT RELEASE_ALL_LOCKS()', [], 0).catch(() => undefined);
         }
       }
     })),
@@ -420,22 +530,25 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
 
     objectDefinition: (o) => exclusive(async () => {
       const s = SHOW_CREATE[o.kind];
-      const r = await run1(`SHOW CREATE ${s.what} ${qMy(o.name)}`, [], 1);
+      const r = await timed(`SHOW CREATE ${s.what} ${qMy(o.name)}`, [], 1);
       const i = r.columns?.indexOf(s.field) ?? -1;
       const v = i >= 0 ? r.rows[0]?.[i] : null;
       return typeof v === 'string' ? v : v && typeof v === 'object' && 'text' in v ? v.text : null;
     }),
 
-    search: (info, columns, term, mode, limit) => exclusive(async () => {
+    search: (info, columns, term, mode, limit, budget) => exclusive(async () => {
       const values: unknown[] = [];
       const cond = columns.map((c) => { values.push(mode === 'exact' ? term : likeContains(term)); return `${qMy(c)} ${mode === 'exact' ? '=' : 'LIKE'} ?`; }).join(' OR ');
-      const r = await run1(`SELECT * FROM ${qMy(info.table.name)} WHERE ${cond} LIMIT ${Math.floor(limit)}`, values, limit);
-      return { columns: r.columns ?? [], rows: r.rows };
+      // One row more than kept: tells whether there are more.
+      const r = await timed(`SELECT * FROM ${qMy(info.table.name)} WHERE ${cond} LIMIT ${Math.floor(limit) + 1}`, values, limit, budget);
+      return { columns: r.columns ?? [], rows: r.rows, truncated: r.truncated };
     }),
 
     stream: (sql, sink, o) => exclusive(async () => {
-      await setTimeoutS(o.timeoutS);
+      const limit = Math.max(0, Math.floor(o.timeoutS));
+      await engineLimit(limit);
       if (o.readOnly) await run1('START TRANSACTION READ ONLY');
+      const done = watchdog.arm(limit);
       try {
         return await new Promise<number>((resolve, reject) => {
           let n = 0;
@@ -458,21 +571,22 @@ export async function connectMysql(opts: MysqlConnectOptions): Promise<ExplorerD
           q.on('end', () => { void pending.then(() => { if (!failed) resolve(n); }); });
         });
       } finally {
+        done();
         if (o.readOnly) await run1('ROLLBACK').catch(() => undefined);
       }
     }),
 
-    exec: (sql) => exclusive(async () => (await run1(sql, [], 0)).affectedRows),
+    exec: (sql) => exclusive(async () => (await timed(sql, [], 0)).affectedRows),
 
     insertRows: (target, columnsSql, rws) => exclusive(async () => {
       if (!rws.length) return 0;
       const values: unknown[] = [];
       const tuples = rws.map((r) => { values.push(...r); return `(${r.map(() => '?').join(', ')})`; }).join(', ');
-      const res = await run1(`INSERT INTO ${target}${columnsSql ? ` (${columnsSql})` : ''} VALUES ${tuples}`, values, 0);
+      const res = await timed(`INSERT INTO ${target}${columnsSql ? ` (${columnsSql})` : ''} VALUES ${tuples}`, values, 0);
       return res.affectedRows ?? rws.length;
     }),
 
-    setTimeout: (s) => exclusive(() => setTimeoutS(s)),
+    setTimeout: (s) => exclusive(async () => { limitS = s; }),
 
     cancel: (id) => exclusive(async () => {
       try { await run1('KILL QUERY ?', [id]); return true; } catch { return false; }
@@ -502,11 +616,12 @@ export interface PostgresConnectOptions {
 }
 
 export async function connectPostgres(opts: PostgresConnectOptions): Promise<ExplorerDriver> {
+  // Values as text (cut per response in run1), bytea as a preview cell, booleans.
   const types = {
     getTypeParser: (oid: number) => {
-      if (oid === BYTEA_OID) return (v: string) => (v.startsWith('\\x') ? binaryCell(Buffer.from(v.slice(2), 'hex')) : longText(v));
+      if (oid === BYTEA_OID) return (v: string) => (v.startsWith('\\x') ? byteaCell(v) : v);
       if (oid === BOOL_OID) return (v: string) => v === 't';
-      return (v: string) => longText(v);
+      return (v: string) => v;
     },
   };
   // Exports: raw values (bytea as a Buffer, the rest as text).
@@ -517,21 +632,24 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
       return (v: string) => v;
     },
   };
-  const client = new pg.Client({
+  const clientOpts = {
     ...(opts.socketDir ? { host: opts.socketDir, port: 5432 } : { host: opts.host, port: opts.port }),
     user: opts.user, password: opts.password, database: opts.database,
-    connectionTimeoutMillis: 10_000, types: types as unknown as pg.CustomTypesConfig, application_name: 'oblimint-explorer',
+  };
+  const client = new pg.Client({
+    ...clientOpts, connectionTimeoutMillis: 10_000, types: types as unknown as pg.CustomTypesConfig, application_name: 'oblimint-explorer',
   });
   await client.connect();
   client.on('error', () => { /* a dropped connection fails the next query; the session is then recreated */ });
   const pid = (client as unknown as { processID?: number }).processID ?? null;
 
-  const run1 = (text: string, values: unknown[] = [], cap = DBX_MAX_QUERY_ROWS, extended = false) => new Promise<StreamResult>((resolve, reject) => {
+  /** One statement; rows read one by one, kept within `cap` and the budget (the others are read and dropped). */
+  const run1 = (text: string, values: unknown[] = [], cap = DBX_MAX_QUERY_ROWS, budget: RowBudget = UNBOUNDED(), extended = false) => new Promise<StreamResult>((resolve, reject) => {
     const res: StreamResult = { columns: null, rows: [], truncated: false, affectedRows: null, insertId: null };
     const q = new pg.Query({ text, values, rowMode: 'array', types: types as unknown as pg.CustomTypesConfig, ...(extended ? { queryMode: 'extended' } : {}) } as pg.QueryConfig);
-    q.on('row', (row: DbxCell[], result?: { fields?: Array<{ name: string }> }) => {
+    q.on('row', (row: unknown[], result?: { fields?: Array<{ name: string }> }) => {
       if (!res.columns && result?.fields) res.columns = result.fields.map((f) => f.name);
-      if (res.rows.length < cap) res.rows.push(row); else res.truncated = true;
+      if (accepts(res, cap)) keepRow(res, row.map((v) => (typeof v === 'string' ? longText(v, budget.textMax) : v as DbxCell)), budget);
     });
     q.on('error', reject);
     q.on('end', (result: { fields?: Array<{ name: string }>; rowCount?: number | null; command?: string }) => {
@@ -542,20 +660,38 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
     client.query(q as unknown as pg.QueryConfig);
   });
   const exclusive = serial();
-  const rows = <T = unknown[]>(text: string, values: unknown[] = []) => run1(text, values, 100_000).then((r) => r.rows as unknown as T[]);
+
+  // ── time limit ──
+  let limitS = DBX_STATEMENT_TIMEOUT_S;
+  const watchdog = createWatchdog(async (stillRunning) => {
+    if (pid === null) return;
+    const side = new pg.Client({ ...clientOpts, connectionTimeoutMillis: 5000, application_name: 'oblimint-explorer' });
+    side.on('error', () => undefined);
+    try {
+      await side.connect();
+      // The session user itself (the connection otherwise runs as the database owner role: no right on the backend).
+      if (stillRunning()) { await side.query('SET ROLE NONE'); await side.query('SELECT pg_cancel_backend($1)', [pid]); }
+    } finally {
+      await side.end().catch(() => undefined);
+    }
+  });
+  /**
+   * A statement under the limit: statement_timeout set again right before it (never cached: a function may
+   * have changed it; refused in an aborted transaction, where the statement fails anyway), the watchdog armed.
+   */
+  const timed = async (text: string, values: unknown[] = [], cap = DBX_MAX_QUERY_ROWS, budget: RowBudget = UNBOUNDED(), extended = false) => {
+    const s = Math.max(0, Math.floor(limitS));
+    await run1(`SET statement_timeout = '${s}s'`, [], 0).catch(() => undefined);
+    const done = watchdog.arm(s);
+    try { return await run1(text, values, cap, budget, extended); } finally { done(); }
+  };
+  const withLimit = async <T>(seconds: number | undefined, fn: () => Promise<T>): Promise<T> => {
+    const before = limitS;
+    limitS = seconds ?? DBX_STATEMENT_TIMEOUT_S;
+    try { return await fn(); } finally { limitS = before; }
+  };
+  const rows = <T = unknown[]>(text: string, values: unknown[] = []) => timed(text, values, 100_000).then((r) => r.rows as unknown as T[]);
   const str = (v: unknown) => (v === null || v === undefined ? null : typeof v === 'object' && v && 'text' in v ? String((v as { text: string }).text) : String(v));
-  let timeoutNow = -1;
-  const setTimeoutS = async (s: number) => {
-    if (s === timeoutNow) return;
-    await run1(`SET statement_timeout = '${Math.max(0, Math.floor(s))}s'`);
-    timeoutNow = s;
-  };
-  await setTimeoutS(DBX_STATEMENT_TIMEOUT_S);
-  const withTimeout = async <T>(o: RunOptions | undefined, fn: () => Promise<T>): Promise<T> => {
-    const want = o?.timeoutS ?? DBX_STATEMENT_TIMEOUT_S;
-    await setTimeoutS(want);
-    try { return await fn(); } finally { if (want !== DBX_STATEMENT_TIMEOUT_S) await setTimeoutS(DBX_STATEMENT_TIMEOUT_S).catch(() => undefined); }
-  };
 
   const where = (filters: DbxFilter[] | undefined, values: unknown[]) => {
     const parts: string[] = [];
@@ -576,8 +712,9 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
   }).join(' AND ');
   const USER_SCHEMAS = `n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'`;
 
-  const driver: ExplorerDriver = {
+  const driver: ExplorerDriver & { watchdog: typeof watchdog } = {
     family: 'postgresql',
+    watchdog,
     connectionId: () => pid,
     version: () => exclusive(async () => str((await rows<unknown[]>('SHOW server_version'))[0]?.[0])),
 
@@ -666,7 +803,7 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
       const values: unknown[] = [];
       const w = where(req.filters, values);
       const order = req.sort ? ` ORDER BY ${qPg(req.sort)} ${req.dir === 'desc' ? 'DESC' : 'ASC'} NULLS LAST` : info.primaryKey.length ? ` ORDER BY ${info.primaryKey.map(qPg).join(', ')}` : '';
-      const r = await run1(`SELECT * FROM ${qPgTable(info.table)}${w}${order} LIMIT ${Math.floor(req.limit)} OFFSET ${Math.floor(req.offset)}`, values, req.limit);
+      const r = await timed(`SELECT * FROM ${qPgTable(info.table)}${w}${order} LIMIT ${Math.floor(req.limit)} OFFSET ${Math.floor(req.offset)}`, values, req.limit, new RowBudget(DBX_PAGE_MAX_BYTES));
       let total: number | null = null;
       let approximate = false;
       const estimate = info.table.rows;
@@ -674,7 +811,10 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
       else {
         try { total = Number(str((await rows<unknown[]>(`SELECT count(*) FROM ${qPgTable(info.table)}${w}`, values))[0]?.[0]) ?? 0); } catch { total = estimate; approximate = true; }
       }
-      return { columns: r.columns ?? info.columns.map((c) => c.name), rows: r.rows, total, approximate, offset: req.offset, limit: req.limit };
+      return {
+        columns: r.columns ?? info.columns.map((c) => c.name), rows: r.rows, total, approximate, offset: req.offset, limit: req.limit,
+        ...(r.truncated && r.rows.length < req.limit ? { truncated: true } : {}),
+      };
     }),
 
     insert: (info, vals) => exclusive(async () => {
@@ -682,13 +822,13 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
       const sql = cols.length
         ? `INSERT INTO ${qPgTable(info.table)} (${cols.map(qPg).join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`
         : `INSERT INTO ${qPgTable(info.table)} DEFAULT VALUES`;
-      await run1(sql, cols.map((c) => vals[c]));
+      await timed(sql, cols.map((c) => vals[c]), 0);
     }),
 
     update: (info, key, vals) => exclusive(async () => {
       const values: unknown[] = [];
       const set = Object.entries(vals).map(([c, v]) => { values.push(v); return `${qPg(c)} = $${values.length}`; }).join(', ');
-      const r = await run1(`UPDATE ${qPgTable(info.table)} SET ${set} WHERE ${keyWhere(info, key, values)}`, values);
+      const r = await timed(`UPDATE ${qPgTable(info.table)} SET ${set} WHERE ${keyWhere(info, key, values)}`, values, 0);
       return r.affectedRows ?? 0;
     }),
 
@@ -698,7 +838,7 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
       try {
         for (const key of keys) {
           const values: unknown[] = [];
-          const r = await run1(`DELETE FROM ${qPgTable(info.table)} WHERE ${keyWhere(info, key, values)}`, values);
+          const r = await timed(`DELETE FROM ${qPgTable(info.table)} WHERE ${keyWhere(info, key, values)}`, values, 0);
           n += r.affectedRows ?? 0;
         }
         await run1('COMMIT');
@@ -711,22 +851,24 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
 
     run: (sql, o) => driver.runList(splitSql(sql, 'postgresql'), o),
 
-    runList: (statements, o) => exclusive(() => withTimeout(o, () => runStatements(statements, (s) => run1(s)))),
+    runList: (statements, o) => exclusive(() => withLimit(o?.timeoutS, () => {
+      const budget = new RowBudget(DBX_QUERY_MAX_BYTES);
+      return runStatements(statements, (s) => timed(s, [], DBX_MAX_QUERY_ROWS, budget));
+    })),
 
-    runOne: (sql, o) => exclusive(async () => {
-      const t = Math.max(1, Math.floor(o.timeoutS ?? DBX_STATEMENT_TIMEOUT_S));
-      if (o.readOnly) {
-        await run1('BEGIN READ ONLY');
-        try {
-          await run1(`SET LOCAL statement_timeout = '${t}s'`);
-          // Extended protocol: the server refuses more than one statement.
-          return capRows(await run1(sql, [], o.maxRows + 1, true), o);
-        } finally {
-          await run1('ROLLBACK').catch(() => undefined);
-        }
+    runOne: (sql, o) => exclusive(() => withLimit(Math.max(1, Math.floor(o.timeoutS ?? DBX_STATEMENT_TIMEOUT_S)), async () => {
+      const budget = new RowBudget(o.maxBytes, DBX_TEXT_PREVIEW);
+      // Extended protocol: the server refuses more than one statement.
+      if (!o.readOnly) return oneResult(await timed(sql, [], o.maxRows, budget, true));
+      await run1('BEGIN READ ONLY');
+      try {
+        return oneResult(await timed(sql, [], o.maxRows, budget, true));
+      } finally {
+        await run1('ROLLBACK').catch(() => undefined);
+        // What a rollback leaves: session advisory locks, prepared statements, LISTEN registrations.
+        await run1('SELECT pg_advisory_unlock_all(); DEALLOCATE ALL; UNLISTEN *', [], 0).catch(() => undefined);
       }
-      return withTimeout({ timeoutS: t }, async () => capRows(await run1(sql, [], o.maxRows + 1, true), o));
-    }),
+    })),
 
     objects: () => exclusive(async () => {
       const out: DbxObject[] = [];
@@ -782,19 +924,22 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
       return null;
     }),
 
-    search: (info, columns, term, mode, limit) => exclusive(async () => {
+    search: (info, columns, term, mode, limit, budget) => exclusive(async () => {
       const values: unknown[] = [mode === 'exact' ? term : likeContains(term)];
       const cond = columns.map((c) => `${qPg(c)}::text ${mode === 'exact' ? '=' : 'ILIKE'} $1`).join(' OR ');
-      const r = await run1(`SELECT * FROM ${qPgTable(info.table)} WHERE ${cond} LIMIT ${Math.floor(limit)}`, values, limit);
-      return { columns: r.columns ?? [], rows: r.rows };
+      // One row more than kept: tells whether there are more.
+      const r = await timed(`SELECT * FROM ${qPgTable(info.table)} WHERE ${cond} LIMIT ${Math.floor(limit) + 1}`, values, limit, budget);
+      return { columns: r.columns ?? [], rows: r.rows, truncated: r.truncated };
     }),
 
     stream: (sql, sink, o) => exclusive(async () => {
+      const limit = Math.max(0, Math.floor(o.timeoutS));
       await run1(o.readOnly ? 'BEGIN READ ONLY' : 'BEGIN');
+      const done = watchdog.arm(limit);
       try {
-        await run1(`SET LOCAL statement_timeout = '${Math.max(0, Math.floor(o.timeoutS))}s'`);
+        await run1(`SET LOCAL statement_timeout = '${limit}s'`);
         // Extended protocol: one statement only inside the cursor.
-        await run1(`DECLARE oblimint_export NO SCROLL CURSOR FOR ${sql}`, [], 0, true);
+        await run1(`DECLARE oblimint_export NO SCROLL CURSOR FOR ${sql}`, [], 0, UNBOUNDED(), true);
         let n = 0;
         let first = true;
         for (;;) {
@@ -813,21 +958,22 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
         }
         return n;
       } finally {
+        done();
         await run1('ROLLBACK').catch(() => undefined);
       }
     }),
 
-    exec: (sql) => exclusive(async () => (await run1(sql, [], 0)).affectedRows),
+    exec: (sql) => exclusive(async () => (await timed(sql, [], 0)).affectedRows),
 
     insertRows: (target, columnsSql, rws) => exclusive(async () => {
       if (!rws.length) return 0;
       const values: unknown[] = [];
       const tuples = rws.map((r) => `(${r.map((v) => { values.push(v); return `$${values.length}`; }).join(', ')})`).join(', ');
-      const res = await run1(`INSERT INTO ${target}${columnsSql ? ` (${columnsSql})` : ''} VALUES ${tuples}`, values, 0);
+      const res = await timed(`INSERT INTO ${target}${columnsSql ? ` (${columnsSql})` : ''} VALUES ${tuples}`, values, 0);
       return res.affectedRows ?? rws.length;
     }),
 
-    setTimeout: (s) => exclusive(() => setTimeoutS(s)),
+    setTimeout: (s) => exclusive(async () => { limitS = s; }),
 
     cancel: (id) => exclusive(async () => {
       // The session user itself (the connection otherwise runs as the database owner role: no right on the session's backend).
@@ -839,18 +985,10 @@ export async function connectPostgres(opts: PostgresConnectOptions): Promise<Exp
   return driver;
 }
 
-/** Keeps at most maxRows rows and maxBytes of them (API keys). */
-function capRows(r: StreamResult, o: RunOneOptions): RunOneResult {
+/** A key's statement result (rows and bytes already capped while reading). */
+function oneResult(r: StreamResult): RunOneResult {
   if (!r.columns) return { columns: null, rows: [], truncated: false, affectedRows: r.affectedRows };
-  const out: DbxCell[][] = [];
-  let bytes = 0;
-  let truncated = r.truncated || r.rows.length > o.maxRows;
-  for (const row of r.rows.slice(0, o.maxRows)) {
-    bytes += rowBytes(row);
-    if (bytes > o.maxBytes) { truncated = true; break; }
-    out.push(row);
-  }
-  return { columns: r.columns, rows: out, truncated, affectedRows: null };
+  return { columns: r.columns, rows: r.rows, truncated: r.truncated, affectedRows: null };
 }
 
 /** Runs console statements in order; stops at the first error. */

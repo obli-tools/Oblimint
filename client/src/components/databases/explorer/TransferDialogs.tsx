@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { CheckCircle2, Download, Square, Upload, XCircle } from 'lucide-react';
 import type { DbxExportFormat, DbxImportStatus, DbxTable, DbxTableInfo } from '@oblimint/shared';
+import { dbxTransactionalEngine } from '@oblimint/shared';
 import { dbExplorerApi } from '@/api/dbExplorer.api';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
@@ -213,7 +214,7 @@ export function ImportModal({ instanceId, dbId, tables, presetTable, maxBytes, o
           <input type="file" accept={format === 'sql' ? '.sql,.gz,.txt' : '.csv,.txt,.tsv,.gz'} disabled={running} onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             className="block w-full text-sm text-text-secondary file:mr-3 file:rounded-lg file:border-0 file:bg-bg-tertiary file:px-3 file:py-1.5 file:text-text-primary" />
           <p className="mt-1 text-[11px] text-text-muted">
-            {file && `${formatBytes(file.size)} · `}{t('dbx.import.max', { size: formatBytes(maxBytes), defaultValue: 'At most {{size}} (gzip accepted).' })}
+            {file && `${formatBytes(file.size)} · `}{t('dbx.import.max', { size: formatBytes(maxBytes), defaultValue: 'At most {{size}}, uncompressed (gzip accepted).' })}
             {tooBig && <span className="ml-1 text-status-down">{t('dbx.import.tooBig') || 'Too large: split the file, or ask the platform administrator.'}</span>}
           </p>
         </div>
@@ -249,6 +250,12 @@ export function ImportModal({ instanceId, dbId, tables, presetTable, maxBytes, o
               </div>
             )}
             <p className="text-xs text-text-muted">{t('dbx.import.csvHint') || 'One transaction: on an error nothing is kept (unless « continue », where the faulty rows are skipped and listed).'}</p>
+            {(() => {
+              const engine = tables.find((x) => x.id === table)?.engine ?? null;
+              return engine && !dbxTransactionalEngine(engine) ? (
+                <p className="text-xs text-status-pending">{t('dbx.import.notTransactional', { engine, defaultValue: '{{engine}} table: not transactional. On an error, the rows already inserted are kept (nothing is rolled back).' })}</p>
+              ) : null;
+            })()}
           </div>
         )}
         <label className="inline-flex items-center gap-2 text-sm text-text-secondary"><input type="checkbox" checked={continueOnError} disabled={running} onChange={(e) => setContinueOnError(e.target.checked)} className={check} />{t('dbx.import.continue') || 'Continue after an error (errors listed)'}</label>

@@ -19,7 +19,10 @@ export interface DbxBinary {
   truncated: boolean;
 }
 
-/** A text value longer than DBX_TEXT_MAX: its first DBX_TEXT_PREVIEW characters only (read-only in the grid). */
+/**
+ * A text value cut: longer than DBX_TEXT_MAX (its first DBX_TEXT_PREVIEW characters), or cut further to
+ * fit the byte budget of a response (API keys: past DBX_TEXT_PREVIEW). Read-only in the grid.
+ */
 export interface DbxLongText {
   long: true;
   text: string;
@@ -35,6 +38,21 @@ export const DBX_MAX_QUERY_ROWS = 1000;
 export const DBX_MAX_PAGE = 500;
 /** Statement time limit (seconds). */
 export const DBX_STATEMENT_TIMEOUT_S = 30;
+/**
+ * Bytes of rows (JSON, approximate) one response may hold, whatever the row
+ * counts: the SQL console (every statement and result set of a run), a page
+ * of the grid, a database search. Rows past it are not kept (truncated); a
+ * first row larger than what is left comes back with its values cut.
+ */
+export const DBX_QUERY_MAX_BYTES = 8 * 1024 * 1024;
+export const DBX_PAGE_MAX_BYTES = 8 * 1024 * 1024;
+export const DBX_SEARCH_MAX_BYTES = 2 * 1024 * 1024;
+
+/** MySQL-family storage engines that roll back (any other one keeps the rows written before an error). PostgreSQL: always. */
+const TRANSACTIONAL_ENGINES = new Set(['innodb', 'xtradb', 'tokudb', 'rocksdb', 'ndb', 'ndbcluster']);
+export function dbxTransactionalEngine(engine: string | null | undefined): boolean {
+  return !engine || TRANSACTIONAL_ENGINES.has(engine.toLowerCase());
+}
 
 export interface DbxTable {
   /** Identifier used in the API: the table name (PostgreSQL: "schema.table" outside public). */
@@ -125,6 +143,8 @@ export interface DbxRows {
   approximate: boolean;
   offset: number;
   limit: number;
+  /** Fewer rows than the page holds: the page is larger than DBX_PAGE_MAX_BYTES (smaller pages show them). */
+  truncated?: boolean;
 }
 
 /** Primary key values of a row (column → value as text). */

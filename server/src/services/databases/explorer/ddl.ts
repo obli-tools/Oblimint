@@ -321,6 +321,12 @@ export function buildDdl(req: DbxDdlRequest, ctx: DdlContext): DbxDdlPreview {
       const newName = checkName(family, def.name, 'column');
       if (newName !== cur.name && t().columns.some((c) => c.name === newName)) throw bad(`Column ${newName} already exists`, 'column');
       if (!pg) {
+        // CHANGE COLUMN rewrites the whole definition: a generated column would become a plain one (its values frozen),
+        // an invisible one visible. Refused rather than half-kept.
+        if (/\b(?:VIRTUAL|STORED|PERSISTENT) GENERATED\b/i.test(cur.extra ?? '')) {
+          throw bad(`Column ${cur.name} is generated (computed from an expression): change it with SQL in the console (ALTER TABLE … MODIFY … AS (…))`, 'column');
+        }
+        if (/\bINVISIBLE\b/i.test(cur.extra ?? '')) throw bad(`Column ${cur.name} is invisible: change it with SQL in the console (ALTER TABLE … MODIFY … INVISIBLE)`, 'column');
         out.push(`ALTER TABLE ${tref()} CHANGE COLUMN ${qMyId(cur.name)} ${columnSql(family, def, { keep: cur })}`);
         warnings.push(W.fullRedefinition);
         if (checkType(family, def.type).toLowerCase() !== cur.type.toLowerCase()) warnings.push(W.rewrite);

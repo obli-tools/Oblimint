@@ -298,6 +298,109 @@ test('SQL explorer end to end on real engines', { timeout: 600_000 }, async (t: 
       assert.ok(sch.tables.orders.includes('title'));
     });
 
+    await t.test(`${tg.engine}: security review — bounded reads, released locks, time limits, sessions, imports, DDL`, async () => {
+      const K = 'k43' as const;
+      // Big rows (20 × 65 000 characters × 501 rows ≈ 650 MB read): the key keeps ≤ 256 KiB, cells cut to 4096 characters.
+      const cols = Array.from({ length: 20 }, (_, k) => `${my ? "REPEAT('x', 65000)" : "repeat('x', 65000)"} AS c${k}`).join(', ');
+      const bigSql = my ? `SELECT ${cols} FROM seq_1_to_501` : `SELECT ${cols} FROM generate_series(1, 501)`;
+      const heap = () => process.memoryUsage().heapUsed;
+      const peakOf = async <T>(fn: () => Promise<T>): Promise<{ r: T; peak: number; ms: number }> => {
+        const base = heap();
+        let peak = 0;
+        const timer = setInterval(() => { peak = Math.max(peak, heap() - base); }, 2);
+        const t0 = Date.now();
+        try { return { r: await fn(), peak, ms: Date.now() - t0 }; } finally { clearInterval(timer); }
+      };
+      const k = await peakOf(() => explorerService.keyQuery(instance, shop, K, bigSql, { write: false, timeoutS: 60 }));
+      assert.ok(k.r.rowCount >= 1, 'never 0 rows');
+      assert.equal(k.r.truncated, true);
+      assert.ok(JSON.stringify(k.r.rows).length < 300 * 1024, `key response ${JSON.stringify(k.r.rows).length} B`);
+      assert.ok((k.r.rows![0][0] as { long: true; text: string }).text.length <= 4096);
+      assert.ok(k.peak < 200 * 1024 * 1024, `key read heap peak ${Math.round(k.peak / 1048576)} MiB (${k.ms} ms)`);
+      const c = await peakOf(() => q(bigSql));
+      assert.equal(c.r.results[0].truncated, true);
+      assert.ok(JSON.stringify(c.r.results).length < 9 * 1024 * 1024, 'console response within 8 MiB');
+      assert.ok(c.peak < 250 * 1024 * 1024, `console read heap peak ${Math.round(c.peak / 1048576)} MiB (${c.ms} ms)`);
+
+      // Locks a read-only key statement takes are released after the call.
+      if (my) {
+        await explorerService.keyQuery(instance, shop, K, "SELECT GET_LOCK('dbx_e2e_lock', 0)", { write: false });
+        assert.equal(String((await ok("SELECT IS_FREE_LOCK('dbx_e2e_lock')")).results[0].rows![0][0]), '1', 'GET_LOCK released');
+      } else {
+        await explorerService.keyQuery(instance, shop, K, 'SELECT pg_advisory_lock(4242)', { write: false });
+        assert.equal((await ok('SELECT pg_try_advisory_lock(4242)')).results[0].rows![0][0], true, 'advisory lock released');
+        await ok('SELECT pg_advisory_unlock(4242)');
+      }
+      // Nested comments / session statements never pass as reads.
+      for (const a of ['/* /* */ SELECT 1 */ DELETE FROM customers', my ? "PREPARE p FROM 'DELETE FROM customers'" : 'PREPARE p AS DELETE FROM customers', 'COMMIT']) {
+        await assert.rejects(explorerService.keyQuery(instance, shop, K, a, { write: false }), (e: AppError) => ['readOnlyStatement', 'sqlError'].includes(e.code ?? ''), a);
+      }
+
+      // The limit is set again before each statement: a statement that disables it does not free the next one.
+      let t0 = Date.now();
+      await explorerService.query(instance, shop, U, my ? 'SET SESSION max_statement_time = 0; SELECT SLEEP(6)' : 'SET statement_timeout = 0; SELECT pg_sleep(6)', 1);
+      assert.ok(Date.now() - t0 < 4500, `uncached limit: ${Date.now() - t0} ms`);
+      if (my) {
+        // Bypassing the engine's limit (SET STATEMENT … FOR) leaves the watchdog: killed a couple of seconds past the limit.
+        t0 = Date.now();
+        await explorerService.query(instance, shop, U, 'SET STATEMENT max_statement_time = 0 FOR SELECT SLEEP(12)', 1);
+        assert.ok(Date.now() - t0 < 7000, `watchdog (console): ${Date.now() - t0} ms`);
+        t0 = Date.now();
+        await explorerService.keyQuery(instance, shop, K, 'SET STATEMENT max_statement_time = 0 FOR SELECT SLEEP(12)', { write: true, timeoutS: 1 }).catch(() => null);
+        assert.ok(Date.now() - t0 < 7000, `watchdog (key write): ${Date.now() - t0} ms`);
+        assert.ok((await ok('SELECT 1')).results[0].rows, 'the session still works');
+      }
+
+      // Concurrent first calls: one session, one temporary SQL user.
+      const before = users.length;
+      const infos = await Promise.all([1, 2, 3].map(() => explorerService.info(instance, shop, 31)));
+      assert.equal(users.length - before, 1, 'one SQL user for 3 concurrent first calls');
+      assert.equal(new Set(infos.map((x) => x.user)).size, 1);
+      await explorerService.close(instance, shop, 31);
+
+      // Pathological imports fail fast (no line break after DELIMITER / COPY; a gzip bomb).
+      const junk = (head: string, mb: number) => Readable.from((function* gen() {
+        yield Buffer.from(head);
+        const block = Buffer.alloc(64 * 1024, 0x78);
+        for (let n = 0; n < mb * 16; n++) yield block;
+      })());
+      t0 = Date.now();
+      const p1 = await explorerService.startImport(instance, shop2, U, junk(my ? 'delimiter ;' : 'COPY customers FROM stdin;', 32), 'application/sql', null, { format: 'sql' });
+      assert.equal(p1.state, 'failed', JSON.stringify(p1));
+      assert.ok(Date.now() - t0 < 5000, `pathological import: ${Date.now() - t0} ms`);
+      // 80 MiB once inflated (client commands only: nothing runs, nothing accumulates), over the 64 MiB limit.
+      const line = my ? 'DELIMITER ;\n' : '\\echo x\n';
+      const bomb = zlib.gzipSync(Buffer.from(line.repeat(Math.ceil((80 * 1024 * 1024) / line.length))));
+      t0 = Date.now();
+      const p2 = await explorerService.startImport(instance, shop2, U, Readable.from([bomb]), 'application/gzip', bomb.length, { format: 'sql' });
+      assert.equal(p2.state, 'failed');
+      assert.match(p2.message ?? '', /inflated/i, p2.message ?? '');
+      assert.ok(Date.now() - t0 < 10_000, `gzip over the limit once inflated: ${Date.now() - t0} ms`);
+
+      if (my) {
+        // Generated / invisible columns are not rewritten by the structure form.
+        await ok('CREATE TABLE gen (id int PRIMARY KEY, a int, b int AS (a * 2) STORED, c int INVISIBLE)');
+        for (const column of ['b', 'c']) {
+          await assert.rejects(explorerService.ddlPreview(instance, shop, U, { op: 'modifyColumn', table: 'gen', column, def: { name: column, type: 'bigint', nullable: true } }),
+            (e: AppError) => e.code === 'invalidDdl', column);
+        }
+        await ok('INSERT INTO gen (id, a) VALUES (1, 10)');
+        await ddl({ op: 'modifyColumn', table: 'gen', column: 'a', def: { name: 'a', type: 'bigint', nullable: true } });
+        await ok('UPDATE gen SET a = 100');
+        assert.equal(String((await ok('SELECT b FROM gen')).results[0].rows![0][0]), '200', 'still computed');
+        // CSV into a MyISAM table: the rows kept before the error are reported.
+        await ok('CREATE TABLE mi (id int PRIMARY KEY, label varchar(20)) ENGINE=MyISAM');
+        const mi = await explorerService.startImport(instance, shop, U, Readable.from([Buffer.from('1,a\n2,b\n1,dup\n')]), 'application/octet-stream', null, {
+          format: 'csv', table: 'mi', csvDelimiter: ',', csvHeader: false, columns: ['id', 'label'],
+        });
+        assert.equal(mi.state, 'failed');
+        assert.equal(mi.rows, 2, JSON.stringify(mi));
+        assert.match(mi.message ?? '', /KEPT/);
+        assert.equal(String((await ok('SELECT COUNT(*) FROM mi')).results[0].rows![0][0]), '2');
+      }
+      await explorerService.close(instance, shop, K);
+    });
+
     await closeAllExplorerSessions();
     setExplorerDeps(null);
     // Every ephemeral user was dropped.

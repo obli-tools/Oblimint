@@ -41,7 +41,8 @@
       "modeValue": "Valeur",
       "modeDefault": "Défaut",
       "referencing": "Lignes qui référencent cette ligne",
-      "follow": "Ouvrir la ligne dans {{table}}"
+      "follow": "Ouvrir la ligne dans {{table}}",
+      "truncated": "Cette page est trop volumineuse pour être affichée en entier (8 Mio) : seules ses premières lignes le sont. Choisissez une page plus petite."
     },
     "structure": {
       "columns": "Colonnes",
@@ -64,7 +65,7 @@
       "history": "Historique",
       "rows": "{{count}} ligne(s)",
       "affected": "{{count}} ligne(s) affectée(s)",
-      "truncated": "Seules les {{rows}} premières lignes sont affichées (ajoutez un LIMIT, ou exportez le résultat).",
+      "truncated": "Toutes les lignes ne sont pas affichées : {{rows}} lignes par résultat et 8 Mio par exécution au plus (ajoutez un LIMIT, ou exportez le résultat).",
       "noRows": "Aucune ligne.",
       "stopped": "Exécution arrêtée à la première erreur : les requêtes suivantes n'ont pas été lancées.",
       "dangerTitle": "Requêtes destructrices",
@@ -227,7 +228,7 @@
       "start": "Importer",
       "stop": "Arrêter",
       "file": "Fichier",
-      "max": "{{size}} au plus (gzip accepté).",
+      "max": "{{size}} au plus, une fois décompressé (gzip accepté).",
       "tooBig": "Trop gros : découpez le fichier, ou demandez à l'administrateur de la plateforme.",
       "sqlHint": "Les instructions s'exécutent une à une sous l'utilisateur SQL temporaire de cette session (fichiers DELIMITER, mysqldump et pg_dump compris). Sauvegardez la base d'abord : il n'y a pas d'annulation.",
       "csvHint": "Une seule transaction : en cas d'erreur, rien n'est conservé (sauf avec « continuer », où les lignes fautives sont ignorées et listées).",
@@ -241,7 +242,8 @@
         "done": "terminé",
         "failed": "échec",
         "cancelled": "arrêté"
-      }
+      },
+      "notTransactional": "Table {{engine}} : non transactionnelle. En cas d'erreur, les lignes déjà insérées sont conservées (rien n'est annulé)."
     },
     "csv": {
       "delimiter": "Séparateur",

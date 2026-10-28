@@ -57,8 +57,11 @@ test('SQL explorer routes on PostgreSQL', { timeout: 300_000 }, async (t: TestCo
     tables: async () => [{ id: 'items', name: 'items', schema: null, kind: 'table', rows: 2, bytes: 10, engine: 'InnoDB', comment: null }],
     table: async (tb: { id: string }) => ({
       table: tb, primaryKey: ['id'], indexes: [], foreignKeys: [], ddl: null,
-      columns: [{ name: 'id', type: 'int', nullable: false, default: null, primary: true, autoIncrement: true, comment: null, binary: false }],
+      columns: [{ name: 'id', type: 'int', nullable: false, default: null, primary: true, autoIncrement: true, comment: null, binary: false },
+        { name: 'label', type: 'text', nullable: true, default: null, primary: false, autoIncrement: false, comment: null, binary: false }],
     }),
+    run: async (sql: string) => ({ results: [{ statement: sql, affectedRows: 1, insertId: null, durationMs: 1 }], stopped: false }),
+    update: async () => 1,
     exec: async (sql: string) => { execs.push(sql); if (sql.includes('boom')) throw new Error('syntax error near boom'); return 1; },
     insertRows: async (_t: string, _c: string | null, rows: unknown[][]) => rows.length,
     stream: async (_sql: string, sink: { columns(n: string[]): unknown; row(v: unknown[]): unknown }) => { await sink.columns(['id', 'label']); await sink.row([1, 'a,b']); return 1; },
@@ -183,6 +186,20 @@ test('SQL explorer routes on PostgreSQL', { timeout: 300_000 }, async (t: TestCo
     const audit = await db('audit_logs').where({ action: 'db.explorer.import', tenant_id: tA }).first('details');
     assert.equal(audit.details.statements, 2);
     assert.ok(!JSON.stringify(audit.details).includes('secret-value'));
+  });
+
+  await t.test('audit: console statements with their literals masked; grid edits without the key values', async () => {
+    const r = await call('POST', `/${shop}/explorer/query`, manager, { sql: "UPDATE items SET label = 'secret-value' WHERE id = 4242" });
+    assert.equal(r.status, 200, r.text);
+    const q = await db('audit_logs').where({ action: 'db.explorer.query', tenant_id: tA }).orderBy('id', 'desc').first('details');
+    assert.deepEqual(q.details.sql, ['UPDATE items SET label = ? WHERE id = ?']);
+    assert.equal(q.details.write, true);
+    const u = await call('POST', `/${shop}/explorer/update`, manager, { table: 'items', key: { id: 4242 }, values: { label: 'secret-value' } });
+    assert.equal(u.status, 200, u.text);
+    const ua = await db('audit_logs').where({ action: 'db.explorer.update', tenant_id: tA }).orderBy('id', 'desc').first('details');
+    assert.deepEqual(ua.details.columns, ['label']);
+    assert.equal(ua.details.affected, 1);
+    assert.ok(!JSON.stringify(q.details).includes('secret-value') && !JSON.stringify(ua.details).includes('4242') && !JSON.stringify(ua.details).includes('secret-value'));
   });
 
   await t.test('export: one-shot ticket, streamed, owner-bound', async () => {

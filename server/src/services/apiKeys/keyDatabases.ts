@@ -4,11 +4,12 @@ import type {
   ApiV1Database, ApiV1DbCredentials, ApiV1DbEnvTarget, ApiV1DbInstance, ApiV1DbQueryResult, ApiV1DbUser, DbCatalog, DbDatabase, DbEngine, DbGrantInput,
   DbInstance, DbUser, DbxTable, DbxTableInfo,
 } from '@oblimint/shared';
+import { dbFamilyOf } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { auditService } from '../audit.service';
 import { databaseService, loadDatabaseRow, loadInstance } from '../databases/databases.service';
-import { explorerService } from '../databases/explorer/explorer.service';
+import { auditSql, explorerService } from '../databases/explorer/explorer.service';
 import type { DbDatabaseRow, DbInstanceRow } from '../databases/rows';
 import { requireScope, type ApiKeyContext } from './apiKeys.service';
 import { keyApi, type SiteArea } from './keyApi';
@@ -224,7 +225,8 @@ export const keyDatabases = {
   async query(ctx: ApiKeyContext, req: Request, instanceId: number, dbId: number, body: { sql: string; write?: boolean; maxRows?: number; timeoutS?: number }): Promise<ApiV1DbQueryResult> {
     const t = await explorerTarget(ctx, instanceId, dbId);
     const write = body.write === true;
-    const cut = body.sql.length > 500 ? `${body.sql.slice(0, 500)}…` : body.sql;
+    // Literals masked (the statement's shape, never the values it carries), cut.
+    const cut = auditSql(dbFamilyOf(t.instance.engine), body.sql);
     const log = (details: Record<string, unknown>) => auditService.logReqAs(req, t.instance.tenant_id, 'db.key.query', {
       resourceType: 'database', resourcePath: `${t.instance.id}/${t.database.id}`, details: { database: t.database.name, write, sql: cut, ...details },
     });

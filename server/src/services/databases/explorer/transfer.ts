@@ -276,12 +276,14 @@ export async function runSqlImport(driver: ExplorerDriver, family: DbFamily, inp
       return;
     }
     for (const it of items) {
+      if (it.kind === 'meta') continue; // client commands: nothing to run (no await per line)
       if (stop || ctl.cancelled()) { stop = true; return; }
       await handle(it);
     }
   };
 
   for await (const chunk of input) {
+    if (!stop && ctl.cancelled()) stop = true; // checked per chunk too: a chunk may yield no item
     if (stop) continue; // drain the upload
     await processItems(() => splitter.push(typeof chunk === 'string' ? chunk : decoder.write(chunk)));
   }
@@ -291,6 +293,8 @@ export async function runSqlImport(driver: ExplorerDriver, family: DbFamily, inp
 /** CSV into an existing table: the file's columns mapped onto table columns, batches of bound INSERTs. */
 export async function runCsvImport(driver: ExplorerDriver, family: DbFamily, info: DbxTableInfo, input: AsyncIterable<Buffer | string>, ctl: ImportControl, o: {
   delimiter: string; header: boolean; columns: Array<string | null> | null; emptyNull: boolean; continueOnError: boolean;
+  /** The table rolls back (false: MyISAM & co, the rows inserted before an error stay). Default true. */
+  transactional?: boolean;
 }): Promise<void> {
   const st = ctl.status;
   const mapping = o.columns ?? info.columns.map((c) => c.name);
@@ -365,10 +369,21 @@ export async function runCsvImport(driver: ExplorerDriver, family: DbFamily, inf
     }
   };
 
+  // Not transactional (MyISAM & co): a failed multi-row INSERT may have kept part of its rows, which no
+  // affected-row count reports — the table is counted before and after instead.
+  const countRows = async (): Promise<number | null> => {
+    try {
+      const r = await driver.runOne(`SELECT COUNT(*) FROM ${target}`, { readOnly: false, maxRows: 1, maxBytes: 4096 });
+      const n = Number(r.rows[0]?.[0]);
+      return Number.isFinite(n) ? n : null;
+    } catch { return null; }
+  };
+  const before = o.transactional === false ? await countRows() : null;
   if (tx) await driver.exec(family === 'postgresql' ? 'BEGIN' : 'START TRANSACTION');
   let ok = false;
   try {
     for await (const chunk of input) {
+      if (!stop && ctl.cancelled()) stop = true;
       if (stop) continue; // drain the upload
       await take(parse(() => reader.push(typeof chunk === 'string' ? chunk : decoder.write(chunk))));
     }
@@ -379,8 +394,15 @@ export async function runCsvImport(driver: ExplorerDriver, family: DbFamily, inf
     if (tx) {
       if (!ok) {
         await driver.exec('ROLLBACK').catch(() => undefined);
-        if (st.rows) st.message = `Rolled back: ${st.rows} row(s) not kept`;
-        st.rows = 0;
+        if (o.transactional === false) {
+          // ROLLBACK is a no-op on such a table: what was inserted is said, never hidden.
+          const after = before === null ? null : await countRows();
+          if (after !== null) st.rows = Math.max(0, after - before!);
+          if (st.rows) st.message = `Stopped: ${st.rows} row(s) inserted before the stop are KEPT (the table's engine is not transactional)`;
+        } else {
+          if (st.rows) st.message = `Rolled back: ${st.rows} row(s) not kept`;
+          st.rows = 0;
+        }
       } else await driver.exec('COMMIT');
     }
   }

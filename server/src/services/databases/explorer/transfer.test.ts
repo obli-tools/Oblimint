@@ -5,7 +5,7 @@ import type { DbxImportStatus, DbxTableInfo } from '@oblimint/shared';
 import type { AppError } from '../../../middleware/errorHandler';
 import { CsvReader, csvLine } from './csv';
 import type { ExplorerDriver, RowSink } from './drivers';
-import { SqlSplitter, splitStatements, type SplitItem } from './sqlStream';
+import { maskSqlLiterals, SqlSplitter, splitStatements, type SplitItem } from './sqlStream';
 import { copyField, copyRow, explorerDumpArgv, exportRows, parseCopy, pgTablePattern, runCsvImport, runSqlImport } from './transfer';
 import { firstKeyword, singleStatement } from './explorer.service';
 
@@ -90,8 +90,8 @@ test('splitter: console rules kept (comments, empty statements), a $ inside an i
 });
 
 test('read-only gate: one statement, first keyword after comments / parentheses', () => {
-  assert.equal(firstKeyword('-- c\n/* d */ ((SELECT 1))'), 'select');
-  assert.equal(firstKeyword('/*!40000 DELETE */'), '');
+  assert.equal(firstKeyword('-- c\n/* d */ ((SELECT 1))', 'mysql'), 'select');
+  assert.equal(firstKeyword('/*!40000 DELETE */', 'mysql'), '');
   assert.equal(singleStatement('postgresql', 'WITH x AS (SELECT 1) SELECT * FROM x;', true), 'WITH x AS (SELECT 1) SELECT * FROM x');
   for (const bad of ['UPDATE t SET a = 1', 'SET TRANSACTION READ WRITE', 'COMMIT', 'CREATE TABLE x (a int)', 'LOCK TABLES t WRITE', 'DO $$ BEGIN END $$', 'COPY t TO STDOUT']) {
     assert.throws(() => singleStatement('postgresql', bad, true), (e) => (e as AppError).code === 'readOnlyStatement', bad);
@@ -196,7 +196,8 @@ test('SQL import: cancellation stops before the next statement and still drains 
   let n = 0;
   const st = status();
   const src = input('SELECT 1; SELECT 2; SELECT 3; SELECT 4;', 3);
-  await runSqlImport(d, 'mysql', src, { status: st, cancelled: () => ++n > 2 }, false);
+  await runSqlImport(d, 'mysql', src, { status: st, cancelled: () => { n++; return log.length >= 2; } }, false);
+  assert.ok(n > 2, 'checked per statement and per chunk');
   assert.equal(log.length, 2);
   assert.equal(src.readableEnded, true);
 });
@@ -255,4 +256,124 @@ test('export rows: CSV and JSON written with backpressure, binary as 0x…', asy
   const b = collect();
   await exportRows(d, 'SELECT', b.w, { format: 'json', readOnly: true, timeoutS: 1, delimiter: ',', header: true });
   assert.deepEqual(JSON.parse(b.text()), [{ id: 1, txt: 'a,"b"', bin: '0x01ff' }, { id: 2, txt: null, bin: null }]);
+});
+
+// ── security review: linear time, bounded memory, read-only gate, audit masking ──
+
+const BS = String.fromCharCode(92);
+const CHUNK = 64 * 1024;
+
+/** Pushes head, then `total` characters of `fill` in 64 KiB chunks, then tail: time, error code, items. */
+function feed(r: { push(t: string): unknown[]; end(): unknown[] }, head: string, fill: string, total: number, tail = '') {
+  const block = fill.repeat(Math.ceil(CHUNK / fill.length)).slice(0, CHUNK);
+  const t0 = process.hrtime.bigint();
+  let code: string | null = null;
+  let items = 0;
+  try {
+    items += r.push(head).length;
+    for (let n = 0; n < total; n += CHUNK) items += r.push(block).length;
+    items += r.push(tail).length + r.end().length;
+  } catch (e) { code = (e as AppError).code ?? 'error'; }
+  return { ms: Number(process.hrtime.bigint() - t0) / 1e6, code, items };
+}
+
+test('splitter / CSV: pathological 64 MiB inputs fail fast; big statements and records in linear time', () => {
+  const M = 64 * 1024 * 1024 + CHUNK;
+  const my = () => new SqlSplitter({ family: 'mysql' });
+  const pgDump = () => new SqlSplitter({ family: 'postgresql', psql: true });
+  const cases: Array<[string, ReturnType<typeof feed>, string]> = [
+    ['DELIMITER line without a line break', feed(my(), 'delimiter ;', 'x', M), 'statementTooLarge'],
+    ['psql meta-command without a line break', feed(pgDump(), `${BS}restrict `, 'x', M), 'statementTooLarge'],
+    ['COPY statement line never ending', feed(pgDump(), 'COPY t FROM stdin;', 'x', M), 'statementTooLarge'],
+    ['COPY data line without a line break', feed(pgDump(), 'COPY t FROM stdin;\n', 'x', M), 'statementTooLarge'],
+    ['statement over the cap', feed(my(), 'SELECT ', 'x', M), 'statementTooLarge'],
+    ['unterminated string over the cap', feed(my(), "SELECT '", 'x', M), 'statementTooLarge'],
+    ['CSV: unterminated quoted field', feed(new CsvReader({ delimiter: ',' }), '"', 'x', M), 'csvError'],
+    ['CSV: endless unquoted record', feed(new CsvReader({ delimiter: ',' }), '', 'x,', M), 'csvError'],
+  ];
+  for (const [what, r, code] of cases) {
+    assert.equal(r.code, code, what);
+    assert.ok(r.ms < 2500, `${what}: ${Math.round(r.ms)} ms`);
+  }
+  // A big legitimate statement / record: whole, and 4× the size costs about 4× the time (never 16×).
+  const timeOf = (make: () => { push(t: string): unknown[]; end(): unknown[] }, head: string, size: number, tail: string) => {
+    let best = Infinity;
+    for (let k = 0; k < 2; k++) {
+      const r = feed(make(), head, 'ab', size, tail);
+      assert.equal(r.code, null);
+      assert.equal(r.items, 1);
+      best = Math.min(best, r.ms);
+    }
+    return best;
+  };
+  const s8 = timeOf(my, "INSERT INTO t VALUES ('", 8 * 1024 * 1024, "');");
+  const s32 = timeOf(my, "INSERT INTO t VALUES ('", 32 * 1024 * 1024, "');");
+  assert.ok(s32 < 2500 && s32 < Math.max(8 * s8, 300), `statement: 8 MiB ${Math.round(s8)} ms, 32 MiB ${Math.round(s32)} ms`);
+  const csv = () => new CsvReader({ delimiter: ',' });
+  const c2 = timeOf(csv, '"', 2 * 1024 * 1024, '"\n');
+  const c8 = timeOf(csv, '"', 8 * 1024 * 1024, '"\n');
+  assert.ok(c8 < 2500 && c8 < Math.max(8 * c2, 300), `CSV record: 2 MiB ${Math.round(c2)} ms, 8 MiB ${Math.round(c8)} ms`);
+  // The text of an item split over many chunks is exact.
+  const s = new SqlSplitter({ family: 'mysql' });
+  const body = 'x'.repeat(200_000);
+  const out = chunked(s, `-- c\n  DELIMITER $$\nSELECT '${body}' $$\nDELIMITER ;\nSELECT 2;`, 4093);
+  assert.deepEqual(out.filter((x) => x.kind === 'statement').map((x) => (x as { sql: string }).sql), [`SELECT '${body}'`, 'SELECT 2']);
+});
+
+test('SQL import: cancellation is seen per chunk even when chunks yield no statement', async () => {
+  const { d, log } = fakeDriver();
+  const st = status();
+  let cancelled = false;
+  let chunks = 0;
+  const src = Readable.from((function* gen() {
+    for (let k = 0; k < 64; k++) { chunks++; if (k === 3) cancelled = true; yield Buffer.from(`SELECT '${'y'.repeat(CHUNK)}`); }
+  })());
+  await runSqlImport(d, 'mysql', src, { status: st, cancelled: () => cancelled }, false);
+  assert.equal(log.length, 0);
+  assert.equal(chunks, 64, 'upload drained');
+  assert.equal(st.errorCount, 0, 'stopped by the cancellation, before the statement cap');
+});
+
+test('CSV import into a non-transactional table: the rows kept are reported, never « rolled back »', async () => {
+  const bad = fakeDriver((rows) => (rows.includes('boom') ? 'Duplicate entry' : null));
+  // The table is counted before and after: a failed multi-row INSERT kept part of its rows (no affected count for those).
+  let count = 7;
+  const counts: string[] = [];
+  Object.assign(bad.d, { runOne: async (sql: string) => { counts.push(sql); const n = count; count = 7 + 500 + 40; return { columns: ['n'], rows: [[n]], truncated: false, affectedRows: null }; } });
+  const st = status();
+  await runCsvImport(bad.d, 'mysql', { ...itemsTable, table: { ...itemsTable.table, engine: 'MyISAM' } }, input('1,ok\n'.repeat(600) + '2,boom\n'), { status: st, cancelled: () => false }, {
+    delimiter: ',', header: false, columns: ['id', 'label'], emptyNull: false, continueOnError: false, transactional: false,
+  });
+  assert.deepEqual(counts, ['SELECT COUNT(*) FROM `items`', 'SELECT COUNT(*) FROM `items`']);
+  assert.equal(st.rows, 540, 'what the table really kept');
+  assert.match(st.message ?? '', /540 row\(s\).*KEPT/);
+});
+
+test('read-only gate: nested PostgreSQL comments, MySQL comment rules, session-changing statements refused', () => {
+  assert.equal(firstKeyword('/* /* */ SELECT 1 */ DELETE FROM t', 'postgresql'), 'delete');
+  assert.throws(() => singleStatement('postgresql', '/* /* */ SELECT 1 */ DELETE FROM t', true), (e) => (e as AppError).code === 'readOnlyStatement');
+  assert.equal(firstKeyword('/* a /* b */ c */ (SELECT 1)', 'postgresql'), 'select');
+  assert.equal(firstKeyword('/* /* */ DELETE FROM t', 'mysql'), 'delete', 'no nesting on MySQL');
+  assert.equal(firstKeyword('# c\nSELECT 1', 'mysql'), 'select');
+  assert.equal(firstKeyword('# c\nSELECT 1', 'postgresql'), '', '# is no comment on PostgreSQL');
+  assert.equal(firstKeyword('--x\nSELECT 1', 'mysql'), '', 'MySQL: -- without a blank is no comment');
+  assert.equal(firstKeyword('( /* c */ ( -- d\n SELECT 1))', 'postgresql'), 'select');
+  for (const [family, sql] of [
+    ['postgresql', 'PREPARE p AS DELETE FROM t'], ['postgresql', 'EXECUTE p'], ['postgresql', 'DEALLOCATE ALL'], ['postgresql', 'COMMIT'], ['postgresql', 'ROLLBACK'],
+    ['postgresql', "SET statement_timeout = 0"], ['postgresql', 'LOCK TABLE t'], ['postgresql', 'LISTEN c'], ['postgresql', "NOTIFY c, 'x'"], ['postgresql', 'DO $$ BEGIN END $$'],
+    ['postgresql', 'CALL p()'], ['mysql', 'PREPARE p FROM \'DELETE FROM t\''], ['mysql', 'EXECUTE p'], ['mysql', 'DEALLOCATE PREPARE p'], ['mysql', 'COMMIT'],
+    ['mysql', 'SET SESSION max_statement_time = 0'], ['mysql', 'LOCK TABLES t READ'], ['mysql', 'DO SLEEP(1)'], ['mysql', 'CALL p()'], ['mysql', 'HANDLER t OPEN'],
+  ] as const) {
+    assert.throws(() => singleStatement(family, sql, true), (e) => (e as AppError).code === 'readOnlyStatement' && /never runs read-only/.test((e as AppError).message), `${family}: ${sql}`);
+    assert.equal(singleStatement(family, sql, false), sql, 'allowed with write: true');
+  }
+});
+
+test('audit: literals masked (strings, numbers, dollar bodies), identifiers and keywords kept, comments dropped', () => {
+  assert.equal(maskSqlLiterals("UPDATE `users` SET pass = 'secret', n = 42 WHERE id = 7 AND t1.c2 = -3.5e2", 'mysql'), 'UPDATE `users` SET pass = ?, n = ? WHERE id = ? AND t1.c2 = -?');
+  assert.equal(maskSqlLiterals("SELECT \"col1\", E'it\\'s', X'ff', 0x1F, 1abc FROM t2 -- token=abc\nWHERE a = $$x$$ /* p */", 'postgresql'),
+    'SELECT "col1", ?, ?, ?, 1abc FROM t2  \nWHERE a = ?  ');
+  assert.equal(maskSqlLiterals("SELECT \"a\" # c\n, 'it\\'s'", 'mysql'), 'SELECT ?  \n, ?');
+  assert.equal(maskSqlLiterals("SELECT 'unterminated secret", 'postgresql'), 'SELECT ?');
+  assert.equal(maskSqlLiterals('/*!40101 SET NAMES 4 */', 'mysql'), '/*!40101 SET NAMES ? */');
 });

@@ -41,7 +41,8 @@
       "modeValue": "Value",
       "modeDefault": "Default",
       "referencing": "Rows referencing this row",
-      "follow": "Open the row in {{table}}"
+      "follow": "Open the row in {{table}}",
+      "truncated": "This page is too large to be shown whole (8 MiB): only its first rows are displayed. Choose a smaller page."
     },
     "structure": {
       "columns": "Columns",
@@ -64,7 +65,7 @@
       "history": "History",
       "rows": "{{count}} row(s)",
       "affected": "{{count}} row(s) affected",
-      "truncated": "Only the first {{rows}} rows are shown (add a LIMIT, or export the result).",
+      "truncated": "Not every row is shown: at most {{rows}} rows per result and 8 MiB per run (add a LIMIT, or export the result).",
       "noRows": "No rows.",
       "stopped": "Execution stopped at the first error: the following statements were not run.",
       "dangerTitle": "Destructive statements",
@@ -227,7 +228,7 @@
       "start": "Import",
       "stop": "Stop",
       "file": "File",
-      "max": "At most {{size}} (gzip accepted).",
+      "max": "At most {{size}}, uncompressed (gzip accepted).",
       "tooBig": "Too large: split the file, or ask the platform administrator.",
       "sqlHint": "Statements run one by one as the temporary SQL user of this session (DELIMITER, mysqldump and pg_dump files understood). Back the database up first: there is no undo.",
       "csvHint": "One transaction: on an error nothing is kept (unless « continue », where the faulty rows are skipped and listed).",
@@ -241,7 +242,8 @@
         "done": "done",
         "failed": "failed",
         "cancelled": "stopped"
-      }
+      },
+      "notTransactional": "{{engine}} table: not transactional. On an error, the rows already inserted are kept (nothing is rolled back)."
     },
     "csv": {
       "delimiter": "Delimiter",

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { DbxTable, DbxTableInfo } from '@oblimint/shared';
+import type { DbxCell, DbxTable, DbxTableInfo } from '@oblimint/shared';
+import { DBX_TEXT_PREVIEW } from '@oblimint/shared';
 import { AppError } from '../../../middleware/errorHandler';
 import type { DbDatabaseRow, DbInstanceRow } from '../rows';
-import { binaryCell, longText, myCell, type ExplorerDriver } from './drivers';
-import { closeAllExplorerSessions, explorerService, setExplorerDeps } from './explorer.service';
+import { binaryCell, byteaCell, createWatchdog, fitRow, keepRow, longText, myCell, RowBudget, rowBytes, type ExplorerDriver } from './drivers';
+import { auditSql, closeAllExplorerSessions, explorerService, setExplorerDeps } from './explorer.service';
 import { splitSql } from './splitSql';
 
 // Database explorer: statement splitting, cells, sessions (fake driver; the
@@ -70,7 +71,7 @@ function fakeDriver(): ExplorerDriver {
     columns: async () => new Map([['items', [{ name: 'id', type: 'int' }, { name: 'label', type: 'varchar(20)' }]], ['v', [{ name: 'n', type: 'int' }]]]),
     objects: async () => [],
     objectDefinition: async () => null,
-    search: async (i, cols, term) => { calls.push(`search:${i.table.id}:${cols.join(',')}:${term}`); return { columns: ['id', 'label'], rows: [[1, term]] }; },
+    search: async (i, cols, term) => { calls.push(`search:${i.table.id}:${cols.join(',')}:${term}`); return { columns: ['id', 'label'], rows: [[1, term]], truncated: false }; },
     stream: async () => 0,
     exec: async () => 0,
     insertRows: async (_t, _c, r) => r.length,
@@ -193,4 +194,112 @@ test('exports: one-shot tickets bound to the session; a query export must be one
   // Another owner cannot use the ticket; a ticket is consumed by the first attempt.
   await assert.rejects(explorerService.runExport(instance, database, 6, tk.token, {} as never), (e: AppError) => e.code === 'exportExpired');
   await assert.rejects(explorerService.runExport(instance, database, 5, tk.token, {} as never), (e: AppError) => e.code === 'exportExpired');
+});
+
+// ── security review ──
+
+const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
+
+/** Deps whose connect() takes a while (the window where concurrent calls used to create two sessions). */
+function slowConnect(ms = 20) {
+  setExplorerDeps({
+    connect: async () => { connects++; const n = connects; await tick(ms); return { driver: fakeDriver(), username: `oblsso_${n}`, password: 'pw' }; },
+    open: async () => fakeDriver(),
+    caps: async () => { await tick(); return { importMax: 1e6, exportMax: 1e6 }; },
+    release: async (_i, u) => { released.push(u); },
+    now: () => now,
+  });
+}
+
+test('concurrent first calls share ONE session (no orphan connection / SQL user); the account limit counts creations in progress', async () => {
+  slowConnect();
+  const infos = await Promise.all([1, 2, 3].map(() => explorerService.info(instance, database, 5)));
+  assert.equal(connects, 1);
+  assert.deepEqual(infos.map((x) => x.user), ['oblsso_1', 'oblsso_1', 'oblsso_1']);
+  // A session past its maximum age, renewed by concurrent calls: one new session, the old one released once.
+  now += 101 * 60_000;
+  const renewed = await Promise.all([1, 2, 3].map(() => explorerService.info(instance, database, 5)));
+  assert.equal(connects, 2);
+  assert.deepEqual(renewed.map((x) => x.user), ['oblsso_2', 'oblsso_2', 'oblsso_2']);
+  assert.deepEqual(released, ['oblsso_1']);
+  // 7 databases at once on one account: 5 sessions at most, every created user is released at the end.
+  await closeAllExplorerSessions();
+  const results = await Promise.allSettled([1, 2, 3, 4, 5, 6, 7].map((k) => explorerService.info(instance, { ...database, id: 100 + k }, 9)));
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 5);
+  assert.ok(results.filter((r) => r.status === 'rejected').every((r) => ((r as PromiseRejectedResult).reason as AppError).code === 'tooManySessions'));
+  await closeAllExplorerSessions();
+  assert.equal(released.length, connects, `every SQL user created was released (${connects} connects)`);
+});
+
+test('imports: a second concurrent start is refused (job set before any await); a refused start leaves no job behind', async () => {
+  slowConnect(1);
+  const { Readable } = await import('stream');
+  const body = () => Readable.from([Buffer.from('SELECT 1;')]);
+  const [a, b] = await Promise.allSettled([
+    explorerService.startImport(instance, database, 5, body(), 'application/sql', 9, { format: 'sql' }),
+    explorerService.startImport(instance, database, 5, body(), 'application/sql', 9, { format: 'sql' }),
+  ]);
+  assert.equal(a.status, 'fulfilled');
+  assert.equal(b.status === 'rejected' && (b.reason as AppError).code, 'importRunning');
+  const done = await explorerService.importStatus(instance, database, 5);
+  await assert.rejects(explorerService.startImport(instance, database, 5, body(), 'application/sql', 1e9, { format: 'sql' }), (e: AppError) => e.code === 'importTooLarge');
+  assert.equal(await explorerService.importStatus(instance, database, 5), done, 'the previous status is kept');
+});
+
+test('exports: at most 5 unused tickets per session (the oldest go)', async () => {
+  const tokens: string[] = [];
+  for (let k = 0; k < 7; k++) tokens.push((await explorerService.prepareExport(instance, database, 5, { format: 'csv', tables: ['items'] }, '/x')).token);
+  for (const t of tokens.slice(0, 2)) await assert.rejects(explorerService.runExport(instance, database, 5, t, {} as never), (e: AppError) => e.code === 'exportExpired');
+  // Still valid (fails later, on the fake response, not on the ticket).
+  await assert.rejects(explorerService.runExport(instance, database, 5, tokens[2], {} as never), (e: AppError) => e.code !== 'exportExpired');
+});
+
+test('rows: a byte budget per response; the first row too big comes back cut, never 0 rows; key cells cut to the preview', () => {
+  const big = 'x'.repeat(65_000);
+  const row: DbxCell[] = Array.from({ length: 20 }, () => big);
+  const set = { rows: [] as DbxCell[][], truncated: false };
+  const budget = new RowBudget(256 * 1024);
+  keepRow(set, row, budget);
+  keepRow(set, row, budget);
+  assert.equal(set.rows.length, 1, 'only the first, cut');
+  assert.equal(set.truncated, true);
+  assert.ok(rowBytes(set.rows[0]) <= 256 * 1024 + 20 * 64, `first row cut to the budget (${rowBytes(set.rows[0])} B)`);
+  assert.deepEqual(set.rows[0][0], { long: true, text: big.slice(0, (set.rows[0][0] as { text: string }).text.length), size: 65_000 });
+  // Once spent, another result set of the same response keeps nothing.
+  const other = { rows: [] as DbxCell[][], truncated: false };
+  keepRow(other, ['a'], budget);
+  assert.deepEqual(other, { rows: [], truncated: true });
+  // Small rows: kept until the budget, then the set stops (no gap).
+  const small = new RowBudget(1000);
+  const s2 = { rows: [] as DbxCell[][], truncated: false };
+  for (let k = 0; k < 100; k++) keepRow(s2, ['y'.repeat(40)], small);
+  assert.ok(s2.rows.length > 10 && s2.rows.length < 30 && s2.truncated);
+  // API keys: text cut to DBX_TEXT_PREVIEW (myCell / longText with the key's limit), bytea decoded no further than the preview.
+  assert.deepEqual(myCell('z'.repeat(5000), DBX_TEXT_PREVIEW), { long: true, text: 'z'.repeat(DBX_TEXT_PREVIEW), size: 5000 });
+  assert.equal(longText('z'.repeat(5000)), 'z'.repeat(5000), 'the grid keeps values up to DBX_TEXT_MAX');
+  assert.deepEqual(byteaCell(`\\x${'ab'.repeat(1000)}`), { binary: true, hex: 'ab'.repeat(64), size: 1000, truncated: true });
+  assert.equal(fitRow([1, null, true, 'short'], 10).length, 4);
+});
+
+test('watchdog: past limit + grace the statement is killed, unless it ended (or the kill finds it ended)', async () => {
+  const killed: string[] = [];
+  const wd = createWatchdog(async (still) => { killed.push(still() ? 'kill' : 'late'); }, 20);
+  const done = wd.arm(0.01);
+  await tick(60);
+  done();
+  assert.deepEqual(killed, ['kill']);
+  const done2 = wd.arm(0.01);
+  done2();
+  await tick(60);
+  assert.deepEqual(killed, ['kill'], 'ended in time: nothing killed');
+  wd.arm(0)();
+  assert.equal(wd.kills, 1);
+});
+
+test('audit: statements of the console / keys / query exports with their literals masked', async () => {
+  assert.equal(auditSql('mysql', "UPDATE users SET password = 'hunter2' WHERE id = 12"), 'UPDATE users SET password = ? WHERE id = ?');
+  assert.equal(auditSql('postgresql', `SELECT '${'s'.repeat(5000)}`), 'SELECT ?', 'masked before being cut');
+  assert.ok(auditSql('mysql', `SELECT ${'a, '.repeat(400)}b`).endsWith('…'));
+  const tk = await explorerService.prepareExport(instance, database, 5, { format: 'json', sql: "SELECT * FROM items WHERE label = 'private'" }, '/x');
+  assert.match(tk.filename, /query/);
 });
