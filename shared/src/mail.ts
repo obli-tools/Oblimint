@@ -409,6 +409,26 @@ export interface MailPtrCheck {
   status: MailDnsCheckStatus;
 }
 
+/**
+ * Public delegation of the zone of a mail domain (NS at the zone apex):
+ * ours: every public NS is one of our name servers; elsewhere: none is;
+ * mixed: some of ours + some others (resolvers answer at random);
+ * unknown: lookup failed / no NS found / never checked.
+ */
+export type MailDnsDelegationStatus = 'ours' | 'elsewhere' | 'mixed' | 'unknown';
+
+export interface MailDnsDelegation {
+  /** Zone apex checked: the hosted zone name, else the first parent of the mail domain with NS records. */
+  zone: string;
+  /** NS returned by the public resolvers at the last check (lower case, no trailing dot). */
+  found: string[];
+  /** Our name servers (settings dns.nameservers; [] when the DNS module is off). */
+  expected: string[];
+  status: MailDnsDelegationStatus;
+  /** false: no delegation in the stored check yet (older check or never checked). */
+  checked: boolean;
+}
+
 /** GET /mail/domains/:id/dns */
 export interface MailDnsStatus {
   mailDomainId: number;
@@ -423,6 +443,8 @@ export interface MailDnsStatus {
   checkedAt: string | null;
   healthy: boolean;
   records: MailDnsRecord[];
+  /** Who serves the zone of the domain (public NS), from the last check — no network on GET. */
+  delegation: MailDnsDelegation;
   /** Reverse DNS of the node addresses — set at the hosting provider, the panel can only remind. */
   ptr: { ipv4: MailPtrCheck | null; ipv6: MailPtrCheck | null };
 }

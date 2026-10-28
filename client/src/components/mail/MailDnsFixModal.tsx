@@ -57,7 +57,7 @@ function blockedReason(t: TFunction, it: MailDnsFixItem): string {
   }
 }
 
-export function MailDnsFixModal({ open, mailDomainId, focus, ptr, onClose, onApplied }: {
+export function MailDnsFixModal({ open, mailDomainId, focus, ptr, onClose, onApplied, prompt = false }: {
   open: boolean;
   mailDomainId: number;
   /** Item id ('<kind>:<FQDN>') of the row whose Fix was clicked; null = every fixable record. */
@@ -65,6 +65,11 @@ export function MailDnsFixModal({ open, mailDomainId, focus, ptr, onClose, onApp
   ptr: MailDnsStatus['ptr'] | null;
   onClose: () => void;
   onApplied: (status: MailDnsStatus) => void;
+  /**
+   * Opened by itself right after mail was enabled on the domain (not by a click on « Fix »):
+   * asks first whether mail should now come to this server; closing leaves the warning of the card.
+   */
+  prompt?: boolean;
 }) {
   const { t } = useTranslation();
   const [plan, setPlan] = useState<MailDnsFixPlan | null>(null);
@@ -125,6 +130,8 @@ export function MailDnsFixModal({ open, mailDomainId, focus, ptr, onClose, onApp
   };
 
   const nsList = (plan?.expectedNameservers ?? []).join(', ');
+  // MX of the previous provider stored in the zone (prompt line).
+  const previousMx = [...new Set(fixItems.filter((i) => i.kind === 'mx').flatMap((i) => i.before.filter((r) => r.type === 'MX').map((r) => host(r.content))))];
 
   return (
     <Modal
@@ -136,7 +143,7 @@ export function MailDnsFixModal({ open, mailDomainId, focus, ptr, onClose, onApp
       size="lg"
       footer={
         <>
-          <Button size="sm" variant="secondary" disabled={applying} onClick={onClose}>{t('common.cancel') || 'Cancel'}</Button>
+          <Button size="sm" variant="secondary" disabled={applying} onClick={onClose}>{prompt ? (t('mail.dns.fix.notNow') || 'Not now') : (t('common.cancel') || 'Cancel')}</Button>
           {stale ? (
             <Button size="sm" loading={loading} onClick={() => { void load(); }}>{t('mail.dns.fix.reviewAgain') || 'Review again'}</Button>
           ) : (
@@ -153,6 +160,14 @@ export function MailDnsFixModal({ open, mailDomainId, focus, ptr, onClose, onApp
         <p className="flex items-start gap-2 text-sm text-status-down"><AlertTriangle size={14} className="mt-0.5 shrink-0" />{loadError}</p>
       ) : plan ? (
         <div className="space-y-3">
+          {prompt && fixItems.length > 0 && (
+            <p className="flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/5 px-3 py-2 text-sm text-amber-400">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>{previousMx.length
+                ? t('mail.dns.fix.promptMx', { hosts: previousMx.join(', '), defaultValue: 'This zone already contains mail records pointing elsewhere (e.g. {{hosts}}): mail would keep going there. Route mail to this server now?' })
+                : (t('mail.dns.fix.prompt') || 'This zone already contains mail records that override the ones of this server: mail would not work as expected. Fix them now?')}</span>
+            </p>
+          )}
           <p className="text-xs text-text-muted">
             {t('mail.dns.fix.intro', { zone: plan.zoneName ?? plan.domain, defaultValue: 'Records stored in the zone {{zone}} hide the records this server needs. Ticked lines are removed so that our name servers serve the expected records instead. Other records of the zone are not touched.' })}
           </p>

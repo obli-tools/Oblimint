@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 import type {
-  MailDnsFixPlan, MailDnsFixRequest, MailDnsFixResult, MailDnsRecord, MailDnsStatus, MailDomainDnsSettings, MailDomainDnsUpdate, MailPtrCheck,
+  MailDnsDelegation, MailDnsDelegationStatus, MailDnsFixPlan, MailDnsFixRequest, MailDnsFixResult, MailDnsRecord, MailDnsStatus, MailDomainDnsSettings, MailDomainDnsUpdate, MailPtrCheck,
 } from '@oblimint/shared';
 import { HostingSocketEvents, mailEngineHasMailboxes } from '@oblimint/shared';
 import { db } from '../../../db';
@@ -13,7 +13,7 @@ import { registerEdgeContributor, unregisterEdgeContributor } from '../../edge/c
 import { iso, json } from '../../hosting/rows';
 import { actorCan, type HostingActor } from '../../hosting/access';
 import { emitHosting } from '../../hosting/events';
-import { publicDns, PublicDnsError } from '../../../utils/publicDns';
+import { publicDns } from '../../../utils/publicDns';
 import { platformSettings } from '../../platformSettings';
 import { loadMailDomain } from '../access';
 import { emitMail } from '../events';
@@ -21,6 +21,7 @@ import { activeMailEngine } from '../registry';
 import { parseDnsSettings } from '../rows';
 import { mailEdgeContributor } from '../tls/edgeContributor';
 import { checkPtr, checkRecords, recordsHealthy } from './checks';
+import { classifyDelegation, lookupDelegation, normHost, ourNameservers } from './delegation';
 import { dkimService, retireAlgorithm, runDkimRotation } from './dkim.service';
 import { expectedRecordsOf, loadMailPlatformContext, mailDomainView, mailDomainViews, type MailDomainView, type MailPlatformContext } from './domains';
 import { fixItemId, rowsToRemove } from './fixPlan';
@@ -54,11 +55,26 @@ let scanRunning = false;
 
 type PtrPair = { ipv4: MailPtrCheck | null; ipv6: MailPtrCheck | null };
 
-/** What mail_domains.dns_check holds. */
+/** Public delegation as stored by a check (expected = our name servers at that time). */
+type StoredDelegation = Omit<MailDnsDelegation, 'checked'>;
+
+/** What mail_domains.dns_check holds (delegation: absent in checks stored before it existed). */
 interface StoredCheck {
   checkedAt: string | null;
   records: MailDnsRecord[];
   ptr: PtrPair;
+  delegation: StoredDelegation | null;
+}
+
+const DELEGATION_STATUSES: readonly MailDnsDelegationStatus[] = ['ours', 'elsewhere', 'mixed', 'unknown'];
+const hostList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map(normHost).filter(Boolean) : []);
+
+function parseStoredDelegation(v: unknown): StoredDelegation | null {
+  if (!v || typeof v !== 'object') return null;
+  const d = v as Partial<Record<keyof StoredDelegation, unknown>>;
+  if (typeof d.zone !== 'string' || !d.zone) return null;
+  const status = (DELEGATION_STATUSES as readonly unknown[]).includes(d.status) ? d.status as MailDnsDelegationStatus : 'unknown';
+  return { zone: d.zone, found: hostList(d.found), expected: hostList(d.expected), status };
 }
 
 function parseStoredCheck(v: unknown): StoredCheck {
@@ -67,7 +83,44 @@ function parseStoredCheck(v: unknown): StoredCheck {
     checkedAt: typeof c?.checkedAt === 'string' ? c.checkedAt : null,
     records: Array.isArray(c?.records) ? c!.records.filter((r) => r && typeof r.name === 'string' && typeof r.type === 'string') : [],
     ptr: c?.ptr && typeof c.ptr === 'object' ? { ipv4: c.ptr.ipv4 ?? null, ipv6: c.ptr.ipv6 ?? null } : { ipv4: null, ipv6: null },
+    delegation: parseStoredDelegation(c?.delegation),
   };
+}
+
+/** Our name servers now ([] when the settings cannot be read). */
+async function expectedNameservers(): Promise<string[]> {
+  try {
+    return ourNameservers(await platformSettings.section('dns'));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Delegation shown by the status: the stored lookup, re-classified against our
+ * name servers of now (they may have changed since); nothing stored → unknown, unchecked.
+ */
+function delegationView(stored: StoredDelegation | null, fallbackZone: string, expected: string[]): MailDnsDelegation {
+  if (!stored) return { zone: fallbackZone, found: [], expected, status: 'unknown', checked: false };
+  const status = stored.status === 'unknown' ? 'unknown' : classifyDelegation(stored.found, expected);
+  return { zone: stored.zone, found: stored.found, expected, status, checked: true };
+}
+
+/** Live delegation lookup of a mail domain (hosted zone name, else walk up to the first name with NS). Never throws. */
+async function checkDelegation(v: Pick<MailDomainView, 'name' | 'accountId'>): Promise<StoredDelegation> {
+  const expected = await expectedNameservers();
+  let zone: string | null = null;
+  try {
+    const row = await zoneForName(v.name, v.accountId);
+    if (row?.kind === 'hosted') zone = row.name;
+  } catch { /* walk up */ }
+  try {
+    const d = await lookupDelegation(await publicDns(), { zone, name: v.name, expected });
+    return { zone: d.zone, found: d.found, expected, status: d.status };
+  } catch (err) {
+    logger.debug({ mailDomain: v.name, err: (err as Error)?.message }, 'mail dns: delegation lookup failed');
+    return { zone: zone ?? v.name, found: [], expected, status: 'unknown' };
+  }
 }
 
 const recordKey = (r: { name: string; type: string; content: string; priority: number | null }) => `${r.name}|${r.type}|${r.content}|${r.priority ?? ''}`;
@@ -118,9 +171,11 @@ async function buildStatus(v: MailDomainView, ctx: MailPlatformContext): Promise
   // Records of a hosted zone hidden by stored ones (Fix). Never fails the status.
   let zoneHosted = false;
   let shadowed = false;
+  let zoneName: string | null = null;
   try {
     const fx = await fixState(v, await loadContext());
     zoneHosted = fx.zone?.kind === 'hosted';
+    if (zoneHosted) zoneName = fx.zone!.name;
     const fixable = new Map(fx.items.filter((it) => it.status === 'fix').map((it) => [it.id, it.before.length > 0]));
     for (const r of records) {
       if (r.kind === 'mx' || r.kind === 'spf' || r.kind === 'dkim' || r.kind === 'dmarc') {
@@ -146,6 +201,7 @@ async function buildStatus(v: MailDomainView, ctx: MailPlatformContext): Promise
     checkedAt: iso(row?.dns_checked_at ?? null),
     healthy: records.length > 0 && recordsHealthy(records),
     records,
+    delegation: delegationView(stored.delegation, zoneName ?? v.name, await expectedNameservers()),
     ptr,
   };
 }
@@ -153,12 +209,15 @@ async function buildStatus(v: MailDomainView, ctx: MailPlatformContext): Promise
 /** Live check of one mail domain; stores the result. */
 async function runCheck(v: MailDomainView, ctx: MailPlatformContext, lookup: MailDnsLookup): Promise<void> {
   const specs = (await expectedRecordsOf([v], ctx)).get(v.id) ?? [];
-  const records = await checkRecords(specs, lookup, { hasMailboxes: ctx.hasMailboxes, host: ctx.host, ipv4: ctx.ipv4, ipv6: ctx.ipv6 });
+  const [records, delegation] = await Promise.all([
+    checkRecords(specs, lookup, { hasMailboxes: ctx.hasMailboxes, host: ctx.host, ipv4: ctx.ipv4, ipv6: ctx.ipv6 }),
+    checkDelegation(v),
+  ]);
   let ptr: PtrPair = { ipv4: null, ipv6: null };
   try { ptr = await ptrCached(); } catch { /* PTR is a reminder only */ }
   const now = new Date();
   const healthy = records.length > 0 && recordsHealthy(records);
-  const stored: StoredCheck = { checkedAt: now.toISOString(), records, ptr };
+  const stored: StoredCheck = { checkedAt: now.toISOString(), records, ptr, delegation };
   await db('mail_domains').where({ id: v.id }).update({ dns_check: JSON.stringify(stored), dns_healthy: healthy, dns_checked_at: now });
   try {
     emitMail({ entity: 'dns', id: v.id, accountId: v.accountId, action: 'updated' }, { tenantId: v.tenantId, accountId: v.accountId });
@@ -244,23 +303,23 @@ function assertZoneManage(actor: HostingActor, zone: ZoneRow): void {
   }
 }
 
-const normHost = (n: string) => n.toLowerCase().replace(/\.$/, '');
-
 async function fixPreview(actor: HostingActor, mailDomainId: number): Promise<MailDnsFixPlan> {
   const md = await loadMailDomain(actor, mailDomainId, 'mail.manage');
   const v = await viewOrThrow(md.id);
   const fx = await fixState(v, await loadContext());
   if (fx.zone) assertZoneManage(actor, fx.zone);
-  const expectedNameservers = (await platformSettings.section('dns')).nameservers.map(normHost);
+  const expected = await expectedNameservers();
   const hosted = fx.zone?.kind === 'hosted';
   let delegated: boolean | null = null;
   let publicNameservers: string[] = [];
   if (hosted && fx.zone) {
+    // Same lookup / classification as the check (delegation.ts).
     try {
-      publicNameservers = [...new Set((await (await publicDns()).ns(fx.zone.name)).map(normHost))].sort();
-      delegated = publicNameservers.length > 0 && expectedNameservers.length > 0 && publicNameservers.every((n) => expectedNameservers.includes(n));
+      const d = await lookupDelegation(await publicDns(), { zone: fx.zone.name, name: v.name, expected });
+      publicNameservers = d.found;
+      if (!d.failed) delegated = d.status === 'ours';
     } catch (err) {
-      if (!(err instanceof PublicDnsError)) logger.debug({ zone: fx.zone.name, err: (err as Error)?.message }, 'mail dns fix: delegation lookup failed');
+      logger.debug({ zone: fx.zone.name, err: (err as Error)?.message }, 'mail dns fix: delegation lookup failed');
     }
   }
   return {
@@ -271,7 +330,7 @@ async function fixPreview(actor: HostingActor, mailDomainId: number): Promise<Ma
     zoneHosted: hosted,
     delegated,
     publicNameservers,
-    expectedNameservers,
+    expectedNameservers: expected,
     items: fx.items,
   };
 }

@@ -52,6 +52,7 @@ export function MailDomainPage() {
   const [dns, setDns] = useState<MailDnsStatus | null>(null);
   const [dnsError, setDnsError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [fixPrompt, setFixPrompt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -225,11 +226,18 @@ export function MailDomainPage() {
         onCheck={() => { void check(); }}
         canFix={manage && can('dns.manage', domain.accountId)}
         onFixed={(s) => { setDns(s); setDnsError(null); }}
+        zonesHref={domain.accountId != null ? accountHref(domain.accountId, 'domains', { sub: 'zones' }) : null}
+        fixPrompt={fixPrompt}
       />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="flex flex-col gap-5">
-          <MailDomainSettingsCard domain={domain} manage={manage} onChanged={(d) => { setDomain(d); void loadDns(); }} />
+          <MailDomainSettingsCard domain={domain} manage={manage} onChanged={(d) => {
+            const enabledNow = !domain.enabled && d.enabled;
+            setDomain(d);
+            // Mail enabled again: the Fix asks at once when the zone overrides the mail records.
+            void loadDns().then(() => { if (enabledNow) setFixPrompt((n) => n + 1); });
+          }} />
           {!engineKnown ? (
             engineState === 'failed' ? (
               <div className="flex items-start gap-2 rounded-xl bg-bg-secondary p-4 text-sm text-text-muted">

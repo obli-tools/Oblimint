@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, AtSign } from 'lucide-react';
-import type { Domain, HostingAccount, MailDomainDetail } from '@oblimint/shared';
+import type { Domain, HostingAccount, MailDnsStatus, MailDomainDetail } from '@oblimint/shared';
 import { domainsApi } from '@/api/domains.api';
 import { mailApi } from '@/api/mail.api';
 import { Button } from '@/components/common/Button';
@@ -9,7 +9,9 @@ import { Modal } from '@/components/common/Modal';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { AddDomainInline } from '@/components/hosting/DomainCreateModal';
 import { inputCls, labelCls, selectCls } from '@/components/hosting/hostingUi';
+import { useHostingMe } from '@/store/hostingStore';
 import { cn } from '@/utils/cn';
+import { MailDnsFixModal } from './MailDnsFixModal';
 import { mailErrorMessage } from './mailErrors';
 import { isValidAddress, normalizeAddress } from './mailFormat';
 
@@ -25,7 +27,10 @@ export function MailDomainCreateModal({ open, accounts, defaultAccountId, defaul
   onCreated: (d: MailDomainDetail) => void;
 }) {
   const { t } = useTranslation();
+  const { can } = useHostingMe();
   const [accountId, setAccountId] = useState<number | null>(null);
+  /** Created; its hosted zone overrides the mail records: the Fix asks before onCreated. */
+  const [fixFor, setFixFor] = useState<{ created: MailDomainDetail; ptr: MailDnsStatus['ptr'] } | null>(null);
   const [domains, setDomains] = useState<Domain[] | null>(null);
   const [taken, setTaken] = useState<Set<number>>(new Set());
   const [domainId, setDomainId] = useState<number | null>(null);
@@ -41,6 +46,7 @@ export function MailDomainCreateModal({ open, accounts, defaultAccountId, defaul
     setEnabled(true);
     setCatchAll('');
     setError('');
+    setFixFor(null);
     // Reset on open only: a background reload of the accounts must not wipe the form.
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -67,13 +73,38 @@ export function MailDomainCreateModal({ open, accounts, defaultAccountId, defaul
     setSaving(true);
     setError('');
     try {
-      onCreated(await mailApi.createDomain({ domainId: selected.id, enabled, catchAll: catchAll.trim() ? normalizeAddress(catchAll) : null }));
+      const created = await mailApi.createDomain({ domainId: selected.id, enabled, catchAll: catchAll.trim() ? normalizeAddress(catchAll) : null });
+      // Records typed in the zone (MX of the previous provider…) would keep mail away: ask at once.
+      if (created.enabled && can('mail.manage', created.accountId) && can('dns.manage', created.accountId)) {
+        try {
+          const st = await mailApi.dnsStatus(created.id);
+          if (st.shadowed && st.records.some((r) => r.fixable && r.status !== 'ok')) {
+            setFixFor({ created, ptr: st.ptr });
+            return;
+          }
+        } catch { /* the card of the domain shows it */ }
+      }
+      onCreated(created);
     } catch (err) {
       setError(mailErrorMessage(t, err, t('mail.domains.create.failed') || 'Failed to enable mail on the domain'));
     } finally {
       setSaving(false);
     }
   };
+
+  if (fixFor) {
+    return (
+      <MailDnsFixModal
+        open={open}
+        mailDomainId={fixFor.created.id}
+        focus={null}
+        ptr={fixFor.ptr}
+        prompt
+        onApplied={() => undefined}
+        onClose={() => { const d = fixFor.created; setFixFor(null); onCreated(d); }}
+      />
+    );
+  }
 
   return (
     <Modal

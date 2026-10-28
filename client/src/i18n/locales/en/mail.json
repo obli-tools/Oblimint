@@ -198,7 +198,31 @@
           "systemRecord": "A record managed by the platform holds this name.",
           "cnameAtName": "A CNAME at this name redirects everything, including the website: change it in the DNS zone.",
           "stillHidden": "Another record would still hide the expected one: check the DNS zone."
-        }
+        },
+        "notNow": "Not now",
+        "promptMx": "This zone already contains mail records pointing elsewhere (e.g. {{hosts}}): mail would keep going there. Route mail to this server now?",
+        "prompt": "This zone already contains mail records that override the ones of this server: mail would not work as expected. Fix them now?"
+      },
+      "delegation": {
+        "title": "Name servers (NS)",
+        "zone": "Zone",
+        "expected": "Expected (ours)",
+        "found": "Found (public)",
+        "noneConfigured": "none configured",
+        "ourNameservers": "our name servers",
+        "ours": "on Mint",
+        "elsewhere": "elsewhere",
+        "mixed": "mixed",
+        "unknown": "unknown",
+        "servedHint": "The zone is served by Mint: these records are written automatically.",
+        "notServedTitle": "This zone is not served",
+        "hostedElsewhereHint": "A zone exists on Mint but the domain points to other name servers ({{found}}): what Mint writes is NOT served. Either switch the name servers to {{ours}} at the registrar, or copy the records below at the current DNS host.",
+        "externalHint": "The zone is managed at {{found}}: copy the records below there (copy button on each line), then click « Check now ».",
+        "noZoneTitle": "No zone on Mint",
+        "noZoneHint": "The domain points to the name servers of Mint, but its zone is not hosted here: nothing is served for it (no web, no mail). Host its DNS zone here, or point the domain back to its former DNS host at the registrar.",
+        "noZoneLink": "DNS zones",
+        "mixedTitle": "Mixed name servers",
+        "mixedHint": "The domain points both to our name servers and to others ({{found}}): resolvers answer at random from one or the other. Set the name servers of the domain at the registrar to {{ours}} only, or to the other DNS host only."
       }
     },
     "ptr": {

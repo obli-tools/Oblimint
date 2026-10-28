@@ -198,7 +198,31 @@
           "systemRecord": "Un enregistrement géré par la plateforme occupe ce nom.",
           "cnameAtName": "Un CNAME à ce nom redirige tout, y compris le site : modifiez-le dans la zone DNS.",
           "stillHidden": "Un autre enregistrement masquerait encore l'enregistrement attendu : vérifiez la zone DNS."
-        }
+        },
+        "notNow": "Plus tard",
+        "promptMx": "Cette zone contient déjà des enregistrements mail qui pointent ailleurs (par ex. {{hosts}}) : le courrier continuerait d'y aller. Diriger le courrier vers ce serveur maintenant ?",
+        "prompt": "Cette zone contient déjà des enregistrements mail qui remplacent ceux de ce serveur : le courrier ne fonctionnerait pas comme prévu. Les corriger maintenant ?"
+      },
+      "delegation": {
+        "title": "Serveurs de noms (NS)",
+        "zone": "Zone",
+        "expected": "Attendus (les nôtres)",
+        "found": "Trouvés (publics)",
+        "noneConfigured": "aucun configuré",
+        "ourNameservers": "nos serveurs de noms",
+        "ours": "chez Mint",
+        "elsewhere": "ailleurs",
+        "mixed": "mixte",
+        "unknown": "inconnu",
+        "servedHint": "La zone est servie par Mint : ces enregistrements sont écrits automatiquement.",
+        "notServedTitle": "Cette zone n'est pas servie",
+        "hostedElsewhereHint": "Une zone existe sur Mint mais le domaine pointe vers d'autres serveurs de noms ({{found}}) : ce que Mint écrit n'est PAS servi. Soit vous basculez les serveurs de noms vers {{ours}} chez le registraire, soit vous recopiez les enregistrements ci-dessous chez l'hébergeur DNS actuel.",
+        "externalHint": "La zone est gérée chez {{found}} : recopiez-y les enregistrements ci-dessous (bouton copier sur chaque ligne), puis cliquez sur « Vérifier maintenant ».",
+        "noZoneTitle": "Aucune zone sur Mint",
+        "noZoneHint": "Le domaine pointe vers les serveurs de noms de Mint, mais sa zone n'est pas hébergée ici : rien n'est servi pour lui (ni web, ni mail). Hébergez sa zone DNS ici, ou faites de nouveau pointer le domaine vers son ancien hébergeur DNS chez le registraire.",
+        "noZoneLink": "Zones DNS",
+        "mixedTitle": "Serveurs de noms mélangés",
+        "mixedHint": "Le domaine pointe à la fois vers nos serveurs de noms et vers d'autres ({{found}}) : les résolveurs répondent au hasard avec l'un ou l'autre. Chez le registraire, ne gardez que {{ours}}, ou uniquement ceux de l'autre hébergeur DNS."
       }
     },
     "ptr": {

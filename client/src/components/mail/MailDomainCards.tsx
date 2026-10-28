@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, Fingerprint, Globe, KeyRound, ListChecks, Plus, RefreshCw, RotateCw, Server, Settings2, Trash2, Wrench } from 'lucide-react';
+import { AlertTriangle, Fingerprint, Info, Globe, KeyRound, ListChecks, Plus, RefreshCw, RotateCw, Server, Settings2, Trash2, Wrench } from 'lucide-react';
 import {
   HostingSocketEvents,
-  type DkimAlgorithm, type DkimKey, type DkimKeyStatus, type DmarcPolicy, type MailDnsRecord, type MailDnsStatus, type MailDomainDetail, type MailDomainDnsSettings,
+  type DkimAlgorithm, type DkimKey, type DkimKeyStatus, type DmarcPolicy, type MailDnsDelegation, type MailDnsRecord, type MailDnsStatus, type MailDomainDetail, type MailDomainDnsSettings,
   type MailExternalConfig, type MailPtrCheck, type MailUpdatedPayload, type MtaStsMode,
 } from '@oblimint/shared';
 import { mailApi } from '@/api/mail.api';
@@ -107,17 +108,142 @@ function rowFixable(r: MailDnsRecord): boolean {
   return !!r.fixable && r.status !== 'ok';
 }
 
+const hostsOf = (list: string[]) => list.join(', ');
+
+/** The delegation of the status (unknown, unchecked when an older server sent none). */
+const delegationOf = (s: MailDnsStatus): MailDnsDelegation =>
+  s.delegation ?? { zone: s.domain, found: [], expected: [], status: 'unknown', checked: false };
+
+/** Who serves the zone (public NS): green = our name servers, amber = another DNS host, red = mixed (an error). */
+function DelegationPill({ d }: { d: MailDnsDelegation }) {
+  const { t } = useTranslation();
+  if (d.status === 'ours') return <Pill tone="green">{t('mail.dns.delegation.ours') || 'on Mint'}</Pill>;
+  if (d.status === 'elsewhere') return <Pill tone="amber" title={hostsOf(d.found)}>{t('mail.dns.delegation.elsewhere') || 'elsewhere'}</Pill>;
+  if (d.status === 'mixed') return <Pill tone="red" title={hostsOf(d.found)}>{t('mail.dns.delegation.mixed') || 'mixed'}</Pill>;
+  return <Pill tone="muted">{d.checked ? (t('mail.dns.delegation.unknown') || 'unknown') : (t('mail.dns.status.unchecked') || 'not checked')}</Pill>;
+}
+
+/** First row of the card: the name servers of the zone apex, expected vs found. */
+function DelegationRow({ d }: { d: MailDnsDelegation }) {
+  const { t } = useTranslation();
+  return (
+    <li className="rounded-lg bg-bg-primary p-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[11px] font-semibold text-accent">NS</span>
+        <span className="text-[11px] text-text-muted">{t('mail.dns.delegation.title') || 'Name servers (NS)'}</span>
+        <span className="ml-auto"><DelegationPill d={d} /></span>
+      </div>
+      <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <InfoRow label={t('mail.dns.delegation.zone') || 'Zone'} mono>{d.zone}</InfoRow>
+        <InfoRow label={t('mail.dns.delegation.expected') || 'Expected (ours)'} mono>{d.expected.length ? hostsOf(d.expected) : (t('mail.dns.delegation.noneConfigured') || 'none configured')}</InfoRow>
+        <InfoRow label={t('mail.dns.delegation.found') || 'Found (public)'} mono>{d.found.length ? hostsOf(d.found) : '—'}</InfoRow>
+      </div>
+    </li>
+  );
+}
+
+const NOTE_TONES = {
+  info: 'border-sky-400/30 bg-sky-400/5 text-sky-300',
+  warning: 'border-amber-400/30 bg-amber-400/5 text-amber-400',
+  error: 'border-red-400/30 bg-red-500/5 text-red-400',
+} as const;
+
+function DnsNote({ tone, title, children }: { tone: keyof typeof NOTE_TONES; title?: string; children: ReactNode }) {
+  const Icon = tone === 'info' ? Info : AlertTriangle;
+  return (
+    <div className={cn('rounded-md border p-3 text-xs', NOTE_TONES[tone])}>
+      <div className="flex items-start gap-2">
+        <Icon size={13} className="mt-0.5 shrink-0" />
+        <div>
+          {title && <div className="font-medium">{title}</div>}
+          <div className={cn(title && 'mt-0.5 text-text-secondary')}>{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Explanation of the card, from the real situation: zone hosted here or not × public
+ * delegation (ours / elsewhere / mixed / unknown). `zonesHref`: where a zone can be hosted here.
+ */
+function DnsSituationHint({ status, fixEnabled, zonesHref }: { status: MailDnsStatus; fixEnabled: boolean; zonesHref: string | null }) {
+  const { t } = useTranslation();
+  const d = delegationOf(status);
+  const hosted = status.zoneHosted || status.managed;
+  const found = hostsOf(d.found);
+  const ours = d.expected.length ? hostsOf(d.expected) : (t('mail.dns.delegation.ourNameservers') || 'our name servers');
+  const shadowed = status.shadowed ? (
+    <DnsNote tone="warning">
+      {fixEnabled
+        ? (t('mail.dns.shadowedHint') || 'The zone of this domain is hosted on our name servers, but records stored in it override the automatic ones (marked below): use « Fix » to serve the expected records.')
+        : (t('mail.dns.shadowedHintReadOnly') || 'The zone of this domain is hosted on our name servers, but records stored in it override the automatic ones (marked below): someone allowed to edit the DNS zone can fix them.')}
+    </DnsNote>
+  ) : null;
+  let main: ReactNode = null;
+  if (d.status === 'mixed') {
+    main = (
+      <DnsNote tone="error" title={t('mail.dns.delegation.mixedTitle') || 'Mixed name servers'}>
+        {t('mail.dns.delegation.mixedHint', { found, ours, defaultValue: 'The domain points both to our name servers and to others ({{found}}): resolvers answer at random from one or the other. Set the name servers of the domain at the registrar to {{ours}} only, or to the other DNS host only.' })}
+      </DnsNote>
+    );
+  } else if (hosted && d.status === 'elsewhere') {
+    main = (
+      <DnsNote tone="warning" title={t('mail.dns.delegation.notServedTitle') || 'This zone is not served'}>
+        {t('mail.dns.delegation.hostedElsewhereHint', { found, ours, defaultValue: 'A zone exists on Mint but the domain points to other name servers ({{found}}): what Mint writes is NOT served. Either switch the name servers to {{ours}} at the registrar, or copy the records below at the current DNS host.' })}
+      </DnsNote>
+    );
+  } else if (hosted) {
+    // ours, or delegation unknown: the zone written here is (presumably) the one served.
+    if (!shadowed) {
+      main = (
+        <p className="text-xs text-text-muted">{d.status === 'ours'
+          ? (t('mail.dns.delegation.servedHint') || 'The zone is served by Mint: these records are written automatically.')
+          : (t('mail.dns.managedHint') || 'The zone of this domain is hosted on our name servers: these records are written automatically.')}</p>
+      );
+    }
+  } else if (d.status === 'elsewhere') {
+    main = (
+      <DnsNote tone="info" title={t('mail.dns.externalTitle') || 'To create at your DNS provider'}>
+        {t('mail.dns.delegation.externalHint', { found, defaultValue: 'The zone is managed at {{found}}: copy the records below there (copy button on each line), then click « Check now ».' })}
+      </DnsNote>
+    );
+  } else if (d.status === 'ours') {
+    const href = status.zoneId ? `/dns/zones/${status.zoneId}` : zonesHref;
+    main = (
+      <DnsNote tone="warning" title={t('mail.dns.delegation.noZoneTitle') || 'No zone on Mint'}>
+        {t('mail.dns.delegation.noZoneHint', { defaultValue: 'The domain points to the name servers of Mint, but its zone is not hosted here: nothing is served for it (no web, no mail). Host its DNS zone here, or point the domain back to its former DNS host at the registrar.' })}
+        {href && (
+          <>{' '}<Link to={href} className="font-medium underline">{t('mail.dns.delegation.noZoneLink') || 'DNS zones'}</Link></>
+        )}
+      </DnsNote>
+    );
+  } else {
+    main = (
+      <DnsNote tone="warning" title={t('mail.dns.externalTitle') || 'To create at your DNS provider'}>
+        {t('mail.dns.externalHint') || 'The DNS zone of this domain is not hosted here: create the records below at your registrar or DNS provider (copy button on each line), then click « Check now ».'}
+      </DnsNote>
+    );
+  }
+  return <>{main}{shadowed}</>;
+}
+
 /**
  * `canFix`: the user may write the zone (mail.manage + dns.manage on the account).
  * `onFixed`: status returned by a successful fix.
+ * `zonesHref`: the DNS zones of the account (link of the « points to us, no zone here » hint).
+ * `fixPrompt`: bumped when mail was just enabled on the domain — the Fix opens by itself
+ * (prompt mode) when the zone overrides the mail records.
  */
-export function MailDnsRecordsCard({ status, error, checking, onCheck, canFix = false, onFixed }: {
+export function MailDnsRecordsCard({ status, error, checking, onCheck, canFix = false, onFixed, zonesHref = null, fixPrompt = 0 }: {
   status: MailDnsStatus | null;
   error: string | null;
   checking: boolean;
   onCheck: () => void;
   canFix?: boolean;
   onFixed?: (s: MailDnsStatus) => void;
+  zonesHref?: string | null;
+  fixPrompt?: number;
 }) {
   const { t, i18n } = useTranslation();
   const message = (r: MailDnsRecord) => (r.code ? t(`mail.dns.messages.${r.code}`, { defaultValue: r.message ?? r.code }) : r.message);
@@ -125,6 +251,13 @@ export function MailDnsRecordsCard({ status, error, checking, onCheck, canFix = 
   const [fixFocus, setFixFocus] = useState<string | null>(null);
   const fixEnabled = canFix && !!status?.zoneHosted;
   const fixableCount = fixEnabled ? (status?.records ?? []).filter(rowFixable).length : 0;
+  const [prompting, setPrompting] = useState(false);
+  const promptHandled = useRef(0);
+  useEffect(() => {
+    if (!fixPrompt || fixPrompt === promptHandled.current || !status) return;
+    promptHandled.current = fixPrompt;
+    if (status.shadowed && fixableCount > 0) { setPrompting(true); setFixFocus(''); }
+  }, [fixPrompt, status, fixableCount]);
   return (
     <Card
       title={t('mail.dns.title') || 'DNS records'}
@@ -132,7 +265,7 @@ export function MailDnsRecordsCard({ status, error, checking, onCheck, canFix = 
       actions={
         <div className="flex items-center gap-2">
           {fixableCount > 0 && (
-            <Button size="sm" onClick={() => setFixFocus('')}>
+            <Button size="sm" onClick={() => { setPrompting(false); setFixFocus(''); }}>
               <Wrench size={13} className="mr-1.5" />{t('mail.dns.fix.fixAll') || 'Fix all'}
             </Button>
           )}
@@ -152,31 +285,10 @@ export function MailDnsRecordsCard({ status, error, checking, onCheck, canFix = 
             {status.healthy ? <Pill tone="green">{t('mail.dns.healthy') || 'everything is right'}</Pill> : <Pill tone="red">{t('mail.dns.unhealthy') || 'to fix'}</Pill>}
             <span>{status.checkedAt ? t('mail.dns.checkedAt', { date: new Date(status.checkedAt).toLocaleString(i18n.language), defaultValue: 'last check {{date}}' }) : (t('mail.dns.neverChecked') || 'never checked')}</span>
           </div>
-          {status.shadowed ? (
-            <p className="flex items-start gap-2 rounded-md border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-400">
-              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-              <span>{fixEnabled
-                ? (t('mail.dns.shadowedHint') || 'The zone of this domain is hosted on our name servers, but records stored in it override the automatic ones (marked below): use « Fix » to serve the expected records.')
-                : (t('mail.dns.shadowedHintReadOnly') || 'The zone of this domain is hosted on our name servers, but records stored in it override the automatic ones (marked below): someone allowed to edit the DNS zone can fix them.')}</span>
-            </p>
-          ) : status.managed || status.zoneHosted ? (
-            <p className="text-xs text-text-muted">{t('mail.dns.managedHint') || 'The zone of this domain is hosted on our name servers: these records are written automatically.'}</p>
-          ) : (
-            <div className="rounded-md border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-400">
-              <div className="flex items-start gap-2">
-                <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                <div>
-                  <div className="font-medium">{t('mail.dns.externalTitle') || 'To create at your DNS provider'}</div>
-                  <p className="mt-0.5 text-text-secondary">{t('mail.dns.externalHint') || 'The DNS zone of this domain is not hosted here: create the records below at your registrar or DNS provider (copy button on each line), then click « Check now ».'}</p>
-                </div>
-              </div>
-            </div>
-          )}
-          {status.records.length === 0 ? (
-            <p className="py-4 text-center text-xs text-text-muted">{t('mail.dns.noRecord') || 'No record expected (mail disabled or domain pending).'}</p>
-          ) : (
-            <ul className="space-y-2">
-              {status.records.map((r, i) => {
+          <DnsSituationHint status={status} fixEnabled={fixEnabled} zonesHref={zonesHref} />
+          <ul className="space-y-2">
+            <DelegationRow d={delegationOf(status)} />
+            {status.records.map((r, i) => {
                 const msg = message(r);
                 return (
                   <li key={`${r.kind}-${r.name}-${r.type}-${i}`} className="rounded-lg bg-bg-primary p-2.5">
@@ -188,7 +300,7 @@ export function MailDnsRecordsCard({ status, error, checking, onCheck, canFix = 
                       <span className="ml-auto flex items-center gap-2">
                         <DnsCheckPill status={r.status} />
                         {fixEnabled && rowFixable(r) && (
-                          <Button size="sm" variant="secondary" onClick={() => setFixFocus(`${r.kind}:${r.name}`)}>
+                          <Button size="sm" variant="secondary" onClick={() => { setPrompting(false); setFixFocus(`${r.kind}:${r.name}`); }}>
                             <Wrench size={12} className="mr-1" />{t('mail.dns.fix.fix') || 'Fix'}
                           </Button>
                         )}
@@ -211,7 +323,9 @@ export function MailDnsRecordsCard({ status, error, checking, onCheck, canFix = 
                   </li>
                 );
               })}
-            </ul>
+          </ul>
+          {status.records.length === 0 && (
+            <p className="py-4 text-center text-xs text-text-muted">{t('mail.dns.noRecord') || 'No record expected (mail disabled or domain pending).'}</p>
           )}
         </div>
       )}
@@ -221,7 +335,8 @@ export function MailDnsRecordsCard({ status, error, checking, onCheck, canFix = 
           mailDomainId={status.mailDomainId}
           focus={fixFocus || null}
           ptr={status.ptr}
-          onClose={() => setFixFocus(null)}
+          prompt={prompting}
+          onClose={() => { setFixFocus(null); setPrompting(false); }}
           onApplied={(s) => onFixed?.(s)}
         />
       )}

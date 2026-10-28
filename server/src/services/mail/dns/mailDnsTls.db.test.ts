@@ -333,7 +333,17 @@ test('mail-dns-tls on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Test
   assert.equal((await db('mail_dkim_keys').where({ mail_domain_id: mEx, algorithm: 'ed25519' }).first()).status, 'retiring', 'platform default off');
 
   // ── live check with a fake resolver ──
+  // Public NS (delegation of the zone): mutable table, every lookup of the test goes through it.
+  const { setPublicDnsForTests } = await import('../../../utils/publicDns');
+  const OUR_NS = ['ns1.host.net', 'ns2.host.net'];
+  const nsTable: Record<string, string[]> = { 'exemple.fr': OUR_NS };
+  const nsCalls: string[] = [];
+  const nsFake = { txt: async () => [], ns: async (n: string) => { nsCalls.push(n); return nsTable[n] ?? []; } };
+  setPublicDnsForTests(nsFake);
+  t.after(() => setPublicDnsForTests(null));
   const status0 = await mailDnsService.status(clientA1ro, mEx);
+  assert.deepEqual(status0.delegation, { zone: 'exemple.fr', found: [], expected: OUR_NS, status: 'unknown', checked: false }, 'never checked: unknown');
+  assert.deepEqual(nsCalls, [], 'no network on GET');
   const published: Record<string, Record<string, unknown[]>> = { mx: {}, txt: {}, a: {}, aaaa: {}, srv: {} };
   for (const r of status0.records) {
     if (r.type === 'MX') (published.mx[r.name] ??= []).push({ exchange: r.content.replace(/\.$/, ''), priority: r.priority });
@@ -362,6 +372,41 @@ test('mail-dns-tls on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Test
   assert.ok(again.records.every((r) => r.status === 'ok'));
   assert.equal(again.healthy, true);
   assert.equal((await mailDnsService.ptrStatus()).ipv4?.found[0], 'mail.host.net');
+
+  // ── delegation (public NS of the zone apex), stored with the check ──
+  assert.deepEqual(checked.delegation, { zone: 'exemple.fr', found: OUR_NS, expected: OUR_NS, status: 'ours', checked: true });
+  assert.deepEqual(nsCalls, ['exemple.fr'], 'the hosted zone name, no walk-up');
+  nsTable['exemple.fr'] = ['dns1.registrar.example', 'dns2.registrar.example'];
+  assert.equal((await mailDnsService.status(admin, mEx)).delegation.status, 'ours', 'GET reads the stored check');
+  resetMailDnsStateForTests();
+  const elsewhere = await mailDnsService.check(clientA1ro, mEx);
+  assert.deepEqual(elsewhere.delegation, {
+    zone: 'exemple.fr', found: ['dns1.registrar.example', 'dns2.registrar.example'], expected: OUR_NS, status: 'elsewhere', checked: true,
+  });
+  assert.equal(elsewhere.zoneHosted, true);
+  // Sub-domain mail domain: the zone of its account (exemple.fr) is checked.
+  nsTable['exemple.fr'] = ['ns1.host.net', 'dns2.registrar.example'];
+  resetMailDnsStateForTests();
+  const mixed = await mailDnsService.check(clientA1ro, mShop);
+  assert.equal(mixed.delegation.zone, 'exemple.fr');
+  assert.equal(mixed.delegation.status, 'mixed');
+  // Our name servers changed since the check: the stored lookup is classified again.
+  await platformSettings.update({ dns: { enabled: true, nameservers: ['ns1.host.net', 'ns2.host.net', 'dns2.registrar.example'] } });
+  assert.equal((await mailDnsService.status(admin, mShop)).delegation.status, 'ours');
+  await platformSettings.update({ dns: { enabled: true, nameservers: OUR_NS } });
+  // Resolver failure: unknown, the check itself succeeds.
+  setPublicDnsForTests({ txt: async () => [], ns: async (n) => { throw new Error(`NS ${n}: ETIMEOUT`); } });
+  resetMailDnsStateForTests();
+  const failed = await mailDnsService.check(clientA1ro, mEx);
+  assert.deepEqual(failed.delegation, { zone: 'exemple.fr', found: [], expected: OUR_NS, status: 'unknown', checked: true });
+  assert.equal(failed.healthy, true);
+  setPublicDnsForTests(nsFake);
+  // A check stored before the delegation existed: unknown, unchecked.
+  await db('mail_domains').where({ id: mEx }).update({ dns_check: db.raw("dns_check - 'delegation'") });
+  const legacy = await mailDnsService.status(admin, mEx);
+  assert.deepEqual(legacy.delegation, { zone: 'exemple.fr', found: [], expected: OUR_NS, status: 'unknown', checked: false });
+  assert.ok(legacy.records.every((r) => r.status === 'ok'), 'the rest of the old check is kept');
+  nsTable['exemple.fr'] = OUR_NS;
 
   // ── public autoconfig ──
   await mailDnsService.update(req(tenantA), clientA1, mPending, { settings: { mtaSts: 'testing' } });
@@ -442,10 +487,9 @@ test('mail-dns-tls on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Test
   const { PdnsClient, setPdnsClientForTests } = await import('../../dns/pdnsClient');
   const { FakePdns } = await import('../../dns/testing/fakePdns');
   const { syncZone } = await import('../../dns/sync');
-  const { setPublicDnsForTests } = await import('../../../utils/publicDns');
   const fake = await new FakePdns().start();
   setPdnsClientForTests(new PdnsClient({ baseUrl: fake.baseUrl, apiKey: fake.apiKey, timeoutMs: 3000 }));
-  setPublicDnsForTests({ txt: async () => [], ns: async () => ['ns1.host.net', 'ns2.host.net'] });
+  nsTable['example.com'] = OUR_NS;
   const savedFix = { recheckSoon: mailDnsService.recheckSoon, requestSyncZone: dnsService.requestSyncZone };
   mailDnsService.recheckSoon = (id: number) => { calls.push(`recheck:${id}`); };
   dnsService.requestSyncZone = (id: number, reason: string) => { calls.push(`dns-zone:${id}:${reason}`); };
@@ -540,6 +584,14 @@ test('mail-dns-tls on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Test
     const extStatus = await mailDnsService.status(clientA1ro, mFix);
     assert.equal(extStatus.zoneHosted, false);
     assert.equal(extStatus.shadowed, false);
+    // Zone not hosted here: the apex is found by walking up, its NS point elsewhere.
+    nsTable['example.com'] = ['dns1.registrar.example', 'dns2.registrar.example'];
+    nsCalls.length = 0;
+    resetMailDnsStateForTests();
+    const extChecked = await mailDnsService.check(clientA1ro, mFix);
+    assert.equal(extChecked.delegation.zone, 'example.com');
+    assert.equal(extChecked.delegation.status, 'elsewhere');
+    assert.deepEqual(nsCalls, ['example.com']);
   } finally {
     mailDnsService.recheckSoon = savedFix.recheckSoon;
     dnsService.requestSyncZone = savedFix.requestSyncZone;
