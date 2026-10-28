@@ -38,8 +38,11 @@ import { STALWART_API_URL } from './constants';
 //      R-STALWART-APPPW: no source-network restriction possible).
 //      Verified formats: $6$ (rounds=), $5$, $1$, $2y$/$2b$, {SSHA512},
 //      {SSHA256}, {SSHA} (pwhash crate + Stalwart's {SCHEME} prefixes).
-//  H6  Permissions "authenticate", "email-send", "email-receive" exist and a
-//      name in `disabledPermissions` revokes it from the "user" role.
+//  H6  Permissions "authenticate", "email-send", "email-receive",
+//      "jmap-email-submission-set" exist and a name in `disabledPermissions`
+//      revokes it from the "user" role. email-send only gates SMTP
+//      submission: JMAP EmailSubmission/set needs jmap-email-submission-set
+//      revoked too (constants.ts PERM_JMAP_SUBMIT).
 //  H7  An email "@domain" on a list principal is the domain catch-all
 //      (session.rcpt.catch-all = true); list principals deliver to `members`
 //      (local principal names) and `externalMembers` (any address).

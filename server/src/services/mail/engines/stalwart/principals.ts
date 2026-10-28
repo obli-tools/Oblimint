@@ -4,7 +4,7 @@ import type { MailDesiredState } from '../../driver';
 import { MailDriverError } from '../../driver';
 import type { PrincipalCreate, PrincipalPatchOp, StalwartPrincipal } from './api';
 import {
-  aliasListName, catchAllListName, LIST_PREFIX, MANAGED_PERMISSIONS, PERM_LOGIN, PERM_RECEIVE, PERM_SEND,
+  aliasListName, catchAllListName, LIST_PREFIX, MANAGED_PERMISSIONS, PERM_JMAP_SUBMIT, PERM_LOGIN, PERM_RECEIVE, PERM_SEND,
 } from './constants';
 import { domainName, invalid, isMailAddress, mailAddress, positiveInt } from './validate';
 
@@ -20,7 +20,7 @@ import { domainName, invalid, isMailAddress, mailAddress, positiveInt } from './
 //    its addresses are released (it holds no data; mailbox data stays on the
 //    individuals until purge());
 //  - mailboxes of an inactive domain keep their individual (data) but lose
-//    every address (like a detach): emails = [], no secret, the three
+//    every address (like a detach): emails = [], no secret, the managed
 //    permissions disabled — they never count as a detach for the guard;
 //  - one `individual` per mailbox, name = address (the login), emails = the
 //    address + every alias whose ONLY target is that mailbox (sending as an
@@ -29,14 +29,15 @@ import { domainName, invalid, isMailAddress, mailAddress, positiveInt } from './
 //    engine cannot verify (e.g. an imported $2x$) does NOT abort the sync: the
 //    mailbox gets no secret (no login) and the failure is reported under its
 //    domain (secretErrors → domainErrors); quota in
-//    bytes, disabledPermissions ⊇ {authenticate | email-send | email-receive}
-//    from the login / send / receive flags; loginEnabled=false also drops the
+//    bytes, disabledPermissions ⊇ {authenticate | email-send +
+//    jmap-email-submission-set | email-receive} from the login / send /
+//    receive flags; loginEnabled=false also drops the
 //    secrets (no login whatever the permission model);
 //  - one `list` per other alias (oblimint-alias-<id>) and per catch-all
 //    (oblimint-catchall-<domainId>, email "@domain"); lists hold no data and
 //    are deleted when they leave the state;
 //  - an individual missing from the state is DETACHED, never deleted: emails
-//    and secrets cleared, the three permissions disabled (its data waits for
+//    and secrets cleared, the managed permissions disabled (its data waits for
 //    purge()). Detaching more than half of the attached mailboxes (and more
 //    than one) is refused without allowMassRemoval (MailDriverError
 //    'massRemoval').
@@ -204,7 +205,8 @@ export function buildDesiredPrincipals(state: MailDesiredState, now: Date): Desi
     const login = mb.loginEnabled && isServed;
     const disabled: string[] = [];
     if (!login) disabled.push(PERM_LOGIN);
-    if (!mb.sendEnabled || !login) disabled.push(PERM_SEND);
+    // Sending = SMTP submission (email-send) AND JMAP submission: both go together.
+    if (!mb.sendEnabled || !login) disabled.push(PERM_SEND, PERM_JMAP_SUBMIT);
     if (!mb.receiveEnabled || !isServed) disabled.push(PERM_RECEIVE);
     const quotaMb = mb.quotaMb === null ? 0 : positiveInt(mb.quotaMb, 'mailbox quota', 16 * 1024 * 1024);
     let secrets: string[] = [];

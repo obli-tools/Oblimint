@@ -20,7 +20,7 @@ import { domainName, positiveInt } from './validate';
 //    every domain of an account whose rate is known — not the mailbox list:
 //    the settings only move with the first / last mailbox of an account or a
 //    rate change;
-//  - the send toggle is the email-send permission of the principal (live,
+//  - the send toggle is the email-send + jmap-email-submission-set permissions of the principal (live,
 //    principals.ts), never a limiter change: the limits ignore it;
 //  - a fallback rule applies the platform's STRICTEST rate to any
 //    authenticated sender of a domain without a rule, so a mailbox is never

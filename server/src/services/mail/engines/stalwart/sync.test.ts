@@ -222,15 +222,15 @@ test('stalwart sync: updates, address moves, disable instead of delete, detach',
   assert.deepEqual(p('oblimint-alias-10').emails, ['info@exemple.fr']);
   assert.deepEqual(p('oblimint-alias-10').members, ['contact@exemple.fr', 'md5@exemple.fr']);
   assert.deepEqual(p('md5@exemple.fr').secrets, [], 'no login at all');
-  assert.deepEqual([...p('md5@exemple.fr').disabledPermissions].sort(), ['authenticate', 'email-send']);
+  assert.deepEqual([...p('md5@exemple.fr').disabledPermissions].sort(), ['authenticate', 'email-send', 'jmap-email-submission-set']);
   assert.deepEqual(p('md5@exemple.fr').emails, ['md5@exemple.fr'], 'still receives');
-  assert.deepEqual(p('blf@autre.fr').disabledPermissions, ['email-send']);
+  assert.deepEqual([...p('blf@autre.fr').disabledPermissions].sort(), ['email-send', 'jmap-email-submission-set']);
   assert.equal(p('blf@autre.fr').quota, 512 * 1048576);
   const gone = p('sha256@autre.fr');
   assert.ok(gone, 'detached, not deleted (data kept for purge)');
   assert.deepEqual(gone.emails, []);
   assert.deepEqual(gone.secrets, []);
-  assert.deepEqual([...gone.disabledPermissions].sort(), ['authenticate', 'email-receive', 'email-send']);
+  assert.deepEqual([...gone.disabledPermissions].sort(), ['authenticate', 'email-receive', 'email-send', 'jmap-email-submission-set']);
   assert.equal(fake.principals.has('oblimint-catchall-2'), false, 'catch-all list (no data) removed');
   const script = fake.sieve.get('contact@exemple.fr')!.get('oblimint')!;
   assert.match(script.content, /redirect "copie@gmail\.com";/);
@@ -348,7 +348,7 @@ test('stalwart sync: an inactive domain is never local (MA10) and leaves the dir
   const gm = fake.principals.get('gm@gmail.com')!;
   assert.deepEqual(gm.emails, [], 'no address served');
   assert.deepEqual(gm.secrets, []);
-  assert.deepEqual([...gm.disabledPermissions].sort(), ['authenticate', 'email-receive', 'email-send']);
+  assert.deepEqual([...gm.disabledPermissions].sort(), ['authenticate', 'email-receive', 'email-send', 'jmap-email-submission-set']);
   assert.equal(fake.principals.has('oblimint-alias-12'), false);
   assert.equal(fake.principals.has('oblimint-alias-13'), false, 'no target left');
   assert.equal(fake.principals.has('oblimint-catchall-3'), false);
@@ -562,7 +562,7 @@ test('stalwart sync (report P4): mailbox create / delete, send toggle, password,
   // Send toggle = the email-send permission of the principal.
   st = baseState();
   st.mailboxes.push(mailbox(9, 'nouveau@autre.fr', contactHash, { sendEnabled: false }));
-  await live('send off', st, () => assert.deepEqual(fake.principals.get('nouveau@autre.fr')!.disabledPermissions, ['email-send']), true);
+  await live('send off', st, () => assert.deepEqual([...fake.principals.get('nouveau@autre.fr')!.disabledPermissions].sort(), ['email-send', 'jmap-email-submission-set']), true);
   st.mailboxes[st.mailboxes.length - 1] = mailbox(9, 'nouveau@autre.fr', contactHash);
   await live('send on', st, () => assert.deepEqual(fake.principals.get('nouveau@autre.fr')!.disabledPermissions, []));
   // Password + quota.

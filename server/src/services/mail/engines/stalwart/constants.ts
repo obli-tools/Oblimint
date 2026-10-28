@@ -61,7 +61,16 @@ export const catchAllListName = (domainId: number): string => `${LIST_PREFIX}cat
 export const PERM_LOGIN = 'authenticate';
 export const PERM_SEND = 'email-send';
 export const PERM_RECEIVE = 'email-receive';
-export const MANAGED_PERMISSIONS = [PERM_LOGIN, PERM_SEND, PERM_RECEIVE] as const;
+/**
+ * JMAP EmailSubmission/set. Stalwart 0.12.4 checks email-send on SMTP
+ * submission only: a principal without email-send still SENDS through JMAP
+ * (its own password, or the webmail's impersonation) — verified on the Linux
+ * test host. Revoked together with email-send (send toggle off, outbound
+ * suspended, login off); refused there with "forbidden" while drafts
+ * (Email/set) keep working.
+ */
+export const PERM_JMAP_SUBMIT = 'jmap-email-submission-set';
+export const MANAGED_PERMISSIONS = [PERM_LOGIN, PERM_SEND, PERM_JMAP_SUBMIT, PERM_RECEIVE] as const;
 
 /**
  * Sync bookkeeping (fingerprints only, never a secret), kept in the
