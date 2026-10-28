@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cookieHeader, FailureCounter, readCookie, requestHost, sameOrigin, throttleKey, WEBMAIL_CSP } from './guards';
+import { cookieHeader, FailureCounter, networkKey, readCookie, requestHost, sameOrigin, throttleKey, WEBMAIL_CSP } from './guards';
 import {
   hashSessionId, mailboxLoginAllowed, newSessionId, SESSION_ID_RE, sessionState, shouldTouch, tokensEqual, WEBMAIL_IDLE_MS, WEBMAIL_TOUCH_EVERY_MS,
 } from './session';
@@ -67,6 +67,10 @@ test('login throttle keys: IPv4 as is, IPv6 per /64', () => {
   assert.equal(throttleKey('2001:db8:1:2:3:4:5:6'), '2001:db8:1:2::/64');
   assert.equal(throttleKey('2001:db8:1:2::9'), '2001:db8:1:2::/64');
   assert.equal(throttleKey('2001:db8::1'), '2001:db8:0:0::/64');
+  // Per-mailbox key: the client NETWORK (IPv4 /24, IPv6 /64).
+  assert.equal(networkKey('203.0.113.7'), '203.0.113.0/24');
+  assert.equal(networkKey('::ffff:203.0.113.250'), '203.0.113.0/24');
+  assert.equal(networkKey('2001:db8:1:2::9'), '2001:db8:1:2::/64');
 });
 
 test('failure counter: sliding window and bounded', () => {

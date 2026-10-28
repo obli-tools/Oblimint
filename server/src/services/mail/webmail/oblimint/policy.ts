@@ -9,7 +9,17 @@
 //    principal might see through ACLs are never reachable);
 //  - a method allowlist (no copy / import / parse / blob / identity, mailbox,
 //    sieve, vacation, principal or push-subscription changes);
-//  - bounded requests (calls, ids, limits, body value sizes);
+//  - bounded requests: calls, ids (no duplicate; explicit lists for the
+//    */get that would otherwise return everything), query limits, and the
+//    bodies an Email/get may return — an Email/get with body values takes an
+//    EXPLICIT list of at most MAX_BODY_IDS ids, each body value is cut at
+//    MAX_BODY_VALUE_BYTES, and the whole request stays under MAX_BODY_BUDGET
+//    (ids × maxBodyValueBytes summed over its calls). The engine's answer is
+//    also read with a hard byte cap (engine.ts) and the proxy bounds the
+//    concurrent calls (app.ts): a small request can never make the panel
+//    buffer an unbounded answer;
+//  - sending refused when the mailbox may not send (ctx.sendAllowed: the
+//    desired state's rule, read from the database for the request);
 //  - sending: EmailSubmission/set only CREATES, for an Email created by an
 //    Email/set of the SAME request (a received message can never be re-sent
 //    with its forged From), with one of the mailbox's identities and no
@@ -37,10 +47,20 @@ export const ALLOWED_METHODS: ReadonlySet<string> = new Set([
 ]);
 
 export const MAX_METHOD_CALLS = 24;
+/** Ids of an Email/set destroy; maxChanges of the changes / queryChanges methods. */
 export const MAX_IDS = 1000;
+/** Explicit ids of a get method without body values (and SearchSnippet/get emailIds). */
+export const MAX_GET_IDS = 250;
+/** Explicit ids of an Email/get that fetches body values. */
+export const MAX_BODY_IDS = 32;
 export const MAX_QUERY_LIMIT = 200;
-export const MAX_BODY_VALUE_BYTES = 2_000_000;
+/** Each body value is cut here (isTruncated: true; the client fetches the part's blob when it needs more). */
+export const MAX_BODY_VALUE_BYTES = 256 * 1024;
+/** Sum of ids × maxBodyValueBytes over the body-fetching Email/get calls of one request. */
+export const MAX_BODY_BUDGET = 8 * 1024 * 1024;
 export const MAX_SET_ENTRIES = 500;
+/** Get methods that would return EVERY object of the account without an explicit id list. */
+const EXPLICIT_IDS_METHODS: ReadonlySet<string> = new Set(['Email/get', 'Thread/get']);
 
 const CALL_ID_RE = /^[A-Za-z0-9_.#-]{1,64}$/;
 const CREATION_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -50,7 +70,8 @@ const ADDRESS_RE = /^[^\s@<>"]{1,64}@[A-Za-z0-9.-]{1,253}$/;
 export type JmapCall = [string, Record<string, unknown>, string];
 
 export class JmapPolicyError extends Error {
-  constructor(message: string, public readonly status: 400 | 403 = 400) {
+  /** `code`: error code for the browser when more specific than forbidden / invalidRequest. */
+  constructor(message: string, public readonly status: 400 | 403 = 400, public readonly code: 'sendDisabled' | null = null) {
     super(message);
     this.name = 'JmapPolicyError';
   }
@@ -63,6 +84,12 @@ export interface JmapPolicyContext {
   identityIds: ReadonlySet<string>;
   /** Lower-case e-mail addresses of those identities (allowed From). */
   identityEmails: ReadonlySet<string>;
+  /**
+   * The mailbox may send now (enabled, domain active, account served, its
+   * send toggle on, outbound not suspended: the desired state's rule), read
+   * from the database for the request. false refuses every EmailSubmission/set.
+   */
+  sendAllowed: boolean;
 }
 
 const bad = (m: string): never => { throw new JmapPolicyError(m, 400); };
@@ -77,14 +104,48 @@ export function isPlainObject(v: unknown): v is Record<string, unknown> {
 /** Keys that could reach another account or a prototype. */
 const FORBIDDEN_ARG_KEYS = new Set(['fromAccountId', 'toAccountId', '__proto__', 'constructor', 'prototype']);
 
-function checkIdList(v: unknown, what: string): void {
-  if (v === null || v === undefined) return;
+/** A list of ids (null / absent accepted): valid, at most `max`, no duplicate (duplicates multiply the answer). Returns its length. */
+function checkIdList(v: unknown, what: string, max = MAX_IDS): number {
+  if (v === null || v === undefined) return 0;
   if (!Array.isArray(v)) bad(`${what}: expected a list of ids`);
   const list = v as unknown[];
-  if (list.length > MAX_IDS) bad(`${what}: at most ${MAX_IDS} ids`);
+  if (list.length > max) bad(`${what}: at most ${max} ids`);
+  const seen = new Set<string>();
   for (const id of list) {
     if (typeof id !== 'string' || !(JMAP_ID_RE.test(id) || (id.startsWith('#') && CREATION_ID_RE.test(id.slice(1))))) bad(`${what}: invalid id`);
+    if (seen.has(id as string)) bad(`${what}: duplicate id`);
+    seen.add(id as string);
   }
+  return list.length;
+}
+
+const BODY_FETCH_FLAGS = ['fetchTextBodyValues', 'fetchHTMLBodyValues', 'fetchAllBodyValues'] as const;
+
+/**
+ * Email/get: body values only for an explicit, short id list, each value cut
+ * at MAX_BODY_VALUE_BYTES. Returns what the call adds to the request's body
+ * budget (ids × maxBodyValueBytes; 0 without body values).
+ */
+function checkEmailGet(args: Record<string, unknown>): number {
+  let bodies = false;
+  for (const f of BODY_FETCH_FLAGS) {
+    const v = args[f];
+    if (v === undefined || v === null || v === false) continue;
+    if (v !== true) bad(`Email/get: ${f} must be a boolean`);
+    bodies = true;
+  }
+  const max = args.maxBodyValueBytes;
+  if (max !== undefined && max !== null && (typeof max !== 'number' || !Number.isInteger(max) || max < 0)) bad('maxBodyValueBytes: expected a non-negative integer');
+  if (!bodies) {
+    if (typeof max === 'number' && max > MAX_BODY_VALUE_BYTES) args.maxBodyValueBytes = MAX_BODY_VALUE_BYTES;
+    return 0;
+  }
+  if (args['#ids'] !== undefined || !Array.isArray(args.ids)) bad('Email/get: body values need an explicit list of ids');
+  const n = checkIdList(args.ids, 'Email/get ids', MAX_BODY_IDS);
+  // 0 means "no limit" in JMAP: never sent as such.
+  const per = typeof max === 'number' && max > 0 ? Math.min(max, MAX_BODY_VALUE_BYTES) : MAX_BODY_VALUE_BYTES;
+  args.maxBodyValueBytes = per;
+  return n * per;
 }
 
 /** A result reference ({ resultOf, name, path }) to an EARLIER call of the request. */
@@ -250,6 +311,7 @@ export function validateJmapRequest(body: unknown, ctx: JmapPolicyContext): Jmap
   if (calls.length > MAX_METHOD_CALLS) bad(`at most ${MAX_METHOD_CALLS} method calls`);
   const st: RequestState = { callIds: new Set(), createdEmails: new Set() };
   const out: JmapCall[] = [];
+  let bodyBudget = 0;
   for (const raw of calls) {
     if (!Array.isArray(raw) || raw.length !== 3) bad('invalid method call');
     const [name, argsRaw, callId] = raw as [unknown, unknown, unknown];
@@ -267,14 +329,24 @@ export function validateJmapRequest(body: unknown, ctx: JmapPolicyContext): Jmap
     }
     if (args.accountId !== undefined && args.accountId !== ctx.accountId) forbid(`${name}: another account cannot be accessed`);
     args.accountId = ctx.accountId;
-    if (args.ids !== undefined) checkIdList(args.ids, `${name} ids`);
+    const method = name as string;
+    if (method.endsWith('/get')) {
+      // ids null / absent = EVERY object of the account: only where that set is small.
+      if (EXPLICIT_IDS_METHODS.has(method) && args['#ids'] === undefined && !Array.isArray(args.ids)) bad(`${name}: an explicit list of ids is expected`);
+      if (args['#ids'] !== undefined && args.ids !== undefined) bad(`${name}: ids and #ids together`);
+      checkIdList(args.ids, `${name} ids`, MAX_GET_IDS);
+    } else if (args.ids !== undefined) {
+      checkIdList(args.ids, `${name} ids`);
+    }
 
     switch (name) {
       case 'Email/get':
-        capNumber(args, 'maxBodyValueBytes', MAX_BODY_VALUE_BYTES);
-        if (args.fetchAllBodyValues === true || args.fetchTextBodyValues === true || args.fetchHTMLBodyValues === true) {
-          if (args.maxBodyValueBytes === undefined || args.maxBodyValueBytes === null || args.maxBodyValueBytes === 0) args.maxBodyValueBytes = MAX_BODY_VALUE_BYTES;
-        }
+        bodyBudget += checkEmailGet(args);
+        if (bodyBudget > MAX_BODY_BUDGET) bad('Email/get: too many message bodies in one request');
+        break;
+      case 'SearchSnippet/get':
+        if (args['#emailIds'] === undefined && !Array.isArray(args.emailIds)) bad('SearchSnippet/get: an explicit list of email ids is expected');
+        checkIdList(args.emailIds, 'SearchSnippet/get emailIds', MAX_GET_IDS);
         break;
       case 'Email/query':
       case 'Mailbox/query':
@@ -292,6 +364,7 @@ export function validateJmapRequest(body: unknown, ctx: JmapPolicyContext): Jmap
         checkEmailSet(args, ctx, st);
         break;
       case 'EmailSubmission/set':
+        if (ctx.sendAllowed !== true) throw new JmapPolicyError('Sending is disabled for this mailbox', 403, 'sendDisabled');
         checkSubmissionSet(args, ctx, st);
         break;
       default:

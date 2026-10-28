@@ -119,6 +119,13 @@ export function throttleKey(ip: string): string {
   return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '') || '0').join(':')}::/64`;
 }
 
+/** Client NETWORK of an address (per-mailbox login throttle): IPv4 /24, IPv6 /64. */
+export function networkKey(ip: string): string {
+  const k = throttleKey(ip);
+  const m = /^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/.exec(k);
+  return m ? `${m[1]}.0/24` : k;
+}
+
 /** Sliding-window failure counter (login throttle, per key). Memory only, bounded. */
 export class FailureCounter {
   private readonly hits = new Map<string, number[]>();

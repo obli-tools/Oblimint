@@ -10,24 +10,17 @@ import { MemoryWebmailSessionStore } from './session';
 export interface FakeMailbox extends MailboxAuthRow {
   password: string;
   jmapAccountId: string;
-  /** The engine refuses the password (desynchronized hash). */
-  engineRefuses?: boolean;
 }
 
 export class FakeEngine implements WebmailEngine {
   calls: Array<{ address: string; methodCalls: JmapCall[] }> = [];
-  verifyCalls: string[] = [];
   down = false;
+  /** Each call() waits for this (concurrency tests); null = answers at once. */
+  gate: Promise<void> | null = null;
   constructor(public readonly boxes: Map<string, FakeMailbox>) {}
 
-  async verifyPassword(address: string, password: string): Promise<boolean> {
-    if (this.down) throw new WebmailEngineError('down', 502);
-    this.verifyCalls.push(address);
-    const b = this.boxes.get(address);
-    return !!b && !b.engineRefuses && b.password === password;
-  }
-
   async endpoints(address: string): Promise<JmapEndpoints> {
+    if (this.down) throw new WebmailEngineError('down', 502);
     const b = this.boxes.get(address);
     if (!b) throw new WebmailEngineError('refused', 401);
     return { accountId: b.jmapAccountId, apiPath: '/jmap/', uploadPath: '/u/{accountId}/', downloadPath: '/d/{accountId}/{blobId}', eventSourcePath: '/e', capabilities: [] };
@@ -35,6 +28,7 @@ export class FakeEngine implements WebmailEngine {
 
   async call(address: string, methodCalls: JmapCall[]): Promise<JmapResponse> {
     this.calls.push({ address, methodCalls });
+    if (this.gate) await this.gate;
     return { methodResponses: methodCalls.map(([n, a, id]) => [n, { accountId: a.accountId, list: [], echoedBy: address }, id] as JmapCall), sessionState: 's1' };
   }
 
@@ -62,8 +56,21 @@ export class FakeEngine implements WebmailEngine {
     return new Response(`<script>alert(1)</script> ${address} ${accountId} ${blobId}`, { headers: { 'Content-Type': 'text/html' } });
   }
 
-  async eventSource(): Promise<Response> {
-    throw new WebmailEngineError('no stream in tests', 502);
+  /** Open event streams (a ping, then nothing until the caller aborts). */
+  openStreams = 0;
+  async eventSource(_address: string, signal: AbortSignal): Promise<Response> {
+    const self = this;
+    self.openStreams++;
+    let closed = false;
+    const close = () => { if (!closed) { closed = true; self.openStreams--; } };
+    const body = new ReadableStream<Uint8Array>({
+      start(ctrl) {
+        ctrl.enqueue(new TextEncoder().encode('event: ping\ndata: {}\n\n'));
+        signal.addEventListener('abort', () => { close(); try { ctrl.close(); } catch { /* closed */ } }, { once: true });
+      },
+      cancel() { close(); },
+    });
+    return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
   }
 }
 
@@ -85,6 +92,7 @@ export function fakeAuthDeps(over: Partial<WebmailAuthDeps> = {}) {
   const failures: Array<{ ip: string; username: string | null }> = [];
   const banned = new Set<string>();
   const ssoTokens = new Map<string, number>();
+  const sleeps: number[] = [];
   let now = 1_700_000_000_000;
   const deps: WebmailAuthDeps = {
     store,
@@ -98,10 +106,12 @@ export function fakeAuthDeps(over: Partial<WebmailAuthDeps> = {}) {
       ssoTokens.delete(token);
       return { mailboxId };
     },
+    peekSso: async (token) => (typeof token === 'string' && ssoTokens.has(token) ? { mailboxId: ssoTokens.get(token)! } : null),
     isBanned: async (ip) => banned.has(ip),
     recordFailure: (ip, username) => { failures.push({ ip, username }); },
     maxUploadBytes: async () => 1024,
+    sleep: async (ms) => { sleeps.push(ms); },
     ...over,
   };
-  return { deps, boxes, engine, store, failures, banned, ssoTokens, advance: (ms: number) => { now += ms; }, now: () => now };
+  return { deps, boxes, engine, store, failures, banned, ssoTokens, sleeps, advance: (ms: number) => { now += ms; }, now: () => now };
 }

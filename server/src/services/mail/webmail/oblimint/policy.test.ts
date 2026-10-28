@@ -1,18 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ALLOWED_METHODS, attachmentDisposition, isValidBlobId, JmapPolicyError, MAX_METHOD_CALLS, MAX_QUERY_LIMIT, safeFileName, uploadContentType,
-  validateJmapRequest, type JmapPolicyContext,
+  ALLOWED_METHODS, attachmentDisposition, isValidBlobId, JmapPolicyError, MAX_BODY_BUDGET, MAX_BODY_IDS, MAX_BODY_VALUE_BYTES, MAX_GET_IDS,
+  MAX_METHOD_CALLS, MAX_QUERY_LIMIT, safeFileName, uploadContentType, validateJmapRequest, type JmapPolicyContext,
 } from './policy';
 
 const ctx: JmapPolicyContext = {
   accountId: 'acctA',
   identityIds: new Set(['idA']),
   identityEmails: new Set(['alice@example.test']),
+  sendAllowed: true,
 };
 
-function refused(body: unknown, status: 400 | 403, re?: RegExp): void {
-  assert.throws(() => validateJmapRequest(body, ctx), (err: unknown) => {
+function refused(body: unknown, status: 400 | 403, re?: RegExp, c: JmapPolicyContext = ctx): void {
+  assert.throws(() => validateJmapRequest(body, c), (err: unknown) => {
     assert.ok(err instanceof JmapPolicyError, String(err));
     assert.equal((err as JmapPolicyError).status, status, (err as Error).message);
     if (re) assert.match((err as Error).message, re);
@@ -66,12 +67,65 @@ test('limits are capped, not trusted', () => {
     call('Email/query', { limit: 100000 }, 'q'),
     call('Email/get', { ids: ['a'], fetchHTMLBodyValues: true }, 'g'),
     call('Email/get', { ids: ['a'], maxBodyValueBytes: 1e12 }, 'h'),
+    call('Email/get', { ids: ['b'], fetchTextBodyValues: true, maxBodyValueBytes: 0 }, 'i'),
+    call('Email/get', { ids: ['c'], fetchAllBodyValues: true, maxBodyValueBytes: 1000 }, 'j'),
   ] }, ctx);
   assert.equal(out[0][1].limit, MAX_QUERY_LIMIT);
-  assert.equal(out[1][1].maxBodyValueBytes, 2_000_000);
-  assert.equal(out[2][1].maxBodyValueBytes, 2_000_000);
+  assert.equal(out[1][1].maxBodyValueBytes, MAX_BODY_VALUE_BYTES);
+  assert.equal(out[2][1].maxBodyValueBytes, MAX_BODY_VALUE_BYTES);
+  assert.equal(out[3][1].maxBodyValueBytes, MAX_BODY_VALUE_BYTES, '0 (no limit) is never forwarded');
+  assert.equal(out[4][1].maxBodyValueBytes, 1000);
+  assert.ok(MAX_BODY_VALUE_BYTES <= 256 * 1024);
   refused({ methodCalls: [call('Email/query', { limit: -1 })] }, 400);
+  refused({ methodCalls: [call('Email/get', { ids: ['a'], fetchAllBodyValues: true, maxBodyValueBytes: -5 })] }, 400);
+  refused({ methodCalls: [call('Email/get', { ids: ['a'], fetchAllBodyValues: 'yes' })] }, 400);
 });
+
+// ── response amplification (review: 6 KB request → 61.6 MB buffered) ──
+
+test('amplification: duplicate ids are refused (every list of ids)', () => {
+  const dup = Array(300).fill('Mabc');
+  refused({ methodCalls: [call('Email/get', { ids: dup, properties: ['bodyValues', 'textBody'], fetchAllBodyValues: true }, 'g')] }, 400);
+  refused({ methodCalls: [call('Email/get', { ids: ['a', 'b', 'a'] })] }, 400, /duplicate/);
+  refused({ methodCalls: [call('Thread/get', { ids: ['t', 't'] })] }, 400, /duplicate/);
+  refused({ methodCalls: [call('Mailbox/get', { ids: ['m', 'm'] })] }, 400, /duplicate/);
+  refused({ methodCalls: [call('Email/set', { destroy: ['x', 'x'] })] }, 400, /duplicate/);
+  refused({ methodCalls: [call('SearchSnippet/get', { emailIds: ['x', 'x'], filter: {} })] }, 400, /duplicate/);
+});
+
+test('amplification: bodies only for a short EXPLICIT id list, within a per-request budget', () => {
+  const ids = (n: number, p = 'M') => Array.from({ length: n }, (_, i) => `${p}${i}`);
+  validateJmapRequest({ methodCalls: [call('Email/get', { ids: ids(MAX_BODY_IDS), fetchHTMLBodyValues: true })] }, ctx);
+  refused({ methodCalls: [call('Email/get', { ids: ids(MAX_BODY_IDS + 1), fetchHTMLBodyValues: true })] }, 400, /at most/);
+  // A result reference cannot be counted: no body values through it.
+  refused({ methodCalls: [
+    call('Email/query', { limit: 200 }, 'q'),
+    call('Email/get', { '#ids': { resultOf: 'q', name: 'Email/query', path: '/ids' }, fetchAllBodyValues: true }, 'g'),
+  ] }, 400, /explicit list/);
+  // Budget over the calls of one request (24 calls × 50 ids would be 300 MB of bodies).
+  const per = Math.floor(MAX_BODY_BUDGET / MAX_BODY_VALUE_BYTES);
+  const calls = Array.from({ length: Math.ceil(per / MAX_BODY_IDS) + 1 }, (_, c) => call('Email/get', { ids: ids(MAX_BODY_IDS, `c${c}-`), fetchAllBodyValues: true }, `g${c}`));
+  refused({ methodCalls: calls }, 400, /too many message bodies/);
+  // Smaller values: more ids fit.
+  validateJmapRequest({ methodCalls: [
+    call('Email/get', { ids: ids(MAX_BODY_IDS, 'a'), fetchAllBodyValues: true, maxBodyValueBytes: 4096 }, 'a'),
+    call('Email/get', { ids: ids(MAX_BODY_IDS, 'b'), fetchAllBodyValues: true, maxBodyValueBytes: 4096 }, 'b'),
+  ] }, ctx);
+});
+
+test('amplification: light gets are bounded, and "every object" (ids null) only where the set is small', () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `M${i}`);
+  validateJmapRequest({ methodCalls: [call('Email/get', { ids: ids(MAX_GET_IDS), properties: ['subject'] })] }, ctx);
+  refused({ methodCalls: [call('Email/get', { ids: ids(MAX_GET_IDS + 1), properties: ['subject'] })] }, 400, /at most/);
+  refused({ methodCalls: [call('Email/get', { ids: null, properties: ['subject'] })] }, 400, /explicit list/);
+  refused({ methodCalls: [call('Email/get', { properties: ['subject'] })] }, 400, /explicit list/);
+  refused({ methodCalls: [call('Thread/get', {})] }, 400, /explicit list/);
+  refused({ methodCalls: [call('SearchSnippet/get', { filter: { text: 'x' } })] }, 400, /explicit list/);
+  refused({ methodCalls: [call('Email/query', {}, 'q'), call('Email/get', { ids: ['a'], '#ids': { resultOf: 'q', name: 'Email/query', path: '/ids' } }, 'g')] }, 400);
+  // Small sets keep ids: null.
+  validateJmapRequest({ methodCalls: [call('Mailbox/get', { ids: null }, 'm'), call('Identity/get', { ids: null }, 'i'), call('Quota/get', { ids: null }, 'q')] }, ctx);
+});
+
 
 test('result references must point to an earlier call of an allowed method', () => {
   const ok = validateJmapRequest({ methodCalls: [
@@ -172,4 +226,21 @@ test('blob ids, upload types and download names are sanitized', () => {
   const d = attachmentDisposition('rapport été "final".pdf');
   assert.match(d, /^attachment; filename="[^"\r\n]*"; filename\*=UTF-8''/);
   assert.doesNotMatch(d, /[\r\n]/);
+});
+
+// ── sending blocked (review: suspended accounts kept sending through JMAP) ──
+
+test('EmailSubmission/set is refused with sendDisabled when the mailbox may not send; drafts still work', () => {
+  const off = { ...ctx, sendAllowed: false };
+  const body = { methodCalls: [
+    call('Email/set', { create: { m: draft() } }, 'e'),
+    call('EmailSubmission/set', { create: { s: { identityId: 'idA', emailId: '#m' } } }, 's'),
+  ] };
+  assert.throws(() => validateJmapRequest(body, off), (err: unknown) => {
+    assert.ok(err instanceof JmapPolicyError);
+    assert.equal((err as JmapPolicyError).status, 403);
+    assert.equal((err as JmapPolicyError).code, 'sendDisabled');
+    return true;
+  });
+  validateJmapRequest({ methodCalls: [call('Email/set', { create: { d: draft() } }, 'e')] }, off);
 });

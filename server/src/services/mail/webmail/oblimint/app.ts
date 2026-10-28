@@ -29,6 +29,13 @@ import { parseVacationInput, VacationInputError } from './vacation';
 //   anything else  webmail.html (the SPA)
 // Every response carries the security headers of guards.ts; the page carries
 // the strict CSP of the host, the API a sandbox CSP.
+//
+// Resource bounds: a coarse per-client-address limiter before anything
+// touches the database, then the API limiter keyed by the LIVE session (a
+// cookie that maps to no session counts as its client address); JMAP calls
+// bounded in flight per session, per mailbox and overall (each buffers one
+// engine answer, itself capped in engine.ts); event streams per session, per
+// mailbox and overall; the autoresponder write rate-limited per session.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface WebmailAppDeps {
@@ -40,6 +47,12 @@ export interface WebmailAppDeps {
   secure: boolean;
   clientIp(req: Request): string;
   maxUploadBytes(mailboxId: number): Promise<number>;
+  /**
+   * The mailbox may send now (desired state's rule: login allowed, send
+   * toggle on, outbound of the account not suspended). Read for every
+   * request carrying an EmailSubmission/set; an error refuses the send.
+   */
+  sendAllowed(mailboxId: number): Promise<boolean>;
   vacation: {
     get(mailboxId: number): Promise<MailAutoresponder | null>;
     set(mailboxId: number, value: MailAutoresponder, ip: string | null): Promise<MailAutoresponder | null>;
@@ -47,10 +60,39 @@ export interface WebmailAppDeps {
   /** Directory holding webmail.html + assets/ (null: API only). */
   clientDist: string | null;
   now(): number;
-  /** Requests per minute (API, per session or address). */
+  /** Requests per minute (API, per live session, else per client address). */
   apiRatePerMinute?: number;
+  /** Requests per minute per client address, whatever the session (before any database read). */
+  apiIpRatePerMinute?: number;
+  /** PUT /vacation per minute and session. */
+  vacationRatePerMinute?: number;
+  /** JMAP calls in flight (each buffers one engine answer). */
+  maxJmapPerSession?: number;
+  maxJmapPerMailbox?: number;
+  maxJmap?: number;
   maxStreamsPerSession?: number;
+  maxStreamsPerMailbox?: number;
   maxStreams?: number;
+}
+
+/** In-flight counter per key with a global total (JMAP calls, event streams). */
+class InFlight {
+  private readonly perKey = new Map<string, number>();
+  total = 0;
+  count(key: string): number {
+    return this.perKey.get(key) ?? 0;
+  }
+  add(...keys: string[]): void {
+    for (const k of keys) this.perKey.set(k, this.count(k) + 1);
+    this.total++;
+  }
+  remove(...keys: string[]): void {
+    for (const k of keys) {
+      const n = this.count(k) - 1;
+      if (n > 0) this.perKey.set(k, n); else this.perKey.delete(k);
+    }
+    this.total--;
+  }
 }
 
 type Locals = { wm: LoadedSession | null; ip: string };
@@ -71,7 +113,10 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
   const preCookie = deps.secure ? PRELOGIN_COOKIE_SECURE : PRELOGIN_COOKIE_DEV;
   /** Live event streams per session hash (logout aborts them). */
   const streams = new Map<string, Set<AbortController>>();
-  let streamCount = 0;
+  /** Event streams per mailbox ('m:<id>') and overall. */
+  const streamSlots = new InFlight();
+  /** JMAP calls in flight per session ('s:<hash>'), per mailbox ('m:<id>') and overall. */
+  const jmapSlots = new InFlight();
 
   app.use((_req, res, next) => {
     for (const [k, v] of Object.entries(WEBMAIL_SECURITY_HEADERS)) res.setHeader(k, v);
@@ -81,16 +126,15 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
 
   // ── API ──
   const api = express.Router({ caseSensitive: true, strict: false });
+  // Coarse, per client address, before anything reads the database (a cookie
+  // value, valid or not, never escapes it).
   api.use(rateLimit({
     windowMs: 60_000,
-    limit: deps.apiRatePerMinute ?? 900,
+    limit: deps.apiIpRatePerMinute ?? 3000,
     standardHeaders: false,
     legacyHeaders: false,
     validate: false,
-    keyGenerator: (req) => {
-      const sid = readCookie(req.headers.cookie, sessionCookie);
-      return sid && SESSION_ID_RE.test(sid) ? `s:${sid}` : `ip:${deps.clientIp(req)}`;
-    },
+    keyGenerator: (req) => `a:${deps.clientIp(req)}`,
     handler: (_req, res) => sendError(res, 429, 'tooManyAttempts', 'Too many requests'),
   }));
   api.use(async (req: Request, res: Response, next: NextFunction) => {
@@ -112,6 +156,19 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
       sendError(res, 503, 'unavailable', 'The webmail is not available');
     }
   });
+  // Per LIVE session; without one (no cookie, unknown, expired, forged), per client address.
+  api.use(rateLimit({
+    windowMs: 60_000,
+    limit: deps.apiRatePerMinute ?? 900,
+    standardHeaders: false,
+    legacyHeaders: false,
+    validate: false,
+    keyGenerator: (_req, res) => {
+      const locals = res.locals as Locals;
+      return locals.wm ? `s:${locals.wm.sidHash}` : `ip:${locals.ip}`;
+    },
+    handler: (_req, res) => sendError(res, 429, 'tooManyAttempts', 'Too many requests'),
+  }));
 
   const setSessionCookie = (res: Response, sid: string) => {
     res.append('Set-Cookie', cookieHeader(sessionCookie, sid, { secure: deps.secure, maxAgeSec: WEBMAIL_ABSOLUTE_MS / 1000 }));
@@ -158,7 +215,7 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
 
   /** Upstream / policy error of an authenticated call. */
   const callError = async (res: Response, err: unknown, wm: LoadedSession | null) => {
-    if (err instanceof JmapPolicyError) return sendError(res, err.status, err.status === 403 ? 'forbidden' : 'invalidRequest', err.message);
+    if (err instanceof JmapPolicyError) return sendError(res, err.status, err.code ?? (err.status === 403 ? 'forbidden' : 'invalidRequest'), err.message);
     if (err instanceof WebmailAuthError) {
       if (err.status === 401 && wm) { await deps.auth.logout(wm.sidHash).catch(() => undefined); clearSessionCookie(res); }
       return sendError(res, err.status, err.code, err.message);
@@ -221,6 +278,16 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
     }
   });
 
+  // Mailbox a token would open, the token left unused: shown for confirmation before /sso.
+  api.post('/sso/target', loginLimiter, jsonOnly, smallJson, async (req, res) => {
+    if (!preLoginCsrfOk(req, res)) return sendError(res, 403, 'csrf', 'Missing or invalid CSRF token');
+    try {
+      return res.json(await deps.auth.ssoTarget((req.body as { token?: unknown } | undefined)?.token));
+    } catch (err) {
+      return authError(res, err);
+    }
+  });
+
   api.post('/sso', loginLimiter, jsonOnly, smallJson, async (req, res) => {
     if (!preLoginCsrfOk(req, res)) return sendError(res, 403, 'csrf', 'Missing or invalid CSRF token');
     const locals = res.locals as Locals;
@@ -247,19 +314,34 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
   api.post('/jmap', jsonOnly, bigJson, async (req, res) => {
     const s = needCsrfSession(req, res);
     if (!s) return;
-    const wm = (res.locals as Locals).wm;
+    const wm = (res.locals as Locals).wm!;
+    const keys = [`s:${wm.sidHash}`, `m:${s.mailboxId}`];
+    if (jmapSlots.count(keys[0]) >= (deps.maxJmapPerSession ?? 4)
+      || jmapSlots.count(keys[1]) >= (deps.maxJmapPerMailbox ?? 8)
+      || jmapSlots.total >= (deps.maxJmap ?? 64)) {
+      res.setHeader('Retry-After', '1');
+      return sendError(res, 429, 'tooManyAttempts', 'Too many simultaneous requests');
+    }
+    jmapSlots.add(...keys);
     try {
       const identities = await deps.auth.identities(s);
+      const methodCalls = (req.body as { methodCalls?: unknown } | null)?.methodCalls;
+      const sends = Array.isArray(methodCalls) && methodCalls.some((c) => Array.isArray(c) && c[0] === 'EmailSubmission/set');
+      // Read now, for this request: a send toggled off or an outbound suspension applies at once.
+      const sendAllowed = sends ? await deps.sendAllowed(s.mailboxId) : false;
       const calls = validateJmapRequest(req.body, {
         accountId: s.jmapAccountId,
         identityIds: new Set(identities.map((i) => i.id)),
         identityEmails: new Set(identities.map((i) => i.email.toLowerCase())),
+        sendAllowed,
       });
       await deps.auth.assertOwnAccount(s);
       const out = await deps.engine.call(s.address, calls);
       res.json({ methodResponses: out.methodResponses, sessionState: out.sessionState ?? null });
     } catch (err) {
       await callError(res, err, wm);
+    } finally {
+      jmapSlots.remove(...keys);
     }
   });
 
@@ -329,13 +411,16 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
     if (!s) return;
     const wm = (res.locals as Locals).wm!;
     const own = streams.get(wm.sidHash) ?? new Set<AbortController>();
-    if (own.size >= (deps.maxStreamsPerSession ?? 3) || streamCount >= (deps.maxStreams ?? 500)) {
+    const mailboxKey = `m:${s.mailboxId}`;
+    if (own.size >= (deps.maxStreamsPerSession ?? 3)
+      || streamSlots.count(mailboxKey) >= (deps.maxStreamsPerMailbox ?? 5)
+      || streamSlots.total >= (deps.maxStreams ?? 500)) {
       return sendError(res, 429, 'tooManyAttempts', 'Too many event streams');
     }
     const ctrl = new AbortController();
     own.add(ctrl);
     streams.set(wm.sidHash, own);
-    streamCount++;
+    streamSlots.add(mailboxKey);
     const sid = readCookie(req.headers.cookie, sessionCookie);
     let recheck: NodeJS.Timeout | null = null;
     req.on('close', () => ctrl.abort());
@@ -374,7 +459,7 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
       if (recheck) clearInterval(recheck);
       own.delete(ctrl);
       if (own.size === 0) streams.delete(wm.sidHash);
-      streamCount--;
+      streamSlots.remove(mailboxKey);
       if (!res.writableEnded) res.end();
     }
   });
@@ -389,7 +474,17 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
     }
   });
 
-  api.put('/vacation', jsonOnly, smallJson, async (req, res) => {
+  // Each write re-renders the mailbox's sieve script on the engine: a few per minute is plenty.
+  const vacationLimiter = rateLimit({
+    windowMs: 60_000, limit: deps.vacationRatePerMinute ?? 10, standardHeaders: false, legacyHeaders: false, validate: false,
+    keyGenerator: (_req, res) => {
+      const locals = res.locals as Locals;
+      return locals.wm ? `v:${locals.wm.sidHash}` : `v:ip:${locals.ip}`;
+    },
+    handler: (_req, res) => sendError(res, 429, 'tooManyAttempts', 'Too many changes: try again in a minute'),
+  });
+
+  api.put('/vacation', vacationLimiter, jsonOnly, smallJson, async (req, res) => {
     const s = needCsrfSession(req, res);
     if (!s) return;
     try {

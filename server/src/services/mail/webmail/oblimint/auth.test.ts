@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createWebmailAuth, LOGIN_MAX_FAILURES_PER_ADDRESS, LOGIN_MAX_FAILURES_PER_IP, WebmailAuthError } from './auth';
+import {
+  createWebmailAuth, LOGIN_MAX_DELAY_MS, LOGIN_MAX_FAILURES_PER_ADDRESS_NET, LOGIN_MAX_FAILURES_PER_IP, LOGIN_SLOW_AFTER_FAILURES, loginDelayMs,
+  WebmailAuthError,
+} from './auth';
+import type { WebmailEngine } from './engine';
 import { hashSessionId, WEBMAIL_ABSOLUTE_MS, WEBMAIL_IDLE_MS } from './session';
 import { fakeAuthDeps } from './testing';
 
@@ -15,7 +19,7 @@ async function rejects(p: Promise<unknown>, code: string, status: number): Promi
   });
 }
 
-test('password login: panel hash AND engine must accept; the session pins the mailbox and its JMAP account', async () => {
+test('password login: the panel hash decides; the session pins the mailbox and its JMAP account', async () => {
   const f = fakeAuthDeps();
   const auth = createWebmailAuth(f.deps);
   const { sid, session } = await auth.login(' Alice@Example.test ', 'alice-password-1', IP, 'UA');
@@ -26,8 +30,14 @@ test('password login: panel hash AND engine must accept; the session pins the ma
   assert.equal([...f.store.rows.keys()].includes(sid), false);
   const row = f.store.rows.get(hashSessionId(sid))!;
   assert.equal(row.expiresAt - row.createdAt, WEBMAIL_ABSOLUTE_MS);
-  assert.deepEqual(f.engine.verifyCalls, ['alice@example.test']);
   assert.equal(f.failures.length, 0);
+});
+
+test('a mailbox password is never presented to the engine (its auto-ban can never block the panel address)', () => {
+  // The engine interface has no password check at all: the webmail only impersonates.
+  const methods: Array<keyof WebmailEngine> = ['endpoints', 'call', 'identities', 'upload', 'download', 'eventSource'];
+  const f = fakeAuthDeps();
+  assert.deepEqual(Object.getOwnPropertyNames(Object.getPrototypeOf(f.engine)).filter((m) => m !== 'constructor').sort(), [...methods].sort());
 });
 
 test('wrong password: refused, fed to the ban service, the engine never sees it', async () => {
@@ -35,7 +45,7 @@ test('wrong password: refused, fed to the ban service, the engine never sees it'
   const auth = createWebmailAuth(f.deps);
   await rejects(auth.login('alice@example.test', 'nope-nope-nope', IP, null), 'invalidCredentials', 401);
   assert.deepEqual(f.failures, [{ ip: IP, username: 'alice@example.test' }]);
-  assert.deepEqual(f.engine.verifyCalls, [], 'no brute force reaches the engine');
+  assert.equal(f.engine.calls.length, 0, 'nothing reaches the engine');
   assert.equal(f.store.rows.size, 0);
 });
 
@@ -47,15 +57,14 @@ test('unknown address / malformed input: same generic refusal', async () => {
   await rejects(auth.login('alice@example.test', '', IP, null), 'invalidCredentials', 401);
   await rejects(auth.login({ address: 1 }, 'x', IP, null), 'invalidCredentials', 401);
   assert.equal(f.failures.length, 4);
-  assert.deepEqual(f.engine.verifyCalls, []);
+  assert.equal(f.engine.calls.length, 0);
 });
 
-test('the engine refusing the password (desynchronized hash) refuses the login', async () => {
+test('a principal the engine refuses to impersonate (not synchronized yet) cannot log in', async () => {
   const f = fakeAuthDeps();
-  f.boxes.get('bob@example.test')!.engineRefuses = true;
-  const auth = createWebmailAuth(f.deps);
-  await rejects(auth.login('bob@example.test', 'bob-password-22', IP, null), 'invalidCredentials', 401);
-  assert.equal(f.failures.length, 1);
+  const auth = createWebmailAuth({ ...f.deps, findMailboxByAddress: async (a) => (a === 'carol@example.test' ? { ...f.boxes.get('bob@example.test')!, id: 9, address: a } : null) });
+  await rejects(auth.login('carol@example.test', 'bob-password-22', IP, null), 'invalidCredentials', 401);
+  assert.equal(f.store.rows.size, 0);
 });
 
 test('a disabled mailbox / suspended account / unverified domain cannot log in', async () => {
@@ -90,14 +99,40 @@ test('throttle per client address (IPv6 per /64), then 429 even with the right p
   await auth.login('alice@example.test', 'alice-password-1', v6(1), null);
 });
 
-test('throttle per mailbox address (distributed guessing)', async () => {
+test('throttle per mailbox address AND client network: guessing from one /24 blocks that /24 only', async () => {
   const f = fakeAuthDeps();
   const auth = createWebmailAuth(f.deps);
-  for (let i = 0; i < LOGIN_MAX_FAILURES_PER_ADDRESS; i++) {
+  // Spread over the /24 (each address stays under its own per-IP budget).
+  for (let i = 0; i < LOGIN_MAX_FAILURES_PER_ADDRESS_NET; i++) {
     await rejects(auth.login('bob@example.test', `wrong-${i}-xxxx`, `198.51.100.${i + 1}`, null), 'invalidCredentials', 401);
   }
-  await rejects(auth.login('bob@example.test', 'bob-password-22', '192.0.2.200', null), 'tooManyAttempts', 429);
-  await auth.login('alice@example.test', 'alice-password-1', '192.0.2.200', null);
+  await rejects(auth.login('bob@example.test', 'bob-password-22', '198.51.100.200', null), 'tooManyAttempts', 429);
+  // The owner, elsewhere, is not locked out; another mailbox from that network neither.
+  await auth.login('bob@example.test', 'bob-password-22', '192.0.2.200', null);
+  await auth.login('alice@example.test', 'alice-password-1', '198.51.100.201', null);
+});
+
+test('failures of an address from everywhere only slow its logins down (progressive, bounded), never lock it', async () => {
+  assert.equal(loginDelayMs(0), 0);
+  assert.equal(loginDelayMs(LOGIN_SLOW_AFTER_FAILURES), 0);
+  assert.equal(loginDelayMs(LOGIN_SLOW_AFTER_FAILURES + 1), 500);
+  assert.equal(loginDelayMs(LOGIN_SLOW_AFTER_FAILURES + 6), 1000);
+  assert.ok(loginDelayMs(LOGIN_SLOW_AFTER_FAILURES + 11) > loginDelayMs(LOGIN_SLOW_AFTER_FAILURES + 6));
+  assert.equal(loginDelayMs(10_000), LOGIN_MAX_DELAY_MS);
+  const f = fakeAuthDeps();
+  const auth = createWebmailAuth(f.deps);
+  // 40 failures from 40 different networks (each under its own limits).
+  for (let i = 0; i < 40; i++) {
+    await rejects(auth.login('bob@example.test', `wrong-${i}-xxxx`, `10.${i}.0.1`, null), 'invalidCredentials', 401);
+  }
+  assert.equal(f.sleeps.filter((ms) => ms > 0).length, 40 - LOGIN_SLOW_AFTER_FAILURES - 1, 'the attempts past the threshold were delayed');
+  // The owner still gets in (after a bounded wait), and the delay resets.
+  f.sleeps.length = 0;
+  await auth.login('bob@example.test', 'bob-password-22', '192.0.2.10', null);
+  assert.ok(f.sleeps[0] > 0 && f.sleeps[0] <= LOGIN_MAX_DELAY_MS);
+  f.sleeps.length = 0;
+  await auth.login('bob@example.test', 'bob-password-22', '192.0.2.10', null);
+  assert.deepEqual(f.sleeps, []);
 });
 
 test('a banned address (mail_bans) cannot log in', async () => {
@@ -105,6 +140,21 @@ test('a banned address (mail_bans) cannot log in', async () => {
   f.banned.add(IP);
   const auth = createWebmailAuth(f.deps);
   await rejects(auth.login('alice@example.test', 'alice-password-1', IP, null), 'tooManyAttempts', 429);
+});
+
+test('SSO target: the mailbox of a token is told WITHOUT using the token', async () => {
+  const f = fakeAuthDeps();
+  f.ssoTokens.set('tok-bob', 2);
+  const auth = createWebmailAuth(f.deps);
+  assert.deepEqual(await auth.ssoTarget('tok-bob'), { address: 'bob@example.test' });
+  assert.deepEqual(await auth.ssoTarget('tok-bob'), { address: 'bob@example.test' }, 'still usable');
+  await rejects(auth.ssoTarget('nope'), 'ssoInvalid', 401);
+  const { session } = await auth.sso('tok-bob', IP, null);
+  assert.equal(session.address, 'bob@example.test');
+  await rejects(auth.ssoTarget('tok-bob'), 'ssoInvalid', 401);
+  f.ssoTokens.set('tok-alice', 1);
+  f.boxes.get('alice@example.test')!.mailboxEnabled = false;
+  await rejects(auth.ssoTarget('tok-alice'), 'ssoInvalid', 401);
 });
 
 test('SSO: a valid one-time token opens a session for ITS mailbox; replay / unknown refused', async () => {

@@ -398,6 +398,15 @@ export const webmailService = {
     return { mailboxId: ticket.mailboxId };
   },
 
+  /** Oblimint webmail: mailbox of a live token of kind 'oblimint', the token left unused (confirmation screen). */
+  async peekOblimint(token: unknown): Promise<{ mailboxId: number } | null> {
+    const ticket = webmailTokens.peek(token);
+    if (!ticket || ticket.kind !== 'oblimint') return null;
+    const settings = await platformSettings.section('mail');
+    if (settings.webmail !== 'oblimint') return null;
+    return { mailboxId: ticket.mailboxId };
+  },
+
   /** Webmail logout: revokes the session credential presented (constant work per live session). */
   async logout(username: unknown, password: unknown): Promise<boolean> {
     if (typeof username !== 'string' || typeof password !== 'string' || password.length === 0 || password.length > 256) return false;

@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { AddressInfo } from 'net';
 import http from 'http';
-import { createWebmailApp, relayEvent } from './app';
+import { createWebmailApp, relayEvent, type WebmailAppDeps } from './app';
 import { createWebmailAuth } from './auth';
 import { fakeAuthDeps } from './testing';
 
@@ -15,12 +16,14 @@ interface Harness {
   close(): Promise<void>;
   f: ReturnType<typeof fakeAuthDeps>;
   setEnabled(v: boolean): void;
+  setSendAllowed(v: boolean): void;
 }
 
-async function start(): Promise<Harness> {
+async function start(over: Partial<WebmailAppDeps> = {}): Promise<Harness> {
   const f = fakeAuthDeps();
   const auth = createWebmailAuth(f.deps);
   let enabled = true;
+  let sendAllowed = true;
   const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'wm-dist-'));
   fs.writeFileSync(path.join(dist, 'webmail.html'), '<!doctype html><title>wm</title>');
   fs.mkdirSync(path.join(dist, 'assets'));
@@ -32,9 +35,11 @@ async function start(): Promise<Harness> {
     secure: true,
     clientIp: () => '203.0.113.50',
     maxUploadBytes: async () => 1024,
+    sendAllowed: async () => sendAllowed,
     vacation: { get: async () => null, set: async (_id, v) => v },
     clientDist: dist,
     now: f.now,
+    ...over,
   });
   const server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
@@ -44,6 +49,7 @@ async function start(): Promise<Harness> {
     origin: `https://127.0.0.1:${port}`,
     f,
     setEnabled: (v) => { enabled = v; },
+    setSendAllowed: (v) => { sendAllowed = v; },
     close: () => new Promise((r) => { server.close(() => r()); server.closeAllConnections?.(); }),
   };
 }
@@ -270,4 +276,159 @@ test('event relay: only StateChange of the own account, pings kept, anything els
   assert.equal(relayEvent('data: not json', 'acctA'), null);
   assert.equal(relayEvent('event: state\ndata: {"changed":{"acctA":{"Email<script>":"x","Email":"<b>"}}}', 'acctA'),
     'event: state\ndata: {"@type":"StateChange","changed":{"acctA":{"Email":"<b>"}}}\n\n');
+});
+
+const jmapAs = (h: Harness, who: { cookie: string; csrf: string }, methodCalls: unknown[]) => fetch(`${h.base}/wm-api/jmap`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', Origin: h.origin, Cookie: who.cookie, 'X-Oblimint-CSRF': who.csrf },
+  body: JSON.stringify({ methodCalls }),
+});
+
+const sendCalls = [
+  ['Email/set', { create: { m: { mailboxIds: { d: true }, from: [{ email: 'alice@example.test' }], to: [{ email: 'bob@example.test' }], subject: 'x' } } }, 'e'],
+  ['EmailSubmission/set', { create: { s: { identityId: 'id-alice@example.test', emailId: '#m' } } }, 's'],
+];
+
+test('sending blocked: EmailSubmission refused with sendDisabled (read at each request), nothing reaches the engine', async () => {
+  const seen: number[] = [];
+  let allowed = false;
+  const h = await start({ sendAllowed: async (id) => { seen.push(id); return allowed; } });
+  try {
+    const a = await login(h, 'alice@example.test', 'alice-password-1');
+    const before = h.f.engine.calls.length;
+    const r = await jmapAs(h, a, sendCalls);
+    assert.equal(r.status, 403);
+    assert.deepEqual(await r.json(), { error: 'sendDisabled', message: 'Sending is disabled for this mailbox' });
+    assert.equal(h.f.engine.calls.length, before, 'the draft + submission never reached the engine');
+    // Drafts and reading still work; the flag is only read for a send.
+    assert.equal((await jmapAs(h, a, [sendCalls[0]])).status, 200);
+    assert.deepEqual(seen, [1]);
+    // Re-enabled: the next send goes through at once (no cache).
+    allowed = true;
+    assert.equal((await jmapAs(h, a, sendCalls)).status, 200);
+    // A failing lookup refuses the send.
+  } finally { await h.close(); }
+  const h2 = await start({ sendAllowed: async () => { throw new Error('db down'); } });
+  try {
+    const a = await login(h2, 'alice@example.test', 'alice-password-1');
+    const before = h2.f.engine.calls.length;
+    assert.notEqual((await jmapAs(h2, a, sendCalls)).status, 200);
+    assert.equal(h2.f.engine.calls.length, before);
+  } finally { await h2.close(); }
+});
+
+test('amplification: duplicate / oversized body requests are refused before the engine', async () => {
+  const h = await start();
+  try {
+    const a = await login(h, 'alice@example.test', 'alice-password-1');
+    const before = h.f.engine.calls.length;
+    // The review's request: 1000 times the same id, all body values, twice.
+    const r = await jmapAs(h, a, [
+      ['Email/get', { ids: Array(1000).fill('Mabc'), properties: ['bodyValues', 'textBody'], fetchAllBodyValues: true }, 'g'],
+      ['Email/get', { ids: Array(1000).fill('Mabc'), properties: ['bodyValues', 'textBody'], fetchAllBodyValues: true }, 'h'],
+    ]);
+    assert.equal(r.status, 400);
+    assert.equal(h.f.engine.calls.length, before);
+  } finally { await h.close(); }
+});
+
+test('JMAP calls in flight are bounded per session and per mailbox (429 beyond), then free again', async () => {
+  const h = await start({ maxJmapPerSession: 2, maxJmapPerMailbox: 3 });
+  try {
+    const a1 = await login(h, 'alice@example.test', 'alice-password-1');
+    const a2 = await login(h, 'alice@example.test', 'alice-password-1');
+    const b = await login(h, 'bob@example.test', 'bob-password-22');
+    let open!: () => void;
+    h.f.engine.gate = new Promise<void>((r) => { open = r; });
+    const q = [['Mailbox/get', {}, 'm']];
+    const p1 = jmapAs(h, a1, q);
+    const p2 = jmapAs(h, a1, q);
+    await new Promise((r) => setTimeout(r, 100));
+    const third = await jmapAs(h, a1, q);
+    assert.equal(third.status, 429, 'per session');
+    assert.equal(third.headers.get('retry-after'), '1');
+    const p4 = jmapAs(h, a2, q);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal((await jmapAs(h, a2, q)).status, 429, 'per mailbox (3 in flight for alice)');
+    const pb = jmapAs(h, b, q);
+    open();
+    h.f.engine.gate = null;
+    for (const p of [p1, p2, p4, pb]) assert.equal((await p).status, 200);
+    assert.equal((await jmapAs(h, a1, q)).status, 200, 'slots released');
+  } finally { await h.close(); }
+});
+
+test('event streams are bounded per mailbox (besides per session and overall)', async () => {
+  const h = await start({ maxStreamsPerSession: 3, maxStreamsPerMailbox: 2 });
+  const ctrls: AbortController[] = [];
+  try {
+    const a1 = await login(h, 'alice@example.test', 'alice-password-1');
+    const a2 = await login(h, 'alice@example.test', 'alice-password-1');
+    const b = await login(h, 'bob@example.test', 'bob-password-22');
+    const open = async (who: { cookie: string }) => {
+      const c = new AbortController();
+      ctrls.push(c);
+      const r = await fetch(`${h.base}/wm-api/events`, { headers: { Cookie: who.cookie }, signal: c.signal });
+      return r.status;
+    };
+    assert.equal(await open(a1), 200);
+    assert.equal(await open(a2), 200);
+    assert.equal(await open(a2), 429, 'third stream of the mailbox, from another session');
+    assert.equal(await open(b), 200, 'another mailbox is not affected');
+  } finally {
+    for (const c of ctrls) c.abort();
+    await h.close();
+  }
+});
+
+test('API limiter: only a LIVE session gets its own bucket; forged cookies share the client address bucket', async () => {
+  const h = await start({ apiRatePerMinute: 5 });
+  try {
+    const forged = () => `__Host-oblimint-wm=${crypto.randomBytes(32).toString('base64url')}`;
+    const codes: number[] = [];
+    for (let i = 0; i < 7; i++) codes.push((await fetch(`${h.base}/wm-api/vacation`, { headers: { Cookie: forged() } })).status);
+    assert.deepEqual(codes.slice(0, 5), [401, 401, 401, 401, 401]);
+    assert.equal(codes[6], 429, 'a new random cookie per request does not escape the limit');
+  } finally { await h.close(); }
+  // Coarse per-address limiter before any database read.
+  const h2 = await start({ apiIpRatePerMinute: 3, apiRatePerMinute: 100 });
+  try {
+    const codes: number[] = [];
+    for (let i = 0; i < 4; i++) codes.push((await fetch(`${h2.base}/wm-api/session`)).status);
+    assert.deepEqual(codes, [200, 200, 200, 429]);
+  } finally { await h2.close(); }
+});
+
+test('PUT /vacation has its own limit per session', async () => {
+  const h = await start({ vacationRatePerMinute: 3 });
+  try {
+    const a = await login(h, 'alice@example.test', 'alice-password-1');
+    const put = () => fetch(`${h.base}/wm-api/vacation`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: h.origin, Cookie: a.cookie, 'X-Oblimint-CSRF': a.csrf },
+      body: JSON.stringify({ enabled: true, subject: 'Away', body: 'Back Monday' }),
+    });
+    const codes: number[] = [];
+    for (let i = 0; i < 4; i++) codes.push((await put()).status);
+    assert.deepEqual(codes, [200, 200, 200, 429]);
+    assert.equal((await fetch(`${h.base}/wm-api/vacation`, { headers: { Cookie: a.cookie } })).status, 200, 'reading is not affected');
+  } finally { await h.close(); }
+});
+
+test('SSO target: tells the mailbox of a token without using it (pre-login CSRF)', async () => {
+  const h = await start();
+  try {
+    h.f.ssoTokens.set('t-target', 2);
+    const s = await fetch(`${h.base}/wm-api/session`);
+    const pre = cookieValue(cookiesOf(s), '__Host-oblimint-wm-csrf')!;
+    const post = (path: string, csrf = pre) => fetch(`${h.base}/wm-api${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: h.origin, Cookie: `__Host-oblimint-wm-csrf=${pre}`, 'X-Oblimint-CSRF': csrf },
+      body: JSON.stringify({ token: 't-target' }),
+    });
+    assert.equal((await post('/sso/target', 'nope'.padEnd(43, 'x'))).status, 403);
+    const t = await post('/sso/target');
+    assert.equal(t.status, 200);
+    assert.deepEqual(await t.json(), { address: 'bob@example.test' });
+    assert.equal(cookiesOf(t).some((c) => c.startsWith('__Host-oblimint-wm=')), false, 'no session opened');
+    assert.equal((await post('/sso')).status, 200, 'the token is still usable once confirmed');
+    assert.equal((await post('/sso/target')).status, 401, 'used');
+  } finally { await h.close(); }
 });

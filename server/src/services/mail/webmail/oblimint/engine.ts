@@ -5,16 +5,15 @@ import { JMAP_USING, type JmapCall } from './policy';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JMAP side of the Oblimint webmail: the panel talks to Stalwart's HTTP
-// listener (mail network only, MA7) on behalf of ONE mailbox:
-//  - verifyPassword: Basic "<address>:<password>" on the JMAP session
-//    resource (200 = accepted, 401 / 403 = refused). Called ONLY after the
-//    panel's own copy of the hash accepted the password (oblimint/auth.ts), so
-//    a brute force through the webmail never makes the engine ban the
-//    panel's address;
-//  - everything else impersonates the mailbox: Basic
-//    "<address>%oblimint-master:<master secret>" (authentication.master, the
-//    same mechanism the sieve sync uses, api.ts H10) — the engine then only
-//    exposes that principal; the proxy additionally pins the account id.
+// listener (mail network only, MA7) on behalf of ONE mailbox, always
+// impersonating it: Basic "<address>%oblimint-master:<master secret>"
+// (authentication.master, the same mechanism the sieve sync uses, api.ts
+// H10) — the engine then only exposes that principal; the proxy additionally
+// pins the account id. A mailbox password is NEVER presented to the engine
+// (oblimint/auth.ts: the panel's hash is the authority), so nothing the
+// webmail receives can make the engine's auto-ban block the panel's address.
+// JSON answers are read with a hard byte cap (maxResponseBytes): an answer
+// over it is dropped (413) instead of being buffered.
 // The master secret never leaves this module; nothing of a request body,
 // a password or a secret is logged or put into an error.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,7 +45,6 @@ export interface JmapResponse {
 }
 
 export interface WebmailEngine {
-  verifyPassword(address: string, password: string): Promise<boolean>;
   endpoints(address: string, fresh?: boolean): Promise<JmapEndpoints>;
   call(address: string, methodCalls: JmapCall[]): Promise<JmapResponse>;
   identities(address: string, accountId: string, displayName: string | null): Promise<WebmailIdentity[]>;
@@ -63,6 +61,8 @@ export interface StalwartWebmailEngineOptions {
   fetch?: FetchLike;
   timeoutMs?: number;
   uploadTimeoutMs?: number;
+  /** Largest JSON answer read from the engine (bytes); beyond: WebmailEngineError 413, nothing buffered further. */
+  maxResponseBytes?: number;
   /** How long a JMAP session resource is reused per address. */
   sessionTtlMs?: number;
   now?: () => number;
@@ -70,6 +70,37 @@ export interface StalwartWebmailEngineOptions {
 
 const ADDRESS_RE = /^[^\s@%:]{1,64}@[a-z0-9.-]{1,253}$/;
 const ACCOUNT_RE = /^[A-Za-z0-9_-]{1,255}$/;
+
+/** Default cap of a JMAP answer (bodies are bounded by policy.ts well below it). */
+export const MAX_ENGINE_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Body of an engine answer as text, reading at most `max` bytes: over it,
+ * the stream is cancelled and WebmailEngineError 413 thrown (a declared
+ * Content-Length over the cap is refused before reading anything).
+ */
+export async function readCapped(res: Response, max: number): Promise<string> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new WebmailEngineError('the answer of the mail engine is too large', 413);
+  }
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new WebmailEngineError('the answer of the mail engine is too large', 413);
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, n).toString('utf8');
+}
 
 function basic(user: string, secret: string): string {
   return `Basic ${Buffer.from(`${user}:${secret}`, 'utf8').toString('base64')}`;
@@ -108,6 +139,7 @@ export function createStalwartWebmailEngine(opts: StalwartWebmailEngineOptions):
   const fetchFn: FetchLike = opts.fetch ?? ((input, init) => fetch(input, init as RequestInit));
   const timeoutMs = opts.timeoutMs ?? 20_000;
   const uploadTimeoutMs = opts.uploadTimeoutMs ?? 300_000;
+  const maxResponseBytes = opts.maxResponseBytes ?? MAX_ENGINE_RESPONSE_BYTES;
   const sessionTtlMs = opts.sessionTtlMs ?? 5 * 60_000;
   const masterUser = opts.masterUser ?? MASTER_USER;
   const now = opts.now ?? Date.now;
@@ -115,12 +147,16 @@ export function createStalwartWebmailEngine(opts: StalwartWebmailEngineOptions):
 
   const asMailbox = async (address: string): Promise<string> => basic(`${mailAddress(address)}%${masterUser}`, await opts.masterSecret());
 
-  /** fetch with a timeout (or the caller's signal); network errors → 502. */
+  /**
+   * fetch with a timeout (headers only) and / or the caller's signal, which
+   * stays linked to the answer's BODY too (a cancelled caller or the deadline
+   * of call() stops the transfer); network errors → 502.
+   */
   async function send(path: string, init: RequestInit & { duplex?: 'half' }, ms: number | null, signal?: AbortSignal): Promise<Response> {
     const ctrl = new AbortController();
     const timer = ms ? setTimeout(() => ctrl.abort(), ms) : null;
-    const onAbort = () => ctrl.abort();
-    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) ctrl.abort();
+    else signal?.addEventListener('abort', () => ctrl.abort(), { once: true });
     try {
       return await fetchFn(`${base}${path}`, { ...init, signal: ctrl.signal, redirect: 'manual' });
     } catch (err) {
@@ -128,15 +164,21 @@ export function createStalwartWebmailEngine(opts: StalwartWebmailEngineOptions):
       throw new WebmailEngineError(e.name === 'AbortError' ? 'the mail engine did not answer in time' : 'the mail engine is unreachable', 502);
     } finally {
       if (timer) clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
     }
   }
 
   async function json(res: Response, what: string): Promise<unknown> {
-    const text = await res.text().catch(() => '');
     if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
       if (res.status === 401 || res.status === 403) throw new WebmailEngineError(`${what}: refused by the mail engine`, 401);
       throw new WebmailEngineError(`${what}: mail engine error (HTTP ${res.status})`, res.status === 413 ? 413 : 502);
+    }
+    let text: string;
+    try {
+      text = await readCapped(res, maxResponseBytes);
+    } catch (err) {
+      if (err instanceof WebmailEngineError) throw err;
+      throw new WebmailEngineError(`${what}: the mail engine answer was interrupted`, 502);
     }
     try {
       return text ? JSON.parse(quoteBigInts(text)) : null;
@@ -171,27 +213,24 @@ export function createStalwartWebmailEngine(opts: StalwartWebmailEngineOptions):
 
   async function call(address: string, methodCalls: JmapCall[]): Promise<JmapResponse> {
     const ep = await endpoints(address);
-    const res = await send(ep.apiPath, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: await asMailbox(address) },
-      body: JSON.stringify({ using: [...JMAP_USING], methodCalls }),
-    }, timeoutMs);
-    const out = await json(res, 'JMAP call') as JmapResponse | null;
-    if (!out || !Array.isArray(out.methodResponses)) throw new WebmailEngineError('JMAP call: invalid answer of the mail engine', 502);
-    return out;
+    // One deadline for the answer AND its body (a slow body never holds the buffer forever).
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await send(ep.apiPath, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: await asMailbox(address) },
+        body: JSON.stringify({ using: [...JMAP_USING], methodCalls }),
+      }, null, ctrl.signal);
+      const out = await json(res, 'JMAP call') as JmapResponse | null;
+      if (!out || !Array.isArray(out.methodResponses)) throw new WebmailEngineError('JMAP call: invalid answer of the mail engine', 502);
+      return out;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   return {
-    async verifyPassword(address, password) {
-      const a = mailAddress(address);
-      if (typeof password !== 'string' || password.length === 0 || password.length > 1024) return false;
-      const res = await send(JMAP_SESSION_PATH, { method: 'GET', headers: { Accept: 'application/json', Authorization: basic(a, password) } }, timeoutMs);
-      await res.arrayBuffer().catch(() => undefined);
-      if (res.status === 200) return true;
-      if (res.status === 401 || res.status === 403) return false;
-      throw new WebmailEngineError(`password check: mail engine error (HTTP ${res.status})`, 502);
-    },
-
     endpoints,
     call,
 

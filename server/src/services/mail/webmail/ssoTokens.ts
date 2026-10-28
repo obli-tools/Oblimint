@@ -102,6 +102,14 @@ export class WebmailTokenStore {
     return hit.ticket;
   }
 
+  /** The ticket of a live token WITHOUT using it (null when malformed / unknown / expired). */
+  peek(token: unknown): WebmailTicket | null {
+    if (typeof token !== 'string' || !WEBMAIL_TOKEN_RE.test(token)) return null;
+    const hit = this.tokens.get(token);
+    if (!hit || hit.expiresAt <= this.now()) return null;
+    return hit.ticket;
+  }
+
   /** Drops expired tokens (worker, and on every issue). Returns how many. */
   sweep(): number {
     const t = this.now();

@@ -118,6 +118,15 @@ export function mailboxLoginAllowed(r: { mailboxEnabled: boolean; domainEnabled:
     && (SERVED_ACCOUNT_STATUSES as readonly string[]).includes(String(r.accountStatus)) && accountServesMail(r.accountStatus);
 }
 
+/**
+ * The mailbox may SEND (EmailSubmission): the desired state's rule
+ * (desiredState.ts sendEnabled = login enabled ∧ send_enabled ∧ outbound of
+ * the account not suspended), with this module's login rule.
+ */
+export function mailboxSendAllowed(r: Parameters<typeof mailboxLoginAllowed>[0] & { sendEnabled: boolean; outboundSuspended: boolean }): boolean {
+  return mailboxLoginAllowed(r) && !!r.sendEnabled && !r.outboundSuspended;
+}
+
 // ── memory store (tests) ─────────────────────────────────────────────────────
 
 export class MemoryWebmailSessionStore implements WebmailSessionStore {

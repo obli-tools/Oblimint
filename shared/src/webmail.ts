@@ -8,6 +8,7 @@ import type { MailAutoresponder } from './mail';
 //
 //   GET    /wm-api/session              → WebmailSessionInfo (sets the pre-login CSRF cookie)
 //   POST   /wm-api/login                WebmailLoginRequest → WebmailSessionInfo
+//   POST   /wm-api/sso/target           { token } → WebmailSsoTarget (token NOT used: confirmation screen)
 //   POST   /wm-api/sso                  { token } → WebmailSessionInfo
 //   POST   /wm-api/logout               → { ok }
 //   POST   /wm-api/jmap                 { methodCalls } → { methodResponses } (validated, own account only)
@@ -49,6 +50,11 @@ export interface WebmailSessionInfo {
   method: 'password' | 'sso' | null;
 }
 
+/** Mailbox a panel SSO link opens, shown (and confirmed) before the token is used. */
+export interface WebmailSsoTarget {
+  address: string;
+}
+
 export interface WebmailLoginRequest {
   address: string;
   password: string;
@@ -59,7 +65,9 @@ export type WebmailVacation = MailAutoresponder;
 
 export type WebmailErrorCode =
   | 'invalidCredentials' | 'tooManyAttempts' | 'csrf' | 'notAuthenticated' | 'forbidden' | 'invalidRequest'
-  | 'unavailable' | 'tooLarge' | 'ssoInvalid' | 'notFound' | 'upstream';
+  | 'unavailable' | 'tooLarge' | 'ssoInvalid' | 'notFound' | 'upstream'
+  /** EmailSubmission refused: the mailbox may not send (send toggle off, outbound suspended…). */
+  | 'sendDisabled';
 
 export interface WebmailError {
   error: WebmailErrorCode;

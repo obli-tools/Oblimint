@@ -16,6 +16,7 @@ import { captureStepUpProof } from './middleware/captureStepUpProof';
 import { accessGrantTouch } from './middleware/accessGrantTouch';
 import { serverVersion } from './utils/version';
 import { logger } from './utils/logger';
+import { isWebmailClientPath } from './utils/webmailClientPath';
 
 const PgSession = connectPgSimple(session);
 
@@ -83,7 +84,10 @@ function serveClient(app: express.Express): void {
     logger.warn({ clientDist: config.clientDist }, 'Client build not found: the web UI is not served by this process');
     return;
   }
-  app.use(express.static(config.clientDist, {
+  // The Oblimint webmail page (and its entry bundle) belongs to the webmail
+  // host only (services/mail/webmail/oblimint): never served on the panel's
+  // origin, where it would run next to the panel's session cookie.
+  const staticFiles = express.static(config.clientDist, {
     index: false,
     maxAge: '1h',
     // Public branding images (favicon, logos) are embedded by the other Obli apps
@@ -92,7 +96,8 @@ function serveClient(app: express.Express): void {
     setHeaders: (res, filePath) => {
       if (/^(favicon|logo[\w-]*)\.(svg|png|ico)$/i.test(path.basename(filePath))) res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     },
-  }));
+  });
+  app.use((req, res, next) => (isWebmailClientPath(req.path) ? next() : staticFiles(req, res, next)));
   app.get('*', (req, res, next) => {
     // Exact case, like the routing: /API/... is no API path and gets the shell.
     if (/^\/(api|auth|socket\.io|health|mcp)(\/|$)/.test(req.path)) return next();

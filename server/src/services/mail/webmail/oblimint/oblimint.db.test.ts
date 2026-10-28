@@ -51,7 +51,7 @@ test('Oblimint webmail on PostgreSQL', { timeout: 300_000 }, async (t: TestConte
   const { webmailService, setWebmailDepsForTests, resetWebmailStateForTests } = await import('../webmail.service');
   const { mailService } = await import('../../mail.service');
   const { dbWebmailSessionStore, hashSessionId } = await import('./session');
-  const { findWebmailMailbox, maxUploadBytes } = await import('./server');
+  const { findWebmailMailbox, maxUploadBytes, webmailSendAllowed } = await import('./server');
   const { createWebmailAuth } = await import('./auth');
   const { createWebmailApp } = await import('./app');
   const { FakeEngine } = await import('./testing');
@@ -159,6 +159,13 @@ test('Oblimint webmail on PostgreSQL', { timeout: 300_000 }, async (t: TestConte
     const again = new URL((await open(alice)).body.data!.url).hash.slice(5);
     assert.deepEqual(await webmailService.redeemOblimint(again), { mailboxId: alice });
     assert.equal(await webmailService.redeemOblimint(again), null, 'replay');
+    // The confirmation screen asks which mailbox a token opens WITHOUT using it.
+    const peeked = new URL((await open(alice)).body.data!.url).hash.slice(5);
+    assert.deepEqual(await webmailService.peekOblimint(peeked), { mailboxId: alice });
+    assert.deepEqual(await webmailService.peekOblimint(peeked), { mailboxId: alice });
+    assert.deepEqual(await webmailService.redeemOblimint(peeked), { mailboxId: alice }, 'still usable after the peek');
+    assert.equal(await webmailService.peekOblimint(peeked), null, 'used');
+    assert.equal(await webmailService.peekOblimint('x'.repeat(43)), null);
   });
 
   await t.test('SSO refused when the engine is not Stalwart or the listener is down', async () => {
@@ -187,10 +194,11 @@ test('Oblimint webmail on PostgreSQL', { timeout: 300_000 }, async (t: TestConte
   const auth = createWebmailAuth({
     store: dbWebmailSessionStore, engine, now: Date.now,
     findMailboxByAddress: (a) => findWebmailMailbox({ address: a }), findMailboxById: (id) => findWebmailMailbox({ id }),
-    redeemSso: (tk) => webmailService.redeemOblimint(tk), isBanned: async () => false, recordFailure: (ip) => { failures.push(ip); }, maxUploadBytes,
+    redeemSso: (tk) => webmailService.redeemOblimint(tk), peekSso: (tk) => webmailService.peekOblimint(tk),
+    isBanned: async () => false, recordFailure: (ip) => { failures.push(ip); }, maxUploadBytes,
   });
   const app = createWebmailApp({
-    auth, engine, enabled: async () => true, secure: true, clientIp: () => '203.0.113.9', maxUploadBytes,
+    auth, engine, enabled: async () => true, secure: true, clientIp: () => '203.0.113.9', maxUploadBytes, sendAllowed: webmailSendAllowed,
     vacation: {
       get: async (id) => (await db('mailboxes').where({ id }).first('autoresponder'))?.autoresponder ?? null,
       set: (id, v, ip) => mailService.setAutoresponderAsMailbox(id, v, ip),
@@ -241,6 +249,35 @@ test('Oblimint webmail on PostgreSQL', { timeout: 300_000 }, async (t: TestConte
     const audit = await db('audit_logs').where({ action: 'mail.mailbox.autoresponder', resource_path: String(alice) }).orderBy('id', 'desc').first();
     assert.ok(audit);
     assert.doesNotMatch(JSON.stringify(audit.details), /Secret body/);
+  });
+
+  await t.test('sending allowed = the desired state rule, read at each send (send toggle, outbound suspension, account)', async () => {
+    assert.equal(await webmailSendAllowed(alice), true);
+    const send = () => post('/jmap', { methodCalls: [
+      ['Email/set', { create: { m: { mailboxIds: { d: true }, from: [{ email: `alice@${dom}` }], to: [{ email: `bob@${dom}` }], subject: 'x' } } }, 'e'],
+      ['EmailSubmission/set', { create: { s: { identityId: `id-alice@${dom}`, emailId: '#m' } } }, 's'],
+    ] }, aliceCookie, aliceCsrf);
+    assert.equal((await send()).status, 200);
+    // Send toggle off.
+    await db('mailboxes').where({ id: alice }).update({ send_enabled: false });
+    assert.equal(await webmailSendAllowed(alice), false);
+    const r = await send();
+    assert.equal(r.status, 403);
+    assert.equal(((await r.json()) as { error: string }).error, 'sendDisabled');
+    await db('mailboxes').where({ id: alice }).update({ send_enabled: true });
+    // Anti-abuse suspension of the account's outbound mail.
+    await db('mail_outbound_state').insert({ account_id: acct, tenant_id: tId, status: 'suspended', reason: 'staff', suspended_at: new Date(), suspended_by: 'test' })
+      .onConflict('account_id').merge({ status: 'suspended' });
+    assert.equal(await webmailSendAllowed(alice), false);
+    assert.equal((await send()).status, 403);
+    await db('mail_outbound_state').where({ account_id: acct }).update({ status: 'active' });
+    assert.equal(await webmailSendAllowed(alice), true);
+    assert.equal((await send()).status, 200);
+    // Domain disabled / unknown mailbox.
+    await db('mail_domains').where({ id: (await db('mailboxes').where({ id: alice }).first('mail_domain_id')).mail_domain_id }).update({ enabled: false });
+    assert.equal(await webmailSendAllowed(alice), false);
+    await db('mail_domains').where({ id: (await db('mailboxes').where({ id: alice }).first('mail_domain_id')).mail_domain_id }).update({ enabled: true });
+    assert.equal(await webmailSendAllowed(999999), false);
   });
 
   await t.test('the session dies with the mailbox: disabled → refused at once, then revoked by the hook', async () => {

@@ -13,7 +13,7 @@ import { parseAutoresponder } from '../../rows';
 import { createWebmailApp } from './app';
 import { createWebmailAuth, type MailboxAuthRow } from './auth';
 import { createStalwartWebmailEngine } from './engine';
-import { dbWebmailSessionStore } from './session';
+import { dbWebmailSessionStore, mailboxSendAllowed } from './session';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Listener of the Oblimint webmail (config.hosting.webmailPort, default 8082):
@@ -76,6 +76,30 @@ export async function findWebmailMailbox(where: { address?: string; id?: number 
   };
 }
 
+/**
+ * The mailbox may send now: the desired state's rule (desiredState.ts: login
+ * allowed ∧ send toggle ∧ outbound of the account not suspended), read from
+ * the database at each call (no cache: a suspension applies to the next send).
+ */
+export async function webmailSendAllowed(mailboxId: number): Promise<boolean> {
+  const r = await db('mailboxes as m')
+    .join('mail_domains as md', 'md.id', 'm.mail_domain_id')
+    .join('domains as d', 'd.id', 'md.domain_id')
+    .join('hosting_accounts as a', 'a.id', 'm.account_id')
+    .leftJoin('mail_outbound_state as o', 'o.account_id', 'm.account_id')
+    .where('m.id', mailboxId)
+    .first('m.enabled', 'm.send_enabled', 'md.enabled as domain_enabled', 'd.verification_status', 'a.status as account_status', 'o.status as outbound_status') as Record<string, unknown> | undefined;
+  if (!r) return false;
+  return mailboxSendAllowed({
+    mailboxEnabled: !!r.enabled,
+    domainEnabled: !!r.domain_enabled,
+    domainVerified: r.verification_status === 'verified',
+    accountStatus: (r.account_status as string | null) ?? null,
+    sendEnabled: !!r.send_enabled,
+    outboundSuspended: r.outbound_status === 'suspended',
+  });
+}
+
 /** Largest upload: the mail domain's message size, else the platform's (MiB → bytes). */
 export async function maxUploadBytes(mailboxId: number): Promise<number> {
   const row = await db('mailboxes as m').join('mail_domains as md', 'md.id', 'm.mail_domain_id').where('m.id', mailboxId)
@@ -105,6 +129,7 @@ export function createDefaultWebmailApp() {
     findMailboxByAddress: (address) => findWebmailMailbox({ address }),
     findMailboxById: (id) => findWebmailMailbox({ id }),
     redeemSso: async (token) => (await import('../webmail.service')).webmailService.redeemOblimint(token),
+    peekSso: async (token) => (await import('../webmail.service')).webmailService.peekOblimint(token),
     isBanned: async (ip) => {
       try {
         const key = banKey(ip);
@@ -128,6 +153,7 @@ export function createDefaultWebmailApp() {
     secure: config.nodeEnv === 'production' || config.forceHttps,
     clientIp,
     maxUploadBytes,
+    sendAllowed: webmailSendAllowed,
     vacation: {
       async get(mailboxId) {
         const r = await db('mailboxes').where({ id: mailboxId }).first('autoresponder') as { autoresponder: unknown } | undefined;
