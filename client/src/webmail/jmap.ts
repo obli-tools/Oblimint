@@ -1,9 +1,13 @@
 import type { WebmailIdentity } from '@oblimint/shared';
-import { wmApi, type JmapInvocation } from './api';
+import { ApiError, wmApi, type JmapInvocation } from './api';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JMAP operations of the webmail (RFC 8620 / 8621) through the proxy. The
 // accountId is never sent: the proxy pins the session's own account.
+// Within the proxy's bounds (server policy.ts): explicit, duplicate-free id
+// lists; message bodies fetched separately, a few messages per request
+// (BODY_CHUNK), each body value cut at MAX_BODY_VALUE_BYTES (a longer part
+// is then read from its blob: MessageBody.tsx).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface Mailbox {
@@ -41,6 +45,7 @@ export interface BodyPart {
   partId: string | null;
   blobId: string | null;
   type: string;
+  charset?: string | null;
   name: string | null;
   size: number;
   disposition: string | null;
@@ -59,6 +64,8 @@ export interface EmailFull extends EmailListItem {
   htmlBody: BodyPart[];
   attachments: BodyPart[];
   bodyValues: Record<string, { value: string; isTruncated?: boolean }>;
+  /** The body values were fetched (loadBodies); false = headers / structure only. */
+  bodyLoaded?: boolean;
 }
 
 export interface SearchQuery {
@@ -72,8 +79,14 @@ export interface SearchQuery {
 }
 
 const LIST_PROPS = ['id', 'threadId', 'mailboxIds', 'keywords', 'from', 'to', 'subject', 'receivedAt', 'preview', 'hasAttachment', 'size'];
-const FULL_PROPS = [...LIST_PROPS, 'cc', 'bcc', 'replyTo', 'sentAt', 'messageId', 'inReplyTo', 'references', 'textBody', 'htmlBody', 'attachments', 'bodyValues'];
-const BODY_PROPS = ['partId', 'blobId', 'type', 'name', 'size', 'disposition', 'cid'];
+const FULL_PROPS = [...LIST_PROPS, 'cc', 'bcc', 'replyTo', 'sentAt', 'messageId', 'inReplyTo', 'references', 'textBody', 'htmlBody', 'attachments'];
+const BODY_PROPS = ['partId', 'blobId', 'type', 'charset', 'name', 'size', 'disposition', 'cid'];
+/** Body value cut (server policy MAX_BODY_VALUE_BYTES): longer parts come as isTruncated. */
+export const MAX_BODY_VALUE_BYTES = 256 * 1024;
+/** Messages whose bodies are fetched per request (server: ≤ 32 per call, ≤ 8 MiB of values per request). */
+const BODY_CHUNK = 8;
+/** Thread ids per Thread/get (server: ≤ 250 explicit ids). */
+const THREAD_CHUNK = 100;
 
 const resp = (r: JmapInvocation[], callId: string): Record<string, unknown> => (r.find((m) => m[2] === callId)?.[1] ?? {}) as Record<string, unknown>;
 
@@ -117,27 +130,59 @@ export async function queryThreads(filter: Record<string, unknown>, position: nu
   return { ids: ((q.ids ?? []) as string[]).filter((id) => emails[id]), emails, threadSizes, total: Number(q.total ?? 0), position: Number(q.position ?? position) };
 }
 
-/** Every message of a thread, oldest first, with bodies. */
+/** Every message of a thread, oldest first: headers and structure only (bodies: loadBodies). */
 export async function loadThread(threadId: string): Promise<EmailFull[]> {
   const r = await wmApi.jmap([
     ['Thread/get', { ids: [threadId] }, 't'],
-    ['Email/get', {
-      '#ids': { resultOf: 't', name: 'Thread/get', path: '/list/*/emailIds' }, properties: FULL_PROPS, bodyProperties: BODY_PROPS,
-      fetchHTMLBodyValues: true, fetchTextBodyValues: true, maxBodyValueBytes: 2_000_000,
-    }, 'g'],
+    ['Email/get', { '#ids': { resultOf: 't', name: 'Thread/get', path: '/list/*/emailIds' }, properties: FULL_PROPS, bodyProperties: BODY_PROPS }, 'g'],
   ]);
-  const list = (resp(r, 'g').list ?? []) as EmailFull[];
+  const list = ((resp(r, 'g').list ?? []) as EmailFull[]).map((e) => ({ ...e, bodyValues: {}, bodyLoaded: false }));
   return list.sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+}
+
+/**
+ * Body values (text + HTML parts, each cut at MAX_BODY_VALUE_BYTES) of
+ * `emailIds`, BODY_CHUNK messages per request. A chunk the server finds too
+ * large is retried one message at a time; a message still too large comes
+ * back without values (the reader offers its parts as downloads).
+ */
+export async function loadBodies(emailIds: string[]): Promise<Record<string, EmailFull['bodyValues']>> {
+  const out: Record<string, EmailFull['bodyValues']> = {};
+  const fetchChunk = async (ids: string[]) => {
+    const r = await wmApi.jmap([['Email/get', {
+      ids, properties: ['id', 'bodyValues'], fetchHTMLBodyValues: true, fetchTextBodyValues: true, maxBodyValueBytes: MAX_BODY_VALUE_BYTES,
+    }, 'b']]);
+    for (const e of (resp(r, 'b').list ?? []) as Array<{ id: string; bodyValues?: EmailFull['bodyValues'] }>) out[e.id] = e.bodyValues ?? {};
+  };
+  const unique = [...new Set(emailIds)];
+  for (let i = 0; i < unique.length; i += BODY_CHUNK) {
+    const chunk = unique.slice(i, i + BODY_CHUNK);
+    try {
+      await fetchChunk(chunk);
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.code !== 'tooLarge') throw err;
+      for (const id of chunk) {
+        try { await fetchChunk([id]); } catch (e) {
+          if (!(e instanceof ApiError) || e.code !== 'tooLarge') throw e;
+          out[id] = {};
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** Ids of the messages of `threadIds` (optionally only those in `mailboxId`). */
 export async function threadEmailIds(threadIds: string[], mailboxId: string | null): Promise<EmailListItem[]> {
-  if (threadIds.length === 0) return [];
-  const r = await wmApi.jmap([
-    ['Thread/get', { ids: threadIds }, 't'],
-    ['Email/get', { '#ids': { resultOf: 't', name: 'Thread/get', path: '/list/*/emailIds' }, properties: ['id', 'threadId', 'mailboxIds', 'keywords'] }, 'g'],
-  ]);
-  const list = (resp(r, 'g').list ?? []) as EmailListItem[];
+  const unique = [...new Set(threadIds)];
+  const list: EmailListItem[] = [];
+  for (let i = 0; i < unique.length; i += THREAD_CHUNK) {
+    const r = await wmApi.jmap([
+      ['Thread/get', { ids: unique.slice(i, i + THREAD_CHUNK) }, 't'],
+      ['Email/get', { '#ids': { resultOf: 't', name: 'Thread/get', path: '/list/*/emailIds' }, properties: ['id', 'threadId', 'mailboxIds', 'keywords'] }, 'g'],
+    ]);
+    list.push(...((resp(r, 'g').list ?? []) as EmailListItem[]));
+  }
   return mailboxId ? list.filter((e) => e.mailboxIds?.[mailboxId]) : list;
 }
 
@@ -165,8 +210,9 @@ export async function moveEmails(emails: Array<Pick<EmailListItem, 'id' | 'mailb
 }
 
 export async function destroyEmails(emailIds: string[]): Promise<void> {
-  for (let i = 0; i < emailIds.length; i += 200) {
-    await wmApi.jmap([['Email/set', { destroy: emailIds.slice(i, i + 200) }, 'd']]);
+  const ids = [...new Set(emailIds)];
+  for (let i = 0; i < ids.length; i += 200) {
+    await wmApi.jmap([['Email/set', { destroy: ids.slice(i, i + 200) }, 'd']]);
   }
 }
 

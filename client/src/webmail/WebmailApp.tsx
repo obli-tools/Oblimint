@@ -14,6 +14,11 @@ import { useWebmail } from './store';
 // Root of the webmail SPA: session check, panel single sign-on (token in the
 // URL fragment, removed at once), new-mail refresh (event stream relayed by
 // the proxy, else polling).
+// SSO is ALWAYS confirmed: the page first asks the server which mailbox the
+// token opens (without using it) and shows that address; only "Open" redeems
+// it. A link someone minted for THEIR mailbox and sent to a victim therefore
+// never logs the victim silently into the attacker's mailbox (login CSRF:
+// drafts and sent mail would land there).
 
 const POLL_MS = 60_000;
 
@@ -24,6 +29,8 @@ function takeSsoToken(): string | null {
   return m ? m[1] : null;
 }
 
+const ssoInvalidText = () => i18n.t('wm.sso.invalid') || 'This link has expired or was already used: open the webmail again from the panel.';
+
 async function redeem(token: string): Promise<void> {
   const s = useWebmail.getState();
   try {
@@ -32,10 +39,9 @@ async function redeem(token: string): Promise<void> {
     s.setSession(session);
     s.setPhase('ready');
   } catch (err) {
-    s.setPhase('login');
-    s.toast('error', err instanceof ApiError && err.code === 'ssoInvalid'
-      ? (i18n.t('wm.sso.invalid') || 'This link has expired or was already used: open the webmail again from the panel.')
-      : (i18n.t('wm.errors.network') || 'The server could not be reached.'));
+    // The open session (if any) is kept by the server when the token is refused.
+    s.setPhase(s.session?.authenticated ? 'ready' : 'login');
+    s.toast('error', err instanceof ApiError && err.code === 'ssoInvalid' ? ssoInvalidText() : (i18n.t('wm.errors.network') || 'The server could not be reached.'));
   }
 }
 
@@ -43,20 +49,28 @@ function SsoConfirm() {
   const { t } = useTranslation();
   const session = useWebmail((s) => s.session);
   const token = useWebmail((s) => s.ssoToken);
-  const { setSsoToken, setPhase } = useWebmail.getState();
+  const target = useWebmail((s) => s.ssoAddress) ?? '';
+  const { setSso, setPhase } = useWebmail.getState();
   const [busy, setBusy] = useState(false);
+  const current = session?.authenticated ? session.address ?? '' : '';
+  const cancel = () => { setSso(null, null); setPhase(current ? 'ready' : 'login'); };
   return (
     <div className="flex h-full items-center justify-center bg-bg-primary px-4">
       <div className="w-full max-w-md space-y-4 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl">
         <Logo className="h-7" />
-        <h1 className="text-lg font-semibold text-text-primary">{t('wm.sso.title') || 'Switch mailbox?'}</h1>
-        <p className="text-sm text-text-secondary">
-          {t('wm.sso.text', { address: session?.address ?? '' }) || `A webmail session is already open in this browser (${session?.address ?? ''}). Continuing closes it and opens the mailbox requested from the Oblimint panel.`}
-        </p>
-        <p className="text-sm text-text-muted">{t('wm.sso.warning') || 'If you did not open this link yourself from the panel, keep your session.'}</p>
+        <h1 className="text-lg font-semibold text-text-primary">{t('wm.sso.openTitle') || 'Open this mailbox?'}</h1>
+        <p className="break-all rounded-md border border-border bg-bg-tertiary px-3 py-2 font-mono text-sm text-text-primary">{target}</p>
+        {current ? (
+          <p className="text-sm text-text-secondary">
+            {t('wm.sso.text', { address: current }) || `A webmail session is already open in this browser (${current}). Continuing closes it and opens the mailbox requested from the Oblimint panel.`}
+          </p>
+        ) : (
+          <p className="text-sm text-text-secondary">{t('wm.sso.openText') || 'This link opens the mailbox above, requested from the Oblimint panel.'}</p>
+        )}
+        <p className="text-sm text-text-muted">{t('wm.sso.warningAddress') || 'Continue only if this is YOUR mailbox and you opened this link yourself from the panel: what you write or send would go to this mailbox.'}</p>
         <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="secondary" onClick={() => { setSsoToken(null); setPhase('ready'); }}>{t('wm.sso.keep') || 'Keep my session'}</Button>
-          <Button loading={busy} onClick={() => { setBusy(true); const tk = token; setSsoToken(null); if (tk) void redeem(tk); }}>{t('wm.sso.continue') || 'Continue'}</Button>
+          <Button variant="secondary" onClick={cancel}>{current ? (t('wm.sso.keep') || 'Keep my session') : (t('wm.common.cancel') || 'Cancel')}</Button>
+          <Button loading={busy} onClick={() => { setBusy(true); const tk = token; setSso(null, null); if (tk) void redeem(tk); }}>{t('wm.sso.open') || 'Open this mailbox'}</Button>
         </div>
       </div>
     </div>
@@ -81,13 +95,20 @@ export function WebmailApp() {
     void (async () => {
       try {
         const info = await wmApi.session();
-        if (token && info.authenticated) {
-          s.setSession(info);
-          s.setSsoToken(token);
-          s.setPhase('ssoConfirm');
-        } else if (token) {
-          await redeem(token);
-        } else if (info.authenticated) {
+        if (token) {
+          // Which mailbox does it open? (the token is not used by this question)
+          const target = await wmApi.ssoTarget(token).catch((err: unknown) => {
+            s.toast('error', err instanceof ApiError && err.code === 'ssoInvalid' ? ssoInvalidText() : (i18n.t('wm.errors.network') || 'The server could not be reached.'));
+            return null;
+          });
+          if (target) {
+            if (info.authenticated) s.setSession(info);
+            s.setSso(token, target.address);
+            s.setPhase('ssoConfirm');
+            return;
+          }
+        }
+        if (info.authenticated) {
           s.setSession(info);
           s.setPhase('ready');
         } else {

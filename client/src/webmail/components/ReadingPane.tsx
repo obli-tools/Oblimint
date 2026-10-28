@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Archive, ChevronDown, ChevronLeft, ChevronRight, Download, FolderInput, Forward, Mail, Paperclip, Reply, ReplyAll, ShieldAlert, Trash2,
@@ -6,7 +6,7 @@ import {
 import { cn } from '@/utils/cn';
 import { archive, canArchive, canSpam, deleteThreads, markSeen, markSpam, moveTo } from '../actions';
 import { wmApi } from '../api';
-import { loadThread, setKeyword, type EmailFull } from '../jmap';
+import { loadBodies, loadThread, setKeyword, type EmailFull } from '../jmap';
 import { displayName, draftFrom, formatAddress, formatAddressList, plainTextOf, type ComposeMode } from '../lib/compose';
 import { formatFullDate, formatListDate, formatSize } from '../lib/format';
 import { htmlToText, sanitizeForDisplay } from '../lib/sanitize';
@@ -62,7 +62,9 @@ function MessageCard({ email, expanded, onToggle, onCompose }: {
       </header>
       {expanded && (
         <>
-          <MessageBody email={email} />
+          {email.bodyLoaded
+            ? <MessageBody email={email} />
+            : <p className="px-4 py-3 text-sm text-text-muted">{t('wm.common.loading') || 'Loading…'}</p>}
           <Attachments email={email} />
           <div className="flex flex-wrap gap-2 px-4 pb-4">
             <button type="button" onClick={() => onCompose('reply', email)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary coarse:min-h-10">
@@ -94,6 +96,26 @@ export function ReadingPane() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
+  /** Bodies requested for the open thread (fetched once per message, when it is expanded). */
+  const requested = useRef<Set<string>>(new Set());
+  const threadRef = useRef<string | null>(null);
+  threadRef.current = threadId;
+
+  /** Fetches the bodies of `ids` not requested yet, merged into the messages. */
+  const fetchBodies = useCallback((ids: string[]) => {
+    const missing = ids.filter((id) => !requested.current.has(id));
+    if (missing.length === 0) return;
+    for (const id of missing) requested.current.add(id);
+    const forThread = threadRef.current;
+    loadBodies(missing).then((bodies) => {
+      if (threadRef.current !== forThread) return;
+      // A message gone meanwhile (or too large for the proxy) shows without a body rather than loading forever.
+      setMessages((list) => list && list.map((m) => (missing.includes(m.id) ? { ...m, bodyValues: bodies[m.id] ?? {}, bodyLoaded: true } : m)));
+    }).catch((err) => {
+      for (const id of missing) requested.current.delete(id);
+      if (threadRef.current === forThread) setError((err as Error).message);
+    });
+  }, []);
   const listId = listIds.find((id) => emails[id]?.threadId === threadId) ?? null;
   const index = listId ? listIds.indexOf(listId) : -1;
   const inTrash = !!currentId && currentId === mailboxByRole(mailboxes, 'trash')?.id;
@@ -103,11 +125,14 @@ export function ReadingPane() {
     let cancelled = false;
     setMessages(null);
     setError(null);
+    requested.current = new Set();
     loadThread(threadId).then(async (list) => {
       if (cancelled) return;
       setMessages(list);
-      // Unread messages + the last one expanded.
-      setExpanded(new Set([...list.filter((m) => !m.keywords?.$seen).map((m) => m.id), list[list.length - 1]?.id].filter(Boolean) as string[]));
+      // The last unread messages (at most 10) + the last one expanded; their bodies fetched now, the others on demand.
+      const open = [...list.filter((m) => !m.keywords?.$seen).slice(-10).map((m) => m.id), list[list.length - 1]?.id].filter(Boolean) as string[];
+      setExpanded(new Set(open));
+      fetchBodies(open);
       const unread = list.filter((m) => !m.keywords?.$seen).map((m) => m.id);
       if (unread.length) {
         await setKeyword(unread, '$seen', true).catch(() => undefined);
@@ -117,7 +142,7 @@ export function ReadingPane() {
       }
     }).catch((err) => { if (!cancelled) setError((err as Error).message); });
     return () => { cancelled = true; };
-  }, [threadId, patchEmails, refreshMailboxes]);
+  }, [threadId, patchEmails, refreshMailboxes, fetchBodies]);
 
   if (!threadId) {
     return (
@@ -128,7 +153,13 @@ export function ReadingPane() {
     );
   }
 
-  const compose = (mode: Exclude<ComposeMode, 'new'>, e: EmailFull) => {
+  const compose = async (mode: Exclude<ComposeMode, 'new'>, original: EmailFull) => {
+    // The quote needs the body: fetched now when the message was never expanded.
+    let e = original;
+    if (!e.bodyLoaded) {
+      const bodies = await loadBodies([e.id]).catch(() => ({} as Record<string, EmailFull['bodyValues']>));
+      e = { ...e, bodyValues: bodies[e.id] ?? {}, bodyLoaded: true };
+    }
     const html = partValue(e, e.htmlBody);
     const isHtml = !!html && /html/i.test(e.htmlBody?.[0]?.type ?? '');
     const safe = isHtml ? sanitizeForDisplay(html!, { allowRemote: false }).html : null;
@@ -177,8 +208,11 @@ export function ReadingPane() {
         {!messages && !error && <p className="px-4 py-6 text-sm text-text-muted">{t('wm.common.loading') || 'Loading…'}</p>}
         {messages?.map((m) => (
           <MessageCard key={m.id} email={m} expanded={expanded.has(m.id)}
-            onToggle={() => setExpanded((s) => { const n = new Set(s); if (n.has(m.id)) n.delete(m.id); else n.add(m.id); return n; })}
-            onCompose={(mode, e) => { compose(mode, e); }} />
+            onToggle={() => {
+              if (!expanded.has(m.id)) fetchBodies([m.id]);
+              setExpanded((s) => { const n = new Set(s); if (n.has(m.id)) n.delete(m.id); else n.add(m.id); return n; });
+            }}
+            onCompose={(mode, e) => { void compose(mode, e); }} />
         ))}
         {messages && messages.length === 0 && <p className="px-4 py-6 text-sm text-text-muted">{t('wm.read.gone') || 'This conversation no longer exists.'}</p>}
       </div>

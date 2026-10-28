@@ -1,4 +1,4 @@
-import type { WebmailErrorCode, WebmailSessionInfo, WebmailVacation } from '@oblimint/shared';
+import type { WebmailErrorCode, WebmailSessionInfo, WebmailSsoTarget, WebmailVacation } from '@oblimint/shared';
 import { WEBMAIL_API_PREFIX, WEBMAIL_BACKGROUND_HEADER, WEBMAIL_CSRF_HEADER } from '@oblimint/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -6,6 +6,8 @@ import { WEBMAIL_API_PREFIX, WEBMAIL_BACKGROUND_HEADER, WEBMAIL_CSRF_HEADER } fr
 // only, the session cookie is HttpOnly (never readable here); every
 // state-changing call carries the CSRF token received from /session, /login
 // or /sso. A 401 sends the app back to the login screen.
+// JMAP calls: at most JMAP_PARALLEL in flight (the proxy refuses more per
+// session), a refusal for concurrency retried after a short wait.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class ApiError extends Error {
@@ -57,6 +59,24 @@ async function call<T>(method: string, path: string, body?: unknown, opts: Optio
 
 export type JmapInvocation = [string, Record<string, unknown>, string];
 
+/** JMAP calls in flight from this page (the proxy allows 4 per session: one left for another tab). */
+const JMAP_PARALLEL = 3;
+let jmapActive = 0;
+const jmapWaiting: Array<() => void> = [];
+
+async function jmapSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (jmapActive >= JMAP_PARALLEL) await new Promise<void>((r) => { jmapWaiting.push(r); });
+  jmapActive++;
+  try {
+    return await fn();
+  } finally {
+    jmapActive--;
+    jmapWaiting.shift()?.();
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => { setTimeout(r, ms); });
+
 export const wmApi = {
   async session(): Promise<WebmailSessionInfo> {
     const s = await call<WebmailSessionInfo>('GET', '/session', undefined, { quiet401: true });
@@ -68,6 +88,10 @@ export const wmApi = {
     setCsrf(s.csrf);
     return s;
   },
+  /** Mailbox an SSO link opens (the token is NOT used: shown for confirmation first). */
+  ssoTarget(token: string): Promise<WebmailSsoTarget> {
+    return call<WebmailSsoTarget>('POST', '/sso/target', { token }, { quiet401: true });
+  },
   async sso(token: string): Promise<WebmailSessionInfo> {
     const s = await call<WebmailSessionInfo>('POST', '/sso', { token }, { quiet401: true });
     setCsrf(s.csrf);
@@ -78,7 +102,17 @@ export const wmApi = {
     setCsrf('');
   },
   async jmap(methodCalls: JmapInvocation[], background = false): Promise<JmapInvocation[]> {
-    const r = await call<{ methodResponses: JmapInvocation[] }>('POST', '/jmap', { methodCalls }, { background });
+    const r = await jmapSlot(async () => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await call<{ methodResponses: JmapInvocation[] }>('POST', '/jmap', { methodCalls }, { background });
+        } catch (err) {
+          // Too many simultaneous calls (other tabs): wait and retry a few times.
+          if (!(err instanceof ApiError) || err.status !== 429 || attempt >= 3) throw err;
+          await sleep(500 * (attempt + 1));
+        }
+      }
+    });
     for (const m of r.methodResponses) {
       if (m[0] === 'error') throw new ApiError(400, 'upstream', String((m[1] as { type?: string }).type ?? 'JMAP error'));
     }

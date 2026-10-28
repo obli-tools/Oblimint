@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { FileText, Loader2, Paperclip, Send, Trash2, Type, X } from 'lucide-react';
 import { Button } from '@/components/common/Button';
 import { cn } from '@/utils/cn';
-import { wmApi } from '../api';
+import { ApiError, wmApi } from '../api';
 import { destroyEmails, saveDraft, sendMessage, setKeyword, type OutgoingMessage } from '../jmap';
 import { parseAddressList, textToHtml } from '../lib/compose';
 import { formatSize } from '../lib/format';
@@ -133,7 +133,13 @@ export function Composer({ c }: { c: ComposerState }) {
       toast('ok', t('wm.compose.sent') || 'Message sent');
       void refreshMailboxes(true).then(() => reloadList(true));
     } catch (err) {
-      toast('error', (err as Error).message || (t('wm.compose.sendFailed') || 'The message could not be sent.'));
+      if (err instanceof ApiError && err.code === 'sendDisabled') {
+        // Refused by the proxy before anything was created: the message stays open, saved as a draft.
+        toast('error', t('wm.compose.sendDisabled') || 'Sending is disabled for this mailbox. Your message stays here and is saved in Drafts.');
+        void save();
+      } else {
+        toast('error', (err as Error).message || (t('wm.compose.sendFailed') || 'The message could not be sent.'));
+      }
     } finally {
       setSending(false);
     }

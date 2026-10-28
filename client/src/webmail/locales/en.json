@@ -28,6 +28,7 @@
       "badAddress": "Invalid address: {{list}}",
       "bcc": "Bcc",
       "bodyPlaceholder": "Write your message…",
+      "bodyTitle": "Message body",
       "cc": "Cc",
       "ccBcc": "Cc / Bcc",
       "date": "Date",
@@ -44,6 +45,7 @@
       "saved": "Draft saved",
       "saving": "Saving…",
       "send": "Send",
+      "sendDisabled": "Sending is disabled for this mailbox. Your message stays here and is saved in Drafts.",
       "sendFailed": "The message could not be sent.",
       "sent": "Message sent",
       "subject": "Subject",
@@ -112,7 +114,8 @@
       "next": "Older",
       "none": "Select a message to read it.",
       "previous": "Newer",
-      "showImages": "Show images"
+      "showImages": "Show images",
+      "truncated": "This message is very long: only its beginning is shown."
     },
     "search": {
       "advanced": "Advanced search",
@@ -128,12 +131,13 @@
       "to": "To"
     },
     "sso": {
-      "continue": "Continue",
       "invalid": "This link has expired or was already used: open the webmail again from the panel.",
       "keep": "Keep my session",
+      "open": "Open this mailbox",
+      "openText": "This link opens the mailbox above, requested from the Oblimint panel.",
+      "openTitle": "Open this mailbox?",
       "text": "A webmail session is already open in this browser ({{address}}). Continuing closes it and opens the mailbox requested from the Oblimint panel.",
-      "title": "Switch mailbox?",
-      "warning": "If you did not open this link yourself from the panel, keep your session."
+      "warningAddress": "Continue only if this is YOUR mailbox and you opened this link yourself from the panel: what you write or send would go to this mailbox."
     },
     "title": "Webmail",
     "toast": {

@@ -28,6 +28,7 @@
       "badAddress": "Adresse invalide : {{list}}",
       "bcc": "Cci",
       "bodyPlaceholder": "Écrivez votre message…",
+      "bodyTitle": "Corps du message",
       "cc": "Cc",
       "ccBcc": "Cc / Cci",
       "date": "Date",
@@ -44,6 +45,7 @@
       "saved": "Brouillon enregistré",
       "saving": "Enregistrement…",
       "send": "Envoyer",
+      "sendDisabled": "L'envoi est désactivé pour cette boîte. Votre message reste ouvert et est enregistré dans les brouillons.",
       "sendFailed": "Le message n'a pas pu être envoyé.",
       "sent": "Message envoyé",
       "subject": "Objet",
@@ -112,7 +114,8 @@
       "next": "Plus ancien",
       "none": "Sélectionnez un message pour le lire.",
       "previous": "Plus récent",
-      "showImages": "Afficher les images"
+      "showImages": "Afficher les images",
+      "truncated": "Ce message est très long : seul son début est affiché."
     },
     "search": {
       "advanced": "Recherche avancée",
@@ -128,12 +131,13 @@
       "to": "À"
     },
     "sso": {
-      "continue": "Continuer",
       "invalid": "Ce lien a expiré ou a déjà servi : rouvrez le webmail depuis le panel.",
       "keep": "Garder ma session",
+      "open": "Ouvrir cette boîte",
+      "openText": "Ce lien ouvre la boîte ci-dessus, demandée depuis le panel Oblimint.",
+      "openTitle": "Ouvrir cette boîte mail ?",
       "text": "Une session webmail est déjà ouverte dans ce navigateur ({{address}}). Continuer la fermera et ouvrira la boîte demandée depuis le panel Oblimint.",
-      "title": "Changer de boîte mail ?",
-      "warning": "Si vous n'avez pas ouvert ce lien vous-même depuis le panel, gardez votre session."
+      "warningAddress": "Ne continuez que s'il s'agit de VOTRE boîte et que vous avez ouvert ce lien vous-même depuis le panel : ce que vous écrirez ou enverrez irait dans cette boîte."
     },
     "title": "Webmail",
     "toast": {

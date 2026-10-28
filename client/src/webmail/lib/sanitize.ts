@@ -10,9 +10,14 @@ export function sanitizeForDisplay(html: string, opts: RenderOptions): SanitizeR
   return sanitizeEmailHtml(factory, html, opts);
 }
 
-/** HTML written in the rich editor (pasted content included) before it is sent. */
+/**
+ * HTML entering the rich editor (quoted reply / forward, pasted, dropped) and
+ * leaving it (the message sent): compose mode — no <style>, no remote CSS,
+ * no fixed / absolute positioning. Remote <img> are kept for the recipient
+ * (the editor's own CSP never loads them).
+ */
 export function sanitizeOutgoing(html: string): string {
-  return sanitizeEmailHtml(factory, html, { allowRemote: true }).html;
+  return sanitizeEmailHtml(factory, html, { allowRemote: true, mode: 'compose' }).html;
 }
 
 /** Text of an HTML body, from an INERT document (DOMParser: no script runs, nothing loads). */

