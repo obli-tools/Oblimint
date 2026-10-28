@@ -110,8 +110,8 @@ export function DnsZonePage() {
   const hosted = zone.kind === 'hosted';
   const manage = can('dns.manage', zone.accountId);
   const editable = manage && hosted;
-  // Back without history / after a deletion: the domains of the account, not the global list.
-  const fallbackHref = zone.accountId != null ? accountHref(zone.accountId, 'domains') : '/domains?tab=zones';
+  // Back without history / after a deletion: the zones of the account, not the global list.
+  const fallbackHref = zone.accountId != null ? accountHref(zone.accountId, 'domains', { sub: 'zones' }) : '/domains?tab=zones';
   const systemCount = zone.records.filter((r) => r.origin === 'system').length;
 
   const exportZone = async () => {

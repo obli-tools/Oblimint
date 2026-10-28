@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { Eye, EyeOff, Pencil, Shield, Trash2, UserPlus, Users, Wand2 } from 'lucide-react';
 import type { AccountClientUser, AccountClientUserAdd, ClientCapability, ClientUserCandidate } from '@oblimint/shared';
-import { CLIENT_CAPABILITIES } from '@oblimint/shared';
 import { accountsApi } from '@/api/accounts.api';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
@@ -15,7 +14,7 @@ import { SortTh, useTableSort } from '@/components/common/SortHead';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu';
 import { cn } from '@/utils/cn';
-import { CapabilityCheckboxes, CapabilityChips } from './CapabilityCheckboxes';
+import { CapabilityCheckboxes, useGrantableClientCapabilities, CapabilityChips } from './CapabilityCheckboxes';
 import {
   CopyButton, EmptyState, Pill, hostingErrorMessage, inputCls, isStepUpHandled, labelCls, sectionTitleCls, selectCls, thCls,
   theadRowCls, toastHostingError,
@@ -78,7 +77,7 @@ export function AccountUsersTab({ accountId, tenantId }: { accountId: number; te
               <div className="flex items-center gap-2">
                 <span className="truncate font-mono text-sm font-semibold text-text-primary">{u.username}</span>
                 <span className="font-mono text-[11px] text-text-muted">#{u.userId}</span>
-                {!u.isActive && <Pill tone="red">{t('accounts.users.inactive') || 'disabled'}</Pill>}
+                {!u.isActive && <Pill tone="muted">{t('accounts.users.inactive') || 'disabled'}</Pill>}
                 <ActionMenu items={menu(u)} sheetTitle={u.username} triggerSize="sm" triggerClassName="ml-auto" />
               </div>
               {(u.displayName || u.email) && (
@@ -115,7 +114,7 @@ export function AccountUsersTab({ accountId, tenantId }: { accountId: number; te
                     <div className="flex items-center gap-2">
                       <span className="font-mono font-medium text-text-primary">{u.username}</span>
                       <span className="font-mono text-[11px] text-text-muted">#{u.userId}</span>
-                      {!u.isActive && <Pill tone="red">{t('accounts.users.inactive') || 'disabled'}</Pill>}
+                      {!u.isActive && <Pill tone="muted">{t('accounts.users.inactive') || 'disabled'}</Pill>}
                     </div>
                     {(u.displayName || u.email) && (
                       <div className="truncate text-xs text-text-muted">{[u.displayName, u.email].filter(Boolean).join(' · ')}</div>
@@ -173,7 +172,9 @@ function AddUserModal({ open, accountId, tenantId, existingIds, onClose, onAdded
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [userId, setUserId] = useState('');
-  const [caps, setCaps] = useState<ClientCapability[]>([...CLIENT_CAPABILITIES]);
+  const grantableCaps = useGrantableClientCapabilities();
+  // A new client starts with every capability the caller may delegate.
+  const [caps, setCaps] = useState<ClientCapability[]>([...grantableCaps]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<AttachCandidate[] | null>(null);
@@ -193,8 +194,11 @@ function AddUserModal({ open, accountId, tenantId, existingIds, onClose, onAdded
     if (!open) return;
     setCandidates(null); setManualId(false);
     setMode('create'); setUsername(''); setPassword(''); setShowPassword(false); setEmail(''); setDisplayName('');
-    setUserId(''); setCaps([...CLIENT_CAPABILITIES]); setError(null);
-  }, [open]);
+    setUserId(''); setCaps([...grantableCaps]); setError(null);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // /hosting/me known after the form opened: what cannot be delegated is dropped.
+  useEffect(() => { setCaps((prev) => prev.filter((c) => grantableCaps.includes(c))); }, [grantableCaps]);
 
   const attachId = Number(userId);
   const valid = mode === 'create'

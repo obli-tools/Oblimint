@@ -86,6 +86,12 @@ export interface AccountScopeOptions {
   accountFilter?: (a: HostingAccount) => boolean;
   /** URL key of the workspace chips (default `tenants`). */
   tenantParam?: string;
+  /**
+   * Keep the URL account for the session (sidebar links). False on a page that puts an
+   * account in the URL by itself (Files picks one): that pick, or an account its filter
+   * drops, must never change the scope of the other pages.
+   */
+  remember?: boolean;
 }
 
 export interface AccountScope {
@@ -110,7 +116,7 @@ export interface AccountScope {
 }
 
 export function useAccountScope(options: AccountScopeOptions = {}): AccountScope {
-  const { accountFilter, tenantParam = 'tenants' } = options;
+  const { accountFilter, tenantParam = 'tenants', remember: keepInMemory = true } = options;
   const isMaster = useIsMasterTenant();
   const currentTenantId = useTenantStore((s) => s.currentTenantId);
   const tenantFilter = useTenantFilter(tenantParam);
@@ -140,17 +146,17 @@ export function useAccountScope(options: AccountScopeOptions = {}): AccountScope
 
   // Remember a visible account chosen in the URL (sidebar links); a stale one is forgotten.
   useEffect(() => {
-    if (!accountsLoaded || rawAccount == null) return;
+    if (!keepInMemory || !accountsLoaded || rawAccount == null) return;
     remember(currentTenantId, accountParam);
-  }, [accountsLoaded, rawAccount, accountParam, currentTenantId, remember]);
+  }, [keepInMemory, accountsLoaded, rawAccount, accountParam, currentTenantId, remember]);
 
   const update = useCallback((patch: Record<string, string | null>) => {
     setParams((prev) => patchSearchParams(prev, patch), { replace: true });
   }, [setParams]);
   const setAccount = useCallback((id: number | null) => {
-    if (id == null) remember(currentTenantId, null);
+    if (id == null && keepInMemory) remember(currentTenantId, null);
     update({ account: id == null ? null : String(id) });
-  }, [update, remember, currentTenantId]);
+  }, [update, remember, currentTenantId, keepInMemory]);
   const setSingleTenant = (next: Set<number>) => {
     const picked = pickOneTenant(tenantFilter.value, next);
     // Changing the workspace also forgets the account (it belongs to the old one).

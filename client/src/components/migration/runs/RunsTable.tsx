@@ -41,7 +41,7 @@ export function RunsTable({ runs, showPlan = true, planName }: {
             <>
               <span className="text-xs text-text-secondary">{runKindLabel(t, r.kind)}</span>
               {r.kind !== 'initial' && r.parts.length > 0 && <div className="mt-0.5 flex flex-wrap gap-1">{r.parts.map((p) => <Pill key={p}>{t(`migration.parts.${p}`, { defaultValue: p })}</Pill>)}</div>}
-              {r.mirrorDeletes && <div className="mt-0.5"><Pill tone="red">{t('migration.runs.mirrorDeletesShort') || 'mirror deletes'}</Pill></div>}
+              {r.mirrorDeletes && <div className="mt-0.5"><Pill tone="amber">{t('migration.runs.mirrorDeletesShort') || 'mirror deletes'}</Pill></div>}
             </>
           ),
         },

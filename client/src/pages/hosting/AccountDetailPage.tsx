@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  AlertTriangle, Archive, BarChart3, ChevronRight, Database, FolderOpen, KeyRound, Gauge, Globe, HardDrive, Layers, LayoutGrid, Pause, Play, Plus,
+  AlertTriangle, Archive, BarChart3, ChevronRight, Database, FolderOpen, KeyRound, Gauge, Globe, HardDrive, Layers, LayoutGrid, Network, Pause, Play, Plus,
   RefreshCw, Server, ShieldCheck, Trash2, Users,
 } from 'lucide-react';
 import type { HostingAccount, Plan, Site } from '@oblimint/shared';
@@ -29,6 +29,7 @@ import { FileAccessPanel } from '@/components/hosting/FileAccessPanel';
 import { AccountUsersTab } from '@/components/hosting/AccountUsersTab';
 import { PlanSummary } from '@/components/hosting/AccountCreateModal';
 import { DomainsList } from '@/components/hosting/DomainsList';
+import { DnsZonesTab } from '@/components/dns/DnsZonesTab';
 import { AccountSecurityTab } from '@/components/security/AccountSecurityTab';
 import { AccountUsageTab } from '@/components/usage/AccountUsageTab';
 import { OverQuotaBanner, OverQuotaPill } from '@/components/usage/usageUi';
@@ -43,6 +44,7 @@ import { siteHref, type AccountTab } from '@/utils/links';
 
 // The tab ids are the deep-link contract of accountHref() (utils/links.ts).
 type Tab = AccountTab;
+type DomainsSub = 'domains' | 'zones';
 const TABS: Tab[] = ['overview', 'sites', 'domains', 'databases', 'usage', 'security', 'users', 'files', 'keys', 'backups'];
 
 export function AccountDetailPage() {
@@ -69,6 +71,15 @@ export function AccountDetailPage() {
   const setTab = (next: Tab) => {
     const p = new URLSearchParams(params);
     if (next === 'overview') p.delete('tab'); else p.set('tab', next);
+    p.delete('domain');
+    p.delete('sub');
+    setParams(p, { replace: true });
+  };
+  // Domains tab: sub-filter Domains | DNS zones (`&sub=zones`; domains by default).
+  const domainsSub: DomainsSub = params.get('sub') === 'zones' ? 'zones' : 'domains';
+  const setDomainsSub = (next: DomainsSub) => {
+    const p = new URLSearchParams(params);
+    if (next === 'domains') p.delete('sub'); else p.set('sub', next);
     p.delete('domain');
     setParams(p, { replace: true });
   };
@@ -210,7 +221,25 @@ export function AccountDetailPage() {
 
       {tab === 'overview' && <OverviewTab account={account} isStaff={isStaff} onRefreshUsage={() => { void act('usage', () => accountsApi.refreshUsage(account.id), 'accounts.usageRefreshed', 'Disk usage refreshed', 'accounts.actionFailed', 'Action failed'); }} refreshing={busy === 'usage'} />}
       {tab === 'sites' && <SitesTab account={account} />}
-      {tab === 'domains' && <DomainsList accountId={account.id} createDisabled={account.status === 'deleting'} />}
+      {tab === 'domains' && (
+        <div className="flex flex-col gap-4">
+          <SegmentedTabs<DomainsSub>
+            tabs={[
+              { id: 'domains', label: t('dns.tabs.domains') || 'Domains', icon: <Globe size={14} /> },
+              { id: 'zones', label: t('dns.tabs.zones') || 'DNS zones', icon: <Network size={14} /> },
+            ]}
+            value={domainsSub}
+            onChange={setDomainsSub}
+            size="sm"
+            fill={false}
+            className="self-start"
+            ariaLabel={t('accounts.tabs.domains') || 'Domains'}
+          />
+          {domainsSub === 'domains'
+            ? <DomainsList accountId={account.id} createDisabled={account.status === 'deleting'} />
+            : <DnsZonesTab accountId={account.id} />}
+        </div>
+      )}
       {tab === 'databases' && <AccountDatabasesPanel accountId={account.id} />}
       {tab === 'usage' && <AccountUsageTab accountId={account.id} />}
       {tab === 'security' && <AccountSecurityTab accountId={account.id} />}

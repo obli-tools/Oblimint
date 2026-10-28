@@ -147,7 +147,7 @@ export function MigrationRunPage() {
           <>
             <span>{runKindLabel(t, run.kind)}</span>
             {run.kind !== 'initial' && run.parts.map((p) => <Pill key={p}>{t(`migration.parts.${p}`, { defaultValue: p })}</Pill>)}
-            {run.mirrorDeletes && <Pill tone="red">{t('migration.runs.mirrorDeletesShort') || 'mirror deletes'}</Pill>}
+            {run.mirrorDeletes && <Pill tone="amber">{t('migration.runs.mirrorDeletesShort') || 'mirror deletes'}</Pill>}
             <span>·</span>
             <Link to={`/manage/migration/plans/${run.planId}?tab=runs`} className="text-accent hover:underline">{t('migration.runs.plan') || 'Plan'} #{run.planId}</Link>
             {run.targetAccountId != null && <><span>·</span><Link to={`/accounts/${run.targetAccountId}`} className="text-accent hover:underline">{t('migration.runs.targetAccount') || 'Target account'} #{run.targetAccountId}</Link></>}

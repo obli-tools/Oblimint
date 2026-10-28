@@ -122,7 +122,7 @@ export function NotificationChannelsSection() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-text-primary">{ch.name}</span>
                     <span className="rounded-full bg-bg-tertiary px-2 py-0.5 text-[10px] font-medium text-text-muted">{channelTypeLabel(t, ch.type)}</span>
-                    {!ch.enabled && <Pill tone="red">{t('notifications.disabled') || 'disabled'}</Pill>}
+                    {!ch.enabled && <Pill tone="muted">{t('notifications.disabled') || 'disabled'}</Pill>}
                     {ch.lastError && <Pill tone="amber" title={ch.lastError}>{t('notifications.lastFailed') || 'last send failed'}</Pill>}
                   </div>
                   <div className="mt-1 truncate text-[11px] text-text-muted" title={ch.events.map((e) => eventLabel(t, e)).join(', ')}>

@@ -50,6 +50,8 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [domains, setDomains] = useState<Domain[]>([]);
+  // The choices below are known (no « no domain / no site » hint before they are).
+  const [choicesLoaded, setChoicesLoaded] = useState(false);
   const [runtimes, setRuntimes] = useState<Record<number, SiteRuntime[]>>({});
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
@@ -77,8 +79,10 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
   useEffect(() => {
     if (!manage) return;
     let cancelled = false;
-    if (domain) sitesApi.list({ accountId }).then((l) => { if (!cancelled) setSites(l); }).catch(() => { if (!cancelled) setSites([]); });
-    else domainsApi.list({ accountId }).then((l) => { if (!cancelled) setDomains(l); }).catch(() => { if (!cancelled) setDomains([]); });
+    setChoicesLoaded(false);
+    const done = () => { if (!cancelled) setChoicesLoaded(true); };
+    if (domain) sitesApi.list({ accountId }).then((l) => { if (!cancelled) setSites(l); }).catch(() => { if (!cancelled) setSites([]); }).finally(done);
+    else domainsApi.list({ accountId }).then((l) => { if (!cancelled) setDomains(l); }).catch(() => { if (!cancelled) setDomains([]); }).finally(done);
     return () => { cancelled = true; };
   }, [accountId, manage, domain != null]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -160,7 +164,8 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
         {site && (
           <div>
             <label className={labelCls} htmlFor="route-domain">{t('domains.routes.domain') || 'Domain'}</label>
-            <select id="route-domain" value={draft.domainId} onChange={(e) => setDraft({ ...draft, domainId: e.target.value ? Number(e.target.value) : '' })} className={selectCls}>
+            {/* An existing route stays on its domain (the server updates it under that domain only). */}
+            <select id="route-domain" value={draft.domainId} disabled={draft.id != null} onChange={(e) => setDraft({ ...draft, domainId: e.target.value ? Number(e.target.value) : '' })} className={selectCls}>
               <option value="">{t('domains.routes.chooseDomain') || 'Choose a domain…'}</option>
               {domains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
@@ -221,7 +226,7 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
   );
 
   // Nothing to route with (no site in the account / no domain): the add button stays off.
-  const noChoice = domain ? sites.length === 0 : domains.length === 0;
+  const noChoice = !choicesLoaded || (domain ? sites.length === 0 : domains.length === 0);
   const runtimeCell = (r: SiteRoute) => (r.runtimeId == null
     ? <Pill tone="accent" className="text-[10px] uppercase">{t('domains.routes.primary') || 'primary'}</Pill>
     : r.runtimeBase ? <BaseBadge base={r.runtimeBase} compact /> : <Pill>#{r.runtimeId}</Pill>);
@@ -248,7 +253,7 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
       ) : routes.length === 0 && !draft ? (
         <p className="text-xs text-text-muted">
           {domain
-            ? (sites.length === 0 && manage
+            ? (sites.length === 0 && manage && choicesLoaded
               ? (t('domains.routes.noSite') || 'The account has no site yet: create a site, then route the domain to it.')
               : (t('domains.routes.empty') || 'No route: the domain answers 404.'))
             : (t('domains.routes.siteEmpty') || 'No domain points to this site yet.')}
@@ -283,7 +288,7 @@ export function RouteEditor({ manage, onChanged, ...target }: Target & {
           {draft?.id === null && <li className="py-2">{editor}</li>}
         </ul>
       )}
-      {manage && site && domains.length === 0 && !draft && (
+      {manage && site && choicesLoaded && domains.length === 0 && !draft && (
         <p className="mt-3 text-xs text-text-muted">
           {t('domains.routes.noDomain') || 'This account has no domain yet.'}{' '}
           {/* Added in place (account preset), then chosen in the route form. */}

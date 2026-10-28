@@ -275,6 +275,52 @@
   "notifications": {
     "title": "Notifications"
   },
+  "capabilities": {
+    "overview": {
+      "read": "Tableau de bord · Vue d’ensemble"
+    },
+    "accounts": {
+      "manage": "Comptes d’hébergement"
+    },
+    "sites": {
+      "manage": "Sites"
+    },
+    "domains": {
+      "manage": "Domaines"
+    },
+    "dns": {
+      "manage": "Zones DNS"
+    },
+    "mail": {
+      "manage": "Mail"
+    },
+    "databases": {
+      "manage": "Bases de données"
+    },
+    "files": {
+      "manage": "Fichiers"
+    },
+    "apps": {
+      "manage": "Applications (Docker)",
+      "console": "Console des applications"
+    },
+    "proxy": {
+      "manage": "Hôtes proxy et bans"
+    },
+    "monitoring": {
+      "manage": "Supervision et automatisation"
+    },
+    "plans": {
+      "manage": "Plans"
+    },
+    "users": {
+      "manage": "Gestion des utilisateurs"
+    },
+    "settings": "Paramètres",
+    "audit": {
+      "read": "Journal d’audit"
+    }
+  },
   "permissionSets": {
     "capability": "Capacité",
     "confirmDelete": "Supprimer le jeu de permissions « {{name}} » ? Cette action est irréversible.",

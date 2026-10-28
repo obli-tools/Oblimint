@@ -70,7 +70,7 @@ export function NetworkSystemPanel({ accountId }: { accountId: number | null }) 
   const modePill = (m: NetworkSystemStatus['mode']) => (m === 'enforce'
     ? <Pill tone="green">{t('network.mode.enforce') || 'enforce'}</Pill>
     : m === 'monitor' ? <Pill tone="amber">{t('network.mode.monitor') || 'monitor'}</Pill>
-      : <Pill tone="red">{t('network.mode.off') || 'off'}</Pill>);
+      : <Pill tone="muted">{t('network.mode.off') || 'off'}</Pill>);
 
   return (
     <Card

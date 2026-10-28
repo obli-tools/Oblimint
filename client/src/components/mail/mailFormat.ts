@@ -140,31 +140,6 @@ export function engineHasMailboxes(engine: MailEngine | null | undefined): boole
 }
 
 /**
- * Applies a patch to URL query params (null deletes the key) and returns a new
- * object: used as a functional setSearchParams updater so that several keys
- * changed by one action land in a single navigation.
- */
-export function applyParamsPatch(prev: URLSearchParams, patch: Record<string, string | null>): URLSearchParams {
-  const next = new URLSearchParams(prev);
-  for (const [k, v] of Object.entries(patch)) {
-    if (v == null) next.delete(k); else next.set(k, v);
-  }
-  return next;
-}
-
-/**
- * God view, one workspace at a time: from the chip selection after a click,
- * keeps the chip just added (the last one if several), else the first one left
- * (a chip was removed), else none.
- */
-export function pickSingleTenant(current: ReadonlySet<number>, next: ReadonlySet<number>): number | null {
-  const added = [...next].filter((x) => !current.has(x));
-  if (added.length > 0) return added[added.length - 1];
-  const rest = [...next];
-  return rest.length > 0 ? rest[0] : null;
-}
-
-/**
  * Offset to reload when a page came back empty after a delete / retry (the
  * last item of the last page is gone): the start of the last non-empty page,
  * or null when the current offset is already valid (or nothing is left).

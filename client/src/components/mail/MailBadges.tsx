@@ -136,7 +136,7 @@ export function OutboundStatusBadge({ status }: { status: MailOutboundStatus }) 
   const { t } = useTranslation();
   return status === 'active'
     ? <Pill tone="green">{t('mail.outbound.status.active') || 'sending'}</Pill>
-    : <Pill tone="red">{t('mail.outbound.status.suspended') || 'suspended'}</Pill>;
+    : <Pill tone="amber">{t('mail.outbound.status.suspended') || 'suspended'}</Pill>;
 }
 
 export function QueueStatusBadge({ status }: { status: MailQueueItemStatus }) {

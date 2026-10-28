@@ -1,8 +1,10 @@
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import type { ClientCapability } from '@oblimint/shared';
 import { CLIENT_CAPABILITIES } from '@oblimint/shared';
 import { RightsChecklist } from '@/components/common/RightsChecklist';
+import { useHostingMe } from '@/store/hostingStore';
 import { Pill } from './hostingUi';
 
 export function capabilityLabel(t: TFunction, c: ClientCapability): string {
@@ -41,16 +43,53 @@ function capabilityHint(t: TFunction, c: ClientCapability): string {
   return t(`accounts.capabilities.${c.replace('.', '_')}_hint`) || fallback[c];
 }
 
-/** Checklist of the client capabilities (in CLIENT_CAPABILITIES order) — the common rights editor. */
+/**
+ * Staff capability needed to grant a client capability — mirrors CLIENT_CAP_STAFF_EQUIVALENT
+ * (server/src/services/hosting/access.ts): a staff member only delegates what it holds.
+ */
+const STAFF_EQUIVALENT: Record<ClientCapability, string> = {
+  'sites.manage': 'sites.manage',
+  'releases.publish': 'sites.manage',
+  'releases.approve': 'sites.manage',
+  'domains.manage': 'domains.manage',
+  'files.manage': 'files.manage',
+  'databases.manage': 'databases.manage',
+  'dns.manage': 'dns.manage',
+  'mail.manage': 'mail.manage',
+  'apps.manage': 'apps.manage',
+  'apps.console': 'apps.console',
+  'proxy.manage': 'proxy.manage',
+  'monitoring.manage': 'monitoring.manage',
+};
+
+/**
+ * The client capabilities the caller may grant (stable while /hosting/me does not change):
+ * everything for a full staff member, the ones whose staff equivalent it holds otherwise.
+ */
+export function useGrantableClientCapabilities(): readonly ClientCapability[] {
+  const { me } = useHostingMe();
+  return useMemo(() => {
+    if (!me || me.kind !== 'staff' || me.staffCapabilities === '*') return CLIENT_CAPABILITIES;
+    const held = me.staffCapabilities;
+    return CLIENT_CAPABILITIES.filter((c) => held.includes(STAFF_EQUIVALENT[c]));
+  }, [me]);
+}
+
+/**
+ * Checklist of the client capabilities (in CLIENT_CAPABILITIES order) — the common rights editor.
+ * A capability the caller cannot delegate is greyed (it can still be removed).
+ */
 export function CapabilityCheckboxes({ value, onChange, disabled = false }: {
   value: ClientCapability[]; onChange: (next: ClientCapability[]) => void; disabled?: boolean;
 }) {
   const { t } = useTranslation();
+  const grantable = useGrantableClientCapabilities();
   return (
     <RightsChecklist<ClientCapability>
       items={CLIENT_CAPABILITIES.map((c) => ({ id: c, label: capabilityLabel(t, c), hint: capabilityHint(t, c) }))}
       value={value}
       onChange={onChange}
+      grantable={grantable.length === CLIENT_CAPABILITIES.length ? undefined : grantable}
       disabled={disabled}
     />
   );

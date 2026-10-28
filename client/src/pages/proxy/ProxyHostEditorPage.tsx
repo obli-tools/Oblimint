@@ -21,7 +21,7 @@ import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedT
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { EmptyState, headerBtnCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { EdgeUnitBanner, EdgeUnitPill, useProxyAccess } from '@/components/proxy/proxyUi';
-import { applyParamsPatch } from '@/components/proxy/proxyFormat';
+import { patchSearchParams } from '@/components/common/AccountScope';
 import { lintIssuesOf, proxyErrorCode, proxyErrorMessage, proxyLoadError, toastProxyError } from '@/components/proxy/proxyErrors';
 import { targetComplete } from '@/components/proxy/TargetEditor';
 import {
@@ -72,7 +72,7 @@ export function ProxyHostEditorPage() {
   const [lintIssues, setLintIssues] = useState<AdvancedConfigLintResult['issues']>([]);
 
   const tab: HostTab = isTab(tabParam) && (tabParam !== 'expert' || platformStaff) ? tabParam : 'general';
-  const setTab = (next: HostTab) => setParams((prev) => applyParamsPatch(prev, { tab: next === 'general' ? null : next }), { replace: true });
+  const setTab = (next: HostTab) => setParams((prev) => patchSearchParams(prev, { tab: next === 'general' ? null : next }), { replace: true });
 
   // ── load the host (edit) or build the new form (+ quick setup) ──
   const loadHost = useCallback(async () => {

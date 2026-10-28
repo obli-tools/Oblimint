@@ -156,7 +156,7 @@ export function BansPage() {
   });
   const until = (b: WebBan) => {
     if (!b.active) return <Pill>{t('bans.inactive') || 'lifted / expired'}</Pill>;
-    return b.bannedUntil == null ? <Pill tone="red">{t('bans.permanent') || 'permanent'}</Pill> : <span className="font-mono text-xs text-text-secondary">{fmt(b.bannedUntil)}</span>;
+    return b.bannedUntil == null ? <Pill tone="amber">{t('bans.permanent') || 'permanent'}</Pill> : <span className="font-mono text-xs text-text-secondary">{fmt(b.bannedUntil)}</span>;
   };
   const scopePill = (b: WebBan) => (b.scope === 'platform'
     ? <Pill tone="accent">{t('bans.scope.platform') || 'Platform'}</Pill>

@@ -275,6 +275,52 @@
   "notifications": {
     "title": "Notifications"
   },
+  "capabilities": {
+    "overview": {
+      "read": "Dashboard · Overview"
+    },
+    "accounts": {
+      "manage": "Hosting accounts"
+    },
+    "sites": {
+      "manage": "Sites"
+    },
+    "domains": {
+      "manage": "Domains"
+    },
+    "dns": {
+      "manage": "DNS zones"
+    },
+    "mail": {
+      "manage": "Mail"
+    },
+    "databases": {
+      "manage": "Databases"
+    },
+    "files": {
+      "manage": "Files"
+    },
+    "apps": {
+      "manage": "Applications (Docker)",
+      "console": "Application console"
+    },
+    "proxy": {
+      "manage": "Proxy hosts & bans"
+    },
+    "monitoring": {
+      "manage": "Monitoring & automation"
+    },
+    "plans": {
+      "manage": "Plans"
+    },
+    "users": {
+      "manage": "User management"
+    },
+    "settings": "Settings",
+    "audit": {
+      "read": "Audit log"
+    }
+  },
   "permissionSets": {
     "capability": "Capability",
     "confirmDelete": "Delete permission set \"{{name}}\"? This cannot be undone.",

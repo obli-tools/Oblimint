@@ -5,7 +5,7 @@ import { Boxes, KeyRound, LayoutGrid, Plus, RefreshCw } from 'lucide-react';
 import { PageContainer } from '@/components/common/PageContainer';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
 import { headerAccentBtnCls, headerBtnCls } from '@/components/hosting/hostingUi';
-import { AccountScopeBar, useAccountScope } from '@/components/common/AccountScope';
+import { AccountScopeBar, scopeSubtitle, useAccountScope } from '@/components/common/AccountScope';
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { AppStacksPanel } from '@/components/apps/AppStacksPanel';
 import { AppCatalogPanel } from '@/components/apps/AppCatalogPanel';
@@ -48,7 +48,7 @@ export function AppsPage() {
       <div className="flex items-baseline gap-4 max-sm:flex-wrap max-sm:gap-y-2">
         <h1 className="font-display text-2xl font-semibold tracking-wide text-text-primary">{t('nav.apps') || 'Applications'}</h1>
         <span className="font-mono text-xs tracking-wider text-text-muted">
-          {scope.selectedAccount ? scope.selectedAccount.username : (t('apps.scope.allAccountsShort') || 'all accounts')}
+          {scopeSubtitle(scope, t('apps.scope.allAccountsShort') || 'all accounts')}
         </span>
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => setTick((n) => n + 1)} className={headerBtnCls}><RefreshCw size={14} />{t('common.refresh') || 'Refresh'}</button>

@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { Eye, EyeOff, Wand2, Server } from 'lucide-react';
 import type { TFunction } from 'i18next';
 import type { ClientCapability, HostingAccount, HostingAccountCreate, Plan } from '@oblimint/shared';
-import { CLIENT_CAPABILITIES } from '@oblimint/shared';
 import { plansApi } from '@/api/plans.api';
 import { accountsApi } from '@/api/accounts.api';
 import { useTenantStore } from '@/store/tenantStore';
@@ -19,7 +18,7 @@ import {
 import {
   isValidClientUsername, MIN_CLIENT_PASSWORD, accountUsernameIssue, formatMb, generatePassword, type UsernameIssue,
 } from './hostingFormat';
-import { CapabilityCheckboxes } from './CapabilityCheckboxes';
+import { CapabilityCheckboxes, useGrantableClientCapabilities } from './CapabilityCheckboxes';
 
 export function usernameIssueText(t: TFunction, issue: UsernameIssue): string {
   switch (issue) {
@@ -67,7 +66,9 @@ export function AccountCreateModal({ open, onClose, onCreated }: {
   const [ownerPassword, setOwnerPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [ownerEmail, setOwnerEmail] = useState('');
-  const [caps, setCaps] = useState<ClientCapability[]>([...CLIENT_CAPABILITIES]);
+  const grantableCaps = useGrantableClientCapabilities();
+  // A new client starts with every capability the caller may delegate.
+  const [caps, setCaps] = useState<ClientCapability[]>([...grantableCaps]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [violations, setViolations] = useState<string[]>([]);
@@ -76,7 +77,7 @@ export function AccountCreateModal({ open, onClose, onCreated }: {
     if (!open) return;
     setUsername(''); setTouched(false); setDisplayName(''); setPlanId('');
     setWithOwner(false); setOwnerUsername(''); setOwnerPassword(''); setShowPassword(false); setOwnerEmail('');
-    setCaps([...CLIENT_CAPABILITIES]); setError(null); setViolations([]);
+    setCaps([...grantableCaps]); setError(null); setViolations([]);
     plansApi.list()
       .then((list) => {
         // God view: GET /plans lists every tenant's plans; the account is created in the current tenant.
@@ -86,7 +87,10 @@ export function AccountCreateModal({ open, onClose, onCreated }: {
         if (active.length === 1) setPlanId(active[0].id);
       })
       .catch((err) => { setPlans([]); setPlansError(hostingErrorMessage(t, err, t('plans.loadFailed') || 'Failed to load the plans')); });
-  }, [open, currentTenantId, t]);
+  }, [open, currentTenantId, t]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // /hosting/me known after the form opened: what cannot be delegated is dropped.
+  useEffect(() => { setCaps((prev) => prev.filter((c) => grantableCaps.includes(c))); }, [grantableCaps]);
 
   const issue = accountUsernameIssue(username);
   const plan = plans.find((p) => p.id === planId) ?? null;

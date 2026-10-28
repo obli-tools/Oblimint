@@ -16,13 +16,14 @@ const LAST_ACCOUNT = 'oblimint.files.account';
  * « Fichiers »: the web file explorer of one hosting account (its SFTP tree).
  * The account and the folder live in the URL (?account=7&path=/staging/blog),
  * the last account opened is remembered. Same account scope as the other
- * cross-account pages, without « every account » (one tree at a time).
+ * cross-account pages, without « every account » (one tree at a time). The
+ * account Files picks by itself never becomes the session scope of the others.
  */
 export function FilesPage() {
   const { t } = useTranslation();
   const { can } = useHostingMe();
   const usableFilter = useCallback((a: HostingAccount) => can('files.manage', a.id), [can]);
-  const scope = useAccountScope({ accountFilter: usableFilter });
+  const scope = useAccountScope({ accountFilter: usableFilter, remember: false });
   const { params, accountsLoaded } = scope;
   const [, setParams] = useSearchParams();
   const usable = scope.accounts;

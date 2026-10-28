@@ -129,7 +129,7 @@ export function AccountApiKeysTab({ accountId }: { accountId: number }) {
                           {k.kind === 'connector'
                             ? <><Pill tone="accent"><Plug className="mr-1 inline h-3 w-3" />{t('apiKeys.connector.badge') || 'Claude connector'}</Pill><code className="font-mono text-[11px] text-text-muted">{k.oauthClientId}</code></>
                             : <code className="font-mono text-[11px] text-text-muted">{k.prefix}…</code>}
-                          {expired && <Pill tone="red">{t('apiKeys.expired') || 'expired'}</Pill>}
+                          {expired && <Pill tone="muted">{t('apiKeys.expired') || 'expired'}</Pill>}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1">
                           {k.scopes.length ? k.scopes.map((s) => (

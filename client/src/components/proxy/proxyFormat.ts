@@ -270,23 +270,6 @@ export function linesOf(text: string): string[] {
   return [...new Set(text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean))];
 }
 
-/** Applies a URL query patch (null deletes a key) and returns a new object. */
-export function applyParamsPatch(prev: URLSearchParams, patch: Record<string, string | null>): URLSearchParams {
-  const next = new URLSearchParams(prev);
-  for (const [k, v] of Object.entries(patch)) {
-    if (v == null) next.delete(k); else next.set(k, v);
-  }
-  return next;
-}
-
-/** God view, one workspace at a time: keeps the chip just added, else the first left. */
-export function pickSingleTenant(current: ReadonlySet<number>, next: ReadonlySet<number>): number | null {
-  const added = [...next].filter((x) => !current.has(x));
-  if (added.length > 0) return added[added.length - 1];
-  const rest = [...next];
-  return rest.length > 0 ? rest[0] : null;
-}
-
 /** Ports reserved by the platform: never a stream port (ED5). */
 export const RESERVED_STREAM_PORTS: readonly number[] = [22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 4190, 8081, 8443];
 

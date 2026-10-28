@@ -107,7 +107,7 @@ export function AccessListsPanel({ accountId, tenantId, accounts, showAccount, s
     return (
       <span className="flex flex-wrap items-center gap-1.5">
         {allow > 0 && <Pill tone="green">{t('proxy.accessLists.allowCount', { count: allow, defaultValue: '{{count}} allow' })}</Pill>}
-        {deny > 0 && <Pill tone="red">{t('proxy.accessLists.denyCount', { count: deny, defaultValue: '{{count}} deny' })}</Pill>}
+        {deny > 0 && <Pill tone="amber">{t('proxy.accessLists.denyCount', { count: deny, defaultValue: '{{count}} deny' })}</Pill>}
         {a.users.length > 0 && <Pill tone="blue"><KeyRound size={10} />{t('proxy.accessLists.userCount', { count: a.users.length, defaultValue: '{{count}} user(s)' })}</Pill>}
         {a.satisfyAny && <Pill>{t('proxy.accessLists.satisfyAnyShort') || 'any'}</Pill>}
       </span>
