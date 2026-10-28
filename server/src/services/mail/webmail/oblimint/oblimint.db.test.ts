@@ -8,7 +8,7 @@ import path from 'path';
 import type { AddressInfo } from 'net';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DB integration of the Oblimint webmail (migration 020, session store, SSO of
+// DB integration of the Oblimint webmail (migration 021, session store, SSO of
 // kind 'oblimint', revocation hooks, mailbox lookup, vacation = the panel's
 // autoresponder). PostgreSQL at WEBMAIL_OBLIMINT_TEST_DATABASE_URL (default
 // port 55467); skipped cleanly when nothing listens. The engine is a fake
@@ -125,7 +125,7 @@ test('Oblimint webmail on PostgreSQL', { timeout: 300_000 }, async (t: TestConte
     return { status: res.status, body: await res.json() as { data?: { url: string }; code?: string } };
   };
 
-  await t.test('migration 020: table, FK cascade with the mailbox, method check', async () => {
+  await t.test('migration 021: table, FK cascade with the mailbox, method check', async () => {
     assert.ok(await db.schema.hasTable('webmail_sessions'));
     const now = Date.now();
     await dbWebmailSessionStore.insert('a'.repeat(64), {

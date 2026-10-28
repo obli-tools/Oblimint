@@ -1,7 +1,7 @@
 import type { Knex } from 'knex';
 
 /**
- * 020_webmail_sessions — sessions of the Oblimint webmail (settings
+ * 021_webmail_sessions — sessions of the Oblimint webmail (settings
  * mail.webmail = 'oblimint', services/mail/webmail/oblimint/session.ts):
  *  - sid_hash: SHA-256 of the session cookie (the cookie itself is never stored);
  *  - bound to ONE mailbox (FK with its account: deleted with it) and to the

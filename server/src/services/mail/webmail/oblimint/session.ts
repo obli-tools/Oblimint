@@ -4,7 +4,7 @@ import { SERVED_ACCOUNT_STATUSES } from '../../../edge/vhostPlan';
 import { accountServesMail } from '../../mappers';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sessions of the Oblimint webmail (table webmail_sessions, migration 020).
+// Sessions of the Oblimint webmail (table webmail_sessions, migration 021).
 //
 //  - the browser holds a random 256-bit id in a host-only cookie
 //    (__Host-oblimint-wm: Secure, HttpOnly, SameSite=Strict, Path=/); only its
