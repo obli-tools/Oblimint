@@ -1,7 +1,7 @@
 import apiClient from './client';
 import type {
   ApiResponse, DkimAlgorithm, DkimKey, MailAlias, MailAliasInput, MailAliasUpdate, MailAutoresponderInput, MailBan, Mailbox, MailboxCreate,
-  MailboxCreated, MailboxDetail, MailboxUpdate, MailDnsStatus, MailDomain, MailDomainCreate, MailDomainDetail, MailDomainDnsUpdate,
+  MailboxCreated, MailboxDetail, MailboxUpdate, MailDnsFixPlan, MailDnsFixResult, MailDnsStatus, MailDomain, MailDomainCreate, MailDomainDetail, MailDomainDnsUpdate,
   MailDomainUpdate, MailEngine, MailForwardingInput, MailLogDirection, MailLogEntry, MailLogEventKind, MailOutboundState, MailOverview,
   MailPasswordChange, MailPasswordResult, MailQueueItem, MailSystemStatus, OpenRelayTestResult, SiteMailRelay, SiteMailRelayUpdate,
   WebmailSsoTicket,
@@ -120,6 +120,16 @@ export const mailApi = {
   },
   async dnsCheck(mailDomainId: number): Promise<MailDnsStatus> {
     const res = await apiClient.post<ApiResponse<MailDnsStatus>>(`/mail/domains/${mailDomainId}/dns/check`);
+    return res.data.data!;
+  },
+  /** Fix plan of the mail records hidden in a hosted zone (nothing written). */
+  async dnsFixPreview(mailDomainId: number): Promise<MailDnsFixPlan> {
+    const res = await apiClient.post<ApiResponse<MailDnsFixPlan>>(`/mail/domains/${mailDomainId}/dns/fix`, { dryRun: true });
+    return res.data.data!;
+  },
+  /** Applies the confirmed items of a preview (409 fixPlanChanged when the zone changed since). */
+  async dnsFixApply(mailDomainId: number, items: Array<{ id: string; fingerprint: string }>): Promise<MailDnsFixResult> {
+    const res = await apiClient.post<ApiResponse<MailDnsFixResult>>(`/mail/domains/${mailDomainId}/dns/fix`, { items });
     return res.data.data!;
   },
   async updateDnsSettings(mailDomainId: number, data: MailDomainDnsUpdate): Promise<MailDnsStatus> {

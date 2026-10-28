@@ -4,7 +4,7 @@ import type { DnsRecordInput } from '@oblimint/shared';
 import {
   applyOverrides, autoRecords, buildRrsets, diffRrsets, exportBind, generatedRecordsExpected, nextSerial, normalizeZoneName,
   parseTxtInput, platformAutoRecords, publicationOf, recordConflict, RecordValidationError, relativeName, renderTxt, soaRname,
-  soaSerialOf, substitute, TemplateValidationError, validateRecord, validateTemplateRecords, verificationExpected,
+  soaSerialOf, substitute, TemplateValidationError, txtKind, validateRecord, validateTemplateRecords, verificationExpected,
   type AutoContext, type StoredRecordLike,
 } from './records';
 
@@ -135,6 +135,33 @@ test('conflicts: CNAME exclusivity, apex rules, duplicates; auto records never c
   const auto = [{ name: 'blog', type: 'A' }, { name: 'blog', type: 'AAAA' }, { name: '@', type: 'A' }, { name: 'www', type: 'A' }] as Array<{ name: string; type: 'A' | 'AAAA' }>;
   const kept = applyOverrides(auto, [{ name: 'blog', type: 'CNAME' as const }, { name: '@', type: 'A' as const }]);
   assert.deepEqual(kept, [{ name: 'www', type: 'A' }]);
+});
+
+test('TXT kinds: a TXT only overrides an auto TXT of the same kind', () => {
+  assert.equal(txtKind('@', 'v=spf1 mx -all'), 'spf');
+  assert.equal(txtKind('@', '  V=SPF1 include:x.example.net ~all'), 'spf');
+  assert.equal(txtKind('@', 'v=spf10'), 'other');
+  assert.equal(txtKind('@', 'google-site-verification=abc'), 'other');
+  assert.equal(txtKind('_dmarc', 'v=DMARC1; p=none'), 'dmarc');
+  assert.equal(txtKind('_dmarc.shop', 'anything'), 'dmarc', 'any TXT at _dmarc is DMARC');
+  assert.equal(txtKind('om1._domainkey', 'v=DKIM1; k=rsa; p=x'), 'dkim');
+  assert.equal(txtKind('om1._domainkey.shop', 'p=x'), 'dkim');
+  assert.equal(txtKind('_mta-sts', 'v=STSv1; id=1'), 'mta-sts');
+  assert.equal(txtKind('_smtp._tls', 'v=TLSRPTv1; rua=mailto:a@example.com'), 'tls-rpt');
+
+  const auto = [
+    { name: '@', type: 'TXT' as const, content: 'v=spf1 mx -all' },
+    { name: '_dmarc', type: 'TXT' as const, content: 'v=DMARC1; p=none' },
+    { name: '@', type: 'MX' as const, content: 'mail.example.net.' },
+  ];
+  // A site verification TXT at the apex no longer hides the SPF record.
+  assert.deepEqual(applyOverrides(auto, [{ name: '@', type: 'TXT', content: 'google-site-verification=abc' }]), auto);
+  // A manual SPF does.
+  assert.deepEqual(applyOverrides(auto, [{ name: '@', type: 'TXT', content: 'v=spf1 include:x.example.net ~all' }]).map((r) => r.name + r.type), ['_dmarcTXT', '@MX']);
+  // Any TXT at _dmarc is DMARC; any manual MX replaces the auto MX set.
+  assert.deepEqual(applyOverrides(auto, [{ name: '_dmarc', type: 'TXT', content: 'v=DMARC1; p=reject' }, { name: '@', type: 'MX', content: 'mx.example.org.' }]).map((r) => r.content), ['v=spf1 mx -all']);
+  // Without content (other callers): non-TXT types behave as before.
+  assert.deepEqual(applyOverrides(auto, [{ name: '@', type: 'MX' }]).length, 2);
 });
 
 test('serial YYYYMMDDnn', () => {

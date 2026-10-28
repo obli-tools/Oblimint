@@ -157,6 +157,48 @@
         "txtMismatch": "The record differs from the expected one.",
         "ptrMissing": "No reverse DNS (PTR) for this address: ask your hosting provider to set it.",
         "ptrMismatch": "The reverse DNS (PTR) of this address is not the mail host name."
+      },
+      "shadowedHint": "The zone of this domain is hosted on our name servers, but records stored in it override the automatic ones (marked below): use « Fix » to serve the expected records.",
+      "shadowedHintReadOnly": "The zone of this domain is hosted on our name servers, but records stored in it override the automatic ones (marked below): someone allowed to edit the DNS zone can fix them.",
+      "overridden": "overridden in the zone",
+      "fix": {
+        "fix": "Fix",
+        "fixAll": "Fix all",
+        "title": "Fix the mail records of the zone",
+        "intro": "Records stored in the zone {{zone}} hide the records this server needs. Ticked lines are removed so that our name servers serve the expected records instead. Other records of the zone are not touched.",
+        "notDelegated": "The name servers of this domain do not point to ours yet (found: {{found}}). The change is written now and takes effect once the registrar delegates the domain to {{expected}}.",
+        "delegationUnknown": "The delegation of the domain could not be checked: the change takes effect once the domain points to {{expected}}.",
+        "nothing": "Nothing to fix: the zone already serves the expected records. A difference seen by « Check now » then comes from the delegation or from the cache of the resolvers.",
+        "before": "Before (removed)",
+        "after": "After (served)",
+        "nothingRemoved": "Nothing to remove: the expected record is written again.",
+        "disabled": "disabled",
+        "blockedTitle": "Cannot be fixed here",
+        "ptr": "The reverse DNS (PTR) is set at the provider of the server addresses, not in the zone: it cannot be fixed here.",
+        "apply": "Apply",
+        "reviewAgain": "Review again",
+        "applied": "Zone fixed: {{count}} record(s) now served by our name servers",
+        "failed": "The fix failed",
+        "loadFailed": "Failed to prepare the fix",
+        "item": {
+          "mx": "Route incoming mail back to this server",
+          "spf": "Authorise this server to send the mail of the domain (SPF)",
+          "dkim": "Publish the DKIM key of this server",
+          "dmarc": "Publish the DMARC policy of the domain"
+        },
+        "consequence": {
+          "mx": "Incoming mail for {{domain}} will arrive on this server instead of {{hosts}}.",
+          "mxNew": "Incoming mail for {{domain}} will arrive on this server.",
+          "spf": "Servers previously authorised ({{terms}}) will no longer be: their messages may be rejected or marked as spam.",
+          "dkim": "The key published at this name is replaced by the key this server signs with.",
+          "dmarc": "The current DMARC policy is replaced by the one of the DNS options of this domain."
+        },
+        "blocked": {
+          "notGenerated": "The mail records of this domain are not published (mail disabled, domain not verified or account suspended).",
+          "systemRecord": "A record managed by the platform holds this name.",
+          "cnameAtName": "A CNAME at this name redirects everything, including the website: change it in the DNS zone.",
+          "stillHidden": "Another record would still hide the expected one: check the DNS zone."
+        }
       }
     },
     "ptr": {
@@ -560,7 +602,10 @@
       "mailDataPendingPurge": "The previous data of {{name}} is still being removed: try again in a few minutes.",
       "mailEngineChanging": "The mail engine is being changed: try again in a few minutes.",
       "invalidSchedule": "The end of the autoresponder must be after its start.",
-      "noPublicAddress": "The public address of the server is unknown (setup: public IPv4 / IPv6)."
+      "noPublicAddress": "The public address of the server is unknown (setup: public IPv4 / IPv6).",
+      "fixPlanChanged": "The zone changed since this preview: review the changes again.",
+      "fixIncomplete": "The expected records would still not be served: nothing was changed.",
+      "zoneNotHosted": "The zone of this domain is hosted elsewhere: change the records at your DNS provider."
     }
   },
   "mailSettings": {

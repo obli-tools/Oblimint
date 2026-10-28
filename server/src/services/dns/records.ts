@@ -295,11 +295,42 @@ export function recordConflict(
   return null;
 }
 
-/** Drops the auto records overridden by a manual / template / system record (same name + type, or a CNAME at that name). */
-export function applyOverrides<T extends Pick<StoredRecordLike, 'name' | 'type'>>(auto: T[], others: Array<Pick<StoredRecordLike, 'name' | 'type'>>): T[] {
-  const sameType = new Set(others.map((r) => `${r.name}|${r.type}`));
+/**
+ * What a TXT record is for. Names reserved to one use decide first (`_dmarc`,
+ * `<selector>._domainkey`, `_mta-sts`, `_smtp._tls`: any TXT there is of that
+ * kind), then the content (`v=spf1` → spf, `v=DMARC1` → dmarc, `v=DKIM1` →
+ * dkim, …); everything else (site verifications, …) is 'other'.
+ */
+export type TxtKind = 'spf' | 'dmarc' | 'dkim' | 'mta-sts' | 'tls-rpt' | 'other';
+
+export function txtKind(name: string, content: string): TxtKind {
+  const n = name.toLowerCase();
+  const first = n.split('.')[0];
+  if (/(^|\.)_domainkey(\.|$)/.test(n)) return 'dkim';
+  if (first === '_dmarc') return 'dmarc';
+  if (first === '_mta-sts') return 'mta-sts';
+  if (n === '_smtp._tls' || n.startsWith('_smtp._tls.')) return 'tls-rpt';
+  const c = String(content ?? '').trim().toLowerCase();
+  if (/^v=spf1(\s|$)/.test(c)) return 'spf';
+  if (/^v=dmarc1(\s|;|$)/.test(c)) return 'dmarc';
+  if (/^v=dkim1(\s|;|$)/.test(c)) return 'dkim';
+  if (/^v=stsv1(\s|;|$)/.test(c)) return 'mta-sts';
+  if (/^v=tlsrptv1(\s|;|$)/.test(c)) return 'tls-rpt';
+  return 'other';
+}
+
+type OverrideLike = Pick<StoredRecordLike, 'name' | 'type'> & { content?: string };
+
+/**
+ * Drops the auto records overridden by a manual / template / system record:
+ * same name + type (TXT: same name and same TXT kind — a site verification
+ * TXT at the apex does not hide the SPF record), or a CNAME at that name.
+ */
+export function applyOverrides<T extends OverrideLike>(auto: T[], others: OverrideLike[]): T[] {
+  const key = (r: OverrideLike) => (r.type === 'TXT' ? `${r.name}|TXT|${txtKind(r.name, r.content ?? '')}` : `${r.name}|${r.type}`);
+  const sameType = new Set(others.map(key));
   const cname = new Set(others.filter((r) => r.type === 'CNAME').map((r) => r.name));
-  return auto.filter((r) => !sameType.has(`${r.name}|${r.type}`) && !cname.has(r.name));
+  return auto.filter((r) => !sameType.has(key(r)) && !cname.has(r.name));
 }
 
 // ── rendering ────────────────────────────────────────────────────────────────

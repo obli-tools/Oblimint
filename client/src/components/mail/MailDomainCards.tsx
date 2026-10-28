@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, Fingerprint, Globe, KeyRound, ListChecks, Plus, RefreshCw, RotateCw, Server, Settings2, Trash2 } from 'lucide-react';
+import { AlertTriangle, Fingerprint, Globe, KeyRound, ListChecks, Plus, RefreshCw, RotateCw, Server, Settings2, Trash2, Wrench } from 'lucide-react';
 import {
   HostingSocketEvents,
   type DkimAlgorithm, type DkimKey, type DkimKeyStatus, type DmarcPolicy, type MailDnsRecord, type MailDnsStatus, type MailDomainDetail, type MailDomainDnsSettings,
@@ -17,6 +17,7 @@ import { ChipsInput } from '@/components/settings/ChipsInput';
 import { Card, CopyButton, InfoRow, Pill, inputCls, labelCls, selectCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { DnsCheckPill } from './MailBadges';
+import { MailDnsFixModal } from './MailDnsFixModal';
 import { mailErrorMessage, mailLoadError, toastMailError } from './mailErrors';
 import { EXTERNAL_DKIM_SELECTOR_RE, intIn, isValidAddress, isValidHostname, normalizeAddress } from './mailFormat';
 
@@ -101,22 +102,44 @@ const KIND_LABEL: Record<string, string> = {
   autoconfig: 'Autoconfig', autodiscover: 'Autodiscover', srv: 'SRV', 'mail-host': 'Mail host',
 };
 
-export function MailDnsRecordsCard({ status, error, checking, onCheck }: {
+/** MX / SPF / DKIM / DMARC row the Fix can repair (zone hosted here, stored records hide the expected one). */
+function rowFixable(r: MailDnsRecord): boolean {
+  return !!r.fixable && r.status !== 'ok';
+}
+
+/**
+ * `canFix`: the user may write the zone (mail.manage + dns.manage on the account).
+ * `onFixed`: status returned by a successful fix.
+ */
+export function MailDnsRecordsCard({ status, error, checking, onCheck, canFix = false, onFixed }: {
   status: MailDnsStatus | null;
   error: string | null;
   checking: boolean;
   onCheck: () => void;
+  canFix?: boolean;
+  onFixed?: (s: MailDnsStatus) => void;
 }) {
   const { t, i18n } = useTranslation();
   const message = (r: MailDnsRecord) => (r.code ? t(`mail.dns.messages.${r.code}`, { defaultValue: r.message ?? r.code }) : r.message);
+  // null = closed; '' = every fixable record; else the item id ('<kind>:<FQDN>') of one row.
+  const [fixFocus, setFixFocus] = useState<string | null>(null);
+  const fixEnabled = canFix && !!status?.zoneHosted;
+  const fixableCount = fixEnabled ? (status?.records ?? []).filter(rowFixable).length : 0;
   return (
     <Card
       title={t('mail.dns.title') || 'DNS records'}
       icon={<Globe size={14} className="text-accent" />}
       actions={
-        <Button size="sm" variant="secondary" loading={checking} disabled={!status} onClick={onCheck}>
-          <RefreshCw size={13} className="mr-1.5" />{t('mail.dns.checkNow') || 'Check now'}
-        </Button>
+        <div className="flex items-center gap-2">
+          {fixableCount > 0 && (
+            <Button size="sm" onClick={() => setFixFocus('')}>
+              <Wrench size={13} className="mr-1.5" />{t('mail.dns.fix.fixAll') || 'Fix all'}
+            </Button>
+          )}
+          <Button size="sm" variant="secondary" loading={checking} disabled={!status} onClick={onCheck}>
+            <RefreshCw size={13} className="mr-1.5" />{t('mail.dns.checkNow') || 'Check now'}
+          </Button>
+        </div>
       }
     >
       {error ? (
@@ -129,7 +152,14 @@ export function MailDnsRecordsCard({ status, error, checking, onCheck }: {
             {status.healthy ? <Pill tone="green">{t('mail.dns.healthy') || 'everything is right'}</Pill> : <Pill tone="red">{t('mail.dns.unhealthy') || 'to fix'}</Pill>}
             <span>{status.checkedAt ? t('mail.dns.checkedAt', { date: new Date(status.checkedAt).toLocaleString(i18n.language), defaultValue: 'last check {{date}}' }) : (t('mail.dns.neverChecked') || 'never checked')}</span>
           </div>
-          {status.managed ? (
+          {status.shadowed ? (
+            <p className="flex items-start gap-2 rounded-md border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-400">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>{fixEnabled
+                ? (t('mail.dns.shadowedHint') || 'The zone of this domain is hosted on our name servers, but records stored in it override the automatic ones (marked below): use « Fix » to serve the expected records.')
+                : (t('mail.dns.shadowedHintReadOnly') || 'The zone of this domain is hosted on our name servers, but records stored in it override the automatic ones (marked below): someone allowed to edit the DNS zone can fix them.')}</span>
+            </p>
+          ) : status.managed || status.zoneHosted ? (
             <p className="text-xs text-text-muted">{t('mail.dns.managedHint') || 'The zone of this domain is hosted on our name servers: these records are written automatically.'}</p>
           ) : (
             <div className="rounded-md border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-400">
@@ -154,7 +184,15 @@ export function MailDnsRecordsCard({ status, error, checking, onCheck }: {
                       <span className="font-mono text-[11px] font-semibold text-accent">{r.type}</span>
                       <span className="text-[11px] text-text-muted">{t(`mail.dns.kinds.${r.kind}`, { defaultValue: KIND_LABEL[r.kind] ?? r.kind })}</span>
                       {!r.required && <Pill>{t('mail.dns.optional') || 'optional'}</Pill>}
-                      <span className="ml-auto"><DnsCheckPill status={r.status} /></span>
+                      {r.fixable && <Pill tone="amber">{t('mail.dns.overridden') || 'overridden in the zone'}</Pill>}
+                      <span className="ml-auto flex items-center gap-2">
+                        <DnsCheckPill status={r.status} />
+                        {fixEnabled && rowFixable(r) && (
+                          <Button size="sm" variant="secondary" onClick={() => setFixFocus(`${r.kind}:${r.name}`)}>
+                            <Wrench size={12} className="mr-1" />{t('mail.dns.fix.fix') || 'Fix'}
+                          </Button>
+                        )}
+                      </span>
                     </div>
                     <div className="mt-1.5 flex items-start gap-1">
                       <div className="min-w-0 flex-1">
@@ -176,6 +214,16 @@ export function MailDnsRecordsCard({ status, error, checking, onCheck }: {
             </ul>
           )}
         </div>
+      )}
+      {status && fixEnabled && (
+        <MailDnsFixModal
+          open={fixFocus !== null}
+          mailDomainId={status.mailDomainId}
+          focus={fixFocus || null}
+          ptr={status.ptr}
+          onClose={() => setFixFocus(null)}
+          onApplied={(s) => onFixed?.(s)}
+        />
       )}
     </Card>
   );

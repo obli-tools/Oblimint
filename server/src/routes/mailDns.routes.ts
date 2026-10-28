@@ -10,6 +10,8 @@ import { mailDnsService } from '../services/mail/dns/mailDns.service';
 //   GET  /domains/:id/dns                                   → MailDnsStatus   (read)
 //   POST /domains/:id/dns/check                             → MailDnsStatus   (read; heavyOpLimiter; 429 rateLimited 1 / 15 s / domain)
 //   PUT  /domains/:id/dns-settings   MailDomainDnsUpdate    → MailDnsStatus   (mail.manage; external: engine 'external' only)
+//   POST /domains/:id/dns/fix        MailDnsFixRequest      → MailDnsFixPlan (dryRun) | MailDnsFixResult
+//                                    (mail.manage + dns.manage on the zone; heavyOpLimiter; 409 zoneNotHosted / fixPlanChanged / fixIncomplete)
 //   GET  /domains/:id/dkim                                  → DkimKey[]       (read)
 //   POST /domains/:id/dkim/rotate    DkimRotateRequest      → DkimKey[]       (mail.manage; 429 rateLimited; 409 mailEngineNoMailboxes)
 // Codes: invalidSpfMechanism, invalidDmarcAddress, invalidExternalRecord (400, details.field),
@@ -61,6 +63,17 @@ router.post('/domains/:id/dns/check', heavyOpLimiter, async (req, res, next) => 
 router.put('/domains/:id/dns-settings', validate(dnsUpdate), async (req, res, next) => {
   try {
     res.json({ success: true, data: await mailDnsService.update(req, await resolveActor(req), idParam(req), req.body) });
+  } catch (err) { next(err); }
+});
+
+const fixRequest = z.object({
+  dryRun: z.boolean().optional(),
+  items: z.array(z.object({ id: z.string().min(1).max(300), fingerprint: z.string().min(1).max(64) }).strict()).max(50).optional(),
+}).strict();
+
+router.post('/domains/:id/dns/fix', heavyOpLimiter, validate(fixRequest), async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await mailDnsService.fix(req, await resolveActor(req), idParam(req), req.body) });
   } catch (err) { next(err); }
 });
 

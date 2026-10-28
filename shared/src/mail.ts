@@ -11,7 +11,7 @@
 
 import type { MailEngine } from './types';
 import type { InfraComponentStatus } from './hosting';
-import type { DnsRecordType } from './dns';
+import type { DnsRecordOrigin, DnsRecordType } from './dns';
 
 // ─── ENGINES ─────────────────────────────────────────────────────────────────
 
@@ -393,6 +393,12 @@ export interface MailDnsRecord {
   /** Short English hint (the client translates mail.dns.messages.<code> when set). */
   message: string | null;
   code: string | null;
+  /**
+   * MX / SPF / DKIM / DMARC only: the zone is hosted here and records stored in
+   * it hide or replace the expected one — POST /mail/domains/:id/dns/fix can
+   * remove them so that our name servers serve the expected record.
+   */
+  fixable?: boolean;
 }
 
 export interface MailPtrCheck {
@@ -410,11 +416,94 @@ export interface MailDnsStatus {
   /** Zone hosted on our PowerDNS: records are written automatically (else: copy them to the provider). */
   managed: boolean;
   zoneId: number | null;
+  /** The zone of the domain is hosted here (the panel writes it), whatever its publication state. */
+  zoneHosted: boolean;
+  /** Records stored in the zone override automatic mail records (records with fixable = true). */
+  shadowed: boolean;
   checkedAt: string | null;
   healthy: boolean;
   records: MailDnsRecord[];
   /** Reverse DNS of the node addresses — set at the hosting provider, the panel can only remind. */
   ptr: { ipv4: MailPtrCheck | null; ipv6: MailPtrCheck | null };
+}
+
+// ── Fix of the mail records of a hosted zone (POST /mail/domains/:id/dns/fix) ──
+
+export type MailDnsFixKind = 'mx' | 'spf' | 'dkim' | 'dmarc';
+
+/**
+ * fix: stored records hide / replace the expected one, removing them makes our
+ * name servers serve it; ok: the zone already serves the expected record;
+ * blocked: the fix cannot help (reason).
+ */
+export type MailDnsFixItemStatus = 'fix' | 'ok' | 'blocked';
+
+/**
+ * notGenerated: the mail records of this domain are not generated (mail domain
+ * disabled, domain not verified, account suspended); systemRecord: hidden by a
+ * platform record; cnameAtName: a CNAME at the mail domain name (website) hides
+ * it — edit the zone; stillHidden: something else would still hide it.
+ */
+export type MailDnsFixBlockedReason = 'notGenerated' | 'systemRecord' | 'cnameAtName' | 'stillHidden';
+
+/** A record stored in the zone that the fix removes. */
+export interface MailDnsFixRecord {
+  id: number;
+  type: DnsRecordType;
+  /** Presentation content (MX target with its trailing dot, TXT unquoted). */
+  content: string;
+  priority: number | null;
+  origin: DnsRecordOrigin;
+  disabled: boolean;
+  /** Served by our name servers now (false: disabled — it hides the automatic record without being served). */
+  served: boolean;
+}
+
+export interface MailDnsFixItem {
+  /** Stable id: '<kind>:<FQDN>'. */
+  id: string;
+  kind: MailDnsFixKind;
+  /** FQDN, lower case, no trailing dot. */
+  name: string;
+  type: 'MX' | 'TXT';
+  status: MailDnsFixItemStatus;
+  reason: MailDnsFixBlockedReason | null;
+  /** Stored records hiding / replacing the expected one: removed by the fix. */
+  before: MailDnsFixRecord[];
+  /** What our name servers serve at that name (and TXT kind) after the fix. */
+  after: Array<{ content: string; priority: number | null }>;
+  /** SPF: mechanisms of the removed record(s) the new record no longer contains (e.g. include:…). */
+  lostSpfTerms: string[];
+  /** Sent back on apply: a different value means the zone changed since the preview (409 fixPlanChanged). */
+  fingerprint: string;
+}
+
+export interface MailDnsFixPlan {
+  mailDomainId: number;
+  domain: string;
+  zoneId: number | null;
+  zoneName: string | null;
+  /** false: the zone is not hosted here (external DNS): nothing can be written, copy the records to the provider. */
+  zoneHosted: boolean;
+  /** The public delegation points to our name servers (null: unknown — resolver failure). */
+  delegated: boolean | null;
+  publicNameservers: string[];
+  expectedNameservers: string[];
+  items: MailDnsFixItem[];
+}
+
+/** POST /mail/domains/:id/dns/fix — { dryRun: true } → MailDnsFixPlan; { items } → MailDnsFixResult. */
+export interface MailDnsFixRequest {
+  dryRun?: boolean;
+  items?: Array<{ id: string; fingerprint: string }>;
+}
+
+export interface MailDnsFixResult {
+  /** Item ids applied. */
+  applied: string[];
+  /** Number of stored records removed. */
+  removed: number;
+  status: MailDnsStatus;
 }
 
 export type DkimKeyStatus = 'active' | 'next' | 'retiring' | 'retired';

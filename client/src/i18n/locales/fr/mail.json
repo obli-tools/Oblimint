@@ -157,6 +157,48 @@
         "txtMismatch": "L'enregistrement diffère de celui attendu.",
         "ptrMissing": "Aucun DNS inverse (PTR) pour cette adresse : demandez à votre hébergeur de le poser.",
         "ptrMismatch": "Le DNS inverse (PTR) de cette adresse n'est pas le nom de l'hôte mail."
+      },
+      "shadowedHint": "La zone de ce domaine est hébergée sur nos serveurs de noms, mais des enregistrements stockés dans la zone remplacent les enregistrements automatiques (signalés ci-dessous) : utilisez « Corriger » pour servir les enregistrements attendus.",
+      "shadowedHintReadOnly": "La zone de ce domaine est hébergée sur nos serveurs de noms, mais des enregistrements stockés dans la zone remplacent les enregistrements automatiques (signalés ci-dessous) : une personne autorisée à modifier la zone DNS peut les corriger.",
+      "overridden": "remplacé dans la zone",
+      "fix": {
+        "fix": "Corriger",
+        "fixAll": "Tout corriger",
+        "title": "Corriger les enregistrements mail de la zone",
+        "intro": "Des enregistrements stockés dans la zone {{zone}} masquent ceux dont ce serveur a besoin. Les lignes cochées sont supprimées pour que nos serveurs de noms servent les enregistrements attendus à la place. Les autres enregistrements de la zone ne sont pas touchés.",
+        "notDelegated": "Les serveurs de noms de ce domaine ne pointent pas encore vers les nôtres (trouvés : {{found}}). La modification est écrite maintenant et prend effet dès que le registraire délègue le domaine à {{expected}}.",
+        "delegationUnknown": "La délégation du domaine n'a pas pu être vérifiée : la modification prend effet dès que le domaine pointe vers {{expected}}.",
+        "nothing": "Rien à corriger : la zone sert déjà les enregistrements attendus. Un écart vu par « Vérifier maintenant » vient alors de la délégation ou du cache des résolveurs.",
+        "before": "Avant (supprimé)",
+        "after": "Après (servi)",
+        "nothingRemoved": "Rien à supprimer : l'enregistrement attendu est réécrit.",
+        "disabled": "désactivé",
+        "blockedTitle": "Non corrigeable ici",
+        "ptr": "Le DNS inverse (PTR) se règle chez le fournisseur des adresses du serveur, pas dans la zone : il n'est pas corrigeable ici.",
+        "apply": "Appliquer",
+        "reviewAgain": "Revoir les changements",
+        "applied": "Zone corrigée : {{count}} enregistrement(s) désormais servi(s) par nos serveurs de noms",
+        "failed": "La correction a échoué",
+        "loadFailed": "Impossible de préparer la correction",
+        "item": {
+          "mx": "Repasser la réception du mail sur ce serveur",
+          "spf": "Autoriser ce serveur à envoyer le mail du domaine (SPF)",
+          "dkim": "Publier la clé DKIM de ce serveur",
+          "dmarc": "Publier la politique DMARC du domaine"
+        },
+        "consequence": {
+          "mx": "Le mail entrant pour {{domain}} arrivera sur ce serveur au lieu de {{hosts}}.",
+          "mxNew": "Le mail entrant pour {{domain}} arrivera sur ce serveur.",
+          "spf": "Les serveurs autorisés jusqu'ici ({{terms}}) ne le seront plus : leurs messages pourront être refusés ou classés en spam.",
+          "dkim": "La clé publiée à ce nom est remplacée par la clé avec laquelle ce serveur signe.",
+          "dmarc": "La politique DMARC actuelle est remplacée par celle des options DNS de ce domaine."
+        },
+        "blocked": {
+          "notGenerated": "Les enregistrements mail de ce domaine ne sont pas publiés (mail désactivé, domaine non vérifié ou compte suspendu).",
+          "systemRecord": "Un enregistrement géré par la plateforme occupe ce nom.",
+          "cnameAtName": "Un CNAME à ce nom redirige tout, y compris le site : modifiez-le dans la zone DNS.",
+          "stillHidden": "Un autre enregistrement masquerait encore l'enregistrement attendu : vérifiez la zone DNS."
+        }
       }
     },
     "ptr": {
@@ -560,7 +602,10 @@
       "mailDataPendingPurge": "Les anciennes données de {{name}} sont encore en cours de suppression : réessayez dans quelques minutes.",
       "mailEngineChanging": "Le moteur mail est en cours de changement : réessayez dans quelques minutes.",
       "invalidSchedule": "La fin du répondeur automatique doit être après son début.",
-      "noPublicAddress": "L'adresse publique du serveur est inconnue (installation : IPv4 / IPv6 publiques)."
+      "noPublicAddress": "L'adresse publique du serveur est inconnue (installation : IPv4 / IPv6 publiques).",
+      "fixPlanChanged": "La zone a changé depuis cet aperçu : revoyez les changements.",
+      "fixIncomplete": "Les enregistrements attendus ne seraient toujours pas servis : rien n'a été modifié.",
+      "zoneNotHosted": "La zone de ce domaine est hébergée ailleurs : modifiez les enregistrements chez votre fournisseur DNS."
     }
   },
   "mailSettings": {

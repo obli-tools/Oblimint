@@ -5,6 +5,7 @@ import net from 'net';
 import os from 'os';
 import path from 'path';
 import type { Request } from 'express';
+import type { MailDnsFixPlan, MailDnsFixResult } from '@oblimint/shared';
 import type { HostingActor } from '../../hosting/access';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,7 +17,9 @@ import type { HostingActor } from '../../hosting/access';
 // domain, domain without mail, tenant domain mail.<d>), DKIM keys (ensure,
 // list / rotate access rules, rate limit, external engine, signing keys,
 // rotation pass), DNS settings update (validation, externalOnly, audit), live
-// check with a fake resolver, public autoconfig answers, TLS copy + hook.
+// check with a fake resolver, public autoconfig answers, TLS copy + hook,
+// fix of imported records hiding the auto mail records (preview / 409 /
+// apply, rendered through a fake PowerDNS).
 // Cross-module hooks (engine resync, zone queue, edge sync) are recorded, not run.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -435,4 +438,114 @@ test('mail-dns-tls on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Test
   await db('mail_domains').where({ id: mEx }).update({ enabled: true });
   assert.ok((await mailTlsService.certificates()).some((c) => c.names[0] === 'autoconfig.exemple.fr'), 'copied again once wanted');
   await flush();
+  // ── Fix: imported provider records hide the auto MX / SPF of a hosted zone ──
+  const { PdnsClient, setPdnsClientForTests } = await import('../../dns/pdnsClient');
+  const { FakePdns } = await import('../../dns/testing/fakePdns');
+  const { syncZone } = await import('../../dns/sync');
+  const { setPublicDnsForTests } = await import('../../../utils/publicDns');
+  const fake = await new FakePdns().start();
+  setPdnsClientForTests(new PdnsClient({ baseUrl: fake.baseUrl, apiKey: fake.apiKey, timeoutMs: 3000 }));
+  setPublicDnsForTests({ txt: async () => [], ns: async () => ['ns1.host.net', 'ns2.host.net'] });
+  const savedFix = { recheckSoon: mailDnsService.recheckSoon, requestSyncZone: dnsService.requestSyncZone };
+  mailDnsService.recheckSoon = (id: number) => { calls.push(`recheck:${id}`); };
+  dnsService.requestSyncZone = (id: number, reason: string) => { calls.push(`dns-zone:${id}:${reason}`); };
+  try {
+    const dFix = await domain(tenantA, a1, 'example.com');
+    const zFix = await zone(a1, dFix, 'example.com');
+    const mFix = await mailDomain(a1, dFix, 'example.com');
+    await dkimService.ensureForDomain(mFix);
+    await db('dns_records').insert([
+      { zone_id: zFix.id, name: '@', type: 'MX', content: 'mx1.mail.example.org.', priority: 1, ttl: 3600, origin: 'manual' },
+      { zone_id: zFix.id, name: '@', type: 'MX', content: 'mx2.mail.example.org.', priority: 5, ttl: 3600, origin: 'manual' },
+      { zone_id: zFix.id, name: '@', type: 'TXT', content: 'v=spf1 include:mx.example.org ~all', ttl: 3600, origin: 'manual' },
+      { zone_id: zFix.id, name: '@', type: 'TXT', content: 'google-site-verification=abc123', ttl: 3600, origin: 'manual' },
+    ]);
+    await regenerateAuto(zFix, await loadContext());
+    assert.equal((await syncZone(zFix.id, 'test')).ok, true);
+    const servedOf = (name: string, type: string) => (fake.rrset('example.com', name, type)?.records.map((r) => r.content) ?? []).sort();
+    assert.deepEqual(servedOf('example.com.', 'MX'), ['1 mx1.mail.example.org.', '5 mx2.mail.example.org.'], 'before: the provider MX are served');
+    assert.ok(!servedOf('example.com.', 'TXT').includes('"v=spf1 mx -all"'));
+    assert.equal(servedOf('_dmarc.example.com.', 'TXT').length, 1, 'DMARC not hidden');
+
+    const st = await mailDnsService.status(clientA1ro, mFix);
+    assert.equal(st.zoneHosted, true);
+    assert.equal(st.shadowed, true);
+    assert.deepEqual(st.records.filter((r) => r.fixable).map((r) => r.kind).sort(), ['mx', 'spf']);
+
+    // Rights: mail.manage AND dns.manage on the zone.
+    const clientDns: HostingActor = { kind: 'client', userId: adminId, tenantId: tenantA, accounts: new Map([[a1, new Set(['mail.manage', 'dns.manage'] as const)]]) };
+    await rejectsWith(mailDnsService.fix(req(tenantA), clientA1, mFix, { dryRun: true }), 403);
+    await rejectsWith(mailDnsService.fix(req(tenantA), clientA1ro, mFix, { dryRun: true }), 403);
+    await rejectsWith(mailDnsService.fix(req(tenantA), clientA2, mFix, { dryRun: true }), 404);
+    await rejectsWith(mailDnsService.fix(req(tenantB), staffB, mFix, { dryRun: true }), 404);
+
+    const rowCount = async () => Number((await db('dns_records').where({ zone_id: zFix.id }).count('* as c').first() as { c: string }).c);
+    const countBefore = await rowCount();
+    const plan = await mailDnsService.fix(req(tenantA), clientDns, mFix, { dryRun: true }) as MailDnsFixPlan;
+    assert.equal(await rowCount(), countBefore, 'the preview writes nothing');
+    assert.equal(plan.zoneHosted, true);
+    assert.equal(plan.delegated, true);
+    const mxItem = plan.items.find((i) => i.kind === 'mx')!;
+    const spfItem = plan.items.find((i) => i.kind === 'spf')!;
+    const dkimItem = plan.items.find((i) => i.kind === 'dkim')!;
+    assert.equal(mxItem.status, 'fix');
+    assert.deepEqual(mxItem.before.map((r) => r.content).sort(), ['mx1.mail.example.org.', 'mx2.mail.example.org.']);
+    assert.deepEqual(mxItem.after, [{ content: 'mail.host.net.', priority: 10 }]);
+    assert.equal(spfItem.status, 'fix');
+    assert.deepEqual(spfItem.before.map((r) => r.content), ['v=spf1 include:mx.example.org ~all'], 'site verification kept');
+    assert.deepEqual(spfItem.lostSpfTerms, ['include:mx.example.org']);
+    assert.equal(dkimItem.status, 'ok');
+
+    // 409: stale fingerprint, zone changed since the preview, item with nothing to fix.
+    await rejectsWith(mailDnsService.fix(req(tenantA), clientDns, mFix, { items: [{ id: mxItem.id, fingerprint: '0000000000000000' }] }), 409, 'fixPlanChanged');
+    const [extra] = await db('dns_records').insert({ zone_id: zFix.id, name: '@', type: 'MX', content: 'mx3.mail.example.org.', priority: 9, ttl: 3600, origin: 'manual' }).returning('id') as Array<{ id: number }>;
+    await rejectsWith(mailDnsService.fix(req(tenantA), clientDns, mFix, { items: [{ id: mxItem.id, fingerprint: mxItem.fingerprint }] }), 409, 'fixPlanChanged');
+    await db('dns_records').where({ id: extra.id }).delete();
+    await rejectsWith(mailDnsService.fix(req(tenantA), clientDns, mFix, { items: [{ id: dkimItem.id, fingerprint: dkimItem.fingerprint }] }), 409, 'fixPlanChanged');
+    await rejectsWith(mailDnsService.fix(req(tenantA), clientDns, mFix, { items: [] }), 400, 'validation');
+    assert.equal(await rowCount(), countBefore, 'refused applies write nothing');
+
+    // Apply (MX + SPF): one transaction, audited, zone resynced, domain re-checked.
+    calls.length = 0;
+    const res = await mailDnsService.fix(req(tenantA), clientDns, mFix, {
+      items: [mxItem, spfItem].map((i) => ({ id: i.id, fingerprint: i.fingerprint })),
+    }) as MailDnsFixResult;
+    assert.deepEqual(res.applied, [mxItem.id, spfItem.id]);
+    assert.equal(res.removed, 3);
+    assert.equal(res.status.shadowed, false);
+    assert.deepEqual(res.status.records.filter((r) => r.fixable), []);
+    await flush();
+    assert.ok(calls.includes(`dns-zone:${zFix.id}:mail-dns-fix`), calls.join(','));
+    assert.ok(calls.includes(`recheck:${mFix}`));
+    const fixAudit = await db('audit_logs').where({ action: 'dns.records.fix' }).first();
+    assert.equal(fixAudit.tenant_id, tenantA);
+    assert.match(typeof fixAudit.details === 'string' ? fixAudit.details : JSON.stringify(fixAudit.details), /mx1\.mail\.example\.org/);
+    // What our name servers serve now (rendered zone pushed to the fake PowerDNS).
+    assert.equal((await syncZone(zFix.id, 'test')).ok, true);
+    assert.deepEqual(servedOf('example.com.', 'MX'), ['10 mail.host.net.'], 'after: incoming mail comes back to this server');
+    const apexTxt = servedOf('example.com.', 'TXT');
+    assert.ok(apexTxt.includes('"v=spf1 mx -all"'), apexTxt.join(' | '));
+    assert.ok(apexTxt.includes('"google-site-verification=abc123"'));
+    assert.ok(!apexTxt.some((x) => x.includes('include:mx.example.org')));
+    const replan = await mailDnsService.fix(req(tenantA), clientDns, mFix, { dryRun: true }) as MailDnsFixPlan;
+    assert.ok(replan.items.every((i) => i.status === 'ok'), JSON.stringify(replan.items.map((i) => [i.id, i.status])));
+
+    // External zone: nothing fixable, nothing written.
+    await db('dns_zones').where({ id: zFix.id }).update({ kind: 'external', status: 'disabled' });
+    const ext = await mailDnsService.fix(req(tenantA), clientDns, mFix, { dryRun: true }) as MailDnsFixPlan;
+    assert.equal(ext.zoneHosted, false);
+    assert.deepEqual(ext.items, []);
+    assert.equal(ext.delegated, null);
+    await rejectsWith(mailDnsService.fix(req(tenantA), clientDns, mFix, { items: [{ id: mxItem.id, fingerprint: mxItem.fingerprint }] }), 409, 'zoneNotHosted');
+    const extStatus = await mailDnsService.status(clientA1ro, mFix);
+    assert.equal(extStatus.zoneHosted, false);
+    assert.equal(extStatus.shadowed, false);
+  } finally {
+    mailDnsService.recheckSoon = savedFix.recheckSoon;
+    dnsService.requestSyncZone = savedFix.requestSyncZone;
+    setPdnsClientForTests(null);
+    setPublicDnsForTests(null);
+    await fake.stop();
+  }
 });
+

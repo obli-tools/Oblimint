@@ -218,7 +218,14 @@ export function MailDomainPage() {
         )}
       </DetailHeader>
 
-      <MailDnsRecordsCard status={dns} error={dnsError} checking={checking} onCheck={() => { void check(); }} />
+      <MailDnsRecordsCard
+        status={dns}
+        error={dnsError}
+        checking={checking}
+        onCheck={() => { void check(); }}
+        canFix={manage && can('dns.manage', domain.accountId)}
+        onFixed={(s) => { setDns(s); setDnsError(null); }}
+      />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="flex flex-col gap-5">
