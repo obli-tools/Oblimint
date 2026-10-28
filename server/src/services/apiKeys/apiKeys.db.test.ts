@@ -579,6 +579,47 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
   assert.deepEqual((await keyDatabases.get(cAll, instId)).databases.map((d) => [d.name, d.createdByKey]), [['app_main', false], ['other_site', false]], 'a key on every site sees them all');
   await assert.rejects(keyDatabases.deleteDatabase(cAll, fakeReq(), instId, theirDbId, 'other_site'), (e: { code: string }) => e.code === 'keyNotCreator');
 
+  // SQL explorer through a key: same reach as above, its own session, read-only unless write, audited (statement only).
+  const { setExplorerDeps, closeAllExplorerSessions } = await import('../databases/explorer/explorer.service');
+  const ran: string[] = [];
+  const fakeDriver = {
+    family: 'mysql', connectionId: () => 1, version: async () => '11', close: async () => undefined, setTimeout: async () => undefined,
+    tables: async () => [{ id: 'items', name: 'items', schema: null, kind: 'table', rows: 2, bytes: 10, engine: 'InnoDB', comment: null }],
+    runOne: async (sql: string, o: { readOnly: boolean }) => { ran.push(`${o.readOnly ? 'ro' : 'rw'}:${sql}`); return { columns: ['secret'], rows: [['value-never-audited']], truncated: false, affectedRows: null }; },
+  };
+  setExplorerDeps({
+    connect: async () => ({ driver: fakeDriver as never, username: 'oblsso_key', password: 'pw' }),
+    release: async () => undefined, caps: async () => ({ importMax: 1, exportMax: 1 }),
+  });
+  t.after(async () => { await closeAllExplorerSessions(); setExplorerDeps(null); });
+  await assert.rejects(keyDatabases.query(c4, fakeReq(), instId, theirDbId, { sql: 'SELECT 1' }), (e: { statusCode: number }) => e.statusCode === 404, 'a database out of reach');
+  await assert.rejects(keyDatabases.tables(c3, instId, mineDbId), (e: { code: string }) => e.code === 'keyScope');
+  await assert.rejects(keyDatabases.query(c4, fakeReq(), instId, mineDbId, { sql: 'SELECT 1' }), (e: { code: string }) => e.code === 'instanceNotRunning');
+  await db('db_instances').where({ id: instId }).update({ status: 'running' });
+  assert.deepEqual((await keyDatabases.tables(c4, instId, mineDbId)).map((x) => x.id), ['items']);
+  const q1 = await keyDatabases.query(c4, fakeReq(), instId, mineDbId, { sql: 'SELECT secret FROM items' });
+  assert.equal(q1.readOnly, true);
+  await assert.rejects(keyDatabases.query(c4, fakeReq(), instId, mineDbId, { sql: 'DELETE FROM items' }), (e: { code: string }) => e.code === 'readOnlyStatement');
+  await keyDatabases.query(c4, fakeReq(), instId, mineDbId, { sql: 'DELETE FROM items WHERE id = 1', write: true });
+  assert.deepEqual(ran, ['ro:SELECT secret FROM items', 'rw:DELETE FROM items WHERE id = 1']);
+  const qAudits = await db('audit_logs').where({ action: 'db.key.query', tenant_id: tA }).orderBy('id').select('details', 'resource_path') as Array<{ details: any; resource_path: string }>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  assert.deepEqual(qAudits.map((r) => [r.details.ok, r.details.write, r.details.sql, r.details.code ?? null]), [
+    [false, false, 'SELECT 1', 'instanceNotRunning'], // reached, refused: audited too (a database out of reach is not)
+    [true, false, 'SELECT secret FROM items', null], [false, false, 'DELETE FROM items', 'readOnlyStatement'], [true, true, 'DELETE FROM items WHERE id = 1', null],
+  ]);
+  assert.ok(qAudits.every((r) => r.resource_path === `${instId}/${mineDbId}` && !JSON.stringify(r.details).includes('value-never-audited')), 'never the results');
+  // The MCP tool, with its argument checks.
+  const kMcp = await apiKeysService.create(fakeReq(), await actorForUser(owner, tA), acme, { name: 'sqlmcp', scopes: ['databases.manage'], siteScope: 'all' });
+  const mcpCall = async (args: unknown) => {
+    const r = await fetch(mcpUrl, { method: 'POST', headers: { authorization: `Bearer ${kMcp.key!}`, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'query_database', arguments: args } }) });
+    return (await r.json() as any).result as { isError?: boolean; content: Array<{ text: string }> }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  };
+  const sqlMcp = await mcpCall({ instance_id: instId, database_id: theirDbId, sql: 'SELECT 1' });
+  assert.ok(!sqlMcp.isError && JSON.parse(sqlMcp.content[0].text).readOnly === true, sqlMcp.content[0].text);
+  assert.match((await mcpCall({ instance_id: instId, database_id: theirDbId, sql: 'DROP TABLE items' })).content[0].text, /readOnlyStatement/);
+  assert.match((await mcpCall({ instance_id: instId, database_id: theirDbId, sql: 'SELECT 1', max_rows: 501 })).content[0].text, /Invalid arguments/);
+  await db('db_instances').where({ id: instId }).update({ status: 'stopped' });
+
   // ── allowed addresses, expiry, revocation ──
   const ownerAgain = await actorForUser(owner, tA);
   const k2 = await apiKeysService.create(fakeReq(), ownerAgain, acme, { name: 'ci', scopes: ['files.read'], siteScope: 'all', allowedIps: ['198.51.100.0/24'] });
