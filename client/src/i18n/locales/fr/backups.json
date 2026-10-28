@@ -103,7 +103,9 @@
     "restoreConfirm": "Tapez {{word}} pour confirmer",
     "restoreConfirmMessage": "Ces {{count}} élément(s) sont REMPLACÉS par leur état sauvegardé :",
     "runAccountNow": "Sauvegarder le compte maintenant",
-    "siteHint": "Les sauvegardes du compte qui contiennent ce site : son code (remis dans le dossier de staging) et ses données se restaurent d'ici ; les bases, depuis le compte.",
-    "siteTitle": "Sauvegardes du site"
+    "siteHint": "Les sauvegardes du compte qui contiennent ce site : son code (remis dans le dossier de staging) et ses données se restaurent d'ici ; les bases, depuis la page de leur instance.",
+    "siteTitle": "Sauvegardes du site",
+    "dbTitle": "Sauvegardes des bases",
+    "dbHint": "Les sauvegardes du compte qui contiennent une base de cette instance : chacune se restaure d'ici ; le code et les données des sites, depuis le site."
   }
 }

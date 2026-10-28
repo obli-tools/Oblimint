@@ -113,8 +113,12 @@ export function SiteDetailPage() {
     }
   }, [siteId]);
   useEffect(() => { setActiveWindow(null); void loadWindow(); }, [loadWindow]);
+  // Database snapshots are taken when a window opens / an update runs: the card follows the windows.
+  const [snapshotsTick, setSnapshotsTick] = useState(0);
   useHostingEvent<WindowUpdatedPayload>(HostingSocketEvents.WINDOW_UPDATED, (p) => {
-    if (p.siteId === siteId) void loadWindow();
+    if (p.siteId !== siteId) return;
+    void loadWindow();
+    setSnapshotsTick((n) => n + 1);
   });
 
   useHostingEvent<HostingChangedPayload>(HostingSocketEvents.HOSTING_CHANGED, (p) => {
@@ -210,7 +214,7 @@ export function SiteDetailPage() {
     { id: 'runtime', label: t('sites.tabs.runtimePhp') || 'Runtime & PHP', icon: <Cpu size={16} /> },
     { id: 'config', label: t('sites.tabs.config') || 'Configuration', icon: <Settings2 size={16} /> },
     { id: 'files', label: t('sites.tabs.files') || 'Files', icon: <FolderOpen size={16} /> },
-    { id: 'cron', label: t('cron.tab.title') || 'Cron', icon: <CalendarClock size={16} /> },
+    { id: 'cron', label: t('sites.tabs.cron') || 'Cron', icon: <CalendarClock size={16} /> },
     { id: 'logs', label: t('sites.tabs.logs') || 'Logs & observation', icon: <ScrollText size={16} /> },
     { id: 'maintenance', label: t('sites.tabs.maintenance') || 'Maintenance & access', icon: <Wrench size={16} /> },
   ];
@@ -302,7 +306,7 @@ export function SiteDetailPage() {
         <div className="space-y-4">
           <SiteReleasesTab {...tabProps} tick={releasesTick} />
           {/* D10: everything that puts the site back in a previous state, in one tab. */}
-          <SnapshotsCard site={site} tick={releasesTick} />
+          <SnapshotsCard site={site} tick={releasesTick + snapshotsTick} />
           <AccountBackupsTab
             accountId={site.accountId}
             siteId={site.id}

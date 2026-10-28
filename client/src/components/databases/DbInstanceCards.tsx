@@ -67,7 +67,7 @@ export function DbExternalCard({ instance, catalog, manage, onChanged }: {
   const toggle = async (enabled: boolean) => {
     if (enabled && !(await confirm({
       title: t('databases.external.enableTitle') || 'Open external access',
-      message: t('databases.external.enableConfirm') || 'The instance gets a public port. Only the addresses allowed by the account access list can reach it: check the Security tab of the account. Continue?',
+      message: t('databases.external.enableConfirm') || 'The instance gets a public port. Only the addresses allowed by the account access list can reach it: check Access & security > SFTP / SQL firewall on the account. Continue?',
       confirmLabel: t('common.enable') || 'Enable',
     }))) return;
     setBusy(true);
@@ -101,7 +101,7 @@ export function DbExternalCard({ instance, catalog, manage, onChanged }: {
             <span>
               {t('databases.external.allowListHint') || 'The account access list (allow-list, bans) filters this port.'}{' '}
               <Link to={accountAccessHref(instance.accountId, 'firewall')} className="underline hover:text-accent">
-                {t('databases.external.securityLink') || 'Security of the account'}
+                {t('databases.external.securityLink') || 'Firewall of the account'}
               </Link>
             </span>
           </p>

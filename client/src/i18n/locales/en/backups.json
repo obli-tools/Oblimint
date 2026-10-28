@@ -103,7 +103,9 @@
     "tab": "Backups",
     "restoreConfirmMessage": "These {{count}} element(s) are REPLACED by their backed-up state:",
     "runAccountNow": "Back up the account now",
-    "siteHint": "The backups of the account that hold this site: its code (back into the staging folder) and its data can be restored from here; the databases from the account.",
-    "siteTitle": "Backups of the site"
+    "siteHint": "The backups of the account that hold this site: its code (back into the staging folder) and its data can be restored from here; the databases from their instance page.",
+    "siteTitle": "Backups of the site",
+    "dbTitle": "Backups of the databases",
+    "dbHint": "The backups of the account that hold a database of this instance: each one can be restored from here; the code and data of the sites from the site."
   }
 }

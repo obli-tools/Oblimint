@@ -20,6 +20,7 @@ import { DbDefaultBadge, DbEngineBadge, DbStatusBadge } from '@/components/datab
 import { DbConnectionCard, DbExternalCard, DbSettingsCard } from '@/components/databases/DbInstanceCards';
 import { DbDatabasesCard } from '@/components/databases/DbDatabasesCard';
 import { DbUsersCard } from '@/components/databases/DbUsersCard';
+import { AccountBackupsTab } from '@/components/hosting/AccountBackupsTab';
 import { dbErrorMessage, formatBytes, toastDbError } from '@/components/databases/dbFormat';
 import { apiErrorStatus } from '@/components/dns/dnsErrors';
 import { accountHref } from '@/utils/links';
@@ -244,6 +245,14 @@ export function DbInstancePage() {
       </div>
       <DbDatabasesCard instance={inst} manage={manage} onChanged={() => { void load(true); }} onOpenAdmin={(dbId) => { void openAdmin(dbId); }} />
       <DbUsersCard instance={inst} manage={manage} onChanged={() => { void load(true); }} />
+      {/* D10: the backups holding a database of this instance, restorable in place. */}
+      <AccountBackupsTab
+        accountId={inst.accountId}
+        databaseIds={inst.databases.map((d) => d.id)}
+        canRun={can('sites.manage', inst.accountId)}
+        canManage={false}
+        can={{ code: false, data: false, db: manage }}
+      />
     </PageContainer>
   );
 }

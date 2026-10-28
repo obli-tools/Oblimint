@@ -485,7 +485,8 @@
       "logs": "Logs & observation",
       "maintenance": "Maintenance & access",
       "releasesRestore": "Releases & restore",
-      "runtimePhp": "Runtime & PHP"
+      "runtimePhp": "Runtime & PHP",
+      "cron": "Cron"
     },
     "title": "Sites",
     "count": "{{count}} site(s)",

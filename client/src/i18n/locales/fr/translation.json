@@ -785,6 +785,8 @@
     "toVerify": "à vérifier",
     "site": {
       "addresses": "Adresses",
+      "code": "Code déposé",
+      "codeHint": "Déposez le code dans le dossier de staging : SFTP ou onglet Fichiers.",
       "createMonitor": "Créer un moniteur pour ce site",
       "db": "Une base de données disponible",
       "dbAccount": "Bases de données du compte",

@@ -15,10 +15,12 @@ import { databasesApi } from '@/api/databases.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
 import { IconButton } from '@/components/common/IconButton';
-import { LaunchChecklist, StatTile, type ChecklistItem } from '@/components/common/ObjectTiles';
+import { LaunchChecklist, type ChecklistItem } from '@/components/common/ObjectTiles';
+import { MiniStat } from '@/components/usage/HeroCards';
 import { VerificationBadge } from '@/components/dns/DnsBadges';
 import { TlsBadge, useHostingEvents } from '@/components/hosting/hostingUi';
 import { useDomainDrawer } from '@/components/hosting/DomainDrawer';
+import { DbInstanceCreateModal } from '@/components/databases/DbInstanceCreateModal';
 import type { SiteTab } from '@/utils/links';
 import { BaseBadge, FileStatusIcon, Pill, PolicyBadge } from '../SiteBadges';
 import { findDocrootDataPath, formatCountdown, formatDateTime } from '../siteForm';
@@ -38,13 +40,15 @@ type GoTo = (tab: SiteTab, extra?: Record<string, string>) => void;
  * the PHP limits in Runtime & PHP.
  */
 export function SiteOverviewTab(props: SiteTabProps & { onGoTo: GoTo }) {
+  // The staging state of StagingCard, shared with the checklist (« code uploaded »).
+  const [staging, setStaging] = useState<StagingStatus | null>(null);
   return (
     <div className="grid gap-4 xl:grid-cols-5">
       <div className="flex min-w-0 flex-col gap-4 xl:col-span-3">
-        <LaunchCard {...props} />
+        <LaunchCard {...props} staging={staging} />
       </div>
       <div className="flex min-w-0 flex-col gap-4 xl:col-span-2">
-        <StagingCard {...props} />
+        <StagingCard {...props} onStaging={setStaging} />
         <DetectCard {...props} />
       </div>
     </div>
@@ -53,25 +57,27 @@ export function SiteOverviewTab(props: SiteTabProps & { onGoTo: GoTo }) {
 
 // ── Launch checklist, addresses, tiles ──────────────────────────────────────
 
-function LaunchCard({ site, onPublish, onGoTo }: SiteTabProps & { onGoTo: GoTo }) {
-  const { t } = useTranslation();
+function LaunchCard({ site, onPublish, onGoTo, staging }: SiteTabProps & { onGoTo: GoTo; staging: StagingStatus | null }) {
+  const { t, i18n } = useTranslation();
   const { can } = useHostingMe();
   const drawer = useDomainDrawer();
   // null = not readable by the caller (the line is shown as unknown).
   const [domains, setDomains] = useState<Domain[] | null>(null);
   const [instances, setInstances] = useState<DbInstance[] | null>(null);
+  const [creatingDb, setCreatingDb] = useState(false);
 
   const loadDomains = useCallback(() => {
     domainsApi.list({ accountId: site.accountId }).then(setDomains).catch(() => setDomains(null));
   }, [site.accountId]);
   useEffect(() => { loadDomains(); }, [loadDomains]);
-  useEffect(() => {
-    let cancelled = false;
+  const instancesSeq = useRef(0);
+  const loadInstances = useCallback(() => {
+    const seq = ++instancesSeq.current;
     databasesApi.listInstances({ accountId: site.accountId })
-      .then((l) => { if (!cancelled) setInstances(l); })
-      .catch(() => { if (!cancelled) setInstances(null); });
-    return () => { cancelled = true; };
+      .then((l) => { if (seq === instancesSeq.current) setInstances(l); })
+      .catch(() => { if (seq === instancesSeq.current) setInstances(null); });
   }, [site.accountId]);
+  useEffect(() => { loadInstances(); }, [loadInstances]);
   useHostingEvents([
     HostingSocketEvents.HOSTING_CHANGED, HostingSocketEvents.CERTIFICATE_UPDATED, HostingSocketEvents.DOMAIN_VERIFICATION_UPDATED,
   ], () => { loadDomains(); });
@@ -85,7 +91,18 @@ function LaunchCard({ site, onPublish, onGoTo }: SiteTabProps & { onGoTo: GoTo }
   const noHttps = routed.find((d) => d.tlsMode !== 'none' && d.certificate?.status !== 'valid');
 
   const canDomains = can('domains.manage', site.accountId);
+  const canDb = can('databases.manage', site.accountId);
+  // Code uploaded: something in the staging folder, pending or already published.
+  const codeDone = site.currentReleaseNumber != null || (staging != null && (staging.lastUploadAt != null || staging.pendingChanges > 0));
   const items: ChecklistItem[] = [
+    {
+      key: 'code', done: codeDone, unknown: !codeDone && staging === null,
+      label: t('objectPage.site.code') || 'Code uploaded',
+      hint: staging?.lastUploadAt
+        ? formatDateTime(staging.lastUploadAt, i18n.language)
+        : (t('objectPage.site.codeHint') || 'Upload the code into the staging folder: SFTP or the Files tab.'),
+      action: codeDone ? null : { label: t('sites.tabs.files') || 'Files', onClick: () => onGoTo('files') },
+    },
     {
       key: 'route', done: routed.length > 0, unknown: domains === null,
       label: t('objectPage.site.route') || 'A domain points to the site',
@@ -110,7 +127,10 @@ function LaunchCard({ site, onPublish, onGoTo }: SiteTabProps & { onGoTo: GoTo }
       hint: instances && instances.length > 0
         ? instances.map((i) => i.name).join(', ')
         : (t('objectPage.site.dbHint') || 'Only if the application needs one (the account instances are shared by its sites).'),
-      action: can('databases.manage', site.accountId) ? { label: t('objectPage.site.dbAction') || 'Database settings', onClick: () => onGoTo('config', { section: 'db' }) } : null,
+      // No instance yet: created in place (as on the account); else its settings in Configuration.
+      action: !canDb ? null : instances?.length === 0
+        ? { label: t('databases.create') || 'New instance', onClick: () => setCreatingDb(true) }
+        : { label: t('objectPage.site.dbAction') || 'Database settings', onClick: () => onGoTo('config', { section: 'db' }) },
     },
     {
       key: 'published', done: site.currentReleaseNumber != null,
@@ -156,15 +176,15 @@ function LaunchCard({ site, onPublish, onGoTo }: SiteTabProps & { onGoTo: GoTo }
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <StatTile
+        <MiniStat
           icon={<History size={15} />}
           label={t('sites.tabs.releases') || 'Releases'}
           value={site.currentReleaseNumber != null ? `#${site.currentReleaseNumber}` : null}
           sub={site.currentReleaseNumber != null ? (t('objectPage.site.live') || 'live release') : (t('objectPage.site.nothingLive') || 'nothing published')}
           onClick={() => onGoTo('releases')}
         />
-        <StatTile icon={<Cpu size={15} />} label={t('sites.tabs.runtimePhp') || 'Runtime & PHP'} value={<BaseBadge base={site.base} compact />} onClick={() => onGoTo('runtime')} />
-        <StatTile
+        <MiniStat icon={<Cpu size={15} />} label={t('sites.tabs.runtimePhp') || 'Runtime & PHP'} value={<BaseBadge base={site.base} compact />} onClick={() => onGoTo('runtime')} />
+        <MiniStat
           icon={<Globe size={15} />}
           label={t('sites.tabs.domains') || 'Domains'}
           value={domains === null ? null : routed.length}
@@ -173,6 +193,15 @@ function LaunchCard({ site, onPublish, onGoTo }: SiteTabProps & { onGoTo: GoTo }
           onClick={() => onGoTo('domains')}
         />
       </div>
+
+      {creatingDb && (
+        <DbInstanceCreateModal
+          open
+          accountId={site.accountId}
+          onClose={() => setCreatingDb(false)}
+          onCreated={(i) => { setCreatingDb(false); toast.success(t('databases.created', { name: i.name, defaultValue: 'Instance {{name}} created' })); loadInstances(); }}
+        />
+      )}
     </>
   );
 }
@@ -191,7 +220,7 @@ function useNow(active: boolean): number {
 
 const STAGING_LIST_MAX = 50;
 
-function StagingCard({ site, onPublish }: SiteTabProps) {
+function StagingCard({ site, onPublish, onStaging }: SiteTabProps & { onStaging?: (s: StagingStatus) => void }) {
   const { t, i18n } = useTranslation();
   const { can } = useHostingMe();
   const [staging, setStaging] = useState<StagingStatus | null>(null);
@@ -202,7 +231,9 @@ function StagingCard({ site, onPublish }: SiteTabProps) {
 
   const load = useCallback(async () => {
     try {
-      setStaging(await releasesApi.staging(site.id));
+      const next = await releasesApi.staging(site.id);
+      setStaging(next);
+      onStaging?.(next);
       setError('');
     } catch (err) {
       if (isNotImplemented(err)) unavailable.current = true;
@@ -210,7 +241,7 @@ function StagingCard({ site, onPublish }: SiteTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [site.id, t]);
+  }, [site.id, t]); // eslint-disable-line react-hooks/exhaustive-deps -- onStaging is a state setter
 
   useEffect(() => { void load(); }, [load]);
   // SFTP uploads do not emit a socket event: poll while the tab is open.

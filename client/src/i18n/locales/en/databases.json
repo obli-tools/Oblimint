@@ -103,9 +103,9 @@
       "off": "Only the sites of the account can connect.",
       "notAllowed": "The plan of the account does not allow external access to the databases.",
       "allowListHint": "The account access list (allow-list, bans) filters this port.",
-      "securityLink": "Security of the account",
+      "securityLink": "Firewall of the account",
       "enableTitle": "Open external access",
-      "enableConfirm": "The instance gets a public port. Only the addresses allowed by the account access list can reach it: check the Security tab of the account. Continue?",
+      "enableConfirm": "The instance gets a public port. Only the addresses allowed by the account access list can reach it: check Access & security > SFTP / SQL firewall on the account. Continue?",
       "enabled": "External access opened",
       "disabled": "External access closed",
       "failed": "Failed to change the external access"

@@ -785,6 +785,8 @@
     "toVerify": "to verify",
     "site": {
       "addresses": "Addresses",
+      "code": "Code uploaded",
+      "codeHint": "Upload the code into the staging folder: SFTP or the Files tab.",
       "createMonitor": "Create a monitor for this site",
       "db": "A database is available",
       "dbAccount": "Databases of the account",

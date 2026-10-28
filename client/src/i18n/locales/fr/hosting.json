@@ -130,7 +130,10 @@
       "access": "Accès & sécurité",
       "apps": "Applications",
       "domainsDns": "Domaines & DNS",
-      "mail": "Mail"
+      "mail": "Mail",
+      "databases": "Bases de données",
+      "backups": "Sauvegardes",
+      "usage": "Consommation"
     },
     "title": "Comptes d'hébergement",
     "unsuspend": "Réactiver",

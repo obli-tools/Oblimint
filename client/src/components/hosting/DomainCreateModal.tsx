@@ -292,10 +292,8 @@ export function DomainCreateModal({ open, onClose, onCreated, onClaimCreated, ac
  * account preset (instead of a bare link to /domains that leaves the form).
  * Renders nothing when the caller may not add domains to this account.
  */
-export function AddDomainInline({ accountId, siteId, onCreated, label, className }: {
+export function AddDomainInline({ accountId, onCreated, label, className }: {
   accountId: number;
-  /** Route the new domain to this site at "/" (site page). */
-  siteId?: number;
   onCreated: (d: Domain) => void;
   label?: string;
   className?: string;
@@ -312,7 +310,6 @@ export function AddDomainInline({ accountId, siteId, onCreated, label, className
       <DomainCreateModal
         open={open}
         accountId={accountId}
-        siteId={siteId}
         onClose={() => setOpen(false)}
         onCreated={(d) => {
           setOpen(false);

@@ -903,9 +903,9 @@ export async function recordFailure(e: AuthFailureEvent): Promise<AccessBan | nu
     key: `ban:${accountId}:${e.service}`,
     title: `Adresse bannie (${account.username})`,
     message: `L'adresse ${key} est bannie ${access.banDurationMinutes} min du compte ${account.username} après ${reason}.`
-      + ' Les bans suivants de l\'heure ne sont pas notifiés un par un : voir l\'onglet Sécurité du compte.',
+      + ' Les bans suivants de l\'heure ne sont pas notifiés un par un : voir Accès & sécurité > Pare-feu SFTP / SQL du compte.',
     severity: 'warning',
-    link: `/accounts/${accountId}?tab=security`,
+    link: `/accounts/${accountId}?tab=access&section=firewall`,
   });
   pending.add(accountId);
   firewallService.requestSync(accountId, 'ban');

@@ -19,8 +19,9 @@ import { isStepUpHandled } from '@/api/client';
 import { cn } from '@/utils/cn';
 import { siteHref } from '@/utils/links';
 import { VerificationBadge } from '@/components/dns/DnsBadges';
-import { Card, ForceHttpsIcon, TlsBadge, inputCls, labelCls, selectCls } from './hostingUi';
+import { Card, ForceHttpsIcon, TlsBadge, inputCls, labelCls, selectCls, useHostingEvents } from './hostingUi';
 import { AddDomainInline } from './DomainCreateModal';
+import { useDomainDrawerEvents, type DomainDrawerEvent } from './DomainDrawer';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The ONE route editor (coherence plan D3): the routes of a domain (its
@@ -77,22 +78,63 @@ export function RouteEditor({ manage, onChanged, emptyText, onOpenDomain, action
   }, [site?.id, t]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { void loadSiteRoutes(); }, [loadSiteRoutes]);
+
+  // Site mode: the domains of the account — choices of the form AND badges of
+  // each route, so they follow the drawer, the certificates and the proofs.
+  // Only the latest request lands (a slower earlier one does not overwrite it).
+  const domainsSeq = useRef(0);
+  const loadDomains = useCallback(async () => {
+    if (domain) return;
+    const seq = ++domainsSeq.current;
+    try {
+      const list = await domainsApi.list({ accountId });
+      if (seq === domainsSeq.current) setDomains(list);
+    } catch {
+      // A failed reload keeps the known list (the first load leaves it empty).
+    } finally {
+      if (seq === domainsSeq.current) setChoicesLoaded(true);
+    }
+  }, [accountId, domain != null]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Site mode: a domain (or this site) changed elsewhere — its routes may have too (domain mode: the drawer reloads the domain).
   useHostingEvent<HostingChangedPayload>(HostingSocketEvents.HOSTING_CHANGED, (p) => {
-    if (site && (p.entity === 'domain' || (p.entity === 'site' && p.id === site.id))) void loadSiteRoutes();
+    if (!site) return;
+    if (p.entity === 'domain' || (p.entity === 'site' && p.id === site.id)) void loadSiteRoutes();
+    if (p.entity === 'domain') void loadDomains();
   });
+  // Site mode: the TLS and ownership badges of the routes.
+  useHostingEvents(
+    [HostingSocketEvents.CERTIFICATE_UPDATED, HostingSocketEvents.DOMAIN_VERIFICATION_UPDATED],
+    () => { void loadDomains(); },
+    () => site != null,
+  );
+  // Site mode: what the domain drawer (opened in place) changed or deleted.
+  useDomainDrawerEvents(useCallback((e: DomainDrawerEvent) => {
+    if (domain) return;
+    if (e.type === 'changed') setDomains((cur) => cur.map((x) => (x.id === e.domain.id ? e.domain : x)));
+    else {
+      setDomains((cur) => cur.filter((x) => x.id !== e.id));
+      setDraft((cur) => (cur && cur.id == null && cur.domainId === e.id ? { ...cur, domainId: '' } : cur));
+      void loadSiteRoutes();
+    }
+  }, [domain != null, loadSiteRoutes])); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Choices of the form: the sites (domain mode) or the domains (site mode) of the account.
-  // Site mode: the domains are loaded for reading too (badges of each route).
   useEffect(() => {
-    if (!manage && domain) return;
+    if (!domain) {
+      setChoicesLoaded(false);
+      void loadDomains();
+      return;
+    }
+    if (!manage) return;
     let cancelled = false;
     setChoicesLoaded(false);
-    const done = () => { if (!cancelled) setChoicesLoaded(true); };
-    if (domain) sitesApi.list({ accountId }).then((l) => { if (!cancelled) setSites(l); }).catch(() => { if (!cancelled) setSites([]); }).finally(done);
-    else domainsApi.list({ accountId }).then((l) => { if (!cancelled) setDomains(l); }).catch(() => { if (!cancelled) setDomains([]); }).finally(done);
+    sitesApi.list({ accountId })
+      .then((l) => { if (!cancelled) setSites(l); })
+      .catch(() => { if (!cancelled) setSites([]); })
+      .finally(() => { if (!cancelled) setChoicesLoaded(true); });
     return () => { cancelled = true; };
-  }, [accountId, manage, domain != null]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [accountId, manage, domain != null, loadDomains]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sites whose runtimes were requested (in flight or loaded): one request per site.
   const requestedRuntimes = useRef(new Set<number>());
@@ -318,7 +360,8 @@ export function RouteEditor({ manage, onChanged, emptyText, onOpenDomain, action
           {draft?.id === null && <li className="py-2">{editor}</li>}
         </ul>
       )}
-      {manage && site && choicesLoaded && domains.length === 0 && !draft && (
+      {/* The site tab passes its own « Add a domain » (routed to the site) in `actions`: no second path here. */}
+      {manage && site && !actions && choicesLoaded && domains.length === 0 && !draft && (
         <p className="mt-3 text-xs text-text-muted">
           {t('domains.routes.noDomain') || 'This account has no domain yet.'}{' '}
           {/* Added in place (account preset), then chosen in the route form. */}

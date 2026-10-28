@@ -130,7 +130,10 @@
       "access": "Access & security",
       "apps": "Applications",
       "domainsDns": "Domains & DNS",
-      "mail": "Mail"
+      "mail": "Mail",
+      "databases": "Databases",
+      "backups": "Backups",
+      "usage": "Usage"
     },
     "title": "Hosting accounts",
     "unsuspend": "Resume",

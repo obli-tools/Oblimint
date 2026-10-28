@@ -103,9 +103,9 @@
       "off": "Seuls les sites du compte peuvent se connecter.",
       "notAllowed": "Le plan du compte n'autorise pas l'accès externe aux bases de données.",
       "allowListHint": "La liste d'accès du compte (liste blanche, bannissements) filtre ce port.",
-      "securityLink": "Sécurité du compte",
+      "securityLink": "Pare-feu du compte",
       "enableTitle": "Ouvrir l'accès externe",
-      "enableConfirm": "L'instance obtient un port public. Seules les adresses autorisées par la liste d'accès du compte peuvent l'atteindre : vérifiez l'onglet Sécurité du compte. Continuer ?",
+      "enableConfirm": "L'instance obtient un port public. Seules les adresses autorisées par la liste d'accès du compte peuvent l'atteindre : vérifiez Accès & sécurité > Pare-feu SFTP / SQL du compte. Continuer ?",
       "enabled": "Accès externe ouvert",
       "disabled": "Accès externe fermé",
       "failed": "Impossible de modifier l'accès externe"

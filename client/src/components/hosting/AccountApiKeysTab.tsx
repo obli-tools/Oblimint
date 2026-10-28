@@ -21,7 +21,7 @@ import { ApiGuideModal, CreatedKeyModal, KeyModal, SCOPE_FALLBACK } from './KeyM
 // no bearer secret but an OAuth client id / secret pasted in the custom
 // connector; the user then approves it in the panel (OAuthAuthorizePage).
 
-export function AccountApiKeysTab({ accountId, siteId, presetSiteIds, openNew = false }: {
+export function AccountApiKeysTab({ accountId, siteId, presetSiteIds, openNew = false, onNewClosed }: {
   accountId: number;
   /** Site page: only the keys covering this site; a new key starts with it ticked. */
   siteId?: number;
@@ -29,6 +29,8 @@ export function AccountApiKeysTab({ accountId, siteId, presetSiteIds, openNew = 
   presetSiteIds?: number[];
   /** Open the new-key form at once (deep link &new=1). */
   openNew?: boolean;
+  /** The key form closed (saved or cancelled): the caller drops its deep link (&new=1). */
+  onNewClosed?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
@@ -217,8 +219,8 @@ export function AccountApiKeysTab({ accountId, siteId, presetSiteIds, openNew = 
           kind={typeof editing === 'string' ? editing : editing.kind}
           initial={typeof editing === 'string' ? null : editing}
           initialSiteIds={typeof editing === 'string' ? newSiteIds : undefined}
-          onClose={() => setEditing(null)}
-          onSaved={(k) => { setEditing(null); if ('clientSecret' in k) setCreated(k as ApiKeyCreated); void load(); }}
+          onClose={() => { setEditing(null); onNewClosed?.(); }}
+          onSaved={(k) => { setEditing(null); onNewClosed?.(); if ('clientSecret' in k) setCreated(k as ApiKeyCreated); void load(); }}
         />
       )}
       {created && <CreatedKeyModal created={created} onClose={() => setCreated(null)} onGuide={() => setGuideOpen(true)} />}

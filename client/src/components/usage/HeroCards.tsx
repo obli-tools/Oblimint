@@ -63,24 +63,34 @@ export function HeroCard({ label, value, color, deltaText, barPct, barColor }: {
   );
 }
 
-/** Mini-stat compact card — ported from Obliance. */
-export function MiniStat({ icon, label, value, sub, color = 'text-text-primary', to }: {
+/**
+ * Mini-stat compact card — ported from Obliance. Also the count tiles of the
+ * object overviews (account, site): `onClick` (tab of the same page) renders
+ * a button, `to` (other page) a link; `tone` colours the sub line.
+ */
+export function MiniStat({ icon, label, value, sub, color = 'text-text-primary', to, onClick, tone }: {
   icon: ReactNode;
-  label: string;
-  value: ReactNode;
-  sub?: string;
+  label: ReactNode;
+  /** null = not readable by the caller (« — »). */
+  value: ReactNode | null;
+  sub?: ReactNode;
   color?: string;
   to?: string;
+  onClick?: () => void;
+  /** Highlight of the sub line (e.g. something to do). */
+  tone?: 'amber' | 'red';
 }) {
   const body = (
     <div className="flex items-center gap-3 rounded-lg bg-bg-secondary px-3.5 py-2.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03),_0_4px_16px_-8px_rgba(0,0,0,0.35)]">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-bg-hover text-text-muted">{icon}</div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[10px] font-mono uppercase tracking-[0.12em] text-text-muted">{label}</div>
-        <div className={`truncate text-[14px] font-semibold leading-tight ${color}`}>{value}</div>
-        {sub && <div className="truncate text-[10px] font-mono text-text-muted">{sub}</div>}
+        <div className={`truncate text-[14px] font-semibold leading-tight ${color}`}>{value ?? '—'}</div>
+        {sub && <div className={`truncate text-[10px] font-mono ${tone === 'amber' ? 'text-amber-400' : tone === 'red' ? 'text-red-400' : 'text-text-muted'}`}>{sub}</div>}
       </div>
     </div>
   );
-  return to ? <Link to={to} className="block transition-opacity hover:opacity-90">{body}</Link> : body;
+  if (to) return <Link to={to} className="block min-w-0 transition-opacity hover:opacity-90">{body}</Link>;
+  if (onClick) return <button type="button" onClick={onClick} className="block w-full min-w-0 text-left transition-opacity hover:opacity-90">{body}</button>;
+  return body;
 }

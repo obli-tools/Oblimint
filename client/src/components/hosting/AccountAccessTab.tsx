@@ -42,6 +42,11 @@ export function AccountAccessTab({ account }: { account: HostingAccount }) {
   // Deep link ?section=keys&new=1[&site=<id>]: the new-key form opens with the site ticked.
   const presetSite = Number(params.get('site'));
   const openNew = section === 'keys' && params.get('new') === '1';
+  // Once the form is closed, the deep link goes (a reload must not reopen it).
+  const clearNew = () => {
+    if (!params.has('new') && !params.has('site')) return;
+    setParams((prev) => { const p = new URLSearchParams(prev); p.delete('new'); p.delete('site'); return p; }, { replace: true });
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -61,6 +66,7 @@ export function AccountAccessTab({ account }: { account: HostingAccount }) {
         <AccountApiKeysTab
           accountId={account.id}
           openNew={openNew}
+          onNewClosed={clearNew}
           presetSiteIds={Number.isInteger(presetSite) && presetSite > 0 ? [presetSite] : undefined}
         />
       )}

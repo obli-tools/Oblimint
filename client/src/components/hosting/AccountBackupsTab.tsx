@@ -18,13 +18,18 @@ import { Card, EmptyState, toastHostingError } from './hostingUi';
 // schedule of the platform, or on demand), restore of a site's code / data or
 // of a database from one of them.
 
-export function AccountBackupsTab({ accountId, siteId, canRun, canManage, can }: {
+export function AccountBackupsTab({ accountId, siteId, databaseIds, canRun, canManage, can }: {
   accountId: number;
   /**
    * Site page (Releases & restore): only the backups holding this site, and
    * only its code / data restorable (filtered here: the server lists the account).
    */
   siteId?: number;
+  /**
+   * Database instance page: only the backups holding one of these databases,
+   * and only them restorable (filtered here too).
+   */
+  databaseIds?: number[];
   /** sites.manage: start a backup now. */
   canRun: boolean;
   /** accounts.manage (staff): exclude the account from the schedule. */
@@ -70,19 +75,30 @@ export function AccountBackupsTab({ accountId, siteId, canRun, canManage, can }:
   };
 
   if (!state) return <div className="flex justify-center p-8"><LoadingSpinner /></div>;
-  const siteCan = siteId != null ? { ...can, db: false } : can;
-  const canRestore = siteCan.code || siteCan.data || siteCan.db;
-  const runs = siteId != null ? state.runs.filter((r) => r.objects.some((o) => o.siteId === siteId)) : state.runs;
+  // Scope of the page: the objects of this site / of these databases (the server lists the account).
+  const inScope = (o: BackupObject) => (siteId != null ? o.siteId === siteId
+    : databaseIds != null ? o.kind === 'db' && o.databaseId != null && databaseIds.includes(o.databaseId)
+      : true);
+  const scoped = siteId != null || databaseIds != null;
+  const scopeCan = siteId != null ? { ...can, db: false } : databaseIds != null ? { code: false, data: false, db: can.db } : can;
+  const canRestore = scopeCan.code || scopeCan.data || scopeCan.db;
+  const runs = scoped ? state.runs.filter((r) => r.objects.some(inScope)) : state.runs;
+  const title = siteId != null ? (t('backups.siteTitle') || 'Backups of the site')
+    : databaseIds != null ? (t('backups.dbTitle') || 'Backups of the databases')
+      : (t('backups.title') || 'Backups');
 
   return (
     <div className="space-y-4">
       <Card
         icon={<Archive size={14} className="text-accent" />}
-        title={siteId != null ? (t('backups.siteTitle') || 'Backups of the site') : (t('backups.title') || 'Backups')}
-        actions={canRun ? <Button size="sm" loading={starting} onClick={() => { void runNow(); }}><Play className="mr-1 h-3.5 w-3.5" />{siteId != null ? (t('backups.runAccountNow') || 'Back up the account now') : (t('backups.runNow') || 'Back up now')}</Button> : undefined}
+        title={title}
+        actions={canRun ? <Button size="sm" loading={starting} onClick={() => { void runNow(); }}><Play className="mr-1 h-3.5 w-3.5" />{scoped ? (t('backups.runAccountNow') || 'Back up the account now') : (t('backups.runNow') || 'Back up now')}</Button> : undefined}
       >
         {siteId != null && (
-          <p className="mb-1.5 text-xs text-text-muted">{t('backups.siteHint') || 'The backups of the account that hold this site: its code (back into the staging folder) and its data can be restored from here; the databases from the account.'}</p>
+          <p className="mb-1.5 text-xs text-text-muted">{t('backups.siteHint') || 'The backups of the account that hold this site: its code (back into the staging folder) and its data can be restored from here; the databases from their instance page.'}</p>
+        )}
+        {databaseIds != null && (
+          <p className="mb-1.5 text-xs text-text-muted">{t('backups.dbHint') || 'The backups of the account that hold a database of this instance: each one can be restored from here; the code and data of the sites from the site.'}</p>
         )}
         <p className="text-xs text-text-muted">
           {!state.scheduled
@@ -110,7 +126,7 @@ export function AccountBackupsTab({ accountId, siteId, canRun, canManage, can }:
         </div>
       )}
 
-      <RestoreModal accountId={accountId} siteId={siteId} run={restoring} can={siteCan} fmt={fmt} onClose={() => setRestoring(null)} />
+      <RestoreModal accountId={accountId} inScope={inScope} run={restoring} can={scopeCan} fmt={fmt} onClose={() => setRestoring(null)} />
     </div>
   );
 }
@@ -121,8 +137,8 @@ function itemOf(o: BackupObject): BackupRestoreItem | null {
   return null;
 }
 
-function RestoreModal({ accountId, siteId, run, can, fmt, onClose }: {
-  accountId: number; siteId?: number; run: BackupRun | null; can: { code: boolean; data: boolean; db: boolean }; fmt: (iso: string | null) => string; onClose: () => void;
+function RestoreModal({ accountId, inScope, run, can, fmt, onClose }: {
+  accountId: number; inScope: (o: BackupObject) => boolean; run: BackupRun | null; can: { code: boolean; data: boolean; db: boolean }; fmt: (iso: string | null) => string; onClose: () => void;
 }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
@@ -132,7 +148,7 @@ function RestoreModal({ accountId, siteId, run, can, fmt, onClose }: {
   useEffect(() => { setPicked(new Set()); setResult(null); }, [run]);
   if (!run) return null;
 
-  const objects = run.objects.filter((o) => itemOf(o) && can[o.kind as 'code' | 'data' | 'db'] && (siteId == null || o.siteId === siteId));
+  const objects = run.objects.filter((o) => itemOf(o) && can[o.kind as 'code' | 'data' | 'db'] && inScope(o));
   const keyOf = (o: BackupObject) => o.key;
   const word = t('backups.restoreWord') || 'RESTORE';
 

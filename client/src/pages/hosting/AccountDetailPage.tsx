@@ -31,7 +31,8 @@ import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { LaunchChecklist, StatTile, type ChecklistItem } from '@/components/common/ObjectTiles';
+import { LaunchChecklist, type ChecklistItem } from '@/components/common/ObjectTiles';
+import { MiniStat } from '@/components/usage/HeroCards';
 import { FileAccessPanel } from '@/components/hosting/FileAccessPanel';
 import { AccountAccessTab } from '@/components/hosting/AccountAccessTab';
 import { PlanSummary } from '@/components/hosting/AccountCreateModal';
@@ -206,11 +207,11 @@ export function AccountDetailPage() {
     { id: 'apps', label: t('accounts.tabs.apps') || 'Applications', icon: <AppWindow size={14} />, hidden: !appsReadable },
     { id: 'domains', label: t('accounts.tabs.domainsDns') || 'Domains & DNS', icon: <Globe size={14} />, badge: count(account.domainCount) },
     { id: 'mail', label: t('accounts.tabs.mail') || 'Mail', icon: <AtSign size={14} /> },
-    { id: 'databases', label: t('usage.accountTabs.databases') || 'Databases', icon: <Database size={14} /> },
+    { id: 'databases', label: t('accounts.tabs.databases') || 'Databases', icon: <Database size={14} /> },
     { id: 'files', label: t('accounts.tabs.files') || 'Files', icon: <FolderOpen size={14} /> },
-    { id: 'backups', label: t('backups.tab') || 'Backups', icon: <Archive size={14} /> },
+    { id: 'backups', label: t('accounts.tabs.backups') || 'Backups', icon: <Archive size={14} /> },
     { id: 'access', label: t('accounts.tabs.access') || 'Access & security', icon: <ShieldCheck size={14} /> },
-    { id: 'usage', label: t('usage.accountTabs.usage') || 'Usage', icon: <BarChart3 size={14} /> },
+    { id: 'usage', label: t('accounts.tabs.usage') || 'Usage', icon: <BarChart3 size={14} /> },
   ];
 
   return (
@@ -431,33 +432,33 @@ function OverviewTab({ account, isStaff, appsReadable, onGoTo, onRefreshUsage, r
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-        <StatTile icon={<Server size={15} />} label={t('accounts.tabs.sites') || 'Sites'} value={account.siteCount} onClick={() => onGoTo('sites')} />
-        {appsReadable && <StatTile icon={<AppWindow size={15} />} label={t('accounts.tabs.apps') || 'Applications'} value={data?.apps?.length ?? null} onClick={() => onGoTo('apps')} />}
-        <StatTile
+        <MiniStat icon={<Server size={15} />} label={t('accounts.tabs.sites') || 'Sites'} value={account.siteCount} onClick={() => onGoTo('sites')} />
+        {appsReadable && <MiniStat icon={<AppWindow size={15} />} label={t('accounts.tabs.apps') || 'Applications'} value={data?.apps?.length ?? null} onClick={() => onGoTo('apps')} />}
+        <MiniStat
           icon={<Globe size={15} />} label={t('accounts.tabs.domains') || 'Domains'} value={account.domainCount}
           sub={unverified.length > 0 ? t('domainOwnership.pendingCount', { count: unverified.length, defaultValue: '{{count}} to verify' }) : undefined}
           tone={unverified.length > 0 ? 'amber' : undefined}
           onClick={() => onGoTo('domains')}
         />
-        <StatTile
+        <MiniStat
           icon={<AtSign size={15} />} label={t('mail.tabs.mailboxes') || 'Mailboxes'} value={mailCounts?.mailboxes ?? null}
           sub={mailCounts ? t('objectPage.account.mailDomains', { count: mailCounts.domains, defaultValue: '{{count}} mail domain(s)' }) : undefined}
           onClick={() => onGoTo('mail')}
         />
-        <StatTile icon={<Database size={15} />} label={t('usage.accountTabs.databases') || 'Databases'} value={data?.instances?.length ?? null} onClick={() => onGoTo('databases')} />
+        <MiniStat icon={<Database size={15} />} label={t('accounts.tabs.databases') || 'Databases'} value={data?.instances?.length ?? null} onClick={() => onGoTo('databases')} />
         {/* The proxy has no tab of its own (8 sub-tabs): a tile to its page, account preset. */}
-        <StatTile
+        <MiniStat
           icon={<Shuffle size={15} />} label={t('objectPage.account.proxyHosts') || 'Proxy hosts'} value={data?.proxyHosts?.length ?? null}
           sub={data?.proxyHosts ? t('objectPage.account.enabledCount', { count: proxyEnabled, defaultValue: '{{count}} enabled' }) : undefined}
           to={`/proxy?account=${account.id}`}
         />
-        <StatTile
+        <MiniStat
           icon={<HeartPulse size={15} />} label={t('objectPage.account.monitors') || 'Monitors'} value={data?.monitors?.length ?? null}
           sub={monitorsDown > 0 ? t('objectPage.account.downCount', { count: monitorsDown, defaultValue: '{{count}} down' }) : undefined}
           tone={monitorsDown > 0 ? 'red' : undefined}
           to={`/uptime?account=${account.id}`}
         />
-        <StatTile
+        <MiniStat
           icon={<Archive size={15} />} label={t('objectPage.account.lastBackup') || 'Last backup'}
           value={lastBackup ? fmtShort(lastBackup.startedAt) : (data?.backups ? '—' : null)}
           sub={lastBackup?.status === 'failed' ? (t('objectPage.account.backupFailed') || 'failed') : undefined}
