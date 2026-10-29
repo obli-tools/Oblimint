@@ -12,9 +12,18 @@ import { logger } from '../utils/logger';
 //   POST /sync     → EdgeSyncResult
 //   PUT  /settings { acmeDirectory: 'production' | 'staging' } → EdgeStatus
 //        (switch to production → renewal pass replacing staging certificates)
+//   GET  /platform-certificates → PlatformCertificatesView (certificate of each
+//        platform host name: panel, client space, webmail, mail, DB admin,
+//        preview wildcard, probes — Settings)
+//   POST /platform-certificates/retry { host } → PlatformCertificateItem
+//        (« retry now »: resets the failure backoff of that certificate and
+//        queues an attempt; CERTIFICATE_UPDATED events follow). 404 notFound,
+//        409 certificateNameNotPublic / acmeEmailMissing / certificateDns01Unavailable /
+//        certificateNotDue, 429 certificateRateLimited.
 const router = Router();
 
 const settingsSchema = z.object({ acmeDirectory: z.enum(['production', 'staging']) }).strict();
+const retrySchema = z.object({ host: z.string().trim().min(1).max(253) }).strict();
 
 router.get('/', async (_req, res, next) => {
   try { res.json({ success: true, data: await edgeService.status() }); } catch (err) { next(err); }
@@ -46,6 +55,22 @@ router.put('/settings', async (req, res, next) => {
       }
     }
     res.json({ success: true, data: await edgeService.status() });
+  } catch (err) { next(err); }
+});
+
+router.get('/platform-certificates', async (_req, res, next) => {
+  try { res.json({ success: true, data: await certificateService.listPlatform() }); } catch (err) { next(err); }
+});
+
+router.post('/platform-certificates/retry', async (req, res, next) => {
+  try {
+    const parsed = retrySchema.safeParse(req.body ?? {});
+    if (!parsed.success) throw new AppError(400, 'Invalid body: { host: string }', 'validation');
+    const item = await certificateService.retryPlatform(parsed.data.host);
+    await auditService.logReq(req, 'certificate.retry', {
+      resourceType: 'settings', resourcePath: 'platform-certificates', details: { host: item.host, names: item.names },
+    });
+    res.json({ success: true, data: item });
   } catch (err) { next(err); }
 });
 

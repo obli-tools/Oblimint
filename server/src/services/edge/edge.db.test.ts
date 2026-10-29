@@ -348,6 +348,83 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
   await db('domains').whereIn('id', [offDom.id, goneLe.id, reserved.id, onPreview.id, pendingDom.id, lab.id]).del();
   assert.equal(await codeOf(certificateService.startRequest(999_999)), '404:notFound');
 
+  // ── platform host names (Settings → platform certificates): state, « retry now », short first retries ──
+  {
+    const settled: string[] = [];
+    certificateService._setDeps({ settleDns: async () => { settled.push('dns'); } });
+    await db('app_config').insert({ key: 'client_panel_hostname', value: 'space.example.com' }).onConflict('key').merge();
+    const itemOf = async () => (await certificateService.listPlatform()).items.find((i) => i.host === 'space.example.com');
+    const fresh = await itemOf();
+    assert.ok(fresh, 'client space host listed');
+    assert.deepEqual(fresh.roles, ['clientPanel']);
+    assert.equal(fresh.certificateId, null);
+    assert.equal(fresh.usable, false);
+    assert.equal(fresh.blocked, null);
+    assert.equal((await certificateService.listPlatform()).items.some((i) => i.host === 'previews.host.example'), false, 'no wildcard setting: preview domain not listed');
+
+    // The fake certificate does not cover the name: failure recorded, retried 10 min later (not 6 h).
+    const queued = await certificateService.retryPlatform('Space.Example.com.');
+    assert.equal(queued.host, 'space.example.com');
+    await certificateService._whenIdle();
+    const failed = (await itemOf())!;
+    assert.equal(failed.status, 'failed');
+    assert.equal(failed.failureCount, 1);
+    assert.equal(failed.usable, false);
+    assert.match(failed.lastError ?? '', /does not cover/);
+    assert.deepEqual(settled, ['dns'], 'a platform issuance waits for the pending DNS push');
+    assert.equal(new Date(failed.nextAttemptAt!).getTime() - new Date(failed.lastAttemptAt!).getTime(), 10 * 60_000);
+    assert.ok(failed.retryAvailableAt, 'cooldown shown');
+    assert.equal(await codeOf(certificateService.retryPlatform('space.example.com')), '429:certificateRateLimited');
+
+    // « Retry now » resets the backoff: 3 failures before → 1 after one more failed attempt.
+    await db('certificates').where({ primary_name: 'space.example.com' }).update({ last_attempt_at: new Date(Date.now() - 5 * 60_000), failure_count: 3 });
+    await certificateService.retryPlatform('space.example.com');
+    await certificateService._whenIdle();
+    assert.equal(Number((await db('certificates').where({ primary_name: 'space.example.com' }).first()).failure_count), 1);
+
+    // DNS fixed (the certificate covers the name now): issued, served, audited.
+    const spacePems = selfsigned.generate([{ name: 'commonName', value: 'space.example.com' }], {
+      days: 90, keySize: 2048, algorithm: 'sha256', extensions: [{ name: 'subjectAltName', altNames: [{ type: 2, value: 'space.example.com' }] }],
+    });
+    const spaceKey = createPrivateKey(spacePems.private).export({ type: 'pkcs8', format: 'pem' }).toString();
+    certificateService._setDeps({
+      createCertificateKey: async () => spaceKey,
+      createClient: () => ({
+        async createAccount() { return {}; },
+        async createOrder() { return { url: 'o' } as unknown as acme.Order; },
+        async getAuthorizations() { return [] as acme.Authorization[]; },
+        async getChallengeKeyAuthorization() { return 'ka'; },
+        async completeChallenge() { return {}; },
+        async waitForValidStatus(item) { return item; },
+        async finalizeOrder(o) { return o; },
+        async getCertificate() { return spacePems.cert; },
+      }),
+    });
+    await db('certificates').where({ primary_name: 'space.example.com' }).update({ last_attempt_at: new Date(Date.now() - 5 * 60_000) });
+    await certificateService.retryPlatform('space.example.com');
+    await certificateService._whenIdle();
+    const ok = (await itemOf())!;
+    assert.equal(ok.status, 'valid', ok.lastError ?? '');
+    assert.equal(ok.usable, true);
+    assert.equal(ok.failureCount, 0);
+    assert.equal(ok.lastError, null);
+    assert.equal(ok.issuer, 'letsencrypt-staging');
+    assert.ok(ok.nextAttemptAt && new Date(ok.nextAttemptAt).getTime() > Date.now() + 50 * 24 * 3600_000, 'next attempt = renewal window');
+    assert.ok(fs.existsSync(path.join(localPaths.edgeCerts(), 'space.example.com', 'fullchain.pem')));
+    const issuedAudit = await db('audit_logs').where({ action: 'certificate.issued' }).whereRaw('details::text like ?', ['%space.example.com%']).first();
+    assert.ok(issuedAudit, 'issuance audited');
+    // Served and far from expiry: no pointless order. Unknown host: 404.
+    await db('certificates').where({ primary_name: 'space.example.com' }).update({ last_attempt_at: new Date(Date.now() - 5 * 60_000) });
+    assert.equal(await codeOf(certificateService.retryPlatform('space.example.com')), '409:certificateNotDue');
+    assert.equal(await codeOf(certificateService.retryPlatform('unknown.example.com')), '404:notFound');
+
+    // Host name removed from the settings: no longer listed, row swept by the renewal pass.
+    await db('app_config').where({ key: 'client_panel_hostname' }).del();
+    assert.equal((await itemOf()), undefined);
+    await certificateService.checkRenewals();
+    assert.equal(await db('certificates').where({ primary_name: 'space.example.com' }).first('id'), undefined);
+  }
+
   // ── removal ──
   await certificateService.removeForDomain(dom.id);
   assert.equal(await certificateService.getForDomain(dom.id), null);

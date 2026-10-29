@@ -136,7 +136,8 @@ export type NotificationEvent =
   | 'quota.warning'        // 80 %
   | 'quota.exceeded'       // 100 %
   | 'quota.action'         // uploads blocked / account suspended by enforcement
-  | 'certificate.failed'
+  | 'certificate.failed'   // an issuance failed (platform host names: first failure of a streak)
+  | 'certificate.issued'   // a platform host name got its certificate (first one, or back after failures)
   | 'dns.syncFailed'
   | 'db.instanceFailed'
   | 'cron.failed'
@@ -171,7 +172,7 @@ export type NotificationEvent =
   | 'platform.updateFailed'; // a platform update run failed / was rolled back
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
-  'quota.warning', 'quota.exceeded', 'quota.action', 'certificate.failed', 'dns.syncFailed', 'db.instanceFailed', 'cron.failed', 'security.banned',
+  'quota.warning', 'quota.exceeded', 'quota.action', 'certificate.failed', 'certificate.issued', 'dns.syncFailed', 'db.instanceFailed', 'cron.failed', 'security.banned',
   'window.pendingReview', 'window.autoValidated', 'window.failed', 'scan.threat', 'quarantine.added', 'adapter.completed', 'adapter.failed',
   'supervision.digest', 'mail.outboundSuspended', 'mail.serviceFailed', 'mail.quotaWarning',
   'certificate.expiringSoon', 'uptime.down', 'uptime.up', 'app.updateAvailable', 'app.updated', 'app.updateFailed', 'app.deployFailed',

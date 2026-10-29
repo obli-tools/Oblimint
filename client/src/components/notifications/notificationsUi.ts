@@ -17,6 +17,7 @@ export function eventLabel(t: TFunction, e: NotificationEvent): string {
     'quota.exceeded': 'Quota exceeded (100 %)',
     'quota.action': 'Uploads blocked / account suspended',
     'certificate.failed': 'Certificate failure',
+    'certificate.issued': 'Certificate issued (platform host name)',
     'dns.syncFailed': 'DNS synchronisation failure',
     'db.instanceFailed': 'Database instance failure',
     'cron.failed': 'Cron job failing',

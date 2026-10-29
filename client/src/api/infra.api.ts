@@ -1,5 +1,7 @@
 import apiClient from './client';
-import type { ApiResponse, EdgeStatus, EdgeSyncResult, InfraComponentId, InfraStatus } from '@oblimint/shared';
+import type {
+  ApiResponse, EdgeStatus, EdgeSyncResult, InfraComponentId, InfraStatus, PlatformCertificateItem, PlatformCertificatesView,
+} from '@oblimint/shared';
 
 // /api/system/infra + /api/system/edge (platform admin) — docs/P1-PLAN.md §API.
 // OWNED BY MODULE `ui-hosting` (Nodes page).
@@ -30,6 +32,18 @@ export const infraApi = {
 
   async setAcmeDirectory(acmeDirectory: 'production' | 'staging'): Promise<EdgeStatus> {
     const res = await apiClient.put<ApiResponse<EdgeStatus>>('/system/edge/settings', { acmeDirectory });
+    return res.data.data!;
+  },
+
+  /** Certificate of each platform host name (Settings → platform certificates). */
+  async platformCertificates(): Promise<PlatformCertificatesView> {
+    const res = await apiClient.get<ApiResponse<PlatformCertificatesView>>('/system/edge/platform-certificates');
+    return res.data.data!;
+  },
+
+  /** « Retry now »: resets the failure backoff of that certificate and queues an attempt. */
+  async retryPlatformCertificate(host: string): Promise<PlatformCertificateItem> {
+    const res = await apiClient.post<ApiResponse<PlatformCertificateItem>>('/system/edge/platform-certificates/retry', { host });
     return res.data.data!;
   },
 };

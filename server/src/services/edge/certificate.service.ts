@@ -1,5 +1,7 @@
 import type { Knex } from 'knex';
-import type { CertificateDetail, CertificateLogLine, HostingAccount } from '@oblimint/shared';
+import type {
+  CertificateDetail, CertificateLogLine, HostingAccount, PlatformCertificateItem, PlatformCertificatesView, PlatformHostRole,
+} from '@oblimint/shared';
 import { HostingSocketEvents, MASTER_TENANT_ID } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -12,8 +14,9 @@ import { emitHosting } from '../hosting/events';
 import { wildcardCoversPlatform } from '../hosting/hostingValidation.service';
 import { EDGE_CONTAINER, previewHost } from '../hosting/naming';
 import { localPaths } from '../hosting/paths';
-import { json, toCertificateSummary, type CertificateRow } from '../hosting/rows';
+import { iso, json, toCertificateSummary, type CertificateRow } from '../hosting/rows';
 import { platformSettings } from '../platformSettings';
+import { notify } from '../usage/notifications.service';
 import {
   defaultAcmeClientFactory, httpSelfTest, isHttp01Failure, isPublicAcmeName, issueCertificate, removeCertificateFiles, type AcmeClientFactory,
 } from './acmeIssuer';
@@ -24,7 +27,8 @@ import { certFilesExist, edgeService, loadPlatformHosts } from './edge.service';
 import { announceCertificateInstalled, collectCertificateWishes } from './contributors';
 import { isValidServerName } from './nginxConfig';
 import {
-  inBackoff, isUsable, issuerFor, issuerOutdated, MANUAL_COOLDOWN_MS, needsIssuance, planRenewals, sameNames, type CertIssuer, type ScheduleRow,
+  backoffEndsAt, inBackoff, isUsable, issuerFor, issuerOutdated, MANUAL_COOLDOWN_MS, needsIssuance, nextAttemptAt, planRenewals,
+  PLATFORM_RETRY_COOLDOWN_MS, sameNames, type CertIssuer, type ScheduleRow,
 } from './renewal';
 import { isReservedPlatformName, platformHostNames, SERVED_ACCOUNT_STATUSES, type PlatformHosts } from './vhostPlan';
 
@@ -62,6 +66,14 @@ import { isReservedPlatformName, platformHostNames, SERVED_ACCOUNT_STATUSES, typ
 // two attempts, and for clients the failure backoff applies and `force` on a
 // certificate that does not need renewal is refused (shared queue + shared
 // Let's Encrypt account limits).
+// Retries: a failed attempt arms a timer at the end of its backoff (renewal.ts;
+// short first retries for a platform host name never issued), so the retry
+// does not wait for the next 12-hourly pass; the pass re-arms them after a
+// restart. Platform host names (Settings): listPlatform() shows each one's
+// state, retryPlatform() (staff « retry now ») resets the backoff of one; an
+// issuance for such a name first waits for the pending DNS push (its A / AAAA
+// record, set with the host name), and their first failure / their
+// certificate notify the platform channels (certificate.failed / issued).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LOG_CAP = 200;
@@ -83,6 +95,8 @@ interface CertTarget {
   /** Audit / socket scope. */
   tenantId: number;
   accountId: number | null;
+  /** One of the platform's OWN host names (panel, client space, DB admin, probes, mail / webmail host, preview wildcard). */
+  platformOwn?: boolean;
 }
 
 /** Injectable for tests (fake ACME client, fake DNS-01 solver, no network). */
@@ -92,12 +106,17 @@ const deps: {
   createCertificateKey: (() => Promise<Buffer | string>) | undefined;
   deadlineMs: number;
   dns01: Dns01Provider;
+  /** Waits for the pending DNS pushes (bounded, never throws): dnsService.settle. */
+  settleDns: () => Promise<void>;
 } = {
   createClient: defaultAcmeClientFactory,
   selfTest: httpSelfTest(EDGE_CONTAINER),
   createCertificateKey: undefined,
   deadlineMs: ISSUANCE_DEADLINE_MS,
   dns01: dns01Provider,
+  settleDns: async () => {
+    try { await (await import('../dns/dns.service')).dnsService.settle(); } catch { /* DNS module unavailable: issue anyway */ }
+  },
 };
 
 const queue: { chain: Promise<unknown>; byTarget: Map<string, Promise<void>> } = { chain: Promise.resolve(), byTarget: new Map() };
@@ -114,7 +133,42 @@ function queueKey(t: Pick<CertTarget, 'kind' | 'domainId' | 'siteId' | 'names'>)
 }
 
 const timers: { first: NodeJS.Timeout | null; interval: NodeJS.Timeout | null } = { first: null, interval: null };
+/** One timer per failing certificate row: the retry at the end of its backoff (worker started only). */
+const retryTimers = new Map<number, NodeJS.Timeout>();
+/** Slack after the backoff end (the attempt must find the row out of its backoff). */
+const RETRY_SLACK_MS = 5_000;
 let warnedNonPublicPanel = false;
+
+/**
+ * Arms the retry of a failing row at `at` (epoch ms): a domain row goes
+ * through ensureForDomain, a platform / preview row through ensureAuxiliary
+ * (the wanted targets are recomputed: a host name removed meanwhile is not
+ * retried). Each path re-checks needsIssuance, so a stale timer is harmless.
+ */
+function armRetry(row: Pick<CertificateRow, 'id' | 'domain_id'>, at: number): void {
+  if (!timers.interval) return; // worker not started (tests, setup mode)
+  const prev = retryTimers.get(row.id);
+  if (prev) clearTimeout(prev);
+  const delay = Math.max(1_000, at - Date.now() + RETRY_SLACK_MS);
+  const timer = setTimeout(() => {
+    retryTimers.delete(row.id);
+    if (row.domain_id !== null) certificateService.ensureForDomain(row.domain_id);
+    else certificateService.ensureAuxiliary();
+  }, delay);
+  timer.unref?.();
+  retryTimers.set(row.id, timer);
+}
+
+function disarmRetry(rowId: number): void {
+  const prev = retryTimers.get(rowId);
+  if (prev) clearTimeout(prev);
+  retryTimers.delete(rowId);
+}
+
+/** A platform row (no domain, no site: platform host names, mail certificates of the mail domains) never issued yet: short first retries (renewal.ts fast_start). */
+function fastStart(r: Pick<CertificateRow, 'domain_id' | 'site_id' | 'not_after'>): boolean {
+  return r.domain_id === null && r.site_id === null && r.not_after === null;
+}
 
 /** The detail as `viewer` may read it (A6: a client never gets the raw error text, certificateMessages.ts). */
 function toDetail(r: CertificateRow, viewer: CertificateViewer = 'staff'): CertificateDetail {
@@ -129,12 +183,18 @@ function scheduleRow(r: CertificateRow): ScheduleRow {
   return {
     id: r.id, status: r.status, issuer: r.issuer, names: json<string[]>(r.names, []),
     not_after: r.not_after, failure_count: Number(r.failure_count) || 0, last_attempt_at: r.last_attempt_at,
+    fast_start: fastStart(r),
   };
 }
 
-function emitCert(target: CertTarget, status: string): void {
-  emitHosting(HostingSocketEvents.CERTIFICATE_UPDATED, { domainId: target.domainId, siteId: target.siteId, status },
+function emitCert(target: CertTarget, status: string, certificateId: number | null = null): void {
+  emitHosting(HostingSocketEvents.CERTIFICATE_UPDATED, { domainId: target.domainId, siteId: target.siteId, certificateId, status },
     { tenantId: target.tenantId, accountId: target.accountId });
+}
+
+/** UTC label of a date for the notifications ('2026-10-29 14:05 UTC'). */
+function utcLabel(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
 
 async function acmeEmail(): Promise<string | null> {
@@ -234,7 +294,9 @@ async function auxiliaryTargets(platform: PlatformHosts): Promise<{
   const out = { platform: new Map<string, CertTarget>(), previews: new Map<number, CertTarget>(), contributorsFailed: false };
   const add = (names: string[], preferDns01 = false) => {
     if (!names.every(isPublicAcmeName) || out.platform.has(names[0])) return;
-    out.platform.set(names[0], { kind: 'platform', domainId: null, siteId: null, names, preferDns01, tenantId: MASTER_TENANT_ID, accountId: null });
+    out.platform.set(names[0], {
+      kind: 'platform', domainId: null, siteId: null, names, preferDns01, tenantId: MASTER_TENANT_ID, accountId: null, platformOwn: true,
+    });
   };
   if (platform.panel) {
     if (isPublicAcmeName(platform.panel)) add([platform.panel]);
@@ -335,6 +397,84 @@ function usableNow(row: CertificateRow | undefined, names: string[], expected: C
     && !issuerOutdated(row.issuer, expected) && certFilesExist(row.primary_name);
 }
 
+const ROLE_ORDER: readonly PlatformHostRole[] = ['panel', 'clientPanel', 'webmail', 'mail', 'dbAdmin', 'previewWildcard', 'probeV4', 'probeV6'];
+
+const settingHost = (v: string | null | undefined): string | null => {
+  const h = (v ?? '').trim().toLowerCase().replace(/\.$/, '');
+  return h && isValidServerName(h) ? h : null;
+};
+
+/**
+ * State of the certificate of every platform host name set in the settings
+ * (listPlatform / retryPlatform) + the wanted targets by primary name.
+ * Contributed wishes (mail.<domain> of the mail domains…) are not listed:
+ * only the platform's own names.
+ */
+async function platformCertificateState(): Promise<{ items: PlatformCertificateItem[]; targets: Map<string, CertTarget> }> {
+  const now = Date.now();
+  const [hosts, settings, email] = await Promise.all([loadPlatformHosts(), platformSettings.get(), acmeEmail()]);
+  const wanted = await auxiliaryTargets(hosts);
+  const roles = new Map<string, { roles: PlatformHostRole[]; names: string[] }>();
+  const addRole = (h: string | null | undefined, role: PlatformHostRole, names?: string[]) => {
+    if (!h) return;
+    const entry = roles.get(h) ?? { roles: [], names: names ?? [h] };
+    if (!entry.roles.includes(role)) entry.roles.push(role);
+    roles.set(h, entry);
+  };
+  addRole(hosts.panel, 'panel');
+  addRole(hosts.clientPanel ?? null, 'clientPanel');
+  addRole(settingHost(settings.mail.webmailHostname), 'webmail');
+  addRole(settingHost(settings.mail.hostname), 'mail');
+  addRole(hosts.dbAdmin, 'dbAdmin');
+  if (hosts.previewDomain && settings.preview.wildcardCertificate) {
+    addRole(hosts.previewDomain, 'previewWildcard', [hosts.previewDomain, `*.${hosts.previewDomain}`]);
+  }
+  addRole(hosts.probeV4, 'probeV4');
+  addRole(hosts.probeV6, 'probeV6');
+
+  const primaries = [...roles.keys()];
+  const rows = primaries.length
+    ? await db('certificates').whereIn('primary_name', primaries).whereNull('domain_id').whereNull('site_id').select('*') as CertificateRow[]
+    : [];
+  const byName = new Map(rows.map((r) => [r.primary_name, r]));
+  const items: PlatformCertificateItem[] = [];
+  for (const [host, entry] of roles) {
+    const target = wanted.platform.get(host);
+    const row = byName.get(host);
+    const names = target?.names ?? entry.names;
+    const blocked: PlatformCertificateItem['blocked'] = !names.every(isPublicAcmeName) ? 'notPublic'
+      : entry.roles.includes('previewWildcard') && !target ? 'dns01Unavailable'
+        : !email ? 'acmeEmailMissing' : null;
+    const sched = row ? scheduleRow(row) : null;
+    const issuing = !!target && queue.byTarget.has(queueKey(target));
+    const usable = !!row && isUsable(row, now) && certFilesExist(row.primary_name);
+    const next = blocked || issuing || !sched ? null : nextAttemptAt(sched, now);
+    const last = row?.last_attempt_at ? new Date(row.last_attempt_at).getTime() : NaN;
+    const cooldownEnd = Number.isFinite(last) ? last + PLATFORM_RETRY_COOLDOWN_MS : NaN;
+    items.push({
+      host,
+      roles: [...entry.roles].sort((a, b) => ROLE_ORDER.indexOf(a) - ROLE_ORDER.indexOf(b)),
+      names,
+      certificateId: row?.id ?? null,
+      status: row?.status ?? null,
+      usable,
+      issuing,
+      issuer: row?.issuer ?? null,
+      notBefore: iso(row?.not_before),
+      notAfter: iso(row?.not_after),
+      lastError: row?.last_error ?? null,
+      failureCount: sched?.failure_count ?? 0,
+      lastAttemptAt: iso(row?.last_attempt_at),
+      nextAttemptAt: next === null ? null : new Date(next).toISOString(),
+      retryAvailableAt: Number.isFinite(cooldownEnd) && cooldownEnd > now ? new Date(cooldownEnd).toISOString() : null,
+      blocked,
+      updatedAt: iso(row?.updated_at),
+    });
+  }
+  items.sort((a, b) => ROLE_ORDER.indexOf(a.roles[0]) - ROLE_ORDER.indexOf(b.roles[0]));
+  return { items, targets: wanted.platform };
+}
+
 function auditResource(target: CertTarget): { resourceType?: string; resourcePath?: string } {
   if (target.kind === 'domain') return { resourceType: 'domain', resourcePath: String(target.domainId) };
   if (target.kind === 'preview') return { resourceType: 'site', resourcePath: String(target.siteId) };
@@ -381,7 +521,7 @@ async function runIssuance(target: CertTarget): Promise<void> {
     log: JSON.stringify([]),
     updated_at: db.fn.now(),
   });
-  emitCert(target, keepValid ? 'valid' : 'pending');
+  emitCert(target, keepValid ? 'valid' : 'pending', certId);
 
   // Overall deadline: when it fires, the pending step is abandoned (the ACME
   // calls race the signal), a failure is recorded and the queue moves on.
@@ -411,6 +551,10 @@ async function runIssuance(target: CertTarget): Promise<void> {
       logger.warn({ certId, names: target.names, error: sync.error }, 'certificate: edge sync before validation failed');
       await log('warn', 'The edge configuration could not be fully applied before validation; the challenge may fail (details in the platform logs)');
     }
+    // A platform host name set a moment ago (Settings): its A / AAAA record in a
+    // platform zone hosted here is pushed by the DNS queue — wait for it (bounded)
+    // rather than let Let's Encrypt resolve a name that does not exist yet.
+    if (target.kind === 'platform') await bounded(deps.settleDns());
 
     const issueWith = (preferDns01: boolean) => bounded(issueCertificate({ names: target.names, email, directory, preferDns01 }, {
       edgeDir: localPaths.edge(),
@@ -451,7 +595,8 @@ async function runIssuance(target: CertTarget): Promise<void> {
       removeCertificateFiles(localPaths.edgeCerts(), target.names[0]);
       return;
     }
-    emitCert(target, 'valid');
+    emitCert(target, 'valid', certId);
+    disarmRetry(certId);
     edgeService.scheduleSync('certificate issued');
     // P4 (architect): the mail service copies the files it serves and reloads TLS.
     announceCertificateInstalled(target.names[0], issued.names);
@@ -461,6 +606,21 @@ async function runIssuance(target: CertTarget): Promise<void> {
       ...auditResource(target),
       details: { names: issued.names, issuer: issued.issuer, notAfter: issued.notAfter.toISOString() },
     });
+    // A platform host name that had no served certificate (first one, or back after failures):
+    // the platform channels hear it (a routine renewal of a served one does not notify).
+    if (target.platformOwn && !keepValid) {
+      notify('certificate.issued', {
+        tenantId: MASTER_TENANT_ID,
+        accountId: null,
+        key: `cert-issued:${target.names[0]}:${issued.notAfter.toISOString()}`,
+        title: `Certificat délivré pour ${target.names[0]}`,
+        message: `Let's Encrypt a délivré le certificat de ${issued.names.join(', ')} (valide jusqu'au ${issued.notAfter.toISOString().slice(0, 10)}). `
+          + "L'edge le sert désormais à la place de son certificat par défaut.",
+        severity: 'info',
+        platform: true,
+        link: '/settings#settings-platform-certificates',
+      });
+    }
   } catch (err) {
     clearTimeout(deadlineTimer);
     const message = (err as Error)?.message || String(err);
@@ -472,13 +632,33 @@ async function runIssuance(target: CertTarget): Promise<void> {
     // the CWP certificate while this issuance fails on DNS still pointing at CWP) is usable and stays served.
     const stillValid = isUsable(current, now) && (keepValid || certFilesExist(current.primary_name));
     const status = stillValid ? 'valid' : wasIssued && current.not_after && new Date(current.not_after).getTime() <= now ? 'expired' : 'failed';
+    const failureCount = (Number(current.failure_count) || 0) + 1;
     await db('certificates').where({ id: certId }).update({
       status,
       last_error: message.slice(0, 2000),
-      failure_count: (Number(current.failure_count) || 0) + 1,
+      failure_count: failureCount,
       updated_at: db.fn.now(),
     });
-    emitCert(target, status);
+    emitCert(target, status, certId);
+    // The retry at the end of the backoff (not at the next 12-hourly pass).
+    const retryAt = backoffEndsAt({ failure_count: failureCount, last_attempt_at: current.last_attempt_at, fast_start: fastStart(current) });
+    if (retryAt !== null) armRetry(current, retryAt);
+    if (target.platformOwn && failureCount === 1) {
+      // First failure of a streak only (the short retries would flood the channels).
+      notify('certificate.failed', {
+        tenantId: MASTER_TENANT_ID,
+        accountId: null,
+        key: `cert-failed:${target.names[0]}:${certId}`,
+        title: `Échec du certificat de ${target.names[0]}`,
+        message: `La demande de certificat Let's Encrypt pour ${target.names.join(', ')} a échoué : ${message.slice(0, 500)}\n`
+          + (stillValid ? 'Le certificat actuel reste servi. ' : "L'edge sert son certificat par défaut (non reconnu par les navigateurs). ")
+          + (retryAt !== null ? `Nouvelle tentative automatique vers ${utcLabel(retryAt)}. ` : '')
+          + 'Vérifiez que le nom pointe vers ce serveur (A / AAAA) et que le port 80 est ouvert, puis « Réessayer » dans Réglages.',
+        severity: 'warning',
+        platform: true,
+        link: '/settings#settings-platform-certificates',
+      });
+    }
     if (wasIssued) {
       // Renewal failure alert (audit in the tenant of the object + log + socket above).
       logger.warn({ certId, names: target.names, error: message }, 'certificate renewal failed');
@@ -709,6 +889,16 @@ export const certificateService = {
       },
     });
 
+    // Rows waiting out a failure backoff: their retry is armed at its end (after a
+    // restart the timers are gone; a pass re-arms them instead of leaving the
+    // retry to the next pass, up to 12 h later).
+    const renewing = new Set(plan.renew);
+    for (const r of rows) {
+      if (renewing.has(r.id) || r.status === 'pending') continue;
+      const end = backoffEndsAt(scheduleRow(r));
+      if (end !== null && end > now) armRetry(r, end);
+    }
+
     if (plan.expire.length) {
       await db('certificates').whereIn('id', plan.expire).update({ status: 'expired', updated_at: db.fn.now() });
       edgeService.scheduleSync('certificate expired');
@@ -763,6 +953,60 @@ export const certificateService = {
     if (timers.interval) clearInterval(timers.interval);
     timers.first = null;
     timers.interval = null;
+    for (const id of [...retryTimers.keys()]) disarmRetry(id);
+  },
+
+  /** Settings → platform certificates (GET /system/edge/platform-certificates, platform admin). */
+  async listPlatform(): Promise<PlatformCertificatesView> {
+    const { items } = await platformCertificateState();
+    return { acmeDirectory: await edgeService.acmeDirectory(), items };
+  },
+
+  /**
+   * « Retry now » of a platform host name certificate (staff, Settings): resets
+   * its failure backoff (failure_count = 0, the last error stays until the
+   * attempt) and queues an attempt now. 404 notFound: not a platform host name
+   * of this server; 409 certificateNameNotPublic / acmeEmailMissing /
+   * certificateDns01Unavailable: Let's Encrypt cannot be asked; 429
+   * certificateRateLimited: last attempt < PLATFORM_RETRY_COOLDOWN_MS ago;
+   * 409 certificateNotDue: served, covers its names, outside the renewal window.
+   * Already queued / running: answered as is. Returns the item after queuing.
+   */
+  async retryPlatform(rawHost: string): Promise<PlatformCertificateItem> {
+    const host = String(rawHost ?? '').trim().toLowerCase().replace(/\.$/, '');
+    const state = await platformCertificateState();
+    const item = state.items.find((i) => i.host === host);
+    if (!item) throw new AppError(404, 'Not a platform host name of this server', 'notFound');
+    if (item.blocked === 'notPublic') throw skipError('name not public');
+    if (item.blocked === 'acmeEmailMissing') throw new AppError(409, 'ACME contact email is not configured', 'acmeEmailMissing');
+    if (item.blocked === 'dns01Unavailable') {
+      throw new AppError(409, "The preview wildcard needs DNS-01: the zone of the preview domain must be hosted on this platform's DNS", 'certificateDns01Unavailable');
+    }
+    const target = state.targets.get(host);
+    if (!target) throw new AppError(404, 'Not a platform host name of this server', 'notFound');
+    if (item.issuing) return item;
+    const row = await findRow(target);
+    if (row) {
+      const now = Date.now();
+      const last = row.last_attempt_at ? new Date(row.last_attempt_at).getTime() : NaN;
+      if (Number.isFinite(last) && now - last < PLATFORM_RETRY_COOLDOWN_MS) {
+        throw new AppError(429, 'A certificate attempt was made a moment ago, please wait before retrying', 'certificateRateLimited');
+      }
+      const expected = await expectedIssuer();
+      // Due regardless of the backoff (that is what « retry now » lifts).
+      const due = !usableNow(row, target.names, expected) || needsIssuance({ ...scheduleRow(row), failure_count: 0 }, target.names, now, expected);
+      if (!due) throw new AppError(409, 'The certificate is valid and does not need renewal yet', 'certificateNotDue');
+      await db('certificates').where({ id: row.id }).update({ failure_count: 0, updated_at: db.fn.now() });
+      disarmRetry(row.id);
+    }
+    void enqueue(target);
+    const after = (await platformCertificateState()).items.find((i) => i.host === host);
+    return after ?? item;
+  },
+
+  /** Tests: resolves once the issuance queue is idle. */
+  async _whenIdle(): Promise<void> {
+    while (queue.byTarget.size > 0) await Promise.allSettled([...queue.byTarget.values()]);
   },
 
   /** Tests only: replace the ACME client factory / self-test / DNS-01 solver. */

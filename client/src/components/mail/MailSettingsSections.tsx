@@ -19,6 +19,7 @@ import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { TableScroll } from '@/components/common/TableScroll';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { useConfirm } from '@/components/common/ConfirmDialog';
+import { PlatformCertInline, usePlatformCertificates } from '@/components/settings/PlatformCertificates';
 import { Field, SettingsBlock, settingsInputCls } from '@/components/settings/SettingsBlock';
 import { EmptyState, InfoRow, Pill, thCls, theadRowCls, useHostingEvents } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
@@ -41,6 +42,7 @@ export function MailSettingsSections() {
   const [panel, setPanel] = useState<AppConfigData | null>(null);
   const [panelFailed, setPanelFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { reload: reloadCerts } = usePlatformCertificates();
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +58,7 @@ export function MailSettingsSections() {
     try {
       setSettings(await hostingSettingsApi.update({ mail: patch } as HostingSettingsUpdate));
       toast.success(t('mailSettings.saved') || 'Mail settings saved');
+      reloadCerts(); // a new mail / webmail host name: its certificate line (Hosting → platform certificates)
       return null;
     } catch (err) {
       if (isStepUpHandled(err)) return '';
@@ -360,7 +363,7 @@ function MailServiceBlock({ value, panelHost, panelUnknown, save }: { value: Mai
       dirty={dirty} saving={saving} canSave={valid} onSave={() => { void submit(); }} onReset={() => { reset(); setError(null); }} error={error}
     >
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Field label={t('mailSettings.service.hostname') || 'Mail host name'} htmlFor="ms-host" hint={t('mailSettings.service.hostnameHint', { panel: panelHost ?? '—', defaultValue: 'MX target, SMTP / IMAP server and its certificate. Empty: the panel host ({{panel}}).' })} error={hostOk ? null : (t('mailSettings.errors.hostname') || 'Enter a fully qualified host name.')}>
+        <Field label={<>{t('mailSettings.service.hostname') || 'Mail host name'}<PlatformCertInline host={value.hostname} /></>} htmlFor="ms-host" hint={t('mailSettings.service.hostnameHint', { panel: panelHost ?? '—', defaultValue: 'MX target, SMTP / IMAP server and its certificate. Empty: the panel host ({{panel}}).' })} error={hostOk ? null : (t('mailSettings.errors.hostname') || 'Enter a fully qualified host name.')}>
           <input id="ms-host" value={draft.hostname} onChange={(e) => set({ hostname: e.target.value })} placeholder={panelHost ?? 'mail.example.com'} autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
         </Field>
         <Field label={t('mailSettings.service.webmail') || 'Webmail'} htmlFor="ms-webmail" hint={t('mailSettings.service.webmailHint') || 'Shared webmail container, opened from the panel without a password (single sign-on). Changing it redeploys the container.'}>
@@ -375,7 +378,7 @@ function MailServiceBlock({ value, panelHost, panelUnknown, save }: { value: Mai
           )}
         </Field>
         <Field
-          label={t('mailSettings.service.webmailHostname') || 'Platform webmail host'}
+          label={<>{t('mailSettings.service.webmailHostname') || 'Platform webmail host'}<PlatformCertInline host={value.webmailHostname} /></>}
           htmlFor="ms-wmhost"
           hint={t('mailSettings.service.webmailHostnameHint') || 'For example webmail.<platform domain>. Empty: only webmail.<domain> of each mail domain.'}
           error={!wmOk ? (t('mailSettings.errors.hostname') || 'Enter a fully qualified host name.') : underPanel ? (t('mailSettings.service.underPanel', { panel: panelHost ?? '', defaultValue: 'Never the panel host ({{panel}}) nor one of its sub-domains: the webmail would share the panel cookies. It would not be served.' }))

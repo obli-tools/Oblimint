@@ -405,6 +405,7 @@
     },
     "event": {
       "certificateFailed": "Certificate failure",
+      "certificateIssued": "Certificate issued (platform host name)",
       "cronFailed": "Cron job failing",
       "dbInstanceFailed": "Database instance failure",
       "dnsSyncFailed": "DNS synchronisation failure",
@@ -656,6 +657,51 @@
       "ipv4": "Public IPv4",
       "ipv6": "Public IPv6 (optional)",
       "acmeEmail": "Let's Encrypt e-mail"
+    },
+    "certs": {
+      "title": "Platform certificates",
+      "description": "Let's Encrypt certificates of the platform's own host names. A name is requested as soon as it is saved and served by the edge; until then the edge serves its default self-signed certificate (the browser warns). After a failure (DNS not pointing here yet, port 80 closed) the attempt is retried automatically after 10 min, 30 min, 1 h, 3 h, then every 6 to 24 h — or right away with « Retry now ».",
+      "refresh": "Refresh",
+      "loadFailed": "Failed to load the platform certificates",
+      "empty": "No platform host name is set yet.",
+      "staging": "The platform uses the Let's Encrypt STAGING directory: its certificates are not trusted by browsers (Nodes → edge).",
+      "retry": "Retry now",
+      "retryQueued": "New attempt queued for {{host}}",
+      "retryFailed": "The attempt could not be queued",
+      "cooldown": "An attempt was just made: available again at {{date}}.",
+      "issuerStaging": "Let's Encrypt (staging, not trusted by browsers)",
+      "issuerImported": "imported certificate",
+      "blockedNotPublic": "Reserved or private name: Let's Encrypt is never asked, the edge keeps serving its default (self-signed) certificate.",
+      "blockedEmail": "The Let's Encrypt e-mail is not set (Panel address): no request until then.",
+      "blockedDns01": "A wildcard is only issued through DNS-01: the zone of the preview domain must be hosted on this platform's DNS server.",
+      "issuingSince": "Request in progress since {{date}}.",
+      "queued": "Request queued (one issuance at a time).",
+      "validLine": "Issued by {{issuer}}, valid until {{date}}.",
+      "renewFrom": "Automatic renewal from {{date}}.",
+      "none": "No certificate yet: the edge serves its default (self-signed) certificate. It is requested as soon as the edge serves this name.",
+      "defaultServed": "The edge serves its default (self-signed) certificate on this name until the certificate is issued.",
+      "failures": "{{count}} failed attempt(s), last one {{date}}.",
+      "nextAttempt": "Next automatic attempt: {{date}}.",
+      "state": {
+        "valid": "valid",
+        "expiring": "expires {{date}}",
+        "issuing": "issuing…",
+        "pending": "pending",
+        "failed": "failed",
+        "expired": "expired",
+        "selfSigned": "self-signed",
+        "blocked": "blocked"
+      },
+      "role": {
+        "panel": "Panel",
+        "clientPanel": "Client space",
+        "webmail": "Webmail",
+        "mail": "Mail host",
+        "dbAdmin": "Database admin",
+        "previewWildcard": "Previews (wildcard)",
+        "probeV4": "IPv4 probe",
+        "probeV6": "IPv6 probe"
+      }
     }
   }
 }

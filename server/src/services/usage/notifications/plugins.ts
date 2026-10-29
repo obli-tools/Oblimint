@@ -79,6 +79,7 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'quota.exceeded': 'Quota dépassé',
   'quota.action': 'Action de dépassement de quota',
   'certificate.failed': 'Échec de certificat',
+  'certificate.issued': 'Certificat délivré',
   'dns.syncFailed': 'Échec de synchronisation DNS',
   'db.instanceFailed': 'Instance de base de données en échec',
   'cron.failed': 'Tâche planifiée en échec',

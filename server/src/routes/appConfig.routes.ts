@@ -102,8 +102,10 @@ router.put('/platform', requirePlatformAdminOnMaster, async (req, res, next) => 
     forgetPanelHosts();
     await auditService.logReq(req, 'settings.platform_changed', { resourceType: 'settings', details: { from: before, to: { panel_hostname: host, client_panel_hostname: clientHost === undefined ? before.client_panel_hostname : clientHost || null, public_ipv4: v4, public_ipv6: v6, acme_email: email } } });
     try { edgeService.scheduleSync('panel identity changed'); } catch (err) { logger.warn({ err }, 'edge sync after panel identity change failed'); }
-    try { certificateService.ensureAuxiliary(); } catch (err) { logger.warn({ err }, 'platform certificates after panel identity change failed'); }
+    // DNS push queued first: the platform certificates requested right after wait for it (the A / AAAA
+    // record of a new host name in a hosted platform zone), certificate.service runIssuance.
     dnsService.syncAllNow('panel identity changed').catch((err) => logger.warn({ err }, 'DNS sync after panel identity change failed'));
+    try { certificateService.ensureAuxiliary(); } catch (err) { logger.warn({ err }, 'platform certificates after panel identity change failed'); }
     res.json({ success: true, data: await appConfigService.getAll() });
   } catch (err) { next(err); }
 });

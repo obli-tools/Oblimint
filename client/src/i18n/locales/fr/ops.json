@@ -405,6 +405,7 @@
     },
     "event": {
       "certificateFailed": "Échec d'un certificat",
+      "certificateIssued": "Certificat délivré (nom d'hôte de la plateforme)",
       "cronFailed": "Tâche planifiée en échec",
       "dbInstanceFailed": "Panne d'une instance de base de données",
       "dnsSyncFailed": "Échec de synchronisation DNS",
@@ -656,6 +657,51 @@
       "ipv4": "IPv4 publique",
       "ipv6": "IPv6 publique (facultatif)",
       "acmeEmail": "E-mail Let's Encrypt"
+    },
+    "certs": {
+      "title": "Certificats de la plateforme",
+      "description": "Certificats Let's Encrypt des noms d'hôte propres à la plateforme. Un nom est demandé dès qu'il est enregistré et servi par l'edge ; d'ici là, l'edge sert son certificat auto-signé par défaut (le navigateur avertit). Après un échec (DNS pas encore pointé ici, port 80 fermé), la demande est relancée automatiquement après 10 min, 30 min, 1 h, 3 h, puis toutes les 6 à 24 h — ou tout de suite avec « Réessayer ».",
+      "refresh": "Actualiser",
+      "loadFailed": "Impossible de charger les certificats de la plateforme",
+      "empty": "Aucun nom d'hôte de plateforme n'est encore défini.",
+      "staging": "La plateforme utilise l'annuaire STAGING de Let's Encrypt : ses certificats ne sont pas reconnus par les navigateurs (Nœuds → edge).",
+      "retry": "Réessayer",
+      "retryQueued": "Nouvelle tentative en file pour {{host}}",
+      "retryFailed": "La tentative n'a pas pu être mise en file",
+      "cooldown": "Une tentative vient d'avoir lieu : de nouveau possible à {{date}}.",
+      "issuerStaging": "Let's Encrypt (staging, non reconnu par les navigateurs)",
+      "issuerImported": "certificat importé",
+      "blockedNotPublic": "Nom réservé ou privé : Let's Encrypt n'est jamais sollicité, l'edge garde son certificat par défaut (auto-signé).",
+      "blockedEmail": "L'e-mail Let's Encrypt n'est pas défini (Adresse du panel) : aucune demande d'ici là.",
+      "blockedDns01": "Un wildcard ne s'obtient que par DNS-01 : la zone du domaine de prévisualisation doit être hébergée sur le serveur DNS de la plateforme.",
+      "issuingSince": "Demande en cours depuis le {{date}}.",
+      "queued": "Demande en file (une émission à la fois).",
+      "validLine": "Délivré par {{issuer}}, valide jusqu'au {{date}}.",
+      "renewFrom": "Renouvellement automatique à partir du {{date}}.",
+      "none": "Pas encore de certificat : l'edge sert son certificat par défaut (auto-signé). Il est demandé dès que l'edge sert ce nom.",
+      "defaultServed": "L'edge sert son certificat par défaut (auto-signé) sur ce nom tant que le certificat n'est pas délivré.",
+      "failures": "{{count}} tentative(s) en échec, la dernière le {{date}}.",
+      "nextAttempt": "Prochaine tentative automatique : {{date}}.",
+      "state": {
+        "valid": "valide",
+        "expiring": "expire le {{date}}",
+        "issuing": "émission…",
+        "pending": "en attente",
+        "failed": "échec",
+        "expired": "expiré",
+        "selfSigned": "auto-signé",
+        "blocked": "bloqué"
+      },
+      "role": {
+        "panel": "Panel",
+        "clientPanel": "Espace client",
+        "webmail": "Webmail",
+        "mail": "Hôte mail",
+        "dbAdmin": "Admin des bases",
+        "previewWildcard": "Prévisualisations (wildcard)",
+        "probeV4": "Sonde IPv4",
+        "probeV6": "Sonde IPv6"
+      }
     }
   }
 }

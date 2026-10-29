@@ -12,6 +12,7 @@ import { CopyButton } from '@/components/hosting/hostingUi';
 import { opsErrorMessage } from '@/components/usage/opsErrors';
 import { cn } from '@/utils/cn';
 import { ChipsInput } from './ChipsInput';
+import { PlatformCertInline, PlatformCertificatesBlock, usePlatformCertificates } from './PlatformCertificates';
 import { Field, SettingsBlock, settingsInputCls } from './SettingsBlock';
 import { dbAdminConflictsWithPanel, intInRange, isPanelHost, isEmail, isHostname, isIp, isIpOrCidr, normalizeHostname, previewConflictsWithPanel } from './settingsFormat';
 
@@ -27,6 +28,8 @@ export function HostingSettingsSections() {
   const [settings, setSettings] = useState<HostingSettings | null>(null);
   const [panel, setPanel] = useState<AppConfigData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A saved host name is requested right away: its certificate state follows (socket events too).
+  const { reload: reloadCerts } = usePlatformCertificates();
 
   const load = useCallback(async () => {
     const [s, p] = await Promise.allSettled([hostingSettingsApi.get(), hostingSettingsApi.panelConfig()]);
@@ -39,6 +42,7 @@ export function HostingSettingsSections() {
     try {
       setSettings(await hostingSettingsApi.update({ [section]: patch } as HostingSettingsUpdate));
       toast.success(t('platformSettings.saved') || 'Settings saved');
+      reloadCerts();
       return null;
     } catch (err) {
       if (isStepUpHandled(err)) return '';
@@ -56,7 +60,8 @@ export function HostingSettingsSections() {
 
   return (
     <>
-      <PanelAddressSection panel={panel} onSaved={setPanel} />
+      <PanelAddressSection panel={panel} onSaved={(p) => { setPanel(p); reloadCerts(); }} />
+      <PlatformCertificatesBlock />
       <DnsSection value={settings.dns} save={save} />
       <PreviewSection value={settings.preview} panelHost={panel?.panel_hostname ?? null} save={save} />
       <ReleasePreviewsSection value={settings.releasePreviews} previewDomain={settings.preview.previewDomain} save={save} />
@@ -210,7 +215,7 @@ function PreviewSection({ value, panelHost, save }: { value: HostingSettings['pr
         <span>{t('platformSettings.preview.warning') || 'Use a registrable domain of its own (e.g. example-preview.net), distinct from the panel domain: a preview runs tenant code, and on a sub-domain of the panel it could read or set the panel cookies.'}</span>
       </div>
       <Field
-        label={t('platformSettings.preview.domain') || 'Preview domain'}
+        label={<>{t('platformSettings.preview.domain') || 'Preview domain'}<PlatformCertInline host={value.wildcardCertificate ? value.previewDomain : null} /></>}
         htmlFor="preview-domain"
         error={invalid ? (t('platformSettings.preview.invalid') || 'Enter a domain name (e.g. example-preview.net).') : panelItself ? (t('platformSettings.errors.panelHost') || 'This is the panel host name.') : null}
         hint={t('platformSettings.preview.domainHint') || 'Empty: previews have no public URL. Point *.<domain> (A / AAAA) to this server.'}
@@ -335,7 +340,7 @@ function DbAdminSection({ value, panelHost, previewDomain, save }: { value: Host
       onReset={reset} error={error}
     >
       <Field
-        label={t('platformSettings.dbAdmin.hostname') || 'Host name'}
+        label={<>{t('platformSettings.dbAdmin.hostname') || 'Host name'}<PlatformCertInline host={value.hostname} /></>}
         htmlFor="dbadmin-host"
         error={invalid ? (t('platformSettings.errors.hostname') || 'Enter a fully qualified host name.') : panelItself ? (t('platformSettings.errors.panelHost') || 'This is the panel host name.') : null}
         hint={suggestion
@@ -416,10 +421,10 @@ function AccessSection({ value, panel, save }: { value: HostingSettings['access'
       onReset={reset} error={error}
     >
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Field label={t('platformSettings.access.probeV4') || 'IPv4 probe host'} htmlFor="probe-v4" error={v4Bad ? (t('platformSettings.errors.hostname') || 'Enter a fully qualified host name.') : null} hint={t('platformSettings.access.probeV4Hint') || 'A name with an A record only (no AAAA).'}>
+        <Field label={<>{t('platformSettings.access.probeV4') || 'IPv4 probe host'}<PlatformCertInline host={value.probeHostV4} /></>} htmlFor="probe-v4" error={v4Bad ? (t('platformSettings.errors.hostname') || 'Enter a fully qualified host name.') : null} hint={t('platformSettings.access.probeV4Hint') || 'A name with an A record only (no AAAA).'}>
           <input id="probe-v4" value={draft.probeHostV4} onChange={(e) => set({ probeHostV4: e.target.value })} placeholder="ip4.example-preview.net" autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
         </Field>
-        <Field label={t('platformSettings.access.probeV6') || 'IPv6 probe host'} htmlFor="probe-v6" error={v6Bad ? (t('platformSettings.errors.hostname') || 'Enter a fully qualified host name.') : null} hint={t('platformSettings.access.probeV6Hint') || 'A name with an AAAA record only (no A).'}>
+        <Field label={<>{t('platformSettings.access.probeV6') || 'IPv6 probe host'}<PlatformCertInline host={value.probeHostV6} /></>} htmlFor="probe-v6" error={v6Bad ? (t('platformSettings.errors.hostname') || 'Enter a fully qualified host name.') : null} hint={t('platformSettings.access.probeV6Hint') || 'A name with an AAAA record only (no A).'}>
           <input id="probe-v6" value={draft.probeHostV6} onChange={(e) => set({ probeHostV6: e.target.value })} placeholder="ip6.example-preview.net" autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
         </Field>
       </div>
@@ -567,11 +572,11 @@ function PanelAddressSection({ panel, onSaved }: { panel: AppConfigData | null; 
       onSave={() => { void onSave(); }}
       onReset={reset} error={error}
     >
-      <Field label={t('platformSettings.panel.host') || 'Panel host name'} htmlFor="panel-host" hint={t('platformSettings.panel.hostHint') || 'Create an A (and AAAA) record of this name to the public IP of the server. Customers sign in at https://<name>/client.'}>
+      <Field label={<>{t('platformSettings.panel.host') || 'Panel host name'}<PlatformCertInline host={panel?.panel_hostname} /></>} htmlFor="panel-host" hint={t('platformSettings.panel.hostHint') || 'Create an A (and AAAA) record of this name to the public IP of the server. Customers sign in at https://<name>/client.'}>
         <input id="panel-host" value={draft.host} onChange={set('host')} placeholder="panel.example.com" autoCapitalize="off" autoCorrect="off" spellCheck={false} className={cn(settingsInputCls, 'font-mono')} />
       </Field>
       <Field
-        label={t('platformSettings.panel.clientHost') || 'Client space host name (optional)'}
+        label={<>{t('platformSettings.panel.clientHost') || 'Client space host name (optional)'}<PlatformCertInline host={panel?.client_panel_hostname} /></>}
         htmlFor="panel-client-host"
         hint={clientHost && clientHost === host
           ? (t('platformSettings.panel.clientHostSame') || 'The client space needs its own name, not the panel one.')

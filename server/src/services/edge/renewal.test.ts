@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { IMPORTED_CERT_ISSUER, backoffMs, inBackoff, isUsable, issuerFor, issuerOutdated, needsIssuance, planRenewals, sameNames, type ScheduleRow } from './renewal';
+import {
+  FIRST_ISSUANCE_BACKOFF_MS, IMPORTED_CERT_ISSUER, RENEW_BEFORE_MS, STUCK_PENDING_MS, backoffEndsAt, backoffMs, inBackoff, isUsable, issuerFor, issuerOutdated,
+  needsIssuance, nextAttemptAt, planRenewals, sameNames, type ScheduleRow,
+} from './renewal';
 
 const H = 3600_000;
 const D = 24 * H;
@@ -109,4 +112,41 @@ test('P5: a certificate imported from CWP is handed over to Let\'s Encrypt in th
   const plan = planRenewals(rows, NOW);
   assert.deepEqual(plan.renew, [2, 3]);
   assert.deepEqual(plan.expire, [3]);
+});
+
+test('fast start (platform host name never issued): 10 min, 30 min, 1 h, 3 h, then 6 h / 12 h / 24 h', () => {
+  const M = 60_000;
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 20].map((n) => backoffMs(n, true)), [10 * M, 30 * M, H, 3 * H, 6 * H, 12 * H, 24 * H, 24 * H]);
+  assert.equal(FIRST_ISSUANCE_BACKOFF_MS.length, 4);
+  // Regular rows keep the 6 h start.
+  assert.equal(backoffMs(1, false), 6 * H);
+  // A client space host name set while its DNS was not pointing yet: retried after 10 min, not 6 h.
+  const fresh = row({ status: 'failed', not_after: null, failure_count: 1, last_attempt_at: new Date(NOW - 11 * M), fast_start: true });
+  assert.equal(inBackoff(fresh, NOW), false);
+  assert.equal(needsIssuance(fresh, ['example.com'], NOW), true);
+  assert.deepEqual(planRenewals([{ ...fresh, id: 7 }], NOW).renew, [7]);
+  const tooSoon = { ...fresh, last_attempt_at: new Date(NOW - 9 * M) };
+  assert.equal(inBackoff(tooSoon, NOW), true);
+  assert.equal(needsIssuance(tooSoon, ['example.com'], NOW), false);
+  assert.deepEqual(planRenewals([{ ...tooSoon, id: 7 }], NOW).renew, []);
+  // The same failure on a tenant row (no fast start) waits 6 h.
+  assert.equal(inBackoff({ ...fresh, fast_start: false }, NOW), true);
+});
+
+test('backoffEndsAt: when the automatic retry is armed', () => {
+  assert.equal(backoffEndsAt({ failure_count: 0, last_attempt_at: new Date(NOW) }), null);
+  assert.equal(backoffEndsAt({ failure_count: 2, last_attempt_at: null }), null);
+  assert.equal(backoffEndsAt({ failure_count: 1, last_attempt_at: new Date(NOW) }), NOW + 6 * H);
+  assert.equal(backoffEndsAt({ failure_count: 2, last_attempt_at: new Date(NOW).toISOString(), fast_start: true }), NOW + 30 * 60_000);
+});
+
+test('nextAttemptAt: renewal window, backoff end, due now, stuck pending', () => {
+  assert.equal(nextAttemptAt(null, NOW), null);
+  const end = NOW + 60 * D;
+  assert.equal(nextAttemptAt(row({ not_after: new Date(end) }), NOW), end - RENEW_BEFORE_MS);
+  // Renewal failed inside the window: after the backoff.
+  assert.equal(nextAttemptAt(row({ not_after: new Date(NOW + 10 * D), failure_count: 1, last_attempt_at: new Date(NOW - H) }), NOW), NOW + 5 * H);
+  assert.equal(nextAttemptAt(row({ status: 'failed', not_after: null, failure_count: 1, last_attempt_at: new Date(NOW - 2 * 60_000), fast_start: true }), NOW), NOW + 8 * 60_000);
+  assert.equal(nextAttemptAt(row({ status: 'failed', not_after: null, failure_count: 1, last_attempt_at: new Date(NOW - 7 * H) }), NOW), NOW, 'already due');
+  assert.equal(nextAttemptAt(row({ status: 'pending', not_after: null, last_attempt_at: new Date(NOW - 10 * 60_000) }), NOW), NOW - 10 * 60_000 + STUCK_PENDING_MS);
 });

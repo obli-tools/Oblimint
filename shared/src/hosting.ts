@@ -721,6 +721,49 @@ export interface CertificateDetail extends CertificateSummary {
   log: CertificateLogLine[];
 }
 
+/** Which platform setting a host name comes from (Settings → platform certificates). */
+export type PlatformHostRole = 'panel' | 'clientPanel' | 'dbAdmin' | 'probeV4' | 'probeV6' | 'mail' | 'webmail' | 'previewWildcard';
+
+/**
+ * Certificate of one PLATFORM host name (GET /api/system/edge/platform-certificates,
+ * platform admin). Until `usable`, the edge serves its default self-signed
+ * certificate on that name (browser: certificate not trusted).
+ */
+export interface PlatformCertificateItem {
+  /** Primary name (row key). */
+  host: string;
+  roles: PlatformHostRole[];
+  /** Names the certificate must cover ([d, *.d] for the preview wildcard). */
+  names: string[];
+  /** null: no certificate row yet (never attempted). */
+  certificateId: number | null;
+  status: CertificateStatus | null;
+  /** Valid, unexpired, files present: served by the edge. */
+  usable: boolean;
+  /** Queued or running now. */
+  issuing: boolean;
+  issuer: string | null;
+  notBefore: string | null;
+  notAfter: string | null;
+  /** Raw error of the last failed attempt (staff view). */
+  lastError: string | null;
+  /** Consecutive failed attempts (reset by a success or by « retry now »). */
+  failureCount: number;
+  lastAttemptAt: string | null;
+  /** Next automatic attempt (renewal window, end of the failure backoff); null = none planned. */
+  nextAttemptAt: string | null;
+  /** « Retry now » refused before this time (cooldown); null = available now. */
+  retryAvailableAt: string | null;
+  /** Why Let's Encrypt is not asked for this name. */
+  blocked: 'notPublic' | 'acmeEmailMissing' | 'dns01Unavailable' | null;
+  updatedAt: string | null;
+}
+
+export interface PlatformCertificatesView {
+  acmeDirectory: 'production' | 'staging';
+  items: PlatformCertificateItem[];
+}
+
 export interface SiteRoute {
   id: number;
   domainId: number;
@@ -1186,7 +1229,7 @@ export const HostingSocketEvents = {
   RUNTIME_UPDATED: 'RUNTIME_UPDATED',
   /** Feature B: { siteId, previewId, status } — release / staging preview changed (scoped tenant + account). */
   PREVIEW_UPDATED: 'PREVIEW_UPDATED',
-  /** { domainId, status } */
+  /** { domainId, siteId, certificateId, status } (domainId + siteId null: platform host name certificate) */
   CERTIFICATE_UPDATED: 'CERTIFICATE_UPDATED',
   /** { accountId, running } */
   FILESRV_UPDATED: 'FILESRV_UPDATED',

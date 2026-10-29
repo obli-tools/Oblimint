@@ -4,6 +4,14 @@
 //   - renewal window: not_after < now + 30 days;
 //   - after a failure: wait backoffMs(failure_count) since last_attempt_at
 //     (6 h, 12 h, then 24 h max) — never hammer Let's Encrypt (rate limits);
+//   - EXCEPT a platform row never issued yet (fast_start: panel / client
+//     space / DB admin / probe / mail / webmail host just set — and the mail
+//     certificates of the mail domains, platform rows too — its DNS not
+//     pointing or not propagated yet at the first attempt): 10 min, 30 min,
+//     1 h, 3 h, then the regular 6 h / 12 h / 24 h (Let's Encrypt allows 5
+//     failed validations per host name per hour: far below);
+//   - the retry happens AT the end of the backoff (certificate.service arms a
+//     timer), not at the next 12-hourly renewal pass;
 //   - a 'pending' row whose last attempt is older than 1 h is considered
 //     stuck (process restarted mid-issuance) and retried;
 //   - a 'valid' certificate from the STAGING directory while the platform is
@@ -23,6 +31,15 @@ export const BACKOFF_MAX_MS = 24 * 3600_000;
 export const STUCK_PENDING_MS = 3600_000;
 /** Minimum delay between two manual renew requests of the same certificate. */
 export const MANUAL_COOLDOWN_MS = 10 * 60_000;
+/**
+ * Minimum delay between two « retry now » of a PLATFORM host name certificate
+ * (staff only, Settings): short, the owner fixes the DNS and retries — the
+ * Let's Encrypt limit (5 failed validations per host name per hour, one back
+ * every 12 min) is then the only bound, its error is shown as is.
+ */
+export const PLATFORM_RETRY_COOLDOWN_MS = 2 * 60_000;
+/** fast_start backoff (platform host name never issued): then the regular schedule. */
+export const FIRST_ISSUANCE_BACKOFF_MS: readonly number[] = [10 * 60_000, 30 * 60_000, 3600_000, 3 * 3600_000];
 
 export type CertIssuer = 'letsencrypt' | 'letsencrypt-staging';
 
@@ -47,7 +64,11 @@ export interface ScheduleRow {
   not_after: Date | string | null;
   failure_count: number;
   last_attempt_at: Date | string | null;
+  /** Platform host name never issued yet: short first retries (FIRST_ISSUANCE_BACKOFF_MS). */
+  fast_start?: boolean;
 }
+
+type BackoffRow = Pick<ScheduleRow, 'failure_count' | 'last_attempt_at' | 'fast_start'>;
 
 function ms(v: Date | string | null): number | null {
   if (v === null || v === undefined) return null;
@@ -55,17 +76,49 @@ function ms(v: Date | string | null): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-/** Minimum delay after `failureCount` consecutive failures (0 → none). */
-export function backoffMs(failureCount: number): number {
+/** Minimum delay after `failureCount` consecutive failures (0 → none); `fastStart`: FIRST_ISSUANCE_BACKOFF_MS first. */
+export function backoffMs(failureCount: number, fastStart = false): number {
   if (!failureCount || failureCount <= 0) return 0;
-  return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** Math.min(failureCount - 1, 8));
+  let n = failureCount;
+  if (fastStart) {
+    if (n <= FIRST_ISSUANCE_BACKOFF_MS.length) return FIRST_ISSUANCE_BACKOFF_MS[n - 1];
+    n -= FIRST_ISSUANCE_BACKOFF_MS.length;
+  }
+  return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** Math.min(n - 1, 8));
+}
+
+/** End of the failure backoff (epoch ms); null when the row has none (no failure, never attempted). */
+export function backoffEndsAt(row: BackoffRow): number | null {
+  const last = ms(row.last_attempt_at);
+  if (!row.failure_count || last === null) return null;
+  return last + backoffMs(row.failure_count, !!row.fast_start);
 }
 
 /** Is the row still waiting out its failure backoff at `now`? */
-export function inBackoff(row: Pick<ScheduleRow, 'failure_count' | 'last_attempt_at'>, now: number): boolean {
-  const last = ms(row.last_attempt_at);
-  if (!row.failure_count || last === null) return false;
-  return now - last < backoffMs(row.failure_count);
+export function inBackoff(row: BackoffRow, now: number): boolean {
+  const end = backoffEndsAt(row);
+  return end !== null && now < end;
+}
+
+/**
+ * Next AUTOMATIC attempt (epoch ms) as these rules decide it, shown to the
+ * staff (Settings → platform certificates): valid → start of the renewal
+ * window (or the backoff end when later); failed / expired → the backoff end
+ * (`now` when already due); pending → when it counts as stuck.
+ */
+export function nextAttemptAt(row: ScheduleRow | null | undefined, now: number): number | null {
+  if (!row) return null;
+  const backoff = backoffEndsAt(row);
+  if (row.status === 'pending') {
+    const last = ms(row.last_attempt_at);
+    return last === null ? now : Math.max(now, last + STUCK_PENDING_MS);
+  }
+  if (row.status === 'valid') {
+    const end = ms(row.not_after);
+    const window = end === null ? now : end - RENEW_BEFORE_MS;
+    return Math.max(window, backoff ?? window);
+  }
+  return Math.max(now, backoff ?? now);
 }
 
 /** Same set of names (order-insensitive, case-insensitive). */

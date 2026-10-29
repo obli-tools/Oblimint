@@ -568,4 +568,6 @@ export const queue = {
     await flush();
   },
   pending(): number { return q.jobs.length + q.zones.size + q.removals.size + (q.all ? 1 : 0); },
+  /** Worker started and work queued or running (dnsService.settle). */
+  busy(): boolean { return q.active && (!!q.running || queue.pending() > 0); },
 };

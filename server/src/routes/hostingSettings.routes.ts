@@ -39,7 +39,10 @@ async function settingsChanged(sections: string[]): Promise<void> {
       const { edgeService } = await import('../services/edge/edge.service');
       edgeService.scheduleSync('hosting-settings');
     }
-    if (sections.includes('dns')) {
+    // preview / dbAdmin / access carry platform host names (preview domain, DB admin host, probe hosts)
+    // whose A / AAAA records a hosted platform zone publishes: pushed now, not at the hourly resync —
+    // their certificate is requested as soon as the edge serves them (and waits for this push).
+    if (sections.some((s) => s === 'dns' || s === 'preview' || s === 'dbAdmin' || s === 'access')) {
       const { dnsService } = await import('../services/dns/dns.service');
       dnsService.requestSyncAll('hosting-settings');
     }

@@ -633,6 +633,23 @@ export const dnsService = {
   requestSyncAll(reason: string): void {
     safeHook('requestSyncAll', () => queue.all(reason));
   },
+  /**
+   * Waits (bounded) until the queued zone work is pushed — a platform host
+   * name certificate right after its setting changed: its A / AAAA record in a
+   * hosted platform zone must exist before Let's Encrypt resolves the name.
+   * Returns at once when the worker is off or idle. Never throws.
+   */
+  async settle(timeoutMs = 30_000): Promise<void> {
+    try {
+      if (!queue.busy()) return;
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([
+        queue.drain().catch(() => undefined),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); timer.unref?.(); }),
+      ]);
+      if (timer) clearTimeout(timer);
+    } catch { /* never blocks an issuance */ }
+  },
   requestSyncZone(zoneId: number, reason: string): void {
     safeHook('requestSyncZone', () => queue.zone(zoneId, reason));
   },
