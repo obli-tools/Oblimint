@@ -248,6 +248,71 @@ export interface DomainVerification extends DomainVerificationSummary {
   nextCheckAt: string | null;
   /** Pending zone on our name servers (null when verified). */
   pendingZone: DomainPendingZone | null;
+  /**
+   * Detailed outcome of the last check (manual or automatic) of EVERY method
+   * tried — null when verified or never checked (or a row checked before the
+   * field existed: then only lastError). Optional for older servers.
+   */
+  lastResult?: DomainOwnershipCheckResult | null;
+}
+
+/**
+ * Outcome of the TXT proof at the last check:
+ *  found           the expected value is published (proven);
+ *  missing         no TXT record at the challenge name;
+ *  mismatch        TXT record(s) there, none with the expected value;
+ *  resolverFailed  the public resolvers could not be queried.
+ */
+export type DomainOwnershipTxtOutcome = 'found' | 'missing' | 'mismatch' | 'resolverFailed';
+
+/**
+ * Delegation seen by a source, against our name servers:
+ * ours (every NS is ours), elsewhere (none is), mixed (both), none (no NS:
+ * not delegated / not registered — or not answered, see `failed`).
+ */
+export type DomainOwnershipNsStatus = 'ours' | 'elsewhere' | 'mixed' | 'none';
+
+export interface DomainOwnershipNsView {
+  /** NS host names found (lower case, no trailing dot, sorted). */
+  found: string[];
+  status: DomainOwnershipNsStatus;
+  /** The source could not be queried (found is then empty). */
+  failed: boolean;
+}
+
+/** Last ownership check, every method tried (stored in domains.verification_result). */
+export interface DomainOwnershipCheckResult {
+  /** When it ran. */
+  at: string;
+  /** manual (« Check now ») or auto (worker re-check). */
+  trigger: 'manual' | 'auto';
+  /**
+   * proven          one method proved it (provenBy);
+   * notProven       every tried method answered, none proves it (details below);
+   * resolverFailed  no tried method could be queried at all.
+   */
+  summary: 'proven' | 'notProven' | 'resolverFailed';
+  provenBy: 'txt' | 'ns' | null;
+  txt: {
+    outcome: DomainOwnershipTxtOutcome;
+    /** mismatch: the values published at the challenge name (capped, public DNS data). */
+    found: string[];
+  };
+  /** NS method — null when it was not tried (disabled, not allowed for this name, or TXT proved it first). */
+  ns: {
+    /** Our name servers (settings dns.nameservers). */
+    expected: string[];
+    /** Through the public resolvers (settings dns.resolvers; may lag behind: caches). */
+    public: DomainOwnershipNsView;
+    /**
+     * Asked directly to the authoritative servers of the PARENT zone (the
+     * registry for a TLD: what changes first after a switch at the
+     * registrar). null when not asked (public view already ours).
+     */
+    registry: (DomainOwnershipNsView & { zone: string }) | null;
+    /** One of the views is entirely ours. */
+    matches: boolean;
+  } | null;
 }
 
 /**

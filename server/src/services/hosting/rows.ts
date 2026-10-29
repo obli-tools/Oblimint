@@ -60,6 +60,8 @@ export interface DomainRow {
   verification_next_check_at?: Date | string | null; verification_error?: string | null;
   /** Migration 018: last manual check (re-opens the pending zone window and the fast re-checks). */
   verification_requested_at?: Date | string | null;
+  /** Migration 022: outcome of every method at the last check (JSON, DomainOwnershipCheckResult). */
+  verification_result?: unknown;
   /** joined */ account_username?: string;
 }
 

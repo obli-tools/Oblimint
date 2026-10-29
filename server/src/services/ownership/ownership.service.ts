@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import type { Request } from 'express';
 import type {
-  DomainClaim, DomainClaimCreate, DomainClaimStatus, DomainVerification, DomainVerificationError, DomainVerificationMethod,
+  DomainClaim, DomainClaimCreate, DomainClaimStatus, DomainOwnershipCheckResult, DomainOwnershipNsStatus, DomainOwnershipNsView,
+  DomainOwnershipTxtOutcome, DomainVerification, DomainVerificationError, DomainVerificationMethod,
 } from '@oblimint/shared';
 import { HostingSocketEvents, OWNERSHIP_TXT_LABEL } from '@oblimint/shared';
 import { db } from '../../db';
@@ -26,6 +27,7 @@ import { emitHosting } from '../hosting/events';
 import { isPlatformReservedDomain, isSameOrSubdomain, normalizeDomainName, parentDomains } from '../hosting/hostingValidation.service';
 import type { DomainRow } from '../hosting/rows';
 import { platformSettings } from '../platformSettings';
+import { registryLookup, type RegistryLookup } from './registryDelegation';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain ownership (docs/P2-PLAN.md §9.2, audit T3 carry-over). OWNED BY
@@ -36,7 +38,10 @@ import { platformSettings } from '../platformSettings';
 //   txt        TXT _oblimint-challenge.<name> = oblimint-verify=<token>
 //              (the domain's own token, domains.verification_token);
 //   ns         settings dns.allowNsProof and EVERY public NS of the name is
-//              one of settings dns.nameservers. Residual risk R-NS-SQUAT: the
+//              one of settings dns.nameservers — as seen by the public
+//              resolvers, or (they may cache the old NS for hours) by the
+//              parent zone's own servers (registryDelegation.ts: the registry
+//              delegation, what changes first). Residual risk R-NS-SQUAT: the
 //              delegation does not designate an account (a squatter that
 //              registered the name before the delegation gets verified); the
 //              TXT stays the strong proof, a claim corrects it, an admin can
@@ -58,7 +63,11 @@ import { platformSettings } from '../platformSettings';
 // then every 6 h — from the creation time), at least every 5 min during the
 // 48 h after the creation or after a manual check (verification_requested_at,
 // which also re-opens the pending zone window); pending claims expired after
-// 7 days. A verification change emits
+// 7 days. Every check (manual or automatic) stores the outcome of EVERY method
+// tried (verification_result, API lastResult: TXT outcome, NS found / expected
+// for both views, summary), next to the legacy single code verification_error;
+// an automatic check whose outcome changed emits DOMAIN_VERIFICATION_UPDATED
+// (status pending) so that an open card refreshes. A verification change emits
 // DOMAIN_VERIFICATION_UPDATED and calls dnsService.domainChanged,
 // edgeService.scheduleSync, certificateService.ensureForDomain and audits
 // `domain.verified` in the domain's tenant.
@@ -118,49 +127,152 @@ export function nextCheckDelayMs(elapsedSinceCreationMs: number, elapsedSinceReq
 export interface OwnershipProof {
   ok: boolean;
   method: 'txt' | 'ns' | null;
+  /** Legacy single code (domains.verification_error, API lastError). */
   error: DomainVerificationError | null;
+  /** Outcome of EVERY method tried (domains.verification_result, API lastResult) — `at` / `trigger` set by the caller. */
+  result: Omit<DomainOwnershipCheckResult, 'at' | 'trigger'>;
 }
 
 const normHost = (h: string) => h.trim().toLowerCase().replace(/\.$/, '');
 
+/** Delegation `found` against our name servers (empty = none). */
+export function classifyNs(found: string[], ours: ReadonlySet<string>): DomainOwnershipNsStatus {
+  if (!found.length) return 'none';
+  const mine = found.filter((n) => ours.has(n)).length;
+  if (mine === found.length) return 'ours';
+  return mine === 0 ? 'elsewhere' : 'mixed';
+}
+
+const TXT_FOUND_MAX = 5;
+const TXT_FOUND_LEN = 255;
+
 /**
  * Evaluates the ownership proofs of `name` with `token` (pure apart from the
- * injected lookup). TXT first; then, unless txtOnly (claims), the NS proof
- * when allowed. Error precedence: a TXT record with another value →
- * txtMismatch; a lookup failure → resolverFailed; a delegation partly to our
- * name servers → nsMismatch; otherwise txtMissing.
+ * injected lookups). TXT first; then, unless txtOnly (claims), the NS proof
+ * when allowed: the public resolvers, and — when they do not show our name
+ * servers and a registry lookup is given — the parent zone's own servers
+ * (registryDelegation.ts: what changes first after a switch at the
+ * registrar, resolvers may cache the old NS for hours). Every public NS of
+ * either view being ours is the proof.
+ *
+ * `result` describes every method tried (summary proven / notProven /
+ * resolverFailed). Legacy `error` precedence (unchanged): a TXT record with
+ * another value → txtMismatch; a public lookup failure → resolverFailed; a
+ * delegation partly to our name servers → nsMismatch; otherwise txtMissing.
  */
 export async function evaluateOwnership(
   lookup: PublicDnsLookup,
   name: string,
   token: string,
-  opts: { allowNs: boolean; nameservers: string[]; txtOnly?: boolean },
+  opts: { allowNs: boolean; nameservers: string[]; txtOnly?: boolean; registry?: RegistryLookup | null },
 ): Promise<OwnershipProof> {
   const { txtName, txtValue } = ownershipTxt(name, token);
-  let failed = false;
+  let txtFailed = false;
   let txt: string[] = [];
   try {
     txt = (await lookup.txt(txtName)).map((v) => v.trim());
   } catch {
-    failed = true;
+    txtFailed = true;
   }
-  if (txt.includes(txtValue)) return { ok: true, method: 'txt', error: null };
+  const txtOutcome: DomainOwnershipTxtOutcome = txt.includes(txtValue) ? 'found'
+    : txt.length > 0 ? 'mismatch' : txtFailed ? 'resolverFailed' : 'missing';
+  const txtResult = {
+    outcome: txtOutcome,
+    found: txtOutcome === 'mismatch' ? txt.slice(0, TXT_FOUND_MAX).map((v) => v.slice(0, TXT_FOUND_LEN)) : [],
+  };
+  if (txtOutcome === 'found') {
+    return { ok: true, method: 'txt', error: null, result: { summary: 'proven', provenBy: 'txt', txt: txtResult, ns: null } };
+  }
 
-  let nsPartial = false;
   const ours = new Set(opts.nameservers.map(normHost).filter(Boolean));
+  let ns: NonNullable<DomainOwnershipCheckResult['ns']> | null = null;
   if (!opts.txtOnly && opts.allowNs && ours.size > 0) {
+    let pub: DomainOwnershipNsView;
     try {
-      const ns = (await lookup.ns(name)).map(normHost).filter(Boolean);
-      if (ns.length > 0 && ns.every((n) => ours.has(n))) return { ok: true, method: 'ns', error: null };
-      nsPartial = ns.some((n) => ours.has(n));
+      const found = [...new Set((await lookup.ns(name)).map(normHost).filter(Boolean))].sort();
+      pub = { found, status: classifyNs(found, ours), failed: false };
     } catch {
-      failed = true;
+      pub = { found: [], status: 'none', failed: true };
     }
+    let registry: (DomainOwnershipNsView & { zone: string }) | null = null;
+    if (pub.status !== 'ours' && opts.registry) {
+      try {
+        const r = await opts.registry(name);
+        const found = [...new Set(r.found.map(normHost).filter(Boolean))].sort();
+        registry = { zone: r.zone, found, status: r.failed ? 'none' : classifyNs(found, ours), failed: r.failed };
+      } catch {
+        registry = null;
+      }
+    }
+    ns = { expected: [...ours].sort(), public: pub, registry, matches: pub.status === 'ours' || registry?.status === 'ours' };
   }
-  if (txt.length > 0) return { ok: false, method: null, error: 'txtMismatch' };
-  if (failed) return { ok: false, method: null, error: 'resolverFailed' };
-  if (nsPartial) return { ok: false, method: null, error: 'nsMismatch' };
-  return { ok: false, method: null, error: 'txtMissing' };
+
+  if (ns?.matches) {
+    return { ok: true, method: 'ns', error: null, result: { summary: 'proven', provenBy: 'ns', txt: txtResult, ns } };
+  }
+  const nsFailed = !!ns?.public.failed;
+  const allFailed = txtFailed && (!ns || (ns.public.failed && (!ns.registry || ns.registry.failed)));
+  const result = { summary: allFailed ? 'resolverFailed' as const : 'notProven' as const, provenBy: null, txt: txtResult, ns };
+  const nsPartial = ns?.public.status === 'mixed' || ns?.registry?.status === 'mixed';
+  if (txt.length > 0) return { ok: false, method: null, error: 'txtMismatch', result };
+  if (txtFailed || nsFailed) return { ok: false, method: null, error: 'resolverFailed', result };
+  if (nsPartial) return { ok: false, method: null, error: 'nsMismatch', result };
+  return { ok: false, method: null, error: 'txtMissing', result };
+}
+
+/** Result when the public DNS could not even be set up (every tried method failed). */
+function unreachableResult(nsTried: boolean, nameservers: string[]): OwnershipProof['result'] {
+  const failed: DomainOwnershipNsView = { found: [], status: 'none', failed: true };
+  return {
+    summary: 'resolverFailed',
+    provenBy: null,
+    txt: { outcome: 'resolverFailed', found: [] },
+    ns: nsTried ? { expected: [...new Set(nameservers.map(normHost).filter(Boolean))].sort(), public: failed, registry: null, matches: false } : null,
+  };
+}
+
+const NS_STATUSES: readonly string[] = ['ours', 'elsewhere', 'mixed', 'none'];
+const TXT_OUTCOMES: readonly string[] = ['found', 'missing', 'mismatch', 'resolverFailed'];
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+function nsView(v: unknown): DomainOwnershipNsView | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  return { found: strings(o.found), status: NS_STATUSES.includes(o.status as string) ? o.status as DomainOwnershipNsStatus : 'none', failed: o.failed === true };
+}
+
+/** Stored verification_result → API (defensive: unknown shapes give null). */
+export function parseCheckResult(raw: unknown): DomainOwnershipCheckResult | null {
+  let v = raw;
+  if (typeof v === 'string') {
+    try { v = JSON.parse(v); } catch { return null; }
+  }
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const txt = (o.txt ?? {}) as Record<string, unknown>;
+  const summary = o.summary === 'proven' || o.summary === 'resolverFailed' ? o.summary : 'notProven';
+  let ns: DomainOwnershipCheckResult['ns'] = null;
+  if (o.ns && typeof o.ns === 'object') {
+    const n = o.ns as Record<string, unknown>;
+    const pub = nsView(n.public) ?? { found: [], status: 'none', failed: true };
+    const reg = nsView(n.registry);
+    const zone = n.registry && typeof (n.registry as Record<string, unknown>).zone === 'string' ? (n.registry as Record<string, string>).zone : '';
+    ns = { expected: strings(n.expected), public: pub, registry: reg ? { ...reg, zone } : null, matches: n.matches === true };
+  }
+  return {
+    at: typeof o.at === 'string' ? o.at : new Date(0).toISOString(),
+    trigger: o.trigger === 'manual' ? 'manual' : 'auto',
+    summary,
+    provenBy: o.provenBy === 'txt' || o.provenBy === 'ns' ? o.provenBy : null,
+    txt: { outcome: TXT_OUTCOMES.includes(txt.outcome as string) ? txt.outcome as DomainOwnershipTxtOutcome : 'missing', found: strings(txt.found) },
+    ns,
+  };
+}
+
+/** What a user would notice changing between two results (the worker announces only those). */
+export function checkResultSignature(r: Pick<DomainOwnershipCheckResult, 'summary' | 'txt' | 'ns'> | null): string {
+  if (!r) return '';
+  return JSON.stringify([r.summary, r.txt.outcome, r.txt.found,
+    r.ns ? [r.ns.public.status, r.ns.public.found, r.ns.public.failed, r.ns.registry?.status, r.ns.registry?.found, r.ns.registry?.failed, r.ns.expected] : null]);
 }
 
 const VERIFICATION_ERRORS: readonly DomainVerificationError[] = ['txtMissing', 'txtMismatch', 'nsMismatch', 'resolverFailed', 'rateLimited'];
@@ -229,6 +341,7 @@ async function toVerification(row: DomainRow): Promise<DomainVerification> {
     inheritedFrom: method === 'inherited' ? (await verifiedParent(row))?.name ?? null : null,
     lastCheckAt: iso(row.verification_checked_at),
     lastError: status === 'verified' ? null : asError(row.verification_error),
+    lastResult: status === 'verified' ? null : parseCheckResult(row.verification_result),
     nextCheckAt: status === 'verified' ? null : iso(row.verification_next_check_at),
     pendingZone: status === 'verified' ? null : await pendingZoneForDomain({
       id: row.id,
@@ -324,17 +437,37 @@ async function runCheck(row: VerifiableDomain & { verification_token?: string },
     ?? (await db('domains').where({ id: row.id }).first('verification_token') as { verification_token: string } | undefined)?.verification_token;
   if (!token) return false;
   let proof: OwnershipProof;
+  const settings = await dnsSettings();
+  if (settings.allowNs && !(await nsProofAllowedFor(row.name, row.account_id))) settings.allowNs = false;
   try {
-    const settings = await dnsSettings();
-    if (settings.allowNs && !(await nsProofAllowedFor(row.name, row.account_id))) settings.allowNs = false;
-    proof = await evaluateOwnership(await publicDns(), row.name, token, settings);
+    proof = await evaluateOwnership(await publicDns(), row.name, token, { ...settings, registry: await registryLookupSafe() });
   } catch (err) {
     logger.warn({ domainId: row.id, err: (err as Error).message }, 'ownership: public DNS unavailable');
-    proof = { ok: false, method: null, error: 'resolverFailed' };
+    proof = { ok: false, method: null, error: 'resolverFailed', result: unreachableResult(settings.allowNs && settings.nameservers.length > 0, settings.nameservers) };
   }
+  // Every method's outcome, manual or automatic (the card shows the same summary for both).
+  const result: DomainOwnershipCheckResult = { at: new Date().toISOString(), trigger: ctx.req ? 'manual' : 'auto', ...proof.result };
+  const updated = await db('domains').where({ id: row.id, verification_status: 'pending' })
+    .update({ verification_error: proof.ok ? null : proof.error, verification_result: JSON.stringify(result) })
+    .returning('id') as Array<{ id: number }>;
   if (proof.ok && proof.method) return markVerified(row, proof.method, ctx);
-  await db('domains').where({ id: row.id, verification_status: 'pending' }).update({ verification_error: proof.error });
+  // An automatic re-check whose outcome changed (e.g. the delegation moved): the open card refreshes.
+  if (updated.length && !ctx.req && checkResultSignature(result) !== checkResultSignature(parseCheckResult(row.verification_result ?? null))) {
+    try {
+      emitHosting(HostingSocketEvents.DOMAIN_VERIFICATION_UPDATED, { domainId: row.id, status: 'pending' }, { tenantId: row.tenant_id, accountId: row.account_id });
+    } catch (err) {
+      logger.warn({ err: (err as Error).message, domainId: row.id }, 'ownership: socket failed');
+    }
+  }
   return false;
+}
+
+async function registryLookupSafe(): Promise<RegistryLookup | null> {
+  try {
+    return await registryLookup();
+  } catch {
+    return null;
+  }
 }
 
 // ── claims ───────────────────────────────────────────────────────────────────
@@ -529,7 +662,7 @@ export async function ownershipWorkerPass(now = Date.now()): Promise<{ checked: 
     .where((b) => { b.whereNull('d.verification_next_check_at').orWhere('d.verification_next_check_at', '<=', new Date(now)); })
     .orderByRaw('d.verification_next_check_at ASC NULLS FIRST')
     .limit(WORKER_BATCH)
-    .select('d.id', 'd.tenant_id', 'd.account_id', 'd.name', 'd.verification_token', 'd.created_at', 'd.verification_requested_at') as
+    .select('d.id', 'd.tenant_id', 'd.account_id', 'd.name', 'd.verification_token', 'd.created_at', 'd.verification_requested_at', 'd.verification_result') as
     Array<VerifiableDomain & { verification_token: string; created_at: Date | string; verification_requested_at: Date | string | null }>;
   let verified = 0;
   for (const d of due) {
@@ -650,7 +783,7 @@ export const ownershipService = {
       proof = await evaluateOwnership(await publicDns(), claim.name, claim.token, { allowNs: false, nameservers: [], txtOnly: true });
     } catch (err) {
       logger.warn({ claimId: claim.id, err: (err as Error).message }, 'ownership claim: public DNS unavailable');
-      proof = { ok: false, method: null, error: 'resolverFailed' };
+      proof = { ok: false, method: null, error: 'resolverFailed', result: unreachableResult(false, []) };
     }
     if (!proof.ok) {
       await db('domain_claims').where({ id: claim.id }).update({ last_error: proof.error, updated_at: db.fn.now() });

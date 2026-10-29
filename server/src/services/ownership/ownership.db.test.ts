@@ -78,6 +78,7 @@ test('edge-ownership on PostgreSQL (PGlite): verification, inheritance, claims, 
   const { ownershipService, ownershipTxt, ownershipWorkerPass, _resetManualCheckCooldowns } = await import('./ownership.service');
   const { platformSettings } = await import('../platformSettings');
   const { setPublicDnsForTests } = await import('../../utils/publicDns');
+  const { setRegistryLookupForTests } = await import('./registryDelegation');
   const schema = await import('../../validators/hosting.schema');
 
   // ── Fakes of the other modules ─────────────────────────────────────────────
@@ -113,10 +114,14 @@ test('edge-ownership on PostgreSQL (PGlite): verification, inheritance, claims, 
     async txt(name) { if (resolverDown) throw Object.assign(new Error('ETIMEOUT'), { code: 'ETIMEOUT' }); return txt.get(name) ?? []; },
     async ns(name) { if (resolverDown) throw Object.assign(new Error('ETIMEOUT'), { code: 'ETIMEOUT' }); return nsRecords.get(name) ?? []; },
   });
+  // Fake registry (parent zone's own servers, registryDelegation.ts): NS per name, set by the test.
+  const registry = new Map<string, string[]>();
+  setRegistryLookupForTests(async (name) => ({ zone: name.split('.').slice(1).join('.') || name, found: resolverDown ? [] : registry.get(name) ?? [], failed: resolverDown }));
   const seen = (s: string) => calls.includes(s);
 
   t.after(async () => {
     setPublicDnsForTests(null);
+    setRegistryLookupForTests(undefined);
     ownershipService.stop();
     await new Promise((r) => setTimeout(r, 300)); // background certificate attempts settle
     await db.destroy();
@@ -215,11 +220,19 @@ test('edge-ownership on PostgreSQL (PGlite): verification, inheritance, claims, 
     const missing = await ownershipService.check(reqA, await resolveActor(reqA), example);
     assert.equal(missing.status, 'pending');
     assert.equal(missing.lastError, 'txtMissing');
+    // Both methods reported (the NS method is offered for this name): TXT missing, no delegation anywhere.
+    assert.equal(missing.lastResult?.summary, 'notProven');
+    assert.equal(missing.lastResult?.trigger, 'manual');
+    assert.deepEqual(missing.lastResult?.txt, { outcome: 'missing', found: [] });
+    assert.deepEqual(missing.lastResult?.ns?.public, { found: [], status: 'none', failed: false });
+    assert.deepEqual(missing.lastResult?.ns?.registry, { zone: 'com', found: [], status: 'none', failed: false });
     await rejectsWith(ownershipService.check(fakeReq(alice, tenantA), await actor(alice, tenantA), example), 429, 'rateLimited');
 
     resolverDown = true;
     _resetManualCheckCooldowns();
-    assert.equal((await ownershipService.check(fakeReq(alice, tenantA), await actor(alice, tenantA), example)).lastError, 'resolverFailed');
+    const down = await ownershipService.check(fakeReq(alice, tenantA), await actor(alice, tenantA), example);
+    assert.equal(down.lastError, 'resolverFailed');
+    assert.equal(down.lastResult?.summary, 'resolverFailed', 'every tried method failed');
     resolverDown = false;
 
     const row = await domainRow(example);
@@ -506,6 +519,59 @@ test('edge-ownership on PostgreSQL (PGlite): verification, inheritance, claims, 
     await db('domain_claims').where({ id: c.id }).update({ expires_at: new Date(Date.now() - 1000) });
     assert.ok((await ownershipWorkerPass()).claimsExpired >= 1);
     assert.equal((await db('domain_claims').where({ id: c.id }).first()).status, 'expired');
+  });
+
+  // ── 8b. combined outcome (TXT and NS), registry view ───────────────────────
+  await t.test('check result: every method reported, registry delegation ahead of the resolvers, same summary for the worker', async () => {
+    const OLD = ['dns103.example.net', 'ns103.example.net'];
+    const d = await createAs(alice, tenantA, { accountId: shop, name: 'switch.example.net', tlsMode: 'none' });
+    // Switched at the registrar but not effective yet: resolvers AND registry still show the old provider.
+    nsRecords.set('switch.example.net', OLD);
+    registry.set('switch.example.net', OLD);
+    _resetManualCheckCooldowns();
+    const v = await ownershipService.check(fakeReq(alice, tenantA), await actor(alice, tenantA), d.id);
+    assert.equal(v.status, 'pending');
+    assert.equal(v.lastError, 'txtMissing', 'legacy code kept');
+    assert.ok(v.lastResult, 'detailed result stored');
+    assert.equal(v.lastResult!.trigger, 'manual');
+    assert.equal(v.lastResult!.summary, 'notProven');
+    assert.deepEqual(v.lastResult!.txt, { outcome: 'missing', found: [] });
+    assert.deepEqual(v.lastResult!.ns, {
+      expected: ['ns1.oblimint.example', 'ns2.oblimint.example'],
+      public: { found: OLD, status: 'elsewhere', failed: false },
+      registry: { zone: 'example.net', found: OLD, status: 'elsewhere', failed: false },
+      matches: false,
+    });
+    const row = await domainRow(d.id);
+    assert.equal(typeof row.verification_result, 'object', 'jsonb column');
+
+    // Automatic re-check: half switched at the registry → stored with trigger auto.
+    registry.set('switch.example.net', ['ns1.oblimint.example', 'ns103.example.net']);
+    await db('domains').where({ id: d.id }).update({ verification_next_check_at: new Date(Date.now() - 1000) });
+    await ownershipWorkerPass();
+    const auto = await ownershipService.getVerification(await actor(alice, tenantA), d.id);
+    assert.equal(auto.status, 'pending');
+    assert.equal(auto.lastResult!.trigger, 'auto');
+    assert.equal(auto.lastResult!.ns!.registry!.status, 'mixed');
+    assert.equal(auto.lastError, 'nsMismatch');
+
+    // The registry delegates to us while the resolvers still cache the old NS: proven by NS.
+    registry.set('switch.example.net', ['ns2.oblimint.example', 'ns1.oblimint.example']);
+    await db('domains').where({ id: d.id }).update({ verification_next_check_at: new Date(Date.now() - 1000) });
+    await ownershipWorkerPass();
+    const done = await ownershipService.getVerification(await actor(alice, tenantA), d.id);
+    assert.equal(done.status, 'verified');
+    assert.equal(done.method, 'ns');
+    assert.equal(done.lastResult, null, 'no failure detail once verified');
+    assert.equal(done.lastError, null);
+
+    // Rows checked before the column existed: lastResult null, lastError still served.
+    const legacy = await createAs(alice, tenantA, { accountId: shop, name: 'legacy.example.net', tlsMode: 'none' });
+    await db('domains').where({ id: legacy.id }).update({ verification_error: 'txtMissing', verification_result: null });
+    const lv = await ownershipService.getVerification(await actor(alice, tenantA), legacy.id);
+    assert.deepEqual([lv.lastError, lv.lastResult], ['txtMissing', null]);
+    // Fixtures removed: the account stays under its plan's domain limit for the next steps.
+    await db('domains').whereIn('id', [d.id, legacy.id]).del();
   });
 
   // ── 9. delete hook ─────────────────────────────────────────────────────────

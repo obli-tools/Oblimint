@@ -9,11 +9,13 @@ import { useHostingMe } from '@/store/hostingStore';
 import { useAuthStore } from '@/store/authStore';
 import { Button } from '@/components/common/Button';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
+import { Pill } from '@/components/common/Pill';
 import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Card, CopyButton, InfoRow, labelCls, payloadNumber, useHostingEvents } from '@/components/hosting/hostingUi';
 import { VerificationBadge, verificationErrorLabel, verificationMethodLabel } from './DnsBadges';
 import { ownershipErrorMessage, toastOwnershipError } from './dnsErrors';
+import { nsHostList, nsStatusBadge, ownershipResultMessage } from './ownershipResult';
 
 /** Name / value line with a copy button (DNS record to create). */
 export function CopyField({ label, value, mono = true }: { label: ReactNode; value: string; mono?: boolean }) {
@@ -93,6 +95,43 @@ function PendingZoneNotice({ v, fmt }: { v: DomainVerification; fmt: (iso: strin
 }
 
 /**
+ * Name servers of the domain as the last check saw them (public resolvers,
+ * and the parent zone / registry when asked and different), with a badge
+ * ours / elsewhere / mixed — in the « Name servers » tab.
+ */
+function PublishedNameservers({ v, fmt }: { v: DomainVerification; fmt: (iso: string | null) => string }) {
+  const { t } = useTranslation();
+  const ns = v.lastResult?.ns;
+  if (!ns) return null;
+  const pub = nsStatusBadge(t, ns.public);
+  const reg = ns.registry && !ns.registry.failed ? ns.registry : null;
+  const regBadge = reg ? nsStatusBadge(t, reg) : null;
+  const differs = !!reg && (reg.status !== ns.public.status || nsHostList(t, reg.found) !== nsHostList(t, ns.public.found));
+  return (
+    <div className="space-y-2 rounded-md border border-border p-2.5">
+      <div className="min-w-0">
+        <div className={labelCls}>{t('domainOwnership.result.publishedNs') || 'Currently published name servers'}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 break-all font-mono text-[13px] text-text-primary">{ns.public.failed ? '—' : nsHostList(t, ns.public.found)}</span>
+          <Pill tone={pub.tone}>{pub.label}</Pill>
+        </div>
+      </div>
+      {reg && regBadge && differs && (
+        <div className="min-w-0">
+          <div className={labelCls}>{t('domainOwnership.result.registryNs', { zone: reg.zone, defaultValue: 'Delegation at the registry (zone {{zone}})' })}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 break-all font-mono text-[13px] text-text-primary">{nsHostList(t, reg.found)}</span>
+            <Pill tone={regBadge.tone}>{regBadge.label}</Pill>
+          </div>
+          <p className="mt-1 text-xs text-text-muted">{t('domainOwnership.result.registryHint') || 'The registry changes first; public resolvers may keep the previous name servers cached for a few hours.'}</p>
+        </div>
+      )}
+      <p className="text-[11px] text-text-muted">{t('domainOwnership.result.seenAt', { date: fmt(v.lastResult?.at ?? null), defaultValue: 'Seen at the last check ({{date}}).' })}</p>
+    </div>
+  );
+}
+
+/**
  * Ownership section of the domain panel (docs/P2-PLAN.md §9.2): the TXT
  * record (or our name servers) to publish, the last check and its coded
  * error, « check now », and « force » for a platform administrator.
@@ -136,7 +175,11 @@ export function DomainOwnershipCard({ domain, onVerified }: { domain: Domain; on
         toast.success(t('domainOwnership.verifiedToast') || 'Domain verified');
         onVerified?.();
       } else {
-        toast.error(next.lastError ? verificationErrorLabel(t, next.lastError) : (t('domainOwnership.notYet') || 'Not verified yet.'), { duration: 6000 });
+        // Every method tried (TXT and name servers), the active tab's first — never only the TXT outcome.
+        const focus = method === 'ns' && next.nameservers.length > 0 && next.nsProofAllowed ? 'ns' : 'txt';
+        const msg = next.lastResult ? ownershipResultMessage(t, next.lastResult, focus)
+          : next.lastError ? verificationErrorLabel(t, next.lastError) : (t('domainOwnership.notYet') || 'Not verified yet.');
+        toast.error(msg, { duration: 9000 });
       }
     } catch (err) {
       toastOwnershipError(t, err, t('domainOwnership.checkFailed') || 'The check failed');
@@ -234,16 +277,29 @@ export function DomainOwnershipCard({ domain, onVerified }: { domain: Domain; on
               <div className="grid grid-cols-1 gap-2">
                 {v.nameservers.map((ns) => <CopyField key={ns} label={t('domainOwnership.nameserver') || 'Name server'} value={ns} />)}
               </div>
+              <PublishedNameservers v={v} fmt={fmt} />
               <PendingZoneNotice v={v} fmt={fmt} />
             </div>
           )}
           {/* TXT only (no name server method here): say why our name servers stay silent when the guard refused it. */}
           {!nsProof && v.pendingZone?.state === 'refused' && <PendingZoneNotice v={v} fmt={fmt} />}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <InfoRow label={t('domainOwnership.lastCheck') || 'Last check'} mono>{fmt(v.lastCheckAt)}</InfoRow>
+            <InfoRow label={t('domainOwnership.lastCheck') || 'Last check'} mono>
+              {fmt(v.lastCheckAt)}
+              {v.lastResult && (
+                <span className="font-sans text-text-muted"> · {v.lastResult.trigger === 'manual'
+                  ? (t('domainOwnership.result.trigger.manual') || 'manual')
+                  : (t('domainOwnership.result.trigger.auto') || 'automatic')}</span>
+              )}
+            </InfoRow>
             <InfoRow label={t('domainOwnership.nextCheck') || 'Next automatic check'} mono>{fmt(v.nextCheckAt)}</InfoRow>
           </div>
-          {v.lastError && (
+          {/* Outcome of the last check, manual or automatic: every method tried, the active tab's first. */}
+          {v.lastResult && v.lastResult.summary !== 'proven' ? (
+            <p className="rounded-md bg-status-down/5 px-2.5 py-1.5 text-xs text-status-down">
+              {ownershipResultMessage(t, v.lastResult, nsProof && method === 'ns' ? 'ns' : 'txt')}
+            </p>
+          ) : v.lastError && (
             <p className="rounded-md bg-status-down/5 px-2.5 py-1.5 text-xs text-status-down">{verificationErrorLabel(t, v.lastError)}</p>
           )}
           {(manage || platformAdmin) && (

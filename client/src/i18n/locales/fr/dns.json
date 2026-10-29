@@ -371,6 +371,41 @@
       "claimExpired": "La réclamation a expiré : lancez-en une nouvelle.",
       "wildcardNeedsHostedZone": "Un domaine générique nécessite une zone DNS active hébergée ici (certificat par DNS-01).",
       "notImplemented": "La vérification des domaines n'est pas encore disponible sur ce serveur."
+    },
+    "result": {
+      "notProven": "Pas encore prouvé : {{details}}.",
+      "and": ", et ",
+      "noneFound": "aucun",
+      "txt": {
+        "missing": "aucun enregistrement TXT",
+        "mismatch": "l'enregistrement TXT a une autre valeur ({{found}})",
+        "resolverFailed": "l'enregistrement TXT n'a pas pu être interrogé",
+        "found": "l'enregistrement TXT est publié"
+      },
+      "ns": {
+        "elsewhere": "le domaine est encore délégué à {{found}} (attendu : {{expected}})",
+        "mixed": "le domaine n'est délégué qu'en partie à nos serveurs de noms : {{found}} (attendu : uniquement {{expected}})",
+        "none": "aucun serveur de noms n'est publié pour le domaine (attendu : {{expected}})",
+        "ours": "le domaine est délégué à nos serveurs de noms",
+        "failed": "les serveurs de noms n'ont pas pu être interrogés",
+        "publicView": "(résolveurs publics : {{found}})"
+      },
+      "delayHint": "Un changement de serveurs de noms peut prendre de quelques minutes à quelques heures chez le registraire.",
+      "publishedNs": "Serveurs de noms publiés actuellement",
+      "registryNs": "Délégation au registre (zone {{zone}})",
+      "registryHint": "Le registre change en premier ; les résolveurs publics peuvent garder les anciens serveurs de noms en cache quelques heures.",
+      "seenAt": "Constaté lors de la dernière vérification ({{date}}).",
+      "badge": {
+        "ours": "les nôtres",
+        "elsewhere": "ailleurs",
+        "mixed": "mixte",
+        "none": "aucun",
+        "failed": "non interrogé"
+      },
+      "trigger": {
+        "manual": "manuelle",
+        "auto": "automatique"
+      }
     }
   }
 }

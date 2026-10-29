@@ -371,6 +371,41 @@
       "claimExpired": "The claim expired: start a new one.",
       "wildcardNeedsHostedZone": "A wildcard needs an active DNS zone hosted here (certificate through DNS-01).",
       "notImplemented": "Domain verification is not available on this server yet."
+    },
+    "result": {
+      "notProven": "Not proven yet: {{details}}.",
+      "and": ", and ",
+      "noneFound": "none",
+      "txt": {
+        "missing": "no TXT record found",
+        "mismatch": "the TXT record has another value ({{found}})",
+        "resolverFailed": "the TXT record could not be queried",
+        "found": "the TXT record is published"
+      },
+      "ns": {
+        "elsewhere": "the domain is still delegated to {{found}} (expected: {{expected}})",
+        "mixed": "the domain is only partly delegated to our name servers: {{found}} (expected: {{expected}} only)",
+        "none": "no name server is published for the domain (expected: {{expected}})",
+        "ours": "the domain is delegated to our name servers",
+        "failed": "the name servers could not be queried",
+        "publicView": "(public resolvers: {{found}})"
+      },
+      "delayHint": "A change of name servers can take from a few minutes to a few hours at the registrar.",
+      "publishedNs": "Currently published name servers",
+      "registryNs": "Delegation at the registry (zone {{zone}})",
+      "registryHint": "The registry changes first; public resolvers may keep the previous name servers cached for a few hours.",
+      "seenAt": "Seen at the last check ({{date}}).",
+      "badge": {
+        "ours": "ours",
+        "elsewhere": "elsewhere",
+        "mixed": "mixed",
+        "none": "none",
+        "failed": "not queried"
+      },
+      "trigger": {
+        "manual": "manual",
+        "auto": "automatic"
+      }
     }
   }
 }
