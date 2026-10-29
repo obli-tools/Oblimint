@@ -1,4 +1,4 @@
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { cn } from '@/utils/cn';
 
 export interface SegmentedTab<T extends string = string> {
@@ -49,6 +49,37 @@ export function SegmentedTabs<T extends string = string>({
 }: SegmentedTabsProps<T>) {
   const barRef = useRef<HTMLDivElement>(null);
   const visible = tabs.filter((tab) => !tab.hidden);
+  // Tabs hidden past an edge: that edge fades out, so the bar reads as scrollable.
+  const [edges, setEdges] = useState({ left: false, right: false });
+
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const update = () => {
+      const left = bar.scrollLeft > 1;
+      const right = bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 1;
+      setEdges((e) => (e.left === left && e.right === right ? e : { left, right }));
+    };
+    // A vertical mouse wheel scrolls the bar sideways (the scrollbar is hidden),
+    // and only while it can still move — otherwise the page scrolls as usual.
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || bar.scrollWidth <= bar.clientWidth) return;
+      const max = bar.scrollWidth - bar.clientWidth;
+      if ((e.deltaY < 0 && bar.scrollLeft <= 0) || (e.deltaY > 0 && bar.scrollLeft >= max - 1)) return;
+      e.preventDefault();
+      bar.scrollLeft += e.deltaY;
+    };
+    update();
+    bar.addEventListener('scroll', update, { passive: true });
+    bar.addEventListener('wheel', onWheel, { passive: false });
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    ro?.observe(bar);
+    return () => {
+      bar.removeEventListener('scroll', update);
+      bar.removeEventListener('wheel', onWheel);
+      ro?.disconnect();
+    };
+  }, [visible.length]);
 
   // Keep the active tab visible when the bar scrolls (horizontal only — never
   // scrollIntoView, which would also scroll the page vertically).
@@ -93,8 +124,13 @@ export function SegmentedTabs<T extends string = string>({
         // No border (Obli borderless look): the 5px padding keeps the exact
         // geometry of the old 1px transparent border + p-1 — which the neon
         // theme used to paint visible (`.bg-bg-secondary` border colour).
-        'relative flex items-center gap-1 rounded-lg bg-bg-secondary p-[5px]',
+        // max-w-full: under self-start / fit-content the bar would otherwise
+        // take its content width and push the page sideways instead of scrolling.
+        'relative flex min-w-0 max-w-full items-center gap-1 rounded-lg bg-bg-secondary p-[5px]',
         'overflow-x-auto overscroll-x-contain scrollbar-none snap-x',
+        edges.left && edges.right && '[mask-image:linear-gradient(to_right,transparent,#000_28px,#000_calc(100%-28px),transparent)]',
+        edges.left && !edges.right && '[mask-image:linear-gradient(to_right,transparent,#000_28px)]',
+        !edges.left && edges.right && '[mask-image:linear-gradient(to_left,transparent,#000_28px)]',
         className,
       )}
     >
