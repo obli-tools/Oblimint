@@ -254,7 +254,35 @@
       "normalized": "Stored as {{name}}",
       "site": "Route \"/\" to a site (optional)",
       "tls": "TLS",
-      "siteFixedHint": "The domain is routed to this site at \"/\". Other paths can be added afterwards in the Domains tab of the site."
+      "siteFixedHint": "The domain is routed to this site at \"/\". Other paths can be added afterwards in the Domains tab of the site.",
+      "mode": {
+        "domain": "Domain",
+        "subdomain": "Subdomain"
+      },
+      "sub": {
+        "parent": "Parent domain",
+        "label": "Subdomain",
+        "labelPlaceholder": "blog",
+        "preview": "Full name: {{name}}",
+        "exists": "{{name}} is already a domain of this account.",
+        "detected": "Detected as a subdomain of {{parent}}.",
+        "keepDomain": "Create it as a separate domain instead (delegated sub-zone)",
+        "keptAsDomain": "Below {{parent}}, a domain of this account: created as a separate domain, it gets its own DNS zone (delegated sub-zone).",
+        "useSubdomain": "Make it a subdomain",
+        "chooseAccountFirst": "Choose the account first: a subdomain goes below one of its domains.",
+        "noParent": "This account has no domain yet: add the parent domain first (\"Domain\"), then its subdomains.",
+        "noParentZone": "{{parent}} has no DNS zone here: the subdomain gets its own zone, unless you choose \"No zone\".",
+        "zoneHosted": "No separate zone: the records are added to the zone {{zone}}.",
+        "zoneExternal": "The zone {{zone}} is hosted at another provider: create there the A / AAAA records of {{name}} (they are listed in the zone {{zone}} after the creation).",
+        "inherits": "{{parent}} is verified: the ownership is inherited, no TXT / NS record to create.",
+        "inheritsLater": "{{parent}} is not verified yet: this name will be verified with it (until then visitors see a placeholder page and no certificate is issued).",
+        "issue": {
+          "wildcard": "No * here: use the Wildcard option below.",
+          "emptyLabel": "Empty label (two dots in a row, or a dot at either end).",
+          "labelTooLong": "A label has 63 characters at most.",
+          "chars": "Letters, digits and dashes only (not at the start or the end of a label), dots between labels."
+        }
+      }
     },
     "kind": {
       "addon": "Add-on",
@@ -312,7 +340,8 @@
       "proxy": "Proxy",
       "servedByProxy": "No site route: the domain is served by the proxy host(s) below.",
       "title": "Used by"
-    }
+    },
+    "addSubdomain": "Add a subdomain"
   },
   "fileAccess": {
     "activated": "SFTP access opened",

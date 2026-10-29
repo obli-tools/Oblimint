@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { Asterisk, AtSign, Link2, Network, RefreshCw, Shuffle, ShieldCheck, Trash2, Settings2 } from 'lucide-react';
+import { Asterisk, AtSign, CornerDownRight, Link2, Network, RefreshCw, Shuffle, ShieldCheck, Trash2, Settings2 } from 'lucide-react';
 import type {
   CertificateDetail, Domain, DomainKind, DomainUpdate, MailDomain, ProxyHost, TlsMode,
 } from '@oblimint/shared';
@@ -21,7 +21,8 @@ import { cn } from '@/utils/cn';
 import {
   Card, InfoRow, Pill, TlsBadge, hostingErrorMessage, labelCls, payloadNumber, selectCls, toastHostingError, useHostingEvents,
 } from './hostingUi';
-import { DOMAIN_KINDS, domainKindLabel, tlsModeLabel } from './DomainCreateModal';
+import { DOMAIN_KINDS, DomainCreateModal, domainKindLabel, tlsModeLabel } from './DomainCreateModal';
+import { useDomainDrawer } from './DomainDrawer';
 import { VerificationBadge, ZoneKindBadge } from '@/components/dns/DnsBadges';
 import { DomainOwnershipCard } from '@/components/dns/DomainOwnershipCard';
 import { toastOwnershipError } from '@/components/dns/dnsErrors';
@@ -65,6 +66,8 @@ export function DomainPanel({ domainId, onChanged, onDeleted }: {
   const { can } = useHostingMe();
   const [domain, setDomain] = useState<Domain | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [addingSub, setAddingSub] = useState(false);
+  const drawer = useDomainDrawer();
 
   const load = useCallback(async () => {
     try {
@@ -138,6 +141,13 @@ export function DomainPanel({ domainId, onChanged, onDeleted }: {
             <span>{t('dns.zone.none') || 'none'}</span>
           )}
         </span>
+        {manage && (
+          <span className="w-full text-xs">
+            <button type="button" onClick={() => setAddingSub(true)} className="inline-flex items-center gap-1 text-accent hover:underline">
+              <CornerDownRight size={12} />{t('domains.addSubdomain') || 'Add a subdomain'}
+            </button>
+          </span>
+        )}
       </div>
 
       <DomainOwnershipCard domain={domain} onVerified={() => { void load(); }} />
@@ -154,6 +164,21 @@ export function DomainPanel({ domainId, onChanged, onDeleted }: {
       <SettingsCard domain={domain} manage={manage} onSaved={(d) => { setDomain(d); onChanged?.(d); }} />
       <CertificateCard domain={domain} manage={manage} />
 
+      {manage && (
+        <DomainCreateModal
+          open={addingSub}
+          accountId={domain.accountId}
+          initialMode="subdomain"
+          parentDomainId={domain.id}
+          onClose={() => setAddingSub(false)}
+          onCreated={(d) => {
+            setAddingSub(false);
+            toast.success(t('domains.created', { name: d.name, defaultValue: 'Domain {{name}} added' }));
+            // Next step of the new name (route, ownership): its own drawer.
+            drawer.open(d.id);
+          }}
+        />
+      )}
       {manage && (
         <div className="flex justify-end">
           <Button size="sm" variant="danger" onClick={() => { void remove(); }}>

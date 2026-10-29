@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test:webmail": "node --import tsx --test src/webmail/lib/htmlPolicy.test.ts src/webmail/lib/compose.test.ts"
+    "test:webmail": "node --import tsx --test src/webmail/lib/htmlPolicy.test.ts src/webmail/lib/compose.test.ts",
+    "test:hosting": "node --import tsx --test src/components/hosting/domainParent.test.ts"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",
