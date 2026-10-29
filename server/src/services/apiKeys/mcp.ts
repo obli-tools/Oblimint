@@ -3,8 +3,9 @@ import { Readable } from 'stream';
 import { z, type ZodTypeAny } from 'zod';
 import {
   APP_PROFILES, CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, DBX_KEY_DEFAULT_TIMEOUT_S, DBX_KEY_MAX_BYTES, DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S, DBX_TEXT_PREVIEW, SITE_BASE_IDS,
-  SITE_ENV_MAX_VALUE,
+  SITE_ENV_MAX_VALUE, NOTIFICATION_FAMILIES,
 } from '@oblimint/shared';
+import type { NotificationFamily } from '@oblimint/shared';
 import { serverVersion } from '../../utils/version';
 import { AppError } from '../../middleware/errorHandler';
 import { keyApi, type SiteArea } from './keyApi';
@@ -112,6 +113,23 @@ const TOOLS: ToolDef[] = [
     inputSchema: obj({ lang: { type: 'string', enum: ['en', 'fr'], description: 'Language (default en).' } }, []),
     args: z.object({ lang: z.enum(['en', 'fr']).optional() }),
     run: (_ctx, req, a) => keyApi.guide(req, a.lang ?? 'en'),
+  },
+  {
+    name: 'list_notifications', title: 'Notifications', readOnly: true,
+    description: 'Notifications of the key\'s user about this account, newest first: releases awaiting approval / approved / rejected, certificates issued or failing, domain ownership verified, quota, mail, cron, monitoring. Read-only (they stay unread for the human). unreadCount counts the unread ones; hasMore: call again with before = the last id.',
+    inputSchema: obj({
+      unread: { type: 'boolean', description: 'Only the unread ones.' },
+      family: { type: 'string', enum: [...NOTIFICATION_FAMILIES], description: 'Only one family of events.' },
+      before: { type: 'integer', description: 'Older than this notification id (paging).' },
+      limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Default 30.' },
+    }, []),
+    args: z.object({
+      unread: z.boolean().optional(),
+      family: z.enum(NOTIFICATION_FAMILIES as unknown as [NotificationFamily, ...NotificationFamily[]]).optional(),
+      before: zId.optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    }),
+    run: (ctx, _r, a) => keyApi.notifications(ctx, { unread: a.unread === true, family: a.family ?? null, before: a.before ?? null, limit: a.limit }),
   },
   {
     name: 'list_sites', title: 'List sites', readOnly: true,

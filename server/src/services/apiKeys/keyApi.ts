@@ -4,7 +4,9 @@ import type {
   ApiV1Me, ApiV1ParentDomain, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
   PreviewFetchResult, PreviewLink, PreviewStartResult, SitePreview,
   ReleaseFileContent, ReleaseFileList, SiteCreate, StagingRestoreResult, StagingRestoreRunning, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
+  NotificationFamily, UserNotificationPage,
 } from '@oblimint/shared';
+import { userNotificationService } from '../usage/userNotifications.service';
 import { apiKeyGuide } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -250,6 +252,16 @@ export const keyApi = {
   },
 
   listSites: (ctx: ApiKeyContext) => siteViews(ctx, null),
+
+  /**
+   * Notifications of the key's creator about the key's account only (releases awaiting
+   * approval, certificates, quota…), newest first. Read-only: reading them here does not
+   * mark them read for the human.
+   */
+  async notifications(ctx: ApiKeyContext, q: { unread?: boolean; family?: NotificationFamily | null; before?: number | null; limit?: number }): Promise<UserNotificationPage> {
+    await accountRow(ctx);
+    return userNotificationService.list(ctx.creatorId, ctx.tenantId, { ...q, limit: Math.min(q.limit ?? 30, 50), accountId: ctx.accountId });
+  },
 
   async getSite(ctx: ApiKeyContext, siteId: number): Promise<ApiV1Site> {
     await keySite(ctx, siteId);

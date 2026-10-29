@@ -1,7 +1,10 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import rateLimit from 'express-rate-limit';
+import type { NotificationFamily } from '@oblimint/shared';
+import { NOTIFICATION_FAMILIES } from '@oblimint/shared';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { notificationService } from '../services/usage/notifications.service';
+import { parseIds, userNotificationService } from '../services/usage/userNotifications.service';
 
 // /api/notifications — OWNED BY MODULE `usage` (docs/P2-PLAN.md §6.5). Staff of the tenant with the
 // 'settings' capability, or platform admin (channels of the current tenant; tenant 1 channels also
@@ -22,6 +25,81 @@ const testLimiter = rateLimit({
   keyGenerator: (req) => `notif-test:${req.session?.userId ?? 0}`, // behind requireAuth: always a user
   message: { success: false, error: 'Too many tests, please try again in a minute', code: 'rateLimited' },
 });
+
+// ── Notification center of the signed-in user (staff AND clients), current tenant ──
+//   GET    /inbox?unread=1&family=&before=&limit=  → UserNotificationPage
+//   GET    /inbox/unread-count                     → { unreadCount }
+//   POST   /inbox/read        { ids }              → { updated, unreadCount }
+//   POST   /inbox/unread      { ids }              → { updated, unreadCount }
+//   POST   /inbox/read-all                         → { updated, unreadCount }
+//   POST   /inbox/delete      { ids }              → { deleted, unreadCount }
+//   GET    /preferences                            → UserNotificationSettings
+//   PUT    /preferences       UserNotificationPrefsInput → UserNotificationSettings
+const me = (req: Request) => ({ userId: Number(req.session?.userId), tenantId: Number(req.tenantId) });
+
+router.get('/inbox', async (req, res, next) => {
+  try {
+    const { userId, tenantId } = me(req);
+    const family = typeof req.query.family === 'string' && (NOTIFICATION_FAMILIES as readonly string[]).includes(req.query.family)
+      ? req.query.family as NotificationFamily : null;
+    const data = await userNotificationService.list(userId, tenantId, {
+      unread: req.query.unread === '1' || req.query.unread === 'true',
+      family,
+      before: req.query.before ? Number(req.query.before) : null,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.get('/inbox/unread-count', async (req, res, next) => {
+  try {
+    const { userId, tenantId } = me(req);
+    res.json({ success: true, data: { unreadCount: await userNotificationService.unreadCount(userId, tenantId) } });
+  } catch (err) { next(err); }
+});
+
+router.post('/inbox/read', async (req, res, next) => {
+  try {
+    const { userId, tenantId } = me(req);
+    res.json({ success: true, data: await userNotificationService.markRead(userId, tenantId, parseIds(req.body?.ids)) });
+  } catch (err) { next(err); }
+});
+
+router.post('/inbox/unread', async (req, res, next) => {
+  try {
+    const { userId, tenantId } = me(req);
+    res.json({ success: true, data: await userNotificationService.markUnread(userId, tenantId, parseIds(req.body?.ids)) });
+  } catch (err) { next(err); }
+});
+
+router.post('/inbox/read-all', async (req, res, next) => {
+  try {
+    const { userId, tenantId } = me(req);
+    res.json({ success: true, data: await userNotificationService.markAllRead(userId, tenantId) });
+  } catch (err) { next(err); }
+});
+
+router.post('/inbox/delete', async (req, res, next) => {
+  try {
+    const { userId, tenantId } = me(req);
+    res.json({ success: true, data: await userNotificationService.remove(userId, tenantId, parseIds(req.body?.ids)) });
+  } catch (err) { next(err); }
+});
+
+router.get('/preferences', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await userNotificationService.settings(me(req).userId) });
+  } catch (err) { next(err); }
+});
+
+router.put('/preferences', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await userNotificationService.updatePrefs(req, me(req).userId, req.body) });
+  } catch (err) { next(err); }
+});
+
+// ── Channels (staff 'settings') ──
 
 router.get('/channels', async (req, res, next) => {
   try {

@@ -5,6 +5,8 @@ export * from './dns';
 export * from './databases';
 export * from './access';
 export * from './usage';
+// Per-user notification center + transactional e-mail sender
+export * from './userNotifications';
 export * from './cron';
 export * from './platform';
 export * from './maintenance';

@@ -16,6 +16,7 @@ import {
   EVENT_LABELS_FR, defaultPluginDeps, sendToChannel, type ChannelSecrets, type PluginDeps, type RenderedNotification,
 } from './notifications/plugins';
 import { SsrfError, resolveSmtpHost } from './notifications/ssrf';
+import { deliverToUsers } from './userNotifications.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Notification channels (module usage, docs/P2-PLAN.md §6.5 / §9.5). Plugins
@@ -423,9 +424,11 @@ async function targetsFor(event: NotificationEvent, p: NotificationPayload): Pro
 }
 
 async function processJob(job: Job): Promise<void> {
+  const n = await render(job.event, job.payload);
+  // Notification center (bell / e-mail of the users concerned): never throws.
+  await deliverToUsers(job.event, job.payload, n);
   const rows = await targetsFor(job.event, job.payload);
   if (rows.length === 0) return;
-  const n = await render(job.event, job.payload);
   await Promise.all(rows.map((r) => deliverWithRetry(r, n)));
 }
 

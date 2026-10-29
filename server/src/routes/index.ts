@@ -64,6 +64,7 @@ import systemMailRoutes from './systemMail.routes';            // mail-core (pla
 import mailDnsRoutes from './mailDns.routes';                  // mail-dns-tls (/mail/domains/:id/dns|dns-settings|dkim)
 import mailOutboundRoutes, { siteMailRelayRoutes } from './mailOutbound.routes'; // outbound-security
 import systemMailSecurityRoutes from './systemMailSecurity.routes'; // outbound-security (platform admin: bans, relay test)
+import systemTransactionalMailRoutes from './systemTransactionalMail.routes'; // transactional e-mail sender (platform admin)
 import webmailRoutes from './webmail.routes';                  // webmail (/mail/mailboxes/:id/webmail-session)
 // P4b — apps + proxy (docs/P4b-PLAN.md §6). One router file per owning module.
 import appsRoutes from './apps.routes';                         // apps-core (/apps: stacks, catalog, registries, policy)
@@ -103,6 +104,7 @@ router.use('/system/firewall', requireAuth, requireRole('admin'), systemFirewall
 router.use('/system/scanner', requireAuth, requireRole('admin'), scannerRoutes);         // P3 scanners
 router.use('/system/mail', requireAuth, requireRole('admin'), systemMailRoutes);         // P4 mail-core (no catch-all)
 router.use('/system/mail', requireAuth, requireRole('admin'), systemMailSecurityRoutes); // P4 outbound-security
+router.use('/system/transactional-mail', requireAuth, requirePlatformAdminOnMaster, systemTransactionalMailRoutes); // transactional e-mail sender
 for (const migrationRouter of [migrationSourcesRoutes, migrationDiscoveryRoutes, migrationPlansRoutes, migrationRunsRoutes, migrationCutoverRoutes]) {
   router.use('/system/migration', requireAuth, requirePlatformAdminOnMaster, migrationRouter); // P5
 }

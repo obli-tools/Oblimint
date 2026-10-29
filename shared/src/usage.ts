@@ -169,7 +169,13 @@ export type NotificationEvent =
   // Platform updates (Nodes > Updates; master tenant channels)
   | 'platform.updateAvailable' // a platform image has a new digest (once per digest)
   | 'platform.updated'       // a platform update run succeeded
-  | 'platform.updateFailed'; // a platform update run failed / was rolled back
+  | 'platform.updateFailed'  // a platform update run failed / was rolled back
+  // Notification center (releases awaiting a human, domain ownership)
+  | 'release.pendingApproval' // a release waits for an approval (publish mode approval / suspicious content)
+  | 'release.approved'       // a release awaiting approval was approved (it goes live)
+  | 'release.rejected'       // a release awaiting approval was rejected
+  | 'domain.verified'        // the ownership of a domain is proven (it can go live)
+  | 'domain.reclaimed';      // a domain was taken back by the account that proved its ownership
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'quota.warning', 'quota.exceeded', 'quota.action', 'certificate.failed', 'certificate.issued', 'dns.syncFailed', 'db.instanceFailed', 'cron.failed', 'security.banned',
@@ -178,6 +184,7 @@ export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'certificate.expiringSoon', 'uptime.down', 'uptime.up', 'app.updateAvailable', 'app.updated', 'app.updateFailed', 'app.deployFailed',
   'edge.unitQuarantined', 'edge.rollback', 'workflow.failed',
   'platform.updateAvailable', 'platform.updated', 'platform.updateFailed',
+  'release.pendingApproval', 'release.approved', 'release.rejected', 'domain.verified', 'domain.reclaimed',
 ];
 
 /**

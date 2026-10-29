@@ -31,7 +31,9 @@ export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
   // Feature B: access gate secret of a release / staging preview (edge string comparison).
   | 'site-preview'
   // Feature B: environment overrides of a preview's database clone (random passwords of rotated users).
-  | 'site-preview-db';
+  | 'site-preview-db'
+  // Transactional e-mail sender of the platform (SMTP / platform mailbox password).
+  | 'transactional-mail';
 
 export class SecretBoxError extends Error {
   constructor(message: string) {

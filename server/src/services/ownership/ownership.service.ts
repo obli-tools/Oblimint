@@ -27,6 +27,7 @@ import { emitHosting } from '../hosting/events';
 import { isPlatformReservedDomain, isSameOrSubdomain, normalizeDomainName, parentDomains } from '../hosting/hostingValidation.service';
 import type { DomainRow } from '../hosting/rows';
 import { platformSettings } from '../platformSettings';
+import { notify } from '../usage/notifications.service';
 import { registryLookup, type RegistryLookup } from './registryDelegation';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -379,7 +380,15 @@ async function announceVerified(d: VerifiableDomain, method: DomainVerificationM
   safe('dnsService.domainChanged', () => dnsService.domainChanged(d.id, 'verified'));
   safe('edgeService.scheduleSync', () => edgeService.scheduleSync(`domain ${d.id} verified`));
   safe('certificateService.ensureForDomain', () => certificateService.ensureForDomain(d.id));
-  const details = { name: d.name, accountId: d.account_id, method, ...(ctx.forced ? { forced: true } : {}), ...(ctx.inheritedFrom ? { inheritedFrom: ctx.inheritedFrom } : {}) };
+  safe('notify', () => notify('domain.verified', {
+    tenantId: d.tenant_id, accountId: d.account_id, key: `domain:${d.id}`, severity: 'info',
+    title: `Domaine vérifié : ${d.name}`,
+    message: method === 'inherited' && ctx.inheritedFrom
+      ? `La propriété de ${d.name} est acquise par celle de ${ctx.inheritedFrom} : le domaine peut être mis en ligne (certificat en cours).`
+      : `La propriété de ${d.name} est prouvée : le domaine peut être mis en ligne (certificat en cours).`,
+    link: '/domains',
+  }));
+  const details ={ name: d.name, accountId: d.account_id, method, ...(ctx.forced ? { forced: true } : {}), ...(ctx.inheritedFrom ? { inheritedFrom: ctx.inheritedFrom } : {}) };
   try {
     if (ctx.req) {
       await auditService.logReqAs(ctx.req, d.tenant_id, 'domain.verified', { resourceType: 'domain', resourcePath: String(d.id), details });
@@ -630,6 +639,13 @@ async function transferClaim(req: Request, claim: ClaimRow): Promise<void> {
       resourceType: 'domain',
       resourcePath: String(v.id),
       details: { name: v.name, accountId: v.account_id, side: 'holder', reason: 'ownershipProvenByAnotherAccount' },
+    });
+    // The holder is told (never who took it back: A2).
+    notify('domain.reclaimed', {
+      tenantId: v.tenant_id, accountId: v.account_id, key: `domain:${v.id}`, severity: 'warning',
+      title: `Domaine retiré : ${v.name}`,
+      message: `Le domaine ${v.name} a été retiré de ce compte : son propriétaire a prouvé qu’il le détient (enregistrement DNS TXT).`,
+      link: null,
     });
   }
   // ── the claimer side (no identity of the holder) ──
