@@ -72,6 +72,7 @@
       "discardPendingConfirm": "Le staging contient {{count}} changement(s) non publié(s). Les abandonner ? Une copie est gardée sur le serveur."
     },
     "current": "courante",
+    "viaKey": "via la clé {{name}}",
     "diff": {
       "added": "Ajouté",
       "binary": "binaire",

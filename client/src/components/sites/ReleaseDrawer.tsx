@@ -109,7 +109,12 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
 
   const meta: Array<[string, ReactNode]> = release ? [
     [t('releases.fields.trigger') || 'Trigger', triggerLabel(release.trigger, t)],
-    [t('releases.fields.author') || 'Author', release.authorName ?? '—'],
+    [t('releases.fields.author') || 'Author', release.apiKeyName ? (
+      <>
+        {release.authorName ?? '—'}
+        <span className="text-text-muted"> · {t('releases.viaKey', { name: release.apiKeyName, defaultValue: 'via key {{name}}' })}</span>
+      </>
+    ) : (release.authorName ?? '—')],
     [t('releases.fields.commit') || 'Commit', release.commitSha ? <span className="font-mono" title={release.commitSha}>{release.commitSha.slice(0, 12)}</span> : '—'],
     [t('releases.fields.created') || 'Created', formatDateTime(release.createdAt, i18n.language)],
     [t('releases.fields.published') || 'Published', formatDateTime(release.publishedAt, i18n.language)],

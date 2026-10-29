@@ -306,6 +306,11 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
                 <>
                   <div>{triggerLabel(r.trigger, t)}</div>
                   {r.authorName && <div className="text-text-muted">{r.authorName}</div>}
+                  {r.apiKeyName && (
+                    <div className="truncate text-text-muted" title={r.apiKeyName}>
+                      {t('releases.viaKey', { name: r.apiKeyName, defaultValue: 'via key {{name}}' })}
+                    </div>
+                  )}
                 </>
               ),
             },
