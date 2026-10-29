@@ -4,6 +4,7 @@ import type {
   Plan, PlanLimits, Release, ReleaseDetail, ReleaseLogLine, ScanSummary, Site, SiteBaseId, SiteDataPath, SiteRoute,
 } from '@oblimint/shared';
 import { CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS } from '@oblimint/shared';
+import { releaseErrorCode } from '../releases/outcome';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Raw rows of the P1 tables (migration 002_hosting_core) and their mappers to
@@ -82,9 +83,9 @@ export interface ReleaseRow {
   published_at: Date | string | null; created_at: Date | string; updated_at: Date | string;
   /** P3 (migration 005): origin of a window / adapter release, staff override of a blocked scan. */
   window_id?: number | null; adapter_run_id?: number | null; scan_override_by?: number | null; scan_override_at?: Date | string | null;
-  /** migration 016: access key that created it (never exposed). */
+  /** migration 016: access key that created it (Release.apiKeyId / apiKeyName: "via key X"). */
   api_key_id?: number | null;
-  /** joined */ author_name?: string | null; approver_name?: string | null; is_current?: boolean;
+  /** joined */ author_name?: string | null; approver_name?: string | null; is_current?: boolean; api_key_name?: string | null;
 }
 
 export interface CertificateRow {
@@ -279,6 +280,7 @@ export function toDomain(r: DomainRow, routes: SiteRoute[], cert: CertificateSum
 }
 
 export function toRelease(r: ReleaseRow): Release {
+  const scan = json<ScanSummary | null>(r.scan, null);
   return {
     id: r.id,
     siteId: r.site_id,
@@ -294,12 +296,16 @@ export function toRelease(r: ReleaseRow): Release {
     filesDeleted: r.files_deleted,
     isCurrent: !!r.is_current,
     onDisk: !!r.on_disk,
-    scan: json<ScanSummary | null>(r.scan, null),
+    scan,
     error: r.error,
     approvedBy: r.approver_name ?? null,
     approvedAt: iso(r.approved_at),
     publishedAt: iso(r.published_at),
     createdAt: isoReq(r.created_at),
+    // A key deleted since: its id is gone too (ON DELETE SET NULL); a name without its id is never shown.
+    apiKeyId: r.api_key_id && r.api_key_name ? Number(r.api_key_id) : null,
+    apiKeyName: r.api_key_id && r.api_key_name ? r.api_key_name : null,
+    errorCode: releaseErrorCode({ status: r.status, error: r.error, scan }),
   };
 }
 

@@ -33,6 +33,7 @@ import { dataLinksMatch, materializeRelease, readCurrent, removeTmpEntries, remo
 import { releaseDeps } from './deps';
 import { getScanner } from './scan';
 import { liveStates } from './liveState';
+import { AUTO_REVERT_TEXT, HEALTHCHECK_FAILED_TEXT, HEALTHCHECK_OK_TEXT, INTERNAL_TEXT, INTERRUPTED_TEXT, RELOAD_FAILED_TEXT, STAGING_EMPTY_TEXT } from './outcome';
 import { REFLECT_BATCH, reflectToStaging } from './changeset';
 import { cleanReleasePath, pageEntries, readReleaseBlob, releaseTree, streamReleaseBlob, toFileEntry, utf8SafeCut, type ReleaseTreeEntry } from './releaseFiles';
 
@@ -263,8 +264,11 @@ function releaseQuery() {
     .join('sites as s', 's.id', 'r.site_id')
     .leftJoin('users as au', 'au.id', 'r.author_user_id')
     .leftJoin('users as ap', 'ap.id', 'r.approved_by')
+    // The key that published it: one of the site's account (api_key_id is only ever set from it).
+    .leftJoin('api_keys as k', function joinKey() { this.on('k.id', '=', 'r.api_key_id').andOn('k.account_id', '=', 's.account_id'); })
     .select(
       'r.*',
+      'k.name as api_key_name',
       db.raw('COALESCE(au.display_name, au.username) as author_name'),
       db.raw('COALESCE(ap.display_name, ap.username) as approver_name'),
       db.raw('(s.current_release_id = r.id) as is_current'),
@@ -349,14 +353,14 @@ async function healthcheck(ctx: { site: Pick<SiteRow, 'id' | 'healthcheck_path'>
   for (let i = 1; i <= deps.health.attempts; i++) {
     const r = await deps.probe(url, host, deps.health.timeoutMs);
     if (r.ok) {
-      run?.line('info', `healthcheck OK (HTTP ${r.status}, essai ${i})`);
+      run?.line('info', `${HEALTHCHECK_OK_TEXT} (HTTP ${r.status}, essai ${i})`);
       return { ok: true, error: null };
     }
     last = r.error ?? `HTTP ${r.status}`;
     run?.line('warn', `healthcheck essai ${i}/${deps.health.attempts} : ${last}`);
     if (i < deps.health.attempts) await deps.sleep(deps.health.delayMs);
   }
-  return { ok: false, error: `healthcheck en échec : ${last}` };
+  return { ok: false, error: `${HEALTHCHECK_FAILED_TEXT} : ${last}` };
 }
 
 /** Reloads every running container of the site. ok=false (logged) when one of them could not be reloaded. */
@@ -395,12 +399,12 @@ async function switchAndVerify(ctx: SiteContext, number: number, run: Run): Prom
   switchCurrent(ctx.paths.releases, number, deps.links);
   await run.step('info', `bascule : current → ${number}`);
   const rl = await reload(ctx, run);
-  const hc = rl.ok ? await healthcheck(ctx, run) : { ok: false, error: `rechargement des conteneurs en échec : ${rl.error}` };
+  const hc = rl.ok ? await healthcheck(ctx, run) : { ok: false, error: `${RELOAD_FAILED_TEXT} : ${rl.error}` };
   if (hc.ok) return null;
   switchCurrent(ctx.paths.releases, prevExists ? prevNumber : null, deps.links);
-  run.line('warn', prevExists ? `retour automatique à la release #${prevNumber}` : 'retour automatique : aucune release précédente');
+  run.line('warn', prevExists ? `${AUTO_REVERT_TEXT} à la release #${prevNumber}` : `${AUTO_REVERT_TEXT} : aucune release précédente`);
   await reload(ctx, run);
-  return hc.error ?? 'healthcheck en échec';
+  return hc.error ?? HEALTHCHECK_FAILED_TEXT;
 }
 
 /** A hostd call of the pipeline, retried with backoff while hostd answers busy / cancelled / unavailable. */
@@ -449,7 +453,7 @@ async function commitAndScan(run: Run): Promise<boolean> {
 
   const scan = scanStaging(ctx.paths.staging, dataPaths);
   for (const n of scan.nestedRepos) run.line('warn', `dépôt git imbriqué exclu : ${n}/`);
-  if (scan.fileCount === 0) throw new PipelineError('staging vide : publication annulée (un site n’est jamais vidé)');
+  if (scan.fileCount === 0) throw new PipelineError(`${STAGING_EMPTY_TEXT} : publication annulée (un site n’est jamais vidé)`);
 
   // Under the site lock no git process can run on repo.git: locks left by a killed git are stale.
   const stale = clearStaleGitLocks(ctx.paths.repo);
@@ -636,7 +640,7 @@ async function fastForwardHeadTo(run: Run, commit: string): Promise<void> {
 }
 
 async function fail(run: Run, err: unknown): Promise<void> {
-  const message = err instanceof PipelineError ? err.message : `erreur interne : ${(err as Error)?.message ?? String(err)}`;
+  const message = err instanceof PipelineError ? err.message : `${INTERNAL_TEXT} : ${(err as Error)?.message ?? String(err)}`;
   if (!(err instanceof PipelineError)) logger.error({ err, releaseId: run.release.id }, 'Release pipeline failed');
   try {
     await run.step('error', message, { status: 'failed', error: message.slice(0, 2000) });
@@ -1432,12 +1436,17 @@ export const releaseService = {
    * opts.content false (caller without the code right, access.actorReadsCode): names
    * and stats only, no patch, and a ?file= request is a 403 codeReadForbidden.
    */
-  async diff(siteId: number, releaseId: number, against: number | 'previous' | 'empty', file?: string | null, opts: { content?: boolean } = {}): Promise<ReleaseDiff> {
+  async diff(
+    siteId: number, releaseId: number, against: number | 'previous' | 'empty' | 'live', file?: string | null, opts: { content?: boolean; patchCap?: number } = {},
+  ): Promise<ReleaseDiff> {
     const content = opts.content !== false;
     if (file && !content) throw new AppError(403, 'Reading the content of the files needs the right to manage the files or to approve the releases', 'codeReadForbidden');
     const ctx = await loadContext(siteId);
     const to = await fetchRelease(siteId, releaseId);
     if (!to.commit_sha) throw new AppError(409, 'This release has no commit yet', 'releaseNotReady');
+    // 'live': the release serving the site now (none: the empty tree).
+    if (against === 'live') against = ctx.site.current_release_id ? Number(ctx.site.current_release_id) : 'empty';
+    const patchCap = Math.max(1024, Math.min(PATCH_FILE_CAP, opts.patchCap ?? PATCH_FILE_CAP));
     let fromId: number | null = null;
     let fromCommit: string | null = null;
     if (against === 'previous') {
@@ -1472,7 +1481,7 @@ export const releaseService = {
       if (!target) throw new AppError(404, 'File not in this diff', 'notFound');
       files = [target];
       if (!target.binary) {
-        const p = await filePatch(repo, fromRef, to.commit_sha, target.path, target.oldPath, PATCH_FILE_CAP);
+        const p = await filePatch(repo, fromRef, to.commit_sha, target.path, target.oldPath, patchCap);
         target.patch = p.patch;
         target.patchTruncated = p.truncated;
       }
@@ -1794,9 +1803,9 @@ export const releaseService = {
     const rows = await db('releases').whereIn('status', IN_FLIGHT).select('id', 'log') as Array<{ id: number; log: unknown }>;
     for (const r of rows) {
       const log = json<ReleaseLogLine[]>(r.log, []);
-      log.push({ at: new Date().toISOString(), level: 'error', message: 'interrompue par un redémarrage' });
+      log.push({ at: new Date().toISOString(), level: 'error', message: INTERRUPTED_TEXT });
       await db('releases').where({ id: r.id }).whereIn('status', IN_FLIGHT).update({
-        status: 'failed', error: 'interrompue par un redémarrage', log: JSON.stringify(log.slice(-LOG_CAP)), updated_at: db.fn.now(),
+        status: 'failed', error: INTERRUPTED_TEXT, log: JSON.stringify(log.slice(-LOG_CAP)), updated_at: db.fn.now(),
       });
     }
     if (rows.length) logger.warn({ count: rows.length }, 'Releases interrupted by a restart marked as failed');

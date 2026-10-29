@@ -902,11 +902,56 @@ export interface Release {
   approvedAt: string | null;
   publishedAt: string | null;
   createdAt: string;
+  /** Access key that published it (null: the panel, an automatic publication, or a key deleted since). */
+  apiKeyId: number | null;
+  apiKeyName: string | null;
+  /** Stable code of what stopped it (failed / blocked), null otherwise (RELEASE_ERROR_CODES). */
+  errorCode: ReleaseErrorCode | null;
 }
 
 export interface ReleaseDetail extends Release {
   log: ReleaseLogLine[];
 }
+
+/**
+ * Why a release did not go live, as a stable code (its `error` text is French and free):
+ * healthcheckFailed — the site did not answer its health check after the switch (previous release put back);
+ * reloadFailed — a container could not be reloaded on the new code (previous release put back);
+ * scanBlocked — the pre-publication scan blocks it: only an audited staff override publishes it;
+ * stagingEmpty — nothing to publish; interrupted — a restart of the panel stopped it;
+ * internalError — unexpected failure (details for the administrators); publishFailed — any other failure.
+ */
+export const RELEASE_ERROR_CODES = ['healthcheckFailed', 'reloadFailed', 'scanBlocked', 'stagingEmpty', 'interrupted', 'internalError', 'publishFailed'] as const;
+export type ReleaseErrorCode = typeof RELEASE_ERROR_CODES[number];
+
+/**
+ * Summary of a release for an agent / a CI (publish with wait, get_release, wait_for_release):
+ * where it stands, what the health check said, whether the previous release was put back.
+ */
+export interface ReleaseOutcome {
+  /** Not queued / scanning / publishing any more. */
+  settled: boolean;
+  /** The wait ended before the release settled: call wait_for_release / GET …/wait again. */
+  timedOut: boolean;
+  status: ReleaseStatus;
+  /** The release serves the site now. */
+  live: boolean;
+  /** passed / failed after the switch, notRun (not deployed yet, blocked, reload failed, still running). */
+  healthcheck: 'passed' | 'failed' | 'notRun';
+  /** The release failed after the switch and the previous release was put back automatically. */
+  autoReverted: boolean;
+  /** The release serving the site now (null: none). */
+  liveRelease: { id: number; number: number } | null;
+  scan: { verdict: ScanVerdict; riskScore: number | null; riskLevel: string | null; blocked: boolean; overridden: boolean } | null;
+  errorCode: ReleaseErrorCode | null;
+  /** What to do next (English, for a model). */
+  hint: string | null;
+}
+
+/** /api/v1 and MCP: a release with its outcome (publish with wait). */
+export type ApiV1ReleaseResult = Release & { outcome?: ReleaseOutcome };
+/** /api/v1 and MCP: a release with its log (staff names and backend details removed) and its outcome. */
+export type ApiV1ReleaseDetail = ReleaseDetail & { outcome: ReleaseOutcome };
 
 export interface PublishRequest {
   message?: string | null;
