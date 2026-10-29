@@ -190,6 +190,9 @@ export function createApp(): express.Express {
   app.use('/api', routes);
 
   healthRoute(app, 'normal');
+  // Deep health for an external monitor (token-protected, no session): services/healthMonitor.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  app.get('/health/deep', require('./services/healthMonitor/healthMonitor.service').deepHealthHandler);
   app.use(errorHandler);
   return app;
 }

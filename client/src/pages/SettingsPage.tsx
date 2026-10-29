@@ -21,6 +21,7 @@ import { MailSettingsSections } from '@/components/mail/MailSettingsSections';
 import { AppsSettingsSections } from '@/components/settings/AppsSettingsSections';
 import { ProxySettingsSections } from '@/components/settings/ProxySettingsSections';
 import { BackupSettingsSections } from '@/components/settings/BackupSettingsSections';
+import { HealthMonitorSection } from '@/components/settings/HealthMonitorSection';
 import { SettingsGroup, SettingsPageLayout, SettingsTocChips, useSettingsToc } from '@/components/settings/SettingsToc';
 import { useHostingMe } from '@/store/hostingStore';
 import { cn } from '@/utils/cn';
@@ -296,6 +297,9 @@ export function SettingsPage() {
 
       {/* ── External backups (destinations, passphrase, schedule, runs) ── */}
       {admin && <SettingsGroup id="settings-group-backups" title={t('settings.toc.backups') || 'Backups'}><BackupSettingsSections /></SettingsGroup>}
+
+      {/* ── Deep health endpoint token + outbound heartbeat (platform admin, master workspace) ── */}
+      {admin && masterAdmin && <SettingsGroup id="settings-group-health" title={t('settings.toc.health') || 'Health monitoring'}><HealthMonitorSection /></SettingsGroup>}
 
       {/* ── P2: notification channels of the workspace ── */}
       {canNotify && <SettingsGroup id="settings-group-notifications" title={t('settings.toc.notifications') || 'Notifications'}><NotificationChannelsSection /></SettingsGroup>}
