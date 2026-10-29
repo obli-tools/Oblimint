@@ -34,8 +34,12 @@
     "action": "Action",
     "allActions": "All",
     "allOfCategory": "All {{root}}.*",
+    "anyKey": "Any key",
     "anyUser": "Any user",
     "apply": "Apply",
+    "key": "Access key",
+    "viaKey": "via key {{name}}",
+    "viaKeyTitle": "Done with the access key",
     "clear": "Clear",
     "col": {
       "action": "Action",

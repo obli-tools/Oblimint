@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { FileText, RefreshCw, Search, ChevronDown, ChevronRight, Download, Filter } from 'lucide-react';
+import { FileText, RefreshCw, Search, ChevronDown, ChevronRight, Download, Filter, KeyRound } from 'lucide-react';
 import { clsx } from 'clsx';
-import { auditApi, type AuditLogRow, type AuditLogFilters } from '@/api/audit.api';
+import { auditApi, type AuditApiKeyRef, type AuditLogRow, type AuditLogFilters } from '@/api/audit.api';
+import { toCsv } from '@/utils/csv';
 import { usersApi } from '@/api/users.api';
 import type { User } from '@oblimint/shared';
 import { TenantBadge } from '@/components/common/TenantBadge';
@@ -72,19 +73,28 @@ function Row({ row, isMaster }: { row: AuditLogRow; isMaster: boolean }) {
  ) : (
  <span className="text-text-muted italic">{t('audit.system') || 'system'}</span>
  )}
+ {row.apiKeyId !== null && (
+ <span
+ className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] text-text-muted whitespace-nowrap"
+ title={`${t('audit.viaKeyTitle') || 'Done with the access key'} #${row.apiKeyId}`}
+ >
+ <KeyRound className="w-3 h-3" />
+ {t('audit.viaKey', { name: row.apiKeyName ?? `#${row.apiKeyId}`, defaultValue: 'via key {{name}}' })}
+ </span>
+ )}
  </td>
  {/* Below lg (touch, scrolling table) the resource wraps instead of
      truncating — the full path used to live only in title=. */}
- <td className="px-2 py-1.5 text-[11px] max-w-[260px] lg:truncate max-lg:min-w-[180px] max-lg:break-all" title={row.resourceType ? `${row.resourceType}:${row.resourceId ?? ''}` : ''}>
+ <td className="px-2 py-1.5 text-[11px] max-w-[260px] lg:truncate max-lg:min-w-[180px] max-lg:break-all" title={row.resourceType ? `${row.resourceType}:${row.resourcePath ?? ''}` : ''}>
  {row.resourceType ? (
  <span className="inline-flex items-baseline gap-1 max-lg:flex-wrap">
  {row.resourceName ? (
  <>
  <span className="text-text-primary">{row.resourceName}</span>
- <span className="text-[10px] text-text-muted font-mono">{row.resourceType}#{row.resourceId}</span>
+ <span className="text-[10px] text-text-muted font-mono">{row.resourceType}#{row.resourcePath}</span>
  </>
  ) : (
- <span className="text-text-muted font-mono">{row.resourceType}:{row.resourceId}</span>
+ <span className="text-text-muted font-mono">{row.resourceType}{row.resourcePath ? `:${row.resourcePath}` : ''}</span>
  )}
  </span>
  ) : (
@@ -126,6 +136,7 @@ export function AuditLogPage({ embedded = false }: { embedded?: boolean } = {}) 
  const [filters, setFilters] = useState<AuditLogFilters>({ limit: PAGE_SIZE, offset: 0 });
  const [actions, setActions] = useState<string[]>([]);
  const [users, setUsers] = useState<User[]>([]);
+ const [keys, setKeys] = useState<AuditApiKeyRef[]>([]);
  const [search, setSearch] = useState('');
 
  const load = useCallback(async (spinner = true) => {
@@ -149,6 +160,7 @@ export function AuditLogPage({ embedded = false }: { embedded?: boolean } = {}) 
  // Load distinct action list — narrow it to the tenant filter so the
  // dropdown only surfaces actions actually present in that tenant.
  auditApi.distinctActions(filterTenantId).then(setActions).catch(() => {});
+ auditApi.distinctKeys(filterTenantId).then(setKeys).catch(() => {});
  // Load tenant users for the "By user" filter.
  usersApi.list().then(setUsers).catch(() => {});
  }, [filterTenantId]);
@@ -163,17 +175,19 @@ export function AuditLogPage({ embedded = false }: { embedded?: boolean } = {}) 
  };
 
  const exportCsv = async () => {
- const header = ['When', 'Action', 'User', 'Resource', 'Resource Name', 'IP', 'Details'];
+ const header = ['When', 'Action', 'User', 'Access key', 'Resource', 'Resource Name', 'IP', 'Details'];
  const rows = items.map((r) => [
  new Date(r.createdAt).toISOString(),
  r.action,
  r.username || '',
- r.resourceType ? `${r.resourceType}:${r.resourceId ?? ''}` : '',
+ r.apiKeyId !== null ? `${r.apiKeyName ?? ''} #${r.apiKeyId}` : '',
+ r.resourceType ? `${r.resourceType}:${r.resourcePath ?? ''}` : '',
  r.resourceName || '',
  r.ipAddress || '',
  r.details ? JSON.stringify(r.details) : '',
  ]);
- const csv = [header, ...rows].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+ // Cells starting with = + - @ are neutralised (formula injection).
+ const csv = toCsv([header, ...rows]);
  // Shared helper: native Downloads in the Android shell, anchor download otherwise.
  const ok = await saveText(csv, `audit-log-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv;charset=utf-8');
  if (!ok) toast.error(t('common.error') || 'Error');
@@ -287,6 +301,19 @@ export function AuditLogPage({ embedded = false }: { embedded?: boolean } = {}) 
  onChange={(id) => setFilters({ ...filters, userId: id ?? undefined, offset: 0 })}
  />
  </div>
+ {keys.length > 0 && (
+ <div>
+ <label className="block text-[10px] uppercase text-text-muted mb-0.5">{t('audit.key') || 'Access key'}</label>
+ <select
+ value={filters.apiKeyId ?? ''}
+ onChange={(e) => setFilters({ ...filters, apiKeyId: e.target.value ? Number(e.target.value) : undefined, offset: 0 })}
+ className="py-1.5 coarse:py-2 px-2 text-xs bg-bg-secondary rounded text-text-primary min-w-[160px] max-w-full"
+ >
+ <option value="">{t('audit.anyKey') || 'Any key'}</option>
+ {keys.map((k) => <option key={k.id} value={k.id}>{k.name} (#{k.id})</option>)}
+ </select>
+ </div>
+ )}
  <div>
  <label className="block text-[10px] uppercase text-text-muted mb-0.5">{t('audit.since') || 'Since'}</label>
  <input

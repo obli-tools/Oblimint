@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import { isMasterTenant, type AuditLogRow } from '@oblimint/shared';
+import { isMasterTenant, type AuditApiKeyRef, type AuditLogRow } from '@oblimint/shared';
 import { db } from '../db';
 import { clientIp as resolveClientIp } from '../utils/clientIp';
 
@@ -13,7 +13,20 @@ export interface AuditLogEntry {
   ipAddress?: string;
 }
 
+/** `details.apiKey` written by withApiKey(), tolerant of older shapes. */
+export function apiKeyRefOf(details: unknown): { id: number; name: string } | null {
+  if (!details || typeof details !== 'object') return null;
+  const k = (details as { apiKey?: unknown }).apiKey;
+  if (!k || typeof k !== 'object') return null;
+  const id = Number((k as { id?: unknown }).id);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const name = (k as { name?: unknown }).name;
+  return { id, name: typeof name === 'string' && name ? name : `#${id}` };
+}
+
 function rowToAudit(r: any): AuditLogRow {
+  const details = typeof r.details === 'string' ? JSON.parse(r.details) : r.details;
+  const key = apiKeyRefOf(details);
   return {
     id: r.id,
     tenantId: r.tenant_id,
@@ -24,8 +37,10 @@ function rowToAudit(r: any): AuditLogRow {
     resourceType: r.resource_type,
     resourcePath: r.resource_path,
     resourceName: r.resource_name ?? null,
-    details: typeof r.details === 'string' ? JSON.parse(r.details) : r.details,
+    details,
     ipAddress: r.ip_address,
+    apiKeyId: key?.id ?? null,
+    apiKeyName: key?.name ?? null,
     createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   };
 }
@@ -104,6 +119,8 @@ export const auditService = {
     tenantId: number;
     action?: string;
     userId?: number;
+    /** Entries made through this access key (`details.apiKey.id`). */
+    apiKeyId?: number;
     resourceType?: string;
     search?: string;
     since?: Date;
@@ -129,6 +146,7 @@ export const auditService = {
       else base.where('al.action', params.action);
     }
     if (params.userId) base.where('al.user_id', params.userId);
+    if (params.apiKeyId) base.whereRaw(`(al.details->'apiKey'->>'id') = ?`, [String(params.apiKeyId)]);
     if (params.resourceType) base.where('al.resource_type', params.resourceType);
     if (params.since) base.where('al.created_at', '>=', params.since);
     if (params.until) base.where('al.created_at', '<=', params.until);
@@ -151,5 +169,24 @@ export const auditService = {
       .limit(limit)
       .offset(offset);
     return { items: rows.map(rowToAudit), total };
+  },
+
+  /** Access keys that appear in the log (latest name each), same scoping as list(). */
+  async distinctApiKeys(params: { tenantId: number; filterTenantId?: number; globalView?: boolean }): Promise<AuditApiKeyRef[]> {
+    const isMaster = isMasterTenant(params.tenantId) && params.globalView === true;
+    const q = db('audit_logs as al')
+      .whereRaw(`(al.details->'apiKey'->>'id') IS NOT NULL`)
+      .select(db.raw(`DISTINCT ON ((al.details->'apiKey'->>'id')) (al.details->'apiKey'->>'id') AS key_id, (al.details->'apiKey'->>'name') AS key_name`))
+      .orderByRaw(`(al.details->'apiKey'->>'id'), al.created_at DESC`)
+      .limit(500);
+    if (!isMaster) q.where('al.tenant_id', params.tenantId);
+    else if (Number.isFinite(params.filterTenantId)) q.where('al.tenant_id', params.filterTenantId);
+    const rows: Array<{ key_id: string | null; key_name: string | null }> = await q;
+    const out: AuditApiKeyRef[] = [];
+    for (const r of rows) {
+      const ref = apiKeyRefOf({ apiKey: { id: r.key_id, name: r.key_name } });
+      if (ref) out.push(ref);
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
   },
 };

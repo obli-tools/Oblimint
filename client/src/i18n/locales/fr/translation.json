@@ -34,8 +34,12 @@
     "action": "Action",
     "allActions": "Toutes",
     "allOfCategory": "Toutes les {{root}}.*",
+    "anyKey": "Toutes les clés",
     "anyUser": "Tous les utilisateurs",
     "apply": "Appliquer",
+    "key": "Clé d'accès",
+    "viaKey": "via la clé {{name}}",
+    "viaKeyTitle": "Action faite avec la clé d'accès",
     "clear": "Effacer",
     "col": {
       "action": "Action",

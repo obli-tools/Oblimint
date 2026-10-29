@@ -296,7 +296,16 @@ export interface AuditLogRow {
   resourceName: string | null;
   details: Record<string, unknown> | null;
   ipAddress: string | null;
+  /** Access key that performed the action (/api/v1 or /mcp), from `details.apiKey`. */
+  apiKeyId: number | null;
+  apiKeyName: string | null;
   createdAt: string;
+}
+
+/** One entry of `GET /api/audit/distinct-keys`: a key seen in the log. */
+export interface AuditApiKeyRef {
+  id: number;
+  name: string;
 }
 
 // ─── SOCKET.IO ───────────────────────────────────────────────────────────────
