@@ -1,0 +1,83 @@
+{
+  "inbox": {
+    "subtitle": "Ce qui s’est passé sur vos sites, domaines et comptes. Conservé 90 jours.",
+    "seeAll": "Voir toutes les notifications",
+    "preferences": "Préférences de notification",
+    "preferencesHint": "Choisissez, pour chaque type d’événement, s’il apparaît dans la cloche et s’il vous est aussi envoyé par e-mail.",
+    "prefsLoadFailed": "Impossible de charger les préférences de notification",
+    "prefsSaveFailed": "Impossible d’enregistrer les préférences de notification",
+    "loadFailed": "Impossible de charger les notifications",
+    "actionFailed": "L’action a échoué",
+    "all": "Toutes",
+    "unread": "Non lues",
+    "allFamilies": "Tous les événements",
+    "emptyUnread": "Rien de non lu.",
+    "loadMore": "Afficher plus",
+    "eventFamily": "Événements",
+    "channelApp": "Dans le panel",
+    "channelEmail": "E-mail",
+    "emailUnavailable": "Les e-mails ne sont pas disponibles : la plateforme n’a pas encore d’expéditeur configuré.",
+    "emailNoAddress": "Ajoutez une adresse e-mail à votre profil pour recevoir les notifications par e-mail.",
+    "emailTo": "Les e-mails sont envoyés à {{email}} (votre profil).",
+    "family": {
+      "releases": "Releases et modifications",
+      "certificates": "Certificats",
+      "domains": "Domaines et DNS",
+      "quota": "Quotas",
+      "mail": "Mail",
+      "apps": "Applications et bases de données",
+      "monitoring": "Surveillance et tâches planifiées",
+      "security": "Sécurité",
+      "platform": "Plateforme"
+    },
+    "familyHint": {
+      "releases": "Releases en attente d’approbation, approuvées ou rejetées, fenêtres à valider, détections de l’analyse, mises à jour de CMS.",
+      "certificates": "Certificats délivrés, en échec ou bientôt expirés.",
+      "domains": "Propriété de domaine vérifiée ou reprise, échecs de synchronisation DNS.",
+      "quota": "Seuils de quota atteints, envois bloqués, compte suspendu.",
+      "mail": "Boîtes presque pleines, envoi suspendu, pannes du service mail.",
+      "apps": "Déploiements et mises à jour d’applications, instances de bases de données.",
+      "monitoring": "Sondes en panne / rétablies, tâches planifiées et workflows en échec.",
+      "security": "Adresses bannies, configurations de proxy refusées ou restaurées.",
+      "platform": "Mises à jour de la plateforme."
+    }
+  },
+  "transactionalMail": {
+    "title": "Expéditeur des e-mails",
+    "description": "L’adresse que le panel utilise pour écrire aux personnes : les notifications choisies par chaque utilisateur, et bientôt les réinitialisations de mot de passe. Soit une boîte hébergée sur cette plateforme (le moteur mail doit être actif), soit un serveur SMTP externe.",
+    "ready": "prêt",
+    "incomplete": "incomplet",
+    "mode": {
+      "off": "Désactivé",
+      "platform": "Moteur mail de la plateforme",
+      "smtp": "SMTP externe"
+    },
+    "platformUnavailable": "Le moteur mail de la plateforme n’est pas actif : rien ne peut partir par ce moyen.",
+    "fromName": "Nom de l’expéditeur",
+    "fromNameHint": "Affiché comme expéditeur (« Oblimint » si vide).",
+    "mailbox": "Boîte d’envoi",
+    "mailboxHint": "Une boîte hébergée sur cette plateforme (ex. noreply@example.com) : les e-mails partent en son nom.",
+    "mailboxPassword": "Mot de passe de la boîte",
+    "from": "Adresse d’expédition",
+    "host": "Serveur SMTP",
+    "port": "Port",
+    "secure": "TLS dès la connexion (465)",
+    "username": "Identifiant",
+    "usernameHint": "Vide : pas d’authentification.",
+    "password": "Mot de passe",
+    "passwordKept": "•••••••• (conservé — saisir pour remplacer)",
+    "passwordAgain": "Le serveur a changé : saisissez de nouveau le mot de passe (celui enregistré ne part que là où il a été donné).",
+    "saved": "Expéditeur enregistré",
+    "saveFailed": "Impossible d’enregistrer l’expéditeur",
+    "testTo": "Envoyer un test à",
+    "sendTest": "Envoyer un test",
+    "testSent": "E-mail de test envoyé à {{to}}",
+    "testFailedWith": "Le test a échoué : {{error}}",
+    "log": "Derniers e-mails",
+    "status": {
+      "sent": "envoyé",
+      "failed": "échec",
+      "skipped": "non envoyé"
+    }
+  }
+}

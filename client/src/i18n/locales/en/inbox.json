@@ -1,0 +1,83 @@
+{
+  "inbox": {
+    "subtitle": "What happened on your sites, domains and accounts. Kept 90 days.",
+    "seeAll": "See all notifications",
+    "preferences": "Notification preferences",
+    "preferencesHint": "Choose, for each kind of event, whether it appears in the bell and whether it is also sent to you by e-mail.",
+    "prefsLoadFailed": "Failed to load the notification preferences",
+    "prefsSaveFailed": "Failed to save the notification preferences",
+    "loadFailed": "Failed to load the notifications",
+    "actionFailed": "The action failed",
+    "all": "All",
+    "unread": "Unread",
+    "allFamilies": "All events",
+    "emptyUnread": "Nothing unread.",
+    "loadMore": "Load more",
+    "eventFamily": "Events",
+    "channelApp": "In the panel",
+    "channelEmail": "E-mail",
+    "emailUnavailable": "E-mails are not available: the platform has no e-mail sender configured yet.",
+    "emailNoAddress": "Add an e-mail address to your profile to receive notifications by e-mail.",
+    "emailTo": "E-mails are sent to {{email}} (your profile).",
+    "family": {
+      "releases": "Releases and changes",
+      "certificates": "Certificates",
+      "domains": "Domains and DNS",
+      "quota": "Quotas",
+      "mail": "Mail",
+      "apps": "Applications and databases",
+      "monitoring": "Monitoring and cron jobs",
+      "security": "Security",
+      "platform": "Platform"
+    },
+    "familyHint": {
+      "releases": "Releases awaiting approval, approved or rejected, windows to review, scanner findings, CMS updates.",
+      "certificates": "Certificates issued, failing or expiring soon.",
+      "domains": "Domain ownership verified or taken back, DNS synchronisation failures.",
+      "quota": "Quota thresholds reached, uploads blocked, account suspended.",
+      "mail": "Mailboxes almost full, outbound mail suspended, mail service failures.",
+      "apps": "Application deployments and updates, database instances.",
+      "monitoring": "Monitors down / recovered, failing cron jobs and workflows.",
+      "security": "Banned addresses, refused or rolled back proxy configurations.",
+      "platform": "Platform updates."
+    }
+  },
+  "transactionalMail": {
+    "title": "E-mail sender",
+    "description": "The address the panel uses to e-mail people: notifications chosen by each user, and soon password resets. Either a mailbox hosted on this platform (the mail engine must be active) or an external SMTP server.",
+    "ready": "ready",
+    "incomplete": "incomplete",
+    "mode": {
+      "off": "Off",
+      "platform": "Platform mail engine",
+      "smtp": "External SMTP"
+    },
+    "platformUnavailable": "The platform mail engine is not active: nothing can be sent this way.",
+    "fromName": "Sender name",
+    "fromNameHint": "Shown as the sender (« Oblimint » when empty).",
+    "mailbox": "Sending mailbox",
+    "mailboxHint": "A mailbox hosted on this platform (e.g. noreply@example.com): the e-mails are sent as it.",
+    "mailboxPassword": "Mailbox password",
+    "from": "Sender address",
+    "host": "SMTP server",
+    "port": "Port",
+    "secure": "TLS from the start (465)",
+    "username": "User name",
+    "usernameHint": "Empty: no authentication.",
+    "password": "Password",
+    "passwordKept": "•••••••• (kept — type to replace)",
+    "passwordAgain": "The server changed: enter the password again (the stored one only goes where it was given).",
+    "saved": "E-mail sender saved",
+    "saveFailed": "Failed to save the e-mail sender",
+    "testTo": "Send a test to",
+    "sendTest": "Send a test",
+    "testSent": "Test e-mail sent to {{to}}",
+    "testFailedWith": "The test failed: {{error}}",
+    "log": "Latest e-mails",
+    "status": {
+      "sent": "sent",
+      "failed": "failed",
+      "skipped": "not sent"
+    }
+  }
+}

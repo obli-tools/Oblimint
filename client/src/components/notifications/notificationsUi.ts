@@ -47,6 +47,11 @@ export function eventLabel(t: TFunction, e: NotificationEvent): string {
     'platform.updateAvailable': 'Platform update available',
     'platform.updated': 'Platform updated',
     'platform.updateFailed': 'Platform update failed',
+    'release.pendingApproval': 'Release waiting for approval',
+    'release.approved': 'Release approved',
+    'release.rejected': 'Release rejected',
+    'domain.verified': 'Domain ownership verified',
+    'domain.reclaimed': 'Domain taken back by its owner',
   };
   return t(`notifications.event.${eventKey(e)}`) || fallback[e];
 }

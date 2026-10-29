@@ -271,7 +271,14 @@
   },
   "notificationCenter": {
     "empty": "Aucune notification",
-    "title": "Centre de notifications"
+    "title": "Centre de notifications",
+    "markAllRead": "Tout marquer comme lu",
+    "markRead": "Marquer comme lu",
+    "dismiss": "Retirer",
+    "agoSeconds": "il y a {{count}} s",
+    "agoMinutes": "il y a {{count}} min",
+    "agoHours": "il y a {{count}} h",
+    "agoDays": "il y a {{count}} j"
   },
   "notifications": {
     "title": "Notifications"
@@ -443,6 +450,7 @@
       "edge": "Edge & bannissements",
       "backups": "Sauvegardes",
       "notifications": "Notifications",
+      "emailSender": "Expéditeur des e-mails",
       "obligate": "SSO Obligate"
     }
   },

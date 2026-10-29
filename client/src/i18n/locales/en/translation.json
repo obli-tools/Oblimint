@@ -271,7 +271,14 @@
   },
   "notificationCenter": {
     "empty": "No notifications",
-    "title": "Notification Center"
+    "title": "Notification Center",
+    "markAllRead": "Mark all as read",
+    "markRead": "Mark as read",
+    "dismiss": "Dismiss",
+    "agoSeconds": "{{count}}s ago",
+    "agoMinutes": "{{count}} min ago",
+    "agoHours": "{{count}} h ago",
+    "agoDays": "{{count}} d ago"
   },
   "notifications": {
     "title": "Notifications"
@@ -443,6 +450,7 @@
       "edge": "Edge & bans",
       "backups": "Backups",
       "notifications": "Notifications",
+      "emailSender": "E-mail sender",
       "obligate": "Obligate SSO"
     }
   },

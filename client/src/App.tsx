@@ -11,6 +11,7 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { LoginPage } from '@/pages/LoginPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { ProfilePage } from '@/pages/ProfilePage';
+import { NotificationsPage } from '@/pages/NotificationsPage';
 import { AdminUsersPage } from '@/pages/AdminUsersPage';
 import { TenantsPage } from '@/pages/TenantsPage';
 import { NodesPage } from '@/pages/NodesPage';
@@ -135,6 +136,7 @@ function NormalRoutes() {
 
           {/* User */}
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
 
           {/* Admin-only */}
           <Route element={<ProtectedRoute requiredRole="admin" />}>

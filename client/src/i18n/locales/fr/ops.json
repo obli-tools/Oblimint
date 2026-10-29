@@ -436,7 +436,12 @@
       "workflowFailed": "Workflow en échec",
       "platformUpdateAvailable": "Mise à jour de la plateforme disponible",
       "platformUpdated": "Plateforme mise à jour",
-      "platformUpdateFailed": "Échec de la mise à jour de la plateforme"
+      "platformUpdateFailed": "Échec de la mise à jour de la plateforme",
+      "releasePendingApproval": "Release en attente d’approbation",
+      "releaseApproved": "Release approuvée",
+      "releaseRejected": "Release rejetée",
+      "domainVerified": "Propriété du domaine vérifiée",
+      "domainReclaimed": "Domaine repris par son propriétaire"
     },
     "form": {
       "botToken": "Jeton du bot",

@@ -21,6 +21,7 @@ import { MailSettingsSections } from '@/components/mail/MailSettingsSections';
 import { AppsSettingsSections } from '@/components/settings/AppsSettingsSections';
 import { ProxySettingsSections } from '@/components/settings/ProxySettingsSections';
 import { BackupSettingsSections } from '@/components/settings/BackupSettingsSections';
+import { TransactionalMailSection } from '@/components/settings/TransactionalMailSection';
 import { SettingsGroup, SettingsPageLayout, SettingsTocChips, useSettingsToc } from '@/components/settings/SettingsToc';
 import { useHostingMe } from '@/store/hostingStore';
 import { cn } from '@/utils/cn';
@@ -296,6 +297,9 @@ export function SettingsPage() {
 
       {/* ── External backups (destinations, passphrase, schedule, runs) ── */}
       {admin && <SettingsGroup id="settings-group-backups" title={t('settings.toc.backups') || 'Backups'}><BackupSettingsSections /></SettingsGroup>}
+
+      {/* ── Transactional e-mail sender of the platform (platform admin on the master tenant) ── */}
+      {admin && masterAdmin && <SettingsGroup id="settings-group-email-sender" title={t('settings.toc.emailSender') || 'E-mail sender'}><TransactionalMailSection /></SettingsGroup>}
 
       {/* ── P2: notification channels of the workspace ── */}
       {canNotify && <SettingsGroup id="settings-group-notifications" title={t('settings.toc.notifications') || 'Notifications'}><NotificationChannelsSection /></SettingsGroup>}
