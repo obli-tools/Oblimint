@@ -125,8 +125,11 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`delete_paths\` | Delete files / folders | \`files.write\` |
 | \`extract_archive\` | Extract a \`.zip\` / \`.tar\` / \`.tar.gz\` already in the site | \`files.write\` |
 | \`staging_changes\` | Unpublished changes (\`pendingChanges\`, \`files\`), \`base\` / \`baseIsLive\`, \`liveChanges\` (what \`publish\` would change on the live site), \`rolledBack\`, \`warningItems\`, \`restore\` | \`files.read\` |
-| \`publish\` | Publish (new live release), \`message?\`, \`override_rollback?\` (only on the human's explicit request) | \`releases.publish\` |
-| \`list_releases\` | Release history, newest first (\`limit\`) | — |
+| \`publish\` | Publish (new live release), \`message?\`, \`override_rollback?\` (only on the human's explicit request), \`wait?\` (default true: waits ≤ 25 s and returns the release with its \`outcome\`, see §5 « After publishing ») | \`releases.publish\` |
+| \`list_releases\` | Release history, newest first (\`limit\`); \`apiKeyName\` (the key that published it), \`errorCode\` | — |
+| \`get_release\` | One release: its pipeline log (French; backend details removed) and its \`outcome\` | — |
+| \`wait_for_release\` | Wait until a release is settled (\`timeout_s\` ≤ 60, default 30), then as \`get_release\`; \`outcome.timedOut\`: call it again | — |
+| \`diff_release\` | Changed files of a release against \`"previous"\` (default), \`"live"\` or a release id (\`against\`); \`file\` for one full patch (≤ 96 KB). Shows the code as is | \`files.read\` + code right |
 | \`rollback\` | Back to a release (\`release_id\`); the staging is not changed | \`releases.publish\` |
 | \`list_release_files\` / \`read_release_file\` | Files of any release, read from its history (paged: \`nextOffset\`; windows of ~96 KB) | \`files.read\` + code right |
 | \`restore_release_to_staging\` | Make the staging exactly a release (\`discard_pending?\`); never publishes | \`files.write\` + code right |
@@ -153,7 +156,7 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`import_sql\` | Run a \`.sql\` / \`.sql.gz\` dump (uploaded first as a file of a site) into a database | \`databases.manage\` + \`files.read\` |
 | \`list_database_tables\` / \`describe_table\` | Tables and views of a database (estimated rows, size); columns, keys, indexes, foreign keys of one table | \`databases.manage\` |
 | \`query_database\` | **One** SQL statement (\`sql\`), **read-only by default** (rolled back); \`write: true\` to change data or structure; \`max_rows?\` (≤ 500), \`timeout_s?\` (≤ 60) — see §5 « Working on the data » | \`databases.manage\` |
-| \`read_logs\` | \`error\` (default), \`access\` or \`app\` logs; \`query\` filter, \`limit\` (≤ 2000) | \`logs.read\` |
+| \`read_logs\` | \`error\` (default), \`access\` or \`app\` logs; \`query\` filter, \`limit\` (≤ 2000), \`since?\` / \`until?\` (ISO 8601), \`status?\` (access only: \`404\`, \`5xx\`) | \`logs.read\` |
 
 **Bases (\`base\`)**: \`apache-php5.6\` (legacy code being ported only: no security fix), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supported), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (plain HTML/JS/CSS).
 **Profiles (\`app_profile\`)**: \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (document root \`public\`), \`generic-php\`, \`static\`. A profile sets the document root and declares the data folders (e.g. \`wp-content/uploads\`).
@@ -177,10 +180,15 @@ The idea: the agent develops on the platform, puts things live **only once the w
 
 ### After publishing
 
-1. \`list_releases\`: the release is \`ready\` (or \`awaiting_approval\`: tell the human).
-2. Check that the site answers (its URL) and \`read_logs\` (\`source: "error"\`).
-3. Broken: \`rollback\` to the previous release at once, then fix in the staging.
-4. A preview still running (\`get_preview\`): \`stop_preview\`.
+1. Read the \`outcome\` returned by \`publish\` (or \`wait_for_release\` when \`outcome.timedOut\`): \`live\`, \`healthcheck\` (\`passed\` / \`failed\` / \`notRun\`), \`autoReverted\` (the previous release was put back), \`scan\` (verdict, risk), \`errorCode\` and \`hint\`.
+   - \`healthcheckFailed\`: the site did not answer its health check on the new code; the previous release is live again. \`get_release\` for the log, \`read_logs\` (\`source: "error"\`, \`since\`: the release's \`createdAt\`), fix, publish again.
+   - \`reloadFailed\`: a container could not be reloaded; the previous release is live again. Retry later; tell the human if it happens again.
+   - \`scanBlocked\`: the security scan blocks the release (\`awaiting_approval\`); only a staff override publishes it. Show the findings to the human.
+   - \`awaiting_approval\` without an error code: the site publishes with approval (or the content is suspicious): tell the human.
+2. \`diff_release\` (\`against: "live"\` before, \`"previous"\` after) shows exactly what changed.
+3. Check that the site answers (its URL) and \`read_logs\` (\`source: "error"\`, \`since\`).
+4. Broken: \`rollback\` to the previous release at once, then fix in the staging.
+5. A preview still running (\`get_preview\`): \`stop_preview\`.
 
 ### Rollbacks by a human
 
@@ -323,8 +331,11 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | POST | \`/sites/:id/files/move\` · \`/copy\` | \`{ items: [{ from, to }], overwrite? }\` | \`files.write\` |
 | POST | \`/sites/:id/files/extract\` | \`{ path, to?, overwrite? }\` | \`files.write\` |
 | GET | \`/sites/:id/staging\` | unpublished changes, base vs live, rollback pending | \`files.read\` |
-| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback? }\` (≤ 500 characters) | \`releases.publish\` |
+| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| seconds ≤ 25 }\` (message ≤ 500 characters); with \`wait\`: the release + \`outcome\` | \`releases.publish\` |
 | GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
+| GET | \`/sites/:id/releases/:releaseId\` | the release, its log and its \`outcome\` | — |
+| GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (seconds ≤ 60, default 30): as above once settled (\`outcome.timedOut\` otherwise) | — |
+| GET | \`/sites/:id/releases/:releaseId/diff\` | \`?against=previous\\|live\\|empty\\|<releaseId>&file=\` (one patch ≤ 256 KB) | \`files.read\` + code right |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
 | GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` |
 | GET | \`/sites/:id/releases/:releaseId/files/text\` | \`?path=&encoding=utf8\\|base64&offset=\` (≤ 2 MB text, 8 MB base64) | \`files.read\` |
@@ -392,6 +403,9 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`notASubdomain\` (400) | The name is not under a domain of the account | \`list_parent_domains\`; a new domain is added in the panel |
 | \`slugTaken\` (409) | Slug already used | Pick another one |
 | \`publishInProgress\` / \`noChanges\` (409) | Publish already running / nothing to publish | Wait / check \`staging_changes\` |
+| \`healthcheckFailed\` · \`reloadFailed\` (release \`errorCode\`) | The release failed after the switch: health check failed · a container could not be reloaded; the previous release is live again (\`outcome.autoReverted\`) | \`get_release\`, \`read_logs\` with \`since\`; fix and publish again · retry later |
+| \`scanBlocked\` (release \`errorCode\`) | The security scan blocks the release; only a staff override publishes it | Show \`scan.findings\` to the human |
+| \`stagingEmpty\` · \`interrupted\` · \`internalError\` · \`publishFailed\` (release \`errorCode\`) | Nothing to publish · a restart stopped it · unexpected failure · other failure (see \`error\`) | Write the code · publish again · retry later, tell the human |
 | \`hostdOutdated\` (503) | The server's file service is older than the panel | Tell the human (an update to apply in the panel), then retry |
 | \`hostdBusy\` (503) | The host agent is busy | Retry in a minute |
 | \`keyNotCreator\` (403) | Deleting a database / user the key did not create | Ask the human |
@@ -535,8 +549,11 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`delete_paths\` | Supprimer fichiers / dossiers | \`files.write\` |
 | \`extract_archive\` | Extraire un \`.zip\` / \`.tar\` / \`.tar.gz\` déjà présent dans le site | \`files.write\` |
 | \`staging_changes\` | Changements non publiés (\`pendingChanges\`, \`files\`), \`base\` / \`baseIsLive\`, \`liveChanges\` (ce que \`publish\` changerait sur le site en ligne), \`rolledBack\`, \`warningItems\`, \`restore\` | \`files.read\` |
-| \`publish\` | Publier (nouvelle release en ligne), \`message?\`, \`override_rollback?\` (seulement à la demande explicite de l'humain) | \`releases.publish\` |
-| \`list_releases\` | Historique des releases, la plus récente en premier (\`limit\`) | — |
+| \`publish\` | Publier (nouvelle release en ligne), \`message?\`, \`override_rollback?\` (seulement à la demande explicite de l'humain), \`wait?\` (true par défaut : attend 25 s au plus et renvoie la release avec son \`outcome\`, voir §5 « Après publication ») | \`releases.publish\` |
+| \`list_releases\` | Historique des releases, la plus récente en premier (\`limit\`) ; \`apiKeyName\` (la clé qui l'a publiée), \`errorCode\` | — |
+| \`get_release\` | Une release : son journal de publication (en français, sans détail technique interne) et son \`outcome\` | — |
+| \`wait_for_release\` | Attendre qu'une release soit terminée (\`timeout_s\` ≤ 60, 30 par défaut), puis comme \`get_release\` ; \`outcome.timedOut\` : rappelle-le | — |
+| \`diff_release\` | Fichiers changés par une release par rapport à \`"previous"\` (par défaut), \`"live"\` ou un id de release (\`against\`) ; \`file\` pour le patch complet d'un fichier (≤ 96 Ko). Montre le code tel quel | \`files.read\` + droit sur le code |
 | \`rollback\` | Retour à une release (\`release_id\`) ; le staging n'est pas modifié | \`releases.publish\` |
 | \`list_release_files\` / \`read_release_file\` | Fichiers de n'importe quelle release, lus dans son historique (pagination : \`nextOffset\` ; fenêtres d'environ 96 Ko) | \`files.read\` + droit sur le code |
 | \`restore_release_to_staging\` | Rendre le staging identique à une release (\`discard_pending?\`) ; ne publie jamais | \`files.write\` + droit sur le code |
@@ -563,7 +580,7 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`import_sql\` | Exécuter un dump \`.sql\` / \`.sql.gz\` (déposé d'abord comme fichier d'un site) dans une base | \`databases.manage\` + \`files.read\` |
 | \`list_database_tables\` / \`describe_table\` | Tables et vues d'une base (lignes estimées, taille) ; colonnes, clés, index, clés étrangères d'une table | \`databases.manage\` |
 | \`query_database\` | **Une** instruction SQL (\`sql\`), **en lecture seule par défaut** (annulée) ; \`write: true\` pour modifier données ou structure ; \`max_rows?\` (≤ 500), \`timeout_s?\` (≤ 60) — voir §5 « Travailler sur les données » | \`databases.manage\` |
-| \`read_logs\` | Journaux \`error\` (par défaut), \`access\` ou \`app\` ; filtre \`query\`, \`limit\` (≤ 2000) | \`logs.read\` |
+| \`read_logs\` | Journaux \`error\` (par défaut), \`access\` ou \`app\` ; filtre \`query\`, \`limit\` (≤ 2000), \`since?\` / \`until?\` (ISO 8601), \`status?\` (access seulement : \`404\`, \`5xx\`) | \`logs.read\` |
 
 **Bases (\`base\`)** : \`apache-php5.6\` (code ancien en cours de portage uniquement : aucun correctif de sécurité), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supporté), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (HTML/JS/CSS pur).
 **Profils (\`app_profile\`)** : \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (racine web \`public\`), \`generic-php\`, \`static\`. Un profil règle la racine web et déclare les dossiers de données (ex. \`wp-content/uploads\`).
@@ -587,10 +604,15 @@ L'idée : l'agent développe sur la plateforme, ne met en ligne **qu'une fois le
 
 ### Après publication
 
-1. \`list_releases\` : la release est \`ready\` (ou \`awaiting_approval\` : préviens l'humain).
-2. Vérifie que le site répond (son URL) et \`read_logs\` (\`source: "error"\`).
-3. Cassé : \`rollback\` vers la release précédente tout de suite, puis corrige dans le staging.
-4. Un aperçu encore en marche (\`get_preview\`) : \`stop_preview\`.
+1. Lis l'\`outcome\` renvoyé par \`publish\` (ou par \`wait_for_release\` si \`outcome.timedOut\`) : \`live\`, \`healthcheck\` (\`passed\` / \`failed\` / \`notRun\`), \`autoReverted\` (la release précédente a été remise), \`scan\` (verdict, risque), \`errorCode\` et \`hint\`.
+   - \`healthcheckFailed\` : le site n'a pas répondu à son contrôle de santé sur le nouveau code ; la release précédente est de nouveau en ligne. \`get_release\` pour le journal, \`read_logs\` (\`source: "error"\`, \`since\` : le \`createdAt\` de la release), corrige, republie.
+   - \`reloadFailed\` : un conteneur n'a pas pu être rechargé ; la release précédente est de nouveau en ligne. Réessaie plus tard ; préviens l'humain si ça recommence.
+   - \`scanBlocked\` : l'analyse de sécurité bloque la release (\`awaiting_approval\`) ; seule une dérogation du staff la publie. Montre les détections à l'humain.
+   - \`awaiting_approval\` sans code d'erreur : le site publie avec validation (ou le contenu est suspect) : préviens l'humain.
+2. \`diff_release\` (\`against: "live"\` avant, \`"previous"\` après) montre exactement ce qui a changé.
+3. Vérifie que le site répond (son URL) et \`read_logs\` (\`source: "error"\`, \`since\`).
+4. Cassé : \`rollback\` vers la release précédente tout de suite, puis corrige dans le staging.
+5. Un aperçu encore en marche (\`get_preview\`) : \`stop_preview\`.
 
 ### Retours arrière par un humain
 
@@ -729,7 +751,10 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | POST | \`/sites/:id/files/move\` · \`/copy\` | \`{ items: [{ from, to }], overwrite? }\` | \`files.write\` |
 | POST | \`/sites/:id/files/extract\` | \`{ path, to?, overwrite? }\` | \`files.write\` |
 | GET | \`/sites/:id/staging\` | changements non publiés, base comparée à la release en ligne, retour arrière en attente | \`files.read\` |
-| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback? }\` (≤ 500 caractères) | \`releases.publish\` |
+| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| secondes ≤ 25 }\` (message ≤ 500 caractères) ; avec \`wait\` : la release + \`outcome\` | \`releases.publish\` |
+| GET | \`/sites/:id/releases/:releaseId\` | la release, son journal et son \`outcome\` | — |
+| GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (secondes ≤ 60, 30 par défaut) : comme ci-dessus une fois terminée (\`outcome.timedOut\` sinon) | — |
+| GET | \`/sites/:id/releases/:releaseId/diff\` | \`?against=previous\\|live\\|empty\\|<releaseId>&file=\` (un patch ≤ 256 Ko) | \`files.read\` + droit sur le code |
 | GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
 | GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` |
@@ -798,6 +823,9 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`notASubdomain\` (400) | Le nom n'est pas sous un domaine du compte | \`list_parent_domains\` ; un nouveau domaine se crée dans le panel |
 | \`slugTaken\` (409) | Slug déjà utilisé | En choisir un autre |
 | \`publishInProgress\` / \`noChanges\` (409) | Publication en cours / rien à publier | Attendre / vérifier \`staging_changes\` |
+| \`healthcheckFailed\` · \`reloadFailed\` (\`errorCode\` de la release) | La release a échoué après la bascule : contrôle de santé en échec · un conteneur n'a pas pu être rechargé ; la release précédente est de nouveau en ligne (\`outcome.autoReverted\`) | \`get_release\`, \`read_logs\` avec \`since\` ; corriger et republier · réessayer plus tard |
+| \`scanBlocked\` (\`errorCode\` de la release) | L'analyse de sécurité bloque la release ; seule une dérogation du staff la publie | Montrer \`scan.findings\` à l'humain |
+| \`stagingEmpty\` · \`interrupted\` · \`internalError\` · \`publishFailed\` (\`errorCode\` de la release) | Rien à publier · un redémarrage l'a arrêtée · échec inattendu · autre échec (voir \`error\`) | Écrire le code · republier · réessayer plus tard, prévenir l'humain |
 | \`hostdOutdated\` (503) | Le service de fichiers du serveur est plus ancien que le panel | Prévenir l'humain (mise à jour à appliquer dans le panel), puis réessayer |
 | \`hostdBusy\` (503) | L'agent de l'hôte est occupé | Réessayer dans une minute |
 | \`keyNotCreator\` (403) | Suppression d'une base / d'un utilisateur que la clé n'a pas créé | Demander à l'humain |

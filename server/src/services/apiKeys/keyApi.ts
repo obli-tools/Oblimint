@@ -1,7 +1,8 @@
 import type { Request } from 'express';
 import type { Readable } from 'stream';
 import type {
-  ApiV1Me, ApiV1ParentDomain, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadSession, LogQueryResult, Release,
+  ApiV1Me, ApiV1ParentDomain, ApiV1ReleaseDetail, ApiV1ReleaseResult, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText,
+  FileUploadChunkResult, FileUploadSession, LogQueryResult, Release, ReleaseDiff, ReleaseLogLine,
   PreviewFetchResult, PreviewLink, PreviewStartResult, SitePreview,
   ReleaseFileContent, ReleaseFileList, SiteCreate, StagingRestoreResult, StagingRestoreRunning, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
 } from '@oblimint/shared';
@@ -15,7 +16,7 @@ import { assertReadsCode, loadAccount, loadSite } from '../hosting/access';
 import type { AccountRow, SiteRow } from '../hosting/rows';
 import { domainsService } from '../hosting/domains.service';
 import { sitesService } from '../hosting/sites.service';
-import { clientStatusMessage, releaseForActor } from '../hosting/statusMessage';
+import { clientStatusMessage } from '../hosting/statusMessage';
 import { appConfigService } from '../appConfig.service';
 import { publicPanelOrigin } from '../panelHosts';
 import { cronService } from '../cron/cron.service';
@@ -23,6 +24,7 @@ import type { DataPathInputBody, DataPathUpdateBody } from '../../validators/hos
 import { assertSource, logsService } from '../logs/logs.service';
 import { releaseService } from '../releases/release.service';
 import { liveStates } from '../releases/liveState';
+import { publicReleaseText, releaseOutcome } from '../releases/outcome';
 import { previewService } from '../previews/previews.service';
 import { apiKeysService, keyAllowsDomain, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
 
@@ -188,6 +190,46 @@ async function nonMembers(accountId: number, userIds: Array<number | null | unde
   const rows = await db('users as u').leftJoin('account_users as au', function joinMember() { this.on('au.user_id', '=', 'u.id').andOnVal('au.account_id', '=', accountId); })
     .whereIn('u.id', ids).select('u.id', 'u.kind', 'au.user_id as member') as Array<{ id: number; kind: string; member: number | null }>;
   return new Set(rows.filter((r) => r.kind === 'staff' || r.member === null).map((r) => Number(r.id)));
+}
+
+/** publish with wait: longest wait for the release to settle. */
+export const PUBLISH_WAIT_MAX_MS = 25_000;
+/** wait_for_release / GET …/releases/:rid/wait: longest wait. */
+export const RELEASE_WAIT_MAX_MS = 60_000;
+
+/**
+ * Releases as a key reads them: the name of a platform staff member is never
+ * shown (author, approver, scan override), the error and the log lines lose
+ * their backend details (raw causes, URLs, paths, addresses: publicReleaseText).
+ */
+async function keyReleases<T extends Release & { log?: ReleaseLogLine[] }>(site: Pick<SiteRow, 'account_id'>, items: T[]): Promise<T[]> {
+  if (!items.length) return items;
+  const approvers = await db('releases').whereIn('id', items.map((r) => r.id)).select('id', 'approved_by') as Array<{ id: number; approved_by: number | null }>;
+  const approverOf = new Map(approvers.map((a) => [Number(a.id), a.approved_by]));
+  const hidden = await nonMembers(site.account_id, [...items.map((r) => r.authorUserId), ...approvers.map((a) => a.approved_by)]);
+  return items.map((r) => {
+    const approver = approverOf.get(r.id);
+    const out: T = {
+      ...r,
+      error: publicReleaseText(r.error),
+      ...(r.authorUserId && hidden.has(r.authorUserId) ? { authorName: null } : {}),
+      ...(approver && hidden.has(Number(approver)) ? { approvedBy: null } : {}),
+      // Only a staff member overrides a blocked scan (M5): never named to a key.
+      ...(r.scan?.override ? { scan: { ...r.scan, override: { ...r.scan.override, by: 'staff' } } } : {}),
+    };
+    if (Array.isArray(r.log)) out.log = r.log.map((l) => ({ ...l, message: publicReleaseText(l.message) }));
+    return out;
+  });
+}
+
+/** One release as a key reads it, with its outcome (the release serving the site now included). */
+async function releaseDetail(site: SiteRow, releaseId: number, waited = false): Promise<ApiV1ReleaseDetail> {
+  const raw = await releaseService.get(site.id, releaseId);
+  const cur = await db('sites as s').join('releases as r', 'r.id', 's.current_release_id').where('s.id', site.id)
+    .first('r.id', 'r.number') as { id: number; number: number } | undefined;
+  const outcome = releaseOutcome(raw, cur ? { id: Number(cur.id), number: Number(cur.number) } : null, { timedOut: waited });
+  const [shown] = await keyReleases(site, [raw]);
+  return { ...shown, outcome };
 }
 
 /** Paths in an audit entry: the first 50 of a batch. */
@@ -373,7 +415,9 @@ export const keyApi = {
    * files of a release a human rolled back from, unless overrideRollback (the
    * human asked for it): audited.
    */
-  async publish(ctx: ApiKeyContext, req: Request, siteId: number, message: string | null, opts: { overrideRollback?: boolean } = {}): Promise<Release> {
+  async publish(
+    ctx: ApiKeyContext, req: Request, siteId: number, message: string | null, opts: { overrideRollback?: boolean; waitMs?: number } = {},
+  ): Promise<ApiV1ReleaseResult> {
     requireScope(ctx, 'releases.publish');
     const site = await keySite(ctx, siteId);
     await loadSite(ctx.actor, site.id, 'releases.publish');
@@ -384,29 +428,50 @@ export const keyApi = {
       resourceType: 'release', resourcePath: String(release.id),
       details: { siteId: site.id, number: release.number, ...(opts.overrideRollback ? { overrideRollback: true } : {}) },
     });
-    return release;
+    const waitMs = Math.min(PUBLISH_WAIT_MAX_MS, Math.max(0, Math.trunc(opts.waitMs ?? 0)));
+    if (!waitMs) return (await keyReleases(site, [release]))[0];
+    await releaseService.waitForRelease(site.id, release.id, waitMs);
+    const { log: _log, ...rest } = await releaseDetail(site, release.id, true); // eslint-disable-line @typescript-eslint/no-unused-vars
+    return rest;
   },
 
   /** Releases, newest first; the name of a platform staff member is never shown (author, approver). */
   async releases(ctx: ApiKeyContext, siteId: number, limit: number, offset: number): Promise<{ items: Release[]; total: number }> {
     const site = await keySite(ctx, siteId);
     const page = await releaseService.list(site.id, { limit, offset } as Parameters<typeof releaseService.list>[1]);
-    const ids = page.items.map((r) => r.id);
-    const approvers = ids.length ? await db('releases').whereIn('id', ids).select('id', 'approved_by') as Array<{ id: number; approved_by: number | null }> : [];
-    const approverOf = new Map(approvers.map((a) => [Number(a.id), a.approved_by]));
-    const hidden = await nonMembers(site.account_id, [...page.items.map((r) => r.authorUserId), ...approvers.map((a) => a.approved_by)]);
-    return {
-      ...page,
-      items: page.items.map((r) => {
-        const out = releaseForActor(ctx.actor, r);
-        const approver = approverOf.get(r.id);
-        return {
-          ...out,
-          ...(r.authorUserId && hidden.has(r.authorUserId) ? { authorName: null } : {}),
-          ...(approver && hidden.has(Number(approver)) ? { approvedBy: null } : {}),
-        };
-      }),
-    };
+    return { ...page, items: await keyReleases(site, page.items) };
+  },
+
+  /** One release with its log (staff names and backend details removed) and its outcome. */
+  async release(ctx: ApiKeyContext, siteId: number, releaseId: unknown): Promise<ApiV1ReleaseDetail> {
+    const site = await keySite(ctx, siteId);
+    return releaseDetail(site, releaseIdOf(releaseId));
+  },
+
+  /** Waits (≤ 60 s) until the release is settled (ready, failed, rejected, awaiting approval), then as release(). */
+  async waitRelease(ctx: ApiKeyContext, siteId: number, releaseId: unknown, timeoutMs: number): Promise<ApiV1ReleaseDetail> {
+    const site = await keySite(ctx, siteId);
+    const rid = releaseIdOf(releaseId);
+    const ms = Math.min(RELEASE_WAIT_MAX_MS, Math.max(0, Math.trunc(timeoutMs) || 0));
+    await releaseService.waitForRelease(site.id, rid, ms);
+    return releaseDetail(site, rid, ms > 0);
+  },
+
+  /**
+   * Changed files of a release against the previous one, the live one or a
+   * given release (files.read + the code right: a patch shows the code, a
+   * committed secret too). Without `file`: names, stats and the small patches;
+   * `file`: that file's patch, cut at patchCap (≤ PATCH_FILE_CAP).
+   */
+  async diffRelease(
+    ctx: ApiKeyContext, siteId: number, releaseId: unknown, against: number | 'previous' | 'live' | 'empty', file: string | null, opts: { patchCap?: number } = {},
+  ): Promise<ReleaseDiff> {
+    await filesAccount(ctx, false);
+    const site = await keySite(ctx, siteId);
+    assertReadsCode(ctx.actor, site);
+    const other = typeof against === 'number' ? releaseIdOf(against) : against;
+    const rel = file ? file.replace(/^\/+/, '') : null;
+    return releaseService.diff(site.id, releaseIdOf(releaseId), other, rel || null, { content: true, ...(opts.patchCap ? { patchCap: opts.patchCap } : {}) });
   },
 
   async rollback(ctx: ApiKeyContext, req: Request, siteId: number, releaseId: unknown): Promise<void> {

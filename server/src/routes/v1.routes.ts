@@ -4,7 +4,7 @@ import { AppError } from '../middleware/errorHandler';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam } from '../services/hosting/access';
 import { parseBody } from '../services/docker/parseBody';
-import { keyApi, type SiteArea } from '../services/apiKeys/keyApi';
+import { keyApi, PUBLISH_WAIT_MAX_MS, RELEASE_WAIT_MAX_MS, type SiteArea } from '../services/apiKeys/keyApi';
 import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from '../services/apiKeys/middleware';
 import type { ApiKeyContext } from '../services/apiKeys/apiKeys.service';
 import {
@@ -38,8 +38,12 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   POST   /sites/:id/files/copy    {items, area?}      → FileOpResult[]               files.write
 //   POST   /sites/:id/files/extract {path, to?, overwrite?, area?} → FileExtractResult files.write
 //   GET    /sites/:id/staging                           → StagingStatus (unpublished changes, base vs live, rollback pending) files.read
-//   POST   /sites/:id/publish   {message?, overrideRollback?} → Release (201; 409 liveRolledBack {liveRelease, rolledBackFrom, count, paths}) releases.publish
+//   POST   /sites/:id/publish   {message?, overrideRollback?, wait?: true | seconds ≤ 25} → Release (+ outcome with wait) (201; 409 liveRolledBack
+//                                                        {liveRelease, rolledBackFrom, count, paths}) releases.publish
 //   GET    /sites/:id/releases?limit=&offset=           → { items: Release[]; total }
+//   GET    /sites/:id/releases/:rid                     → ApiV1ReleaseDetail (log without staff names / backend details, outcome)
+//   GET    /sites/:id/releases/:rid/wait?timeout=≤60    → ApiV1ReleaseDetail once settled (outcome.timedOut otherwise)
+//   GET    /sites/:id/releases/:rid/diff?against=previous|live|empty|<rid>&file= → ReleaseDiff (file: one patch ≤ 256 KiB) files.read (+ code right)
 //   POST   /sites/:id/releases/:rid/rollback            → { rolledBack: true }         releases.publish
 //   GET    /sites/:id/releases/:rid/files?path=&limit=&offset= → ReleaseFileList (limit ≤ 5000)  files.read (+ code right)
 //   GET    /sites/:id/releases/:rid/files/text?path=&encoding=utf8|base64&offset= → ReleaseFileContent (≤ 2 MiB text / 8 MiB base64) files.read
@@ -118,7 +122,17 @@ const itemsBody = z.object({
 }).strict();
 const extractBody = z.object({ path: relPath.min(1), to: relPath.optional(), overwrite: z.boolean().optional(), area: area.optional() }).strict();
 const uploadBody = z.object({ path: relPath.min(1), size: z.number().int().min(0), overwrite: z.boolean().optional(), area: area.optional() }).strict();
-const publishBody = z.object({ message: z.string().max(500).nullable().optional(), overrideRollback: z.boolean().optional() }).strict();
+const publishBody = z.object({
+  message: z.string().max(500).nullable().optional(), overrideRollback: z.boolean().optional(),
+  // true = the longest wait (25 s), a number = seconds.
+  wait: z.union([z.boolean(), z.number().int().min(0).max(PUBLISH_WAIT_MAX_MS / 1000)]).optional(),
+}).strict();
+const diffQuery = z.object({
+  against: z.union([z.enum(['previous', 'live', 'empty']), z.coerce.number().int().positive()]).default('previous'),
+  file: z.string().min(1).max(4096).optional(),
+}).strict();
+const waitQuery = z.object({ timeout: z.coerce.number().int().min(0).max(RELEASE_WAIT_MAX_MS / 1000).default(30) }).strict();
+const waitMsOf = (w: boolean | number | undefined) => (w === true ? PUBLISH_WAIT_MAX_MS : typeof w === 'number' ? w * 1000 : 0);
 const restoreBody = z.object({ discardPending: z.boolean().optional() }).strict();
 const releaseFilesQuery = z.object({
   path: relPath.optional(), limit: z.coerce.number().int().min(1).max(5000).default(200), offset: z.coerce.number().int().min(0).default(0),
@@ -221,12 +235,21 @@ router.post('/sites/:id/files/extract', h(async (req, res) => {
 router.get('/sites/:id/staging', h(async (req, res) => ok(res, await keyApi.stagingStatus(ctxOf(req), siteId(req)))));
 router.post('/sites/:id/publish', h(async (req, res) => {
   const b = parseBody(publishBody, req.body ?? {});
-  ok(res, await keyApi.publish(ctxOf(req), req, siteId(req), b.message ?? null, { overrideRollback: b.overrideRollback === true }), 201);
+  ok(res, await keyApi.publish(ctxOf(req), req, siteId(req), b.message ?? null, { overrideRollback: b.overrideRollback === true, waitMs: waitMsOf(b.wait) }), 201);
 }));
 router.get('/sites/:id/releases', h(async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
   const offset = Math.max(0, Number(req.query.offset) || 0);
   ok(res, await keyApi.releases(ctxOf(req), siteId(req), limit, offset));
+}));
+router.get('/sites/:id/releases/:rid', h(async (req, res) => ok(res, await keyApi.release(ctxOf(req), siteId(req), req.params.rid))));
+router.get('/sites/:id/releases/:rid/wait', h(async (req, res) => {
+  const q = parseBody(waitQuery, req.query);
+  ok(res, await keyApi.waitRelease(ctxOf(req), siteId(req), req.params.rid, q.timeout * 1000));
+}));
+router.get('/sites/:id/releases/:rid/diff', heavyOpLimiter, h(async (req, res) => {
+  const q = parseBody(diffQuery, req.query);
+  ok(res, await keyApi.diffRelease(ctxOf(req), siteId(req), req.params.rid, q.against, q.file ?? null));
 }));
 router.post('/sites/:id/releases/:rid/rollback', h(async (req, res) => {
   await keyApi.rollback(ctxOf(req), req, siteId(req), idParam(req, 'rid'));
