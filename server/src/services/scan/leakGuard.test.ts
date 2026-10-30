@@ -86,6 +86,71 @@ test('cloud credentials and private keys: critical when served raw, warn in PHP 
   noSecret(r);
 });
 
+test('private keys follow the exposure rule: outside the document root or in PHP they warn and never block', async () => {
+  const pkcs8 = '-----BEGIN ' + 'PRIVATE KEY-----\nMIIEow\n-----END PRIVATE KEY-----\n';
+  const files = {
+    'storage/oauth-private.key': pkcs8,                       // Laravel Passport, outside public/
+    'config/jwt/private.pem': PEM,                            // Symfony JWT
+    'public/wp-content/plugins/x/certs/key.php': `<?php return '${PEM}';`,
+    'public/certs/server.key': '-----BEGIN ' + 'ENCRYPTED PRIVATE KEY-----\nMIIE\n',
+  };
+  const r = await run(files, { docroot: 'public' });
+  assert.deepEqual(brief(r), [
+    'secret.private-key config/jwt/private.pem:1 warn',
+    'secret.private-key public/certs/server.key:1 warn',
+    'secret.private-key public/wp-content/plugins/x/certs/key.php:1 warn',
+    'secret.private-key storage/oauth-private.key:1 warn',
+  ]);
+  assert.deepEqual([r.blocked, r.critical], [false, 0]);
+  const served = await run({ 'public/keys/server.key': PEM }, { docroot: 'public' });
+  assert.deepEqual([brief(served), served.blocked], [['secret.private-key public/keys/server.key:1 critical'], true]);
+  noSecret(r);
+});
+
+test('a Google browser key (Maps, Firebase) in served JS / HTML is a warning, never blocking', async () => {
+  const GOOGLE = 'AI' + 'za' + 'Sy' + 'B'.repeat(33);
+  const r = await run({
+    'wp-content/themes/acme/js/map.js': `load("https://maps.googleapis.com/maps/api/js?key=${GOOGLE}");`,
+    'index.html': `<script>\nconst firebaseConfig = { apiKey: "${GOOGLE}" };\n</script>`,
+  });
+  assert.deepEqual(brief(r), ['secret.cloud index.html:2 warn', 'secret.cloud wp-content/themes/acme/js/map.js:1 warn']);
+  assert.equal(r.blocked, false);
+  assert.ok(!JSON.stringify(r).includes(GOOGLE));
+});
+
+test('linear rules on hostile content: 1 MB of newlines / spaces in a dump, a .env, a .pypirc stays fast', async () => {
+  const nl = '\n'.repeat(1024 * 1024);
+  const sp = ' '.repeat(1024 * 1024);
+  const started = Date.now();
+  const r = await run({
+    'dump.sql': nl,
+    'spaces.sql': `COPY ${'x'.repeat(1024 * 1024)}`,
+    '.env': `DB_PASSWORD=x${sp}y\n`,
+    'other/.env': `${sp}\n${nl}`,
+    '.pypirc': nl,
+  });
+  const ms = Date.now() - started;
+  assert.ok(ms < 2000, `took ${ms} ms`);
+  assert.deepEqual(brief(r), ['secret.env-file .env:1 warn']);
+});
+
+test('dumps with indented statements and CRLF .env files are still detected', async () => {
+  const r = await run({
+    'a.sql': 'CREATE TABLE t (id int);\r\n\t  INSERT IGNORE INTO t VALUES (1);\r\n',
+    'b.sql': '-- pg\nCOPY public.users (id, mail) FROM stdin;\n1\n',
+    'public/.env.local': 'APP_NAME=demo\r\nDB_PASSWORD="s3cr3t" # prod\r\n',
+    'public/.env.prod': 'API_TOKEN= # unset\r\nSECRET=#notacomment\r\n',
+    'conf/.pypirc': '[pypi]\nusername = u\n  password = p4ss\n',
+  }, { docroot: 'public', engine: 'nginx' });
+  assert.deepEqual(brief(r), [
+    'expose.dump a.sql:2 warn',
+    'expose.dump b.sql:2 warn',
+    'secret.env-file public/.env.local:2 warn',
+    'secret.env-file public/.env.prod:2 warn',
+    'secret.key-file conf/.pypirc:3 warn',
+  ]);
+});
+
 test('dumps: data only (a schema is fine), compressed dumps, severity by document root', async () => {
   const r = await run({
     'install.sql': 'CREATE TABLE t (id int);\n',

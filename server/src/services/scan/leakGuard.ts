@@ -18,7 +18,8 @@ import {
 //    NEVER copied anywhere (no excerpt, no prefix): only its position.
 //  - Severity: critical when the web server would hand the file out as is
 //    (inside the document root, not executed as PHP, not refused by the
-//    site configuration), warn otherwise. A panel token is critical anywhere.
+//    site configuration), warn otherwise. A panel token is critical anywhere;
+//    a browser key public by design (Google AIza…) is a warning everywhere.
 //  - Policy block: a critical finding stops the publication (the pipeline
 //    fails it, errorCode leakBlocked). Policy warn: reported only. Paths of
 //    the allowlist (globs) are ignored and counted.
@@ -201,7 +202,10 @@ const MESSAGES: Record<LeakRule, string> = {
 
 const DUMP_EXT_RE = /\.(sql|mysql|pgsql|psql|dump)(\.(gz|bz2|xz|zst|zip|7z|tar|tgz))?$/i;
 const DUMP_PLAIN_RE = /\.(sql|mysql|pgsql|psql)$/i;
-const DUMP_DATA_RE = /^\s*(INSERT\s+(IGNORE\s+)?INTO\b|REPLACE\s+INTO\b|COPY\s+\S+[^;\n]*\bFROM\s+stdin\b)/im;
+// Linear patterns only (tenant-controlled text of up to 1 MB, run on the event
+// loop): the line start is [ \t]*, never \s* (which crosses newlines and makes
+// every line start rescan the rest), and a single greedy class per line.
+const DUMP_DATA_RE = /^[ \t]*(INSERT[ \t]+(IGNORE[ \t]+)?INTO\b|REPLACE[ \t]+INTO\b|COPY[ \t]+[^;\n]*\bFROM[ \t]+stdin\b)/im;
 
 const BACKUP_SUFFIX_RE = /(?:[._-](?:bak|backup|old|orig|original|save|sav|swp|swo|tmp|temp|copy|txt|\d{1,8})|~)$/i;
 const SOURCE_EXT_RE = /\.(php[0-9]?|phtml|inc|ini|conf|cnf|config|cfg|env|ya?ml|json|xml|htaccess|htpasswd|properties|toml|py|rb|js|ts)$/i;
@@ -234,23 +238,37 @@ const ENV_PLACEHOLDER_RE = /^(|null|none|changeme|change_me|change-me|secret|pas
 
 const PRIVATE_KEY_RE = /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP |SSH2 )?PRIVATE KEY(?: BLOCK)?-----/g;
 const PANEL_TOKEN_RE = /(?<![A-Za-z0-9_])(?:ob([kt])_([1-9]\d{0,9})_[A-Za-z0-9_-]{43}|oba_[A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])/g;
-const CLOUD_RES: RegExp[] = [
-  /(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])/g,                    // AWS access key id
-  /(?<![A-Za-z0-9_])(?:sk|rk)_live_[0-9a-zA-Z]{20,}/g,                       // Stripe live secret / restricted key
-  /(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9]{36,}/g,                            // GitHub tokens
-  /(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{50,}/g,                          // GitHub fine-grained token
-  /(?<![A-Za-z0-9_])glpat-[A-Za-z0-9_-]{20,}/g,                              // GitLab personal token
-  /(?<![A-Za-z0-9_])xox[abposr]-[A-Za-z0-9-]{10,}/g,                         // Slack tokens
-  /(?<![A-Za-z0-9_])AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g,                // Google API key
-  /(?<![A-Za-z0-9_])SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g,              // SendGrid
-  /(?<![A-Za-z0-9_])sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/g,          // OpenAI project / service keys
-  /(?<![A-Za-z0-9_])sk-ant-[A-Za-z0-9_-]{20,}/g,                             // Anthropic
+/**
+ * Cloud / SaaS credentials. `browser`: a key that is public by design (shipped
+ * in served JS / HTML, restricted by referrer at the provider: Google Maps,
+ * Firebase web config) — reported as a warning, never blocking.
+ */
+const CLOUD_RES: { re: RegExp; browser?: true }[] = [
+  { re: /(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])/g },               // AWS access key id
+  { re: /(?<![A-Za-z0-9_])(?:sk|rk)_live_[0-9a-zA-Z]{20,}/g },                  // Stripe live secret / restricted key
+  { re: /(?<![A-Za-z0-9_])gh[pousr]_[A-Za-z0-9]{36,}/g },                       // GitHub tokens
+  { re: /(?<![A-Za-z0-9_])github_pat_[A-Za-z0-9_]{50,}/g },                     // GitHub fine-grained token
+  { re: /(?<![A-Za-z0-9_])glpat-[A-Za-z0-9_-]{20,}/g },                         // GitLab personal token
+  { re: /(?<![A-Za-z0-9_])xox[abposr]-[A-Za-z0-9-]{10,}/g },                    // Slack tokens
+  { re: /(?<![A-Za-z0-9_])AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g, browser: true }, // Google API key (browser key)
+  { re: /(?<![A-Za-z0-9_])SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}/g },         // SendGrid
+  { re: /(?<![A-Za-z0-9_])sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}/g },     // OpenAI project / service keys
+  { re: /(?<![A-Za-z0-9_])sk-ant-[A-Za-z0-9_-]{20,}/g },                        // Anthropic
 ];
 /** Documentation placeholders (AKIAIOSFODNN7EXAMPLE…). */
 const EXAMPLE_TOKEN_RE = /EXAMPLE|XXXXXXXX|0{16}/i;
 const NPM_TOKEN_RE = /_authToken\s*=\s*(?!\$\{)\S{8,}/;
 const COMPOSER_AUTH_RE = /"(github-oauth|gitlab-token|gitlab-oauth|bitbucket-oauth|http-basic|bearer)"\s*:\s*\{/;
-const PYPIRC_RE = /^\s*password\s*[=:]\s*\S+/im;
+const PYPIRC_RE = /^[ \t]*password[ \t]*[=:][ \t]*\S/im;
+const ENV_LINE_RE = /^[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_.]*)[ \t]*=(.*)$/;
+
+/** Value of a .env line without its trailing comment (" #…" or "\t#…"), without a regex. */
+function stripEnvComment(value: string): string {
+  for (let i = value.indexOf('#'); i !== -1; i = value.indexOf('#', i + 1)) {
+    if (i > 0 && (value[i - 1] === ' ' || value[i - 1] === '\t')) return value.slice(0, i);
+  }
+  return value;
+}
 
 /** Extensions never read for content (media, fonts, archives, binaries). */
 const NO_CONTENT_EXT_RE = /\.(png|jpe?g|gif|webp|avif|ico|bmp|tiff?|psd|mp[34]|m4a|ogg|wav|flac|webm|mov|avi|mkv|woff2?|ttf|otf|eot|zip|gz|tgz|bz2|xz|7z|rar|tar|zst|jar|war|pdf|docx?|xlsx?|pptx?|odt|ods|exe|dll|so|dylib|bin|class|pyc|wasm|swf|mo|sqlite3?|db)$/i;
@@ -425,22 +443,25 @@ export async function detectLeaks(input: LeakGuardInput): Promise<LeakReport> {
     for (const m of text.matchAll(PRIVATE_KEY_RE)) {
       if (n++ >= PER_RULE_PER_FILE) break;
       const encrypted = m[0].includes('ENCRYPTED');
-      add(rel, 'secret.private-key', fixture || encrypted ? 'warn' : 'critical', raw, lineAt(text, m.index ?? 0));
+      // Same exposure rule as every secret: critical only when handed out as is
+      // (a key outside the document root, or in PHP code, is reported, not blocking).
+      add(rel, 'secret.private-key', raw && !fixture && !encrypted ? 'critical' : 'warn', raw, lineAt(text, m.index ?? 0));
     }
     n = 0;
-    for (const re of CLOUD_RES) {
+    for (const { re, browser } of CLOUD_RES) {
       for (const m of text.matchAll(re)) {
         if (EXAMPLE_TOKEN_RE.test(m[0])) continue;
         if (n++ >= PER_RULE_PER_FILE) break;
-        add(rel, 'secret.cloud', raw && !fixture ? 'critical' : 'warn', raw, lineAt(text, m.index ?? 0));
+        add(rel, 'secret.cloud', raw && !fixture && !browser ? 'critical' : 'warn', raw, lineAt(text, m.index ?? 0));
       }
     }
     if (ENV_NAME_RE.test(b) && !ENV_TEMPLATE_RE.test(b)) {
       const lines = text.split('\n');
       for (let i = 0; i < lines.length; i++) {
-        const mm = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s*=\s*(.*)$/.exec(lines[i]);
+        const line = lines[i].endsWith('\r') ? lines[i].slice(0, -1) : lines[i];
+        const mm = ENV_LINE_RE.exec(line);
         if (!mm || !ENV_SECRET_KEY_RE.test(mm[1])) continue;
-        const value = mm[2].replace(/\s+#.*$/, '').trim().replace(/^(['"])(.*)\1$/, '$2').trim();
+        const value = stripEnvComment(mm[2]).trim().replace(/^(['"])(.*)\1$/, '$2').trim();
         if (ENV_PLACEHOLDER_RE.test(value)) continue;
         add(rel, 'secret.env-file', raw ? 'critical' : 'warn', raw, i + 1);
         break; // one line per file: the file is the problem
