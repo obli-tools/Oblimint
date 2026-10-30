@@ -9,6 +9,7 @@ import { clientIp } from '../../utils/clientIp';
 import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
 import { publicPanelOrigin } from '../panelHosts';
+import { gateAction } from '../restrictions/gate';
 import { clientSecretMatches, hashKey, scopesHeldBy } from './apiKeys.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -132,6 +133,14 @@ export const oauthService = {
     }
     const held = await scopesHeldBy(userId, connector);
     if (!held) throw new AppError(403, 'Your account has no access to the hosting account of this connector', 'oauthNoAccess');
+    // connector.authorize (spec §2): the consent itself is protected. The fingerprint holds the
+    // connector, the client and the scopes — not the PKCE challenge / state, new at each attempt,
+    // so an approved consent is found again when the human retries from claude.ai.
+    await gateAction(req, {
+      action: 'connector.authorize',
+      target: { tenantId: Number(connector.tenant_id), accountId: Number(connector.account_id), siteId: null },
+      params: { connectorId: connector.id, name: connector.name, client: new URL(p.redirectUri).host, scopes: [...held.held].sort(), siteScope: connector.site_scope },
+    });
     const code = newToken('obc');
     await db('api_key_oauth_tokens').insert({
       key_id: connector.id, kind: 'code', token_hash: hashKey(code), family: crypto.randomUUID(), user_id: userId,

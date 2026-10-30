@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type { Request } from 'express';
-import { pipeline, Transform, type Readable } from 'stream';
+import { pipeline, Readable, Transform } from 'stream';
 import type {
   ApiV1LeakCheck, ApiV1Me, ApiV1ParentDomain, ApiV1ReleaseDetail, ApiV1ReleaseResult, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileEdit, FileEditResult, FileExtractResult, FileListing, FileOpResult, FileRange, FileSearchResult, FileText, FileWriteResult,
   FileUploadChunkResult, FileUploadSession, LogQueryResult, Release, ReleaseDiff, ReleaseLogLine, SiteErrorGroupDetail, SiteErrorList,
@@ -13,7 +13,7 @@ import { apiKeyGuide } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { auditService } from '../audit.service';
-import { filesService, joinVirtual, splitVirtual } from '../files/files.service';
+import { filesService, joinVirtual, splitVirtual, UPLOAD_CHUNK_SIZE } from '../files/files.service';
 import { fileTools, type ReadRangeOptions, type SearchOptions } from '../files/fileTools';
 import type { HostdFileStream } from '../hostd/files';
 import { assertReadsCode, loadAccount, loadSite } from '../hosting/access';
@@ -33,6 +33,8 @@ import { loggedUserIds, maskStaffIds, publicReleaseText, releaseOutcome } from '
 import { previewService } from '../previews/previews.service';
 import { leakSettingsOf, stagingLeakReport } from '../scan/leakRelease';
 import { localPaths } from '../hosting/paths';
+import { actionLevel } from '../restrictions/gate';
+import { accountTarget, asKeyRequest, keyGated, siteTarget } from '../restrictions/targets';
 import { apiKeysService, keyAllowsDomain, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -216,7 +218,7 @@ async function nonMembers(accountId: number, userIds: Array<number | null | unde
 export const PUBLISH_WAIT_MAX_MS = 25_000;
 /** wait_for_release / GET …/releases/:rid/wait: longest wait. */
 export const RELEASE_WAIT_MAX_MS = 60_000;
-/** Waits held at once (publish with wait, wait_for_release), per key and per site: 429 rateLimited above. */
+/** Waits held at once (publish with wait, wait_for_release, wait_for_pending_action), per key and per site: 429 rateLimited above. */
 export const MAX_WAITS_PER_KEY = 3;
 export const MAX_WAITS_PER_SITE = 6;
 const waitsByKey = new Map<number, number>();
@@ -231,12 +233,12 @@ const bump = (m: Map<number, number>, k: number, d: number) => {
  * client goes away (the polling stops with it): a key cannot pile up long
  * polling loops (each one holds a request open up to 60 s).
  */
-async function withWaitSlot<T>(ctx: ApiKeyContext, req: Request | null, siteId: number, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  if ((waitsByKey.get(ctx.id) ?? 0) >= MAX_WAITS_PER_KEY || (waitsBySite.get(siteId) ?? 0) >= MAX_WAITS_PER_SITE) {
+export async function withWaitSlot<T>(ctx: ApiKeyContext, req: Request | null, siteId: number | null, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  if ((waitsByKey.get(ctx.id) ?? 0) >= MAX_WAITS_PER_KEY || (siteId !== null && (waitsBySite.get(siteId) ?? 0) >= MAX_WAITS_PER_SITE)) {
     throw new AppError(429, `Too many waits running at once (at most ${MAX_WAITS_PER_KEY} per key): let one end, or call again without waiting`, 'rateLimited');
   }
   bump(waitsByKey, ctx.id, 1);
-  bump(waitsBySite, siteId, 1);
+  if (siteId !== null) bump(waitsBySite, siteId, 1);
   const ac = new AbortController();
   const res = req?.res;
   const gone = () => ac.abort();
@@ -246,7 +248,7 @@ async function withWaitSlot<T>(ctx: ApiKeyContext, req: Request | null, siteId: 
   } finally {
     res?.off('close', gone);
     bump(waitsByKey, ctx.id, -1);
-    bump(waitsBySite, siteId, -1);
+    if (siteId !== null) bump(waitsBySite, siteId, -1);
   }
 }
 
@@ -308,6 +310,43 @@ export function keyNotificationFamilies(ctx: Pick<ApiKeyContext, 'scopes' | 'sit
 
 /** Paths in an audit entry: the first 50 of a batch. */
 const sample = (paths: string[]) => (paths.length > 50 ? [...paths.slice(0, 50), `… +${paths.length - 50}`] : paths);
+
+/**
+ * The whole body of a small write (its declared size, ≤ the one-request
+ * upload limit), for the fingerprint of a protected write: a body longer or
+ * shorter than announced is refused, never truncated.
+ */
+async function readBounded(body: Readable, size: number): Promise<Buffer> {
+  if (!Number.isSafeInteger(size) || size < 0 || size > UPLOAD_CHUNK_SIZE) {
+    body.resume();
+    throw new AppError(413, `A file written in one request is at most ${UPLOAD_CHUNK_SIZE} bytes: use the chunked upload`, 'fileTooLarge');
+  }
+  const parts: Buffer[] = [];
+  let got = 0;
+  for await (const chunk of body) {
+    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+    got += b.length;
+    if (got > size) { body.resume(); throw new AppError(400, 'The body is longer than its Content-Length', 'invalidChunk'); }
+    parts.push(b);
+  }
+  if (got !== size) throw new AppError(400, 'The body is shorter than its Content-Length', 'invalidChunk');
+  return Buffer.concat(parts, got);
+}
+
+/** mkdir -p of the parents of `path` inside the site area (existing folders are fine), each one audited. */
+async function mkdirParents(req: Request, a: AccountRow, site: SiteRow, area: SiteArea, path: string): Promise<void> {
+  const segs = path.split('/').filter(Boolean).slice(0, -1);
+  let cur = '';
+  for (const s of segs) {
+    cur += `/${s}`;
+    try {
+      const created = await filesService.mkdir(a, areaPath(site, area, cur));
+      await fileAudit(req, a, site.id, 'files.mkdir', { path: created });
+    } catch (err) {
+      if (!(err instanceof AppError) || err.code !== 'fileExists') throw err;
+    }
+  }
+}
 
 async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV1Site[]> {
   const q = db('sites as s')
@@ -395,7 +434,14 @@ export const keyApi = {
   async createSite(ctx: ApiKeyContext, req: Request, body: Omit<SiteCreate, 'accountId'>): Promise<ApiV1Site> {
     requireScope(ctx, 'sites.create');
     if (body.publishMode === 'auto') requireScope(ctx, 'releases.publish');
-    const site = await sitesService.create(req, ctx.actor, { ...body, accountId: ctx.accountId } as SiteCreate & { accountId: number });
+    const create = () => sitesService.create(req, ctx.actor, { ...body, accountId: ctx.accountId } as SiteCreate & { accountId: number });
+    // A new site in 'auto' publishes every write unreviewed: site.publish_mode_change (spec §2).
+    const site = body.publishMode === 'auto'
+      ? await keyGated(ctx, req, {
+        action: 'site.publish_mode_change', target: accountTarget(await accountRow(ctx)),
+        params: { ...body, from: null, to: 'auto', newSite: true },
+      }, create)
+      : await create();
     await apiKeysService.recordCreatedSite(ctx, site.id);
     const self = { ...ctx, siteIds: new Set([...ctx.siteIds, site.id]) };
     const [v] = await siteViews(self, [site.id]);
@@ -408,7 +454,14 @@ export const keyApi = {
     const site = await keySite(ctx, siteId);
     // Switching to 'auto' publishes every later write: the releases.publish scope too.
     if (body.publishMode === 'auto' && site.publish_mode !== 'auto') requireScope(ctx, 'releases.publish');
-    await sitesService.update(req, ctx.actor, site.id, body);
+    // Leaving the approval mode removes the second person of every publication: site.publish_mode_change.
+    if (body.publishMode && body.publishMode !== site.publish_mode && site.publish_mode === 'approval') {
+      await keyGated(ctx, req, {
+        action: 'site.publish_mode_change', target: siteTarget(site), params: { ...body, from: site.publish_mode, to: body.publishMode },
+      }, () => sitesService.update(req, ctx.actor, site.id, body));
+    } else {
+      await sitesService.update(req, ctx.actor, site.id, body);
+    }
     const [v] = await siteViews(ctx, [site.id]);
     return v;
   },
@@ -446,7 +499,10 @@ export const keyApi = {
     requireScope(ctx, 'files.read');
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
-    const r = await fileTools.edit(a, areaPath(site, area, path), edits, expectedSha256);
+    const virtual = areaPath(site, area, path);
+    const r = await keyGated(ctx, req, {
+      action: 'files.write', target: siteTarget(site), params: { op: 'edit', area, path: relOf(site, area, virtual), edits, expectedSha256 },
+    }, () => fileTools.edit(a, virtual, edits, expectedSha256));
     await fileAudit(req, a, site.id, 'files.edit', { path: r.path, size: r.size, edits: edits.length, replacements: r.replacements, sha256: r.sha256 });
     return { ...r, path: relOf(site, area, r.path) };
   },
@@ -490,7 +546,7 @@ export const keyApi = {
    */
   async putFile(
     ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, size: number, body: Readable, overwrite: boolean,
-    expectedSha256: string | null = null,
+    expectedSha256: string | null = null, opts: { createParents?: boolean } = {},
   ): Promise<FileWriteResult> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
@@ -499,34 +555,64 @@ export const keyApi = {
     try {
       if (expectedSha256 !== null) expectedMtime = await fileTools.assertSha256(a, virtual, expectedSha256);
     } catch (err) {
+      body.resume();
       throw await preconditionError(ctx, a, virtual, err, path);
     }
-    const h = crypto.createHash('sha256');
-    const tap = new Transform({ transform(c: Buffer, _e, cb) { h.update(c); cb(null, c); } });
-    pipeline(body, tap, () => { /* errors reach the upload through tap */ });
-    let p: string;
-    try {
-      p = await filesService.putSmall(a, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime, mustExist: true } : { overwrite }) }, tap);
-    } catch (err) {
-      tap.resume(); // the body is drained, never left hanging
-      throw await preconditionError(ctx, a, virtual, err, path);
-    }
-    const sha256 = h.digest('hex');
-    await fileAudit(req, a, site.id, 'files.upload', { path: p, size, sha256 });
-    return { path: relOf(site, area, p), size, sha256 };
+    const write = async (src: Readable): Promise<FileWriteResult> => {
+      if (opts.createParents) await mkdirParents(req, a, site, area, path);
+      const h = crypto.createHash('sha256');
+      const tap = new Transform({ transform(c: Buffer, _e, cb) { h.update(c); cb(null, c); } });
+      pipeline(src, tap, () => { /* errors reach the upload through tap */ });
+      let p: string;
+      try {
+        p = await filesService.putSmall(a, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime, mustExist: true } : { overwrite }) }, tap);
+      } catch (err) {
+        tap.resume(); // the body is drained, never left hanging
+        throw await preconditionError(ctx, a, virtual, err, path);
+      }
+      const sha256 = h.digest('hex');
+      await fileAudit(req, a, site.id, 'files.upload', { path: p, size, sha256 });
+      return { path: relOf(site, area, p), size, sha256 };
+    };
+    // files.write protected: the content enters the fingerprint (sha256 + size, spec §1.4) — an
+    // approval never serves another content. Read first (≤ 8 MiB, the limit of this write); a free
+    // write keeps streaming.
+    if (await actionLevel(asKeyRequest(req, ctx), 'files.write', siteTarget(site)) === 'none') return write(body);
+    const buf = await readBounded(body, size);
+    return keyGated(ctx, req, {
+      action: 'files.write', target: siteTarget(site),
+      params: {
+        op: 'write', area, path: relOf(site, area, virtual), size: buf.length, contentSha256: crypto.createHash('sha256').update(buf).digest('hex'),
+        overwrite, expectedSha256, createParents: opts.createParents === true,
+      },
+    }, () => write(Readable.from([buf])));
   },
 
-  async uploadStart(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string, size: number, overwrite: boolean, expectedSha256: string | null = null): Promise<FileUploadSession> {
+  /**
+   * Opens a chunked upload. files.write protected: the upload is gated when it
+   * opens (path, size, overwrite, expectedSha256 frozen); its chunks are its
+   * continuation (the session belongs to the key's user, 24 h at most).
+   */
+  async uploadStart(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, size: number, overwrite: boolean, expectedSha256: string | null = null): Promise<FileUploadSession> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     const virtual = areaPath(site, area, path);
+    let expectedMtime: number | undefined;
     try {
-      const expectedMtime = expectedSha256 !== null ? await fileTools.assertSha256(a, virtual, expectedSha256) : undefined;
-      // expectedMtime: checked again by the chunk that completes the file, right before its commit.
-      return await filesService.uploadStart(a, ctx.creatorId, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime, mustExist: true } : { overwrite }) });
+      expectedMtime = expectedSha256 !== null ? await fileTools.assertSha256(a, virtual, expectedSha256) : undefined;
     } catch (err) {
       throw await preconditionError(ctx, a, virtual, err, path);
     }
+    return keyGated(ctx, req, {
+      action: 'files.write', target: siteTarget(site), params: { op: 'upload', area, path: relOf(site, area, virtual), size, overwrite, expectedSha256 },
+    }, async () => {
+      try {
+        // expectedMtime: checked again by the chunk that completes the file, right before its commit.
+        return await filesService.uploadStart(a, ctx.creatorId, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime, mustExist: true } : { overwrite }) });
+      } catch (err) {
+        throw await preconditionError(ctx, a, virtual, err, path);
+      }
+    });
   },
 
   async uploadChunk(ctx: ApiKeyContext, req: Request, uploadId: string, index: number, length: number, body: Readable): Promise<FileUploadChunkResult> {
@@ -544,31 +630,52 @@ export const keyApi = {
     return res;
   },
 
-  async mkdir(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string): Promise<string> {
+  /** A folder; parents: its missing parents too (mkdir -p) — one gate for the whole path. */
+  async mkdir(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, opts: { parents?: boolean } = {}): Promise<string> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
-    const created = await filesService.mkdir(a, areaPath(site, area, path));
-    await fileAudit(req, a, site.id, 'files.mkdir', { path: created });
-    return relOf(site, area, created);
+    const virtual = areaPath(site, area, path);
+    return keyGated(ctx, req, {
+      action: 'files.write', target: siteTarget(site), params: { op: 'mkdir', area, path: relOf(site, area, virtual), parents: opts.parents === true },
+    }, async () => {
+      if (opts.parents) {
+        await mkdirParents(req, a, site, area, `${path.replace(/\/+$/, '')}/x`);
+        return relOf(site, area, virtual);
+      }
+      const created = await filesService.mkdir(a, virtual);
+      await fileAudit(req, a, site.id, 'files.mkdir', { path: created });
+      return relOf(site, area, created);
+    });
   },
 
   async remove(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, paths: string[]): Promise<FileOpResult[]> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
-    const res = await filesService.remove(a, paths.map((p) => areaPath(site, area, p)));
-    const done = res.filter((r) => r.ok).map((r) => r.path);
-    if (done.length) await fileAudit(req, a, site.id, 'files.delete', { paths: sample(done) });
-    return res.map((r) => ({ ...r, path: relOf(site, area, r.path) }));
+    const virtuals = paths.map((p) => areaPath(site, area, p));
+    // A batch: one gate for the whole of it (spec §1.1).
+    return keyGated(ctx, req, {
+      action: 'files.delete', target: siteTarget(site), params: { area, paths: virtuals.map((v) => relOf(site, area, v)) },
+    }, async () => {
+      const res = await filesService.remove(a, virtuals);
+      const done = res.filter((r) => r.ok).map((r) => r.path);
+      if (done.length) await fileAudit(req, a, site.id, 'files.delete', { paths: sample(done) });
+      return res.map((r) => ({ ...r, path: relOf(site, area, r.path) }));
+    });
   },
 
   async move(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, items: Array<{ from: string; to: string }>, overwrite: boolean, copy = false): Promise<FileOpResult[]> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     const mapped = items.map((i) => ({ from: areaPath(site, area, i.from), to: areaPath(site, area, i.to) }));
-    const res = copy ? await filesService.copy(a, mapped) : await filesService.move(a, mapped, overwrite);
-    const done = mapped.filter((_, i) => res[i]?.ok).map((i) => `${i.from} → ${i.to}`);
-    if (done.length) await fileAudit(req, a, site.id, copy ? 'files.copy' : 'files.move', { items: sample(done), ...(copy ? {} : { overwrite }) });
-    return res.map((r) => ({ ...r, path: relOf(site, area, r.path) }));
+    return keyGated(ctx, req, {
+      action: 'files.write', target: siteTarget(site),
+      params: { op: copy ? 'copy' : 'move', area, items: mapped.map((i) => ({ from: relOf(site, area, i.from), to: relOf(site, area, i.to) })), overwrite: copy ? false : overwrite },
+    }, async () => {
+      const res = copy ? await filesService.copy(a, mapped) : await filesService.move(a, mapped, overwrite);
+      const done = mapped.filter((_, i) => res[i]?.ok).map((i) => `${i.from} → ${i.to}`);
+      if (done.length) await fileAudit(req, a, site.id, copy ? 'files.copy' : 'files.move', { items: sample(done), ...(copy ? {} : { overwrite }) });
+      return res.map((r) => ({ ...r, path: relOf(site, area, r.path) }));
+    });
   },
 
   async extract(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, to: string | undefined, overwrite: boolean): Promise<FileExtractResult> {
@@ -576,9 +683,14 @@ export const keyApi = {
     const site = await keySite(ctx, siteId);
     const archive = areaPath(site, area, path);
     const target = to === undefined ? undefined : areaPath(site, area, to);
-    const res = await filesService.extract(a, archive, target, overwrite);
-    await fileAudit(req, a, site.id, 'files.extract', { path: archive, to: target ?? null, overwrite, files: res.files, bytes: res.bytes });
-    return res;
+    return keyGated(ctx, req, {
+      action: 'files.write', target: siteTarget(site),
+      params: { op: 'extract', area, path: relOf(site, area, archive), to: target === undefined ? null : relOf(site, area, target), overwrite },
+    }, async () => {
+      const res = await filesService.extract(a, archive, target, overwrite);
+      await fileAudit(req, a, site.id, 'files.extract', { path: archive, to: target ?? null, overwrite, files: res.files, bytes: res.bytes });
+      return res;
+    });
   },
 
   // ── releases ──
@@ -594,10 +706,16 @@ export const keyApi = {
     const site = await keySite(ctx, siteId);
     await loadSite(ctx.actor, site.id, 'releases.publish');
     const waitMs = Math.min(PUBLISH_WAIT_MAX_MS, Math.max(0, Math.trunc(opts.waitMs ?? 0)));
+    const override = opts.overrideRollback === true;
+    // release.publish, and release.publish_override_rollback with the override: one gate, the strictest.
+    const gates = [
+      { action: 'release.publish', target: siteTarget(site), params: { message, overrideRollback: override } },
+      ...(override ? [{ action: 'release.publish_override_rollback', target: siteTarget(site), params: { message, overrideRollback: true } }] : []),
+    ];
     const go = async (signal: AbortSignal | null): Promise<ApiV1ReleaseResult> => {
-      const release = await releaseService.publish(site.id, {
-        trigger: 'manual', userId: ctx.creatorId, message, apiKeyId: ctx.id, rollbackGuard: opts.overrideRollback ? 'off' : 'refuse',
-      });
+      const release = await keyGated(ctx, req, gates, () => releaseService.publish(site.id, {
+        trigger: 'manual', userId: ctx.creatorId, message, apiKeyId: ctx.id, rollbackGuard: override ? 'off' : 'refuse',
+      }));
       await auditService.logReqAs(req, site.tenant_id, 'release.publish', {
         resourceType: 'release', resourcePath: String(release.id),
         details: { siteId: site.id, number: release.number, ...(opts.overrideRollback ? { overrideRollback: true } : {}) },
@@ -657,7 +775,8 @@ export const keyApi = {
     const site = await keySite(ctx, siteId);
     const rid = releaseIdOf(releaseId);
     await loadSite(ctx.actor, site.id, 'releases.publish');
-    await releaseService.rollback(site.id, rid, ctx.creatorId, { apiKeyId: ctx.id });
+    await keyGated(ctx, req, { action: 'release.rollback', target: siteTarget(site), params: { releaseId: rid } },
+      () => releaseService.rollback(site.id, rid, ctx.creatorId, { apiKeyId: ctx.id }));
     await auditService.logReqAs(req, site.tenant_id, 'release.rollback', { resourceType: 'release', resourcePath: String(rid), details: { siteId: site.id } });
   },
 
@@ -690,7 +809,8 @@ export const keyApi = {
     assertReadsCode(ctx.actor, site);
     const rid = releaseIdOf(releaseId);
     const discardPending = opts.discardPending === true;
-    const r = await releaseService.restoreToStaging(site.id, rid, { userId: ctx.creatorId, apiKeyId: ctx.id, discardPending });
+    const r = await keyGated(ctx, req, { action: 'release.restore_to_staging', target: siteTarget(site), params: { releaseId: rid, discardPending } },
+      () => releaseService.restoreToStaging(site.id, rid, { userId: ctx.creatorId, apiKeyId: ctx.id, discardPending }));
     await auditService.logReqAs(req, site.tenant_id, 'release.restoreToStaging', {
       resourceType: 'release', resourcePath: String(rid),
       details: r.status === 'done'
@@ -721,10 +841,17 @@ export const keyApi = {
     // Database clone: + the databases.manage scope, only databases within the key's reach.
     const clone = body.database === 'clone';
     if (clone) requireScope(ctx, 'databases.manage');
-    const r = await previewService.start(req, ctx.actor, site.id, {
+    const start = async () => previewService.start(req, ctx.actor, site.id, {
       target: staging ? 'staging' : 'release', releaseId: body.releaseId ?? null, ttlMinutes: body.ttlMinutes ?? null,
       options: clone ? { database: 'clone' } : null, databaseIds: clone ? body.databaseIds ?? null : null,
     }, { keyId: ctx.id, includeKey: body.includeKey === true, withLink: true, ...(clone ? { dbReach: await keyDbReach(ctx) } : {}) });
+    // A copy of production data in a preview: preview.db_clone.
+    const r = clone
+      ? await keyGated(ctx, req, {
+        action: 'preview.db_clone', target: siteTarget(site),
+        params: { releaseId: body.releaseId ?? null, staging, ttlMinutes: body.ttlMinutes ?? null, databaseIds: body.databaseIds ?? null, includeKey: body.includeKey === true },
+      }, start)
+      : await start();
     if (body.wait === false) return r;
     for (let waited = 0; waited < 25_000; waited += 500) {
       const p = await previewService.get(ctx.actor, site.id);
@@ -752,7 +879,11 @@ export const keyApi = {
   async previewLink(ctx: ApiKeyContext, req: Request, siteId: number): Promise<PreviewLink> {
     previewScopes(ctx);
     const site = await keySite(ctx, siteId);
-    return previewService.shareLink(req, ctx.actor, site.id, ctx.id, await keyDbReach(ctx));
+    const link = async () => previewService.shareLink(req, ctx.actor, site.id, ctx.id, await keyDbReach(ctx));
+    // A public link to a preview holding a copy of the database: preview.share_link_with_db.
+    const current = await previewService.get(ctx.actor, site.id);
+    if (!current?.dbClone) return link();
+    return keyGated(ctx, req, { action: 'preview.share_link_with_db', target: siteTarget(site), params: { previewId: current.id } }, link);
   },
 
   async previewFetch(ctx: ApiKeyContext, siteId: number, q: {
@@ -834,7 +965,11 @@ export const keyApi = {
     if (!row) throw new AppError(404, 'Subdomain not found among the ones this key created', 'notFound');
     const routes = await db('site_routes').where({ domain_id: row.id }).select('site_id') as Array<{ site_id: number }>;
     if (routes.some((r) => !keyAllowsSite(ctx, Number(r.site_id)))) throw new AppError(403, ROUTE_OUTSIDE, 'keyRouteOutside');
-    await domainsService.remove(req, ctx.actor, row.id);
+    await keyGated(ctx, req, {
+      action: 'subdomain.remove',
+      target: { ...accountTarget(await accountRow(ctx)), siteIds: [...new Set(routes.map((r) => Number(r.site_id)))] },
+      params: { domain: name },
+    }, () => domainsService.remove(req, ctx.actor, row.id));
   },
 
   // ── path routes of the domains (routes.manage) ──
@@ -847,8 +982,10 @@ export const keyApi = {
   async addRoute(ctx: ApiKeyContext, req: Request, domainName: string, pathPrefix: string, siteId: number, runtimeId: number | null = null): Promise<ApiV1Route> {
     requireScope(ctx, 'routes.manage');
     const d = await manageableDomain(ctx, domainName);
-    await keySite(ctx, siteId);
-    const r = await domainsService.addRoute(req, ctx.actor, d.id, { pathPrefix, siteId, runtimeId } as Parameters<typeof domainsService.addRoute>[3]);
+    const site = await keySite(ctx, siteId);
+    const r = await keyGated(ctx, req, {
+      action: 'domain.route_change', target: siteTarget(site), params: { op: 'add', domain: d.name, pathPrefix, siteId, runtimeId },
+    }, () => domainsService.addRoute(req, ctx.actor, d.id, { pathPrefix, siteId, runtimeId } as Parameters<typeof domainsService.addRoute>[3]));
     return { id: r.id, domain: d.name, pathPrefix: r.pathPrefix, siteId: r.siteId, runtimeId: r.runtimeId };
   },
 
@@ -857,9 +994,13 @@ export const keyApi = {
     requireScope(ctx, 'routes.manage');
     const { domain, route } = await keyRoute(ctx, routeId);
     const siteId = body.siteId ?? route.siteId;
-    await keySite(ctx, siteId);
+    const site = await keySite(ctx, siteId);
     const runtimeId = body.runtimeId !== undefined ? body.runtimeId : (siteId === route.siteId ? route.runtimeId : null);
-    const r = await domainsService.updateRoute(req, ctx.actor, domain.id, route.id, { pathPrefix: body.pathPrefix ?? route.pathPrefix, siteId, runtimeId } as Parameters<typeof domainsService.updateRoute>[4]);
+    const pathPrefix = body.pathPrefix ?? route.pathPrefix;
+    const r = await keyGated(ctx, req, {
+      action: 'domain.route_change', target: { ...siteTarget(site), siteIds: [route.siteId, siteId] },
+      params: { op: 'update', routeId: route.id, domain: domain.name, pathPrefix, siteId, runtimeId },
+    }, () => domainsService.updateRoute(req, ctx.actor, domain.id, route.id, { pathPrefix, siteId, runtimeId } as Parameters<typeof domainsService.updateRoute>[4]));
     return { id: r.id, domain: domain.name, pathPrefix: r.pathPrefix, siteId: r.siteId, runtimeId: r.runtimeId };
   },
 
@@ -878,13 +1019,17 @@ export const keyApi = {
   async deleteRuntime(ctx: ApiKeyContext, req: Request, siteId: number, runtimeId: number): Promise<void> {
     requireScope(ctx, 'sites.manage');
     const site = await keySite(ctx, siteId);
-    await sitesService.deleteRuntime(req, ctx.actor, site.id, runtimeId);
+    await keyGated(ctx, req, { action: 'site.runtime_remove', target: siteTarget(site), params: { runtimeId } },
+      () => sitesService.deleteRuntime(req, ctx.actor, site.id, runtimeId));
   },
 
   async deleteRoute(ctx: ApiKeyContext, req: Request, routeId: number): Promise<void> {
     requireScope(ctx, 'routes.manage');
     const { domain, route } = await keyRoute(ctx, routeId);
-    await domainsService.deleteRoute(req, ctx.actor, domain.id, route.id);
+    const site = await keySite(ctx, route.siteId);
+    await keyGated(ctx, req, {
+      action: 'domain.route_change', target: siteTarget(site), params: { op: 'remove', routeId: route.id, domain: domain.name, pathPrefix: route.pathPrefix },
+    }, () => domainsService.deleteRoute(req, ctx.actor, domain.id, route.id));
   },
 
   // ── data paths (folders of the code the site writes to, kept in its data area) ──
@@ -908,7 +1053,8 @@ export const keyApi = {
   async deleteDataPath(ctx: ApiKeyContext, req: Request, siteId: number, pathId: number): Promise<void> {
     requireScope(ctx, 'sites.manage');
     const site = await keySite(ctx, siteId);
-    await sitesService.deleteDataPath(req, ctx.actor, site.id, pathId);
+    await keyGated(ctx, req, { action: 'site.data_path_remove', target: siteTarget(site), params: { pathId } },
+      () => sitesService.deleteDataPath(req, ctx.actor, site.id, pathId));
   },
 
   // ── cron ──
@@ -921,25 +1067,29 @@ export const keyApi = {
   async createCronJob(ctx: ApiKeyContext, req: Request, siteId: number, body: CronJobInput): Promise<CronJob> {
     requireScope(ctx, 'cron.manage');
     const site = await keySite(ctx, siteId);
-    return cronService.create(req, ctx.actor, site.id, body);
+    return keyGated(ctx, req, { action: 'cron.write', target: siteTarget(site), params: { op: 'create', ...body } },
+      () => cronService.create(req, ctx.actor, site.id, body));
   },
 
   async updateCronJob(ctx: ApiKeyContext, req: Request, siteId: number, jobId: number, body: Partial<CronJobInput>): Promise<CronJob> {
     requireScope(ctx, 'cron.manage');
     const site = await keySite(ctx, siteId);
-    return cronService.update(req, ctx.actor, site.id, jobId, body);
+    return keyGated(ctx, req, { action: 'cron.write', target: siteTarget(site), params: { op: 'update', jobId, ...body } },
+      () => cronService.update(req, ctx.actor, site.id, jobId, body));
   },
 
   async deleteCronJob(ctx: ApiKeyContext, req: Request, siteId: number, jobId: number): Promise<void> {
     requireScope(ctx, 'cron.manage');
     const site = await keySite(ctx, siteId);
-    await cronService.remove(req, ctx.actor, site.id, jobId);
+    await keyGated(ctx, req, { action: 'cron.delete', target: siteTarget(site), params: { jobId } },
+      () => cronService.remove(req, ctx.actor, site.id, jobId));
   },
 
   async runCronJob(ctx: ApiKeyContext, req: Request, siteId: number, jobId: number): Promise<CronRun> {
     requireScope(ctx, 'cron.manage');
     const site = await keySite(ctx, siteId);
-    return cronService.runNow(req, ctx.actor, site.id, jobId);
+    return keyGated(ctx, req, { action: 'cron.run', target: siteTarget(site), params: { jobId } },
+      () => cronService.runNow(req, ctx.actor, site.id, jobId));
   },
 
   async cronRuns(ctx: ApiKeyContext, siteId: number, jobId: number, limit: number, offset: number): Promise<{ items: CronRun[]; total: number }> {

@@ -15,6 +15,7 @@ import {
 import type { NotificationFamily } from '@oblimint/shared';
 import { keyDatabases } from '../services/apiKeys/keyDatabases';
 import { keyEnv } from '../services/apiKeys/keyEnv';
+import { keyPending, pendingIdOf, PENDING_WAIT_MAX_MS, statusOf } from '../services/apiKeys/keyPending';
 import { errorListQuery, errorListShape } from '../services/siteErrors/siteErrors.service';
 import type { SiteBaseId } from '@oblimint/shared';
 import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInputSchema, siteCreateSchema, siteUpdateSchema } from '../validators/hosting.schema';
@@ -110,6 +111,13 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   GET    /subdomains                                  → ApiV1Subdomain[] (created by the key)   domains.subdomain
 //   POST   /sites/:id/subdomains {name}                 → ApiV1Subdomain (201)                    domains.subdomain
 //   DELETE /subdomains/:name                            → { deleted: true } (its own only)       domains.subdomain
+//   GET    /pending-actions?status=                     → KeyPendingAction[] (this key's requests for protected actions)
+//   GET    /pending-actions/:pid                        → KeyPendingAction
+//   GET    /pending-actions/:pid/wait?timeout=≤60       → KeyPendingAction once decided (timedOut otherwise; one of the 3 wait slots)
+//   DELETE /pending-actions/:pid                        → KeyPendingAction (withdrawn)
+// Protected actions (shared/src/restrictions.ts): a gated route may answer 428 twoFactorRequired | approvalRequired
+// {details.pendingActionId, description, userMessage, next}, 403 twoFactorNotEnrolled, 409 noEligibleApprover; once
+// approved, the SAME request again runs once (optional header X-Oblimint-Approval: <pendingActionId>; 409 approvalMismatch).
 
 const router = Router();
 router.use(apiKeyAuthLimiter, apiKeyAuth, apiKeyLimiter);
@@ -264,7 +272,7 @@ router.put('/sites/:id/files/content', (req, res, next) => {
 
 router.post('/sites/:id/uploads', h(async (req, res) => {
   const b = parseBody(uploadBody, req.body);
-  ok(res, await keyApi.uploadStart(ctxOf(req), siteId(req), areaOf(b.area), b.path, b.size, b.overwrite === true, b.expectedSha256 ?? null));
+  ok(res, await keyApi.uploadStart(ctxOf(req), req, siteId(req), areaOf(b.area), b.path, b.size, b.overwrite === true, b.expectedSha256 ?? null));
 }));
 
 router.put('/uploads/:uid/:index', (req, res, next) => {
@@ -533,6 +541,16 @@ router.delete('/databases/:iid/users/:uid', h(async (req, res) => {
   await keyDatabases.deleteUser(ctxOf(req), req, iid(req), Number(req.params.uid));
   ok(res, { deleted: true });
 }));
+
+// ── protected actions: this key's pending actions (read-only follow-up; a key never confirms nor approves) ──
+const pendingWaitQuery = z.object({ timeout: z.coerce.number().int().min(0).max(PENDING_WAIT_MAX_MS / 1000).default(30) }).strict();
+router.get('/pending-actions', h(async (req, res) => ok(res, await keyPending.list(ctxOf(req), statusOf(req.query.status)))));
+router.get('/pending-actions/:pid', h(async (req, res) => ok(res, await keyPending.get(ctxOf(req), pendingIdOf(req.params.pid)))));
+router.get('/pending-actions/:pid/wait', h(async (req, res) => {
+  const q = parseBody(pendingWaitQuery, req.query);
+  ok(res, await keyPending.wait(ctxOf(req), req, pendingIdOf(req.params.pid), q.timeout * 1000));
+}));
+router.delete('/pending-actions/:pid', h(async (req, res) => ok(res, await keyPending.cancel(ctxOf(req), req, pendingIdOf(req.params.pid)))));
 
 router.use((_req, res) => { res.status(404).json({ success: false, error: 'Not found', code: 'notFound' }); });
 

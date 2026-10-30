@@ -163,6 +163,12 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`read_logs\` | \`error\` (default), \`access\` or \`app\` logs; \`query\` filter, \`limit\` (≤ 2000), \`since?\` / \`until?\` (ISO 8601), \`status?\` (access only: \`404\`, \`5xx\`) | \`logs.read\` |
 | \`list_errors\` | PHP errors, warnings and fatals **grouped** (level + message + \`file:line\` relative to the release) and **attributed to the release** that served them: \`count\`, \`firstSeen\` / \`lastSeen\`, \`newInRelease\`, \`errorClass\` + \`hint\`; \`releases\` sums up per release. Filters \`release_id?\`, \`since_release_id?\`, \`new_only?\`, \`level?\` (\`fatal,parse\`…), \`limit?\` (≤ 200) | \`logs.read\` |
 | \`get_error\` | One group (\`error_id\`): last occurrence with its stack trace (arguments and secrets masked), its release, the same error in the other releases | \`logs.read\` |
+| \`get_pending_action\` | One request this key filed for a protected action (\`pending_action_id\` from the error): status, the description the human reads, \`expiresAt\`, \`consumeBy\`, \`executionError\`, \`next\` | — |
+| \`wait_for_pending_action\` | Wait until a human decides (\`timeout_s\` ≤ 60, default 30), then as \`get_pending_action\`; \`timedOut\`: call it again. One of the key's 3 wait slots | — |
+| \`list_pending_actions\` | This key's requests, newest first (\`status?\`) | — |
+| \`cancel_pending_action\` | Withdraw a request still pending or approved | — |
+
+Tools that may run into a protected action (see §5 « Protected actions ») also take an optional \`approval_id\`.
 
 **Bases (\`base\`)**: \`apache-php5.6\` (legacy code being ported only: no security fix), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supported), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (plain HTML/JS/CSS).
 **Profiles (\`app_profile\`)**: \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (document root \`public\`), \`generic-php\`, \`static\`. A profile sets the document root and declares the data folders (e.g. \`wp-content/uploads\`).
@@ -325,6 +331,22 @@ The longest route wins: \`/uploads/\` comes before \`/\`. Removing the route giv
 - Laravel: \`create_site\` with \`app_profile: "laravel"\` (document root \`public\`).
 - Secrets (API keys, passwords): **never** in the code. Put them in the site's environment variables (\`set_env\` with \`secret: true\`) and read them with \`getenv()\`.
 
+### Protected actions
+
+The humans of the account may protect some operations (dropping a database, an SQL write, a deletion, publishing, a cron job…; the defaults protect the destructive ones, and \`query_database\` with \`write: true\` for the agents). A protected call runs nothing and answers **428** with a request waiting for a human:
+
+- \`twoFactorRequired\`: the key's owner confirms it in the panel with his 2FA code (phone app or code);
+- \`approvalRequired\`: a **second** authorised person approves it in the panel (with his own code).
+
+\`details\` holds \`pendingActionId\`, \`description\` (exactly what will run), \`expiresAt\` (30 min), \`approveUrl\` and \`userMessage\`. What to do:
+
+1. Tell the human \`userMessage\` as it is (« Autoriser l'action avec un 2FA téléphone ou un code via l'interface ») with the description and the link.
+2. \`wait_for_pending_action\` (REST: \`GET /pending-actions/:pid/wait\`), again while \`timedOut\`.
+3. \`approved\`: call the **same** tool with the **same** arguments (optionally \`approval_id\`; REST: the same request, optionally the header \`X-Oblimint-Approval: <pendingActionId>\`) before \`consumeBy\` (15 min). It runs **once**; any other argument files a new request.
+4. \`denied\`: stop and ask the human. \`expired\`: call again if still needed. \`consumed\` with \`executionError\`: the operation ran and failed.
+
+Other answers: \`twoFactorNotEnrolled\` (403, the key's owner has no 2FA: he enables it in his profile first), \`noEligibleApprover\` (409, a second authorised person is needed), \`approvalMismatch\` (409, \`approval_id\` names another request), \`tooManyPendingActions\` (429). A key never confirms nor approves anything; the requests of another key, even of the same human, are invisible to it.
+
 ---
 
 ## 6. REST API — reference
@@ -397,6 +419,9 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/domains\` · \`/subdomains\` | possible parent domains · subdomains of the key | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.example.com" }\` | \`domains.subdomain\` |
 | DELETE | \`/subdomains/:name\` | | \`domains.subdomain\` |
+| GET | \`/pending-actions\` · \`/pending-actions/:pid\` | this key's requests for protected actions (\`?status=\`) · one of them | — |
+| GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, default 30): once a human decided (\`timedOut\` otherwise) | — |
+| DELETE | \`/pending-actions/:pid\` | withdraw the request | — |
 
 Switch a site to manual publishing:
 
@@ -482,6 +507,9 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`previewsDisabled\` · \`previewDomainMissing\` (409) | Previews off on the platform / no preview domain configured | Tell the human |
 | \`scanBlocked\` (409, \`start_preview\`) | The analysis blocked this code | Do not work around it: tell the human |
 | \`stagingEmpty\` (409, \`start_preview\`) | Nothing in the staging to preview | Write the code first |
+| \`twoFactorRequired\` · \`approvalRequired\` (428) | A protected action: nothing ran, a human must confirm (the key's owner, 2FA code) or approve (a second person) | §5 « Protected actions »: tell the human \`userMessage\`, \`wait_for_pending_action\`, then the same call again |
+| \`twoFactorNotEnrolled\` (403) · \`noEligibleApprover\` (409) | The key's owner has no 2FA · nobody else may approve | Ask the human to enable 2FA · to add a second authorised person (or lower the protection) |
+| \`approvalMismatch\` (409) · \`tooManyPendingActions\` (429) | \`approval_id\` names another request · too many requests waiting | Drop \`approval_id\` or use the right one · wait, \`cancel_pending_action\` |
 
 ---
 
@@ -644,6 +672,12 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`read_logs\` | Journaux \`error\` (par défaut), \`access\` ou \`app\` ; filtre \`query\`, \`limit\` (≤ 2000), \`since?\` / \`until?\` (ISO 8601), \`status?\` (access seulement : \`404\`, \`5xx\`) | \`logs.read\` |
 | \`list_errors\` | Erreurs, avertissements et fatales PHP **regroupés** (niveau + message + \`fichier:ligne\` relatif à la release) et **rattachés à la release** qui les a servis : \`count\`, \`firstSeen\` / \`lastSeen\`, \`newInRelease\`, \`errorClass\` + \`hint\` ; \`releases\` résume par release. Filtres \`release_id?\`, \`since_release_id?\`, \`new_only?\`, \`level?\` (\`fatal,parse\`…), \`limit?\` (≤ 200) | \`logs.read\` |
 | \`get_error\` | Un groupe (\`error_id\`) : dernière occurrence avec sa pile d'appels (arguments et secrets masqués), sa release, la même erreur dans les autres releases | \`logs.read\` |
+| \`get_pending_action\` | Une demande déposée par cette clé pour une action protégée (\`pending_action_id\` de l'erreur) : statut, la description que lit l'humain, \`expiresAt\`, \`consumeBy\`, \`executionError\`, \`next\` | — |
+| \`wait_for_pending_action\` | Attendre la décision d'un humain (\`timeout_s\` ≤ 60, 30 par défaut), puis comme \`get_pending_action\` ; \`timedOut\` : rappelle-le. Compte parmi les 3 attentes de la clé | — |
+| \`list_pending_actions\` | Les demandes de cette clé, des plus récentes aux plus anciennes (\`status?\`) | — |
+| \`cancel_pending_action\` | Retirer une demande encore en attente ou approuvée | — |
+
+Les outils qui peuvent rencontrer une action protégée (voir §5 « Actions protégées ») acceptent aussi un \`approval_id\` facultatif.
 
 **Bases (\`base\`)** : \`apache-php5.6\` (code ancien en cours de portage uniquement : aucun correctif de sécurité), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supporté), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (HTML/JS/CSS pur).
 **Profils (\`app_profile\`)** : \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (racine web \`public\`), \`generic-php\`, \`static\`. Un profil règle la racine web et déclare les dossiers de données (ex. \`wp-content/uploads\`).
@@ -806,6 +840,22 @@ La route la plus longue gagne : \`/uploads/\` passe avant \`/\`. Supprimer la ro
 - Laravel : \`create_site\` avec \`app_profile: "laravel"\` (racine web \`public\`).
 - Les secrets (clés d'API, mots de passe) : **jamais** dans le code. Mets-les dans les variables d'environnement du site (\`set_env\` avec \`secret: true\`) et lis-les avec \`getenv()\`.
 
+### Actions protégées
+
+Les humains du compte peuvent protéger certaines opérations (supprimer une base, une requête SQL en écriture, une suppression, une publication, une tâche planifiée… ; par défaut les opérations destructrices, et \`query_database\` avec \`write: true\` pour les agents). Un appel protégé n'exécute rien et répond **428** avec une demande qui attend un humain :
+
+- \`twoFactorRequired\` : le propriétaire de la clé la confirme dans le panel avec son code 2FA (application du téléphone ou code) ;
+- \`approvalRequired\` : une **seconde** personne habilitée l'approuve dans le panel (avec son propre code).
+
+\`details\` contient \`pendingActionId\`, \`description\` (exactement ce qui va s'exécuter), \`expiresAt\` (30 min), \`approveUrl\` et \`userMessage\`. Que faire :
+
+1. Transmets \`userMessage\` tel quel à l'humain (« Autoriser l'action avec un 2FA téléphone ou un code via l'interface »), avec la description et le lien.
+2. \`wait_for_pending_action\` (REST : \`GET /pending-actions/:pid/wait\`), à nouveau tant que \`timedOut\`.
+3. \`approved\` : rappelle le **même** outil avec les **mêmes** arguments (\`approval_id\` en plus si tu veux ; REST : la même requête, éventuellement l'en-tête \`X-Oblimint-Approval: <pendingActionId>\`) avant \`consumeBy\` (15 min). Elle s'exécute **une fois** ; un autre argument dépose une nouvelle demande.
+4. \`denied\` : arrête-toi et demande à l'humain. \`expired\` : rappelle si c'est encore utile. \`consumed\` avec \`executionError\` : l'opération a été lancée et a échoué.
+
+Autres réponses : \`twoFactorNotEnrolled\` (403, le propriétaire de la clé n'a pas de 2FA : il l'active d'abord dans son profil), \`noEligibleApprover\` (409, il faut une seconde personne habilitée), \`approvalMismatch\` (409, \`approval_id\` désigne une autre demande), \`tooManyPendingActions\` (429). Une clé ne confirme ni n'approuve jamais rien ; les demandes d'une autre clé, même du même humain, lui sont invisibles.
+
 ---
 
 ## 6. API REST — référence
@@ -878,6 +928,9 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET | \`/domains\` · \`/subdomains\` | domaines parents possibles · sous-domaines de la clé | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.exemple.com" }\` | \`domains.subdomain\` |
 | DELETE | \`/subdomains/:name\` | | \`domains.subdomain\` |
+| GET | \`/pending-actions\` · \`/pending-actions/:pid\` | les demandes de cette clé pour des actions protégées (\`?status=\`) · l'une d'elles | — |
+| GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, 30 par défaut) : dès qu'un humain a décidé (\`timedOut\` sinon) | — |
+| DELETE | \`/pending-actions/:pid\` | retirer la demande | — |
 
 Passer un site en publication manuelle :
 
@@ -963,6 +1016,9 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`previewsDisabled\` · \`previewDomainMissing\` (409) | Aperçus désactivés sur la plateforme / aucun domaine d'aperçu configuré | Prévenir l'humain |
 | \`scanBlocked\` (409, \`start_preview\`) | L'analyse a bloqué ce code | Ne pas contourner : prévenir l'humain |
 | \`stagingEmpty\` (409, \`start_preview\`) | Rien dans le staging à prévisualiser | Écrire le code d'abord |
+| \`twoFactorRequired\` · \`approvalRequired\` (428) | Action protégée : rien n'a été exécuté, un humain doit confirmer (le propriétaire de la clé, code 2FA) ou approuver (une seconde personne) | §5 « Actions protégées » : transmettre \`userMessage\`, \`wait_for_pending_action\`, puis le même appel à nouveau |
+| \`twoFactorNotEnrolled\` (403) · \`noEligibleApprover\` (409) | Le propriétaire de la clé n'a pas de 2FA · personne d'autre ne peut approuver | Demander à l'humain d'activer la 2FA · d'ajouter une seconde personne habilitée (ou d'abaisser la protection) |
+| \`approvalMismatch\` (409) · \`tooManyPendingActions\` (429) | \`approval_id\` désigne une autre demande · trop de demandes en attente | Retirer \`approval_id\` ou mettre le bon · attendre, \`cancel_pending_action\` |
 
 ---
 

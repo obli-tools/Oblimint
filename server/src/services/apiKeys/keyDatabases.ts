@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import type { Request, Response } from 'express';
 import type { Readable } from 'stream';
 import type {
@@ -12,8 +13,11 @@ import { databaseService, loadDatabaseRow, loadInstance } from '../databases/dat
 import { auditSql, explorerService } from '../databases/explorer/explorer.service';
 import type { DbDatabaseRow, DbInstanceRow } from '../databases/rows';
 import { requireScope, type ApiKeyContext } from './apiKeys.service';
-import { keyApi, type SiteArea } from './keyApi';
+import { keyApi, keySite, type SiteArea } from './keyApi';
 import { keyEnv } from './keyEnv';
+import { actionLevel, type GateSpec } from '../restrictions/gate';
+import { spoolHashed } from '../restrictions/content';
+import { asKeyRequest, keyGated, siteTarget } from '../restrictions/targets';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Databases through an API key (scope databases.manage), on top of the
@@ -115,9 +119,56 @@ async function credentialsToEnv(ctx: ApiKeyContext, req: Request, inst: ApiV1DbI
     { name: `${prefix}USER`, value: user.username, secret: false },
     { name: `${prefix}PASSWORD`, value: password, secret: true },
   ];
-  await keyEnv.update(ctx, req, target.siteId, vars);
+  // Gated before the user / password was made (envGate): written as is here.
+  await keyEnv.apply(ctx, req, await keyEnv.prepare(ctx, target.siteId, vars, []));
   return vars.map((v) => v.name);
 }
+
+/**
+ * site.env_write of credentials going into a site's environment, as the gate
+ * sees it BEFORE the user or the password exists: the variable names and
+ * where they come from (a generated password is never part of the
+ * fingerprint — it does not exist yet; a given one enters it as a secret).
+ */
+async function envGate(ctx: ApiKeyContext, env: ApiV1DbEnvTarget, origin: Record<string, unknown>, password?: string | null): Promise<GateSpec> {
+  requireScope(ctx, 'sites.manage');
+  const site = await keySite(ctx, env.siteId);
+  const prefix = env.prefix ?? 'DB_';
+  if (!ENV_PREFIX_RE.test(prefix)) throw new AppError(400, 'Prefix: upper-case letters, digits and _', 'validation', { field: 'prefix' });
+  return {
+    action: 'site.env_write', target: siteTarget(site),
+    params: { ...origin, set: ['HOST', 'SOCKET', 'NAME', 'USER', 'PASSWORD'].map((n) => `${prefix}${n}`), databaseId: env.databaseId ?? null },
+    secretParams: password ? { password } : {},
+  };
+}
+
+/**
+ * db.import: free → streamed as before. Protected → the dump is copied to a
+ * private temporary file while hashed (sha256 + size enter the fingerprint:
+ * an approval never serves another dump), gated, then imported from THAT copy
+ * — never re-read from its source, which could have changed meanwhile.
+ */
+async function gatedImport(
+  ctx: ApiKeyContext, req: Request, row: DbInstanceRow, target: { id: number; name: string },
+  source: { stream: Readable; contentType: string } | undefined, origin: Record<string, unknown>,
+): Promise<{ restored: true }> {
+  if (await actionLevel(asKeyRequest(req, ctx), 'db.import', instanceTarget(row)) === 'none') {
+    return databaseService.restore(req, ctx.actor, row.id, target.id, source);
+  }
+  const contentType = source ? source.contentType : String(req.headers['content-type'] ?? '');
+  const copy = await spoolHashed(source?.stream ?? req);
+  try {
+    return await keyGated(ctx, req, {
+      action: 'db.import', target: instanceTarget(row),
+      params: { database: target.name, databaseId: target.id, instanceId: row.id, ...origin, size: copy.size, contentSha256: copy.sha256 },
+    }, () => databaseService.restore(req, ctx.actor, row.id, target.id, { stream: copy.open(), contentType }));
+  } finally {
+    await copy.cleanup();
+  }
+}
+
+/** The database's instance as a restriction target (its account). */
+const instanceTarget = (row: DbInstanceRow) => ({ tenantId: Number(row.tenant_id), accountId: Number(row.account_id), siteId: null });
 
 async function credentials(ctx: ApiKeyContext, req: Request, instanceId: number, user: DbUser, password: string, env: ApiV1DbEnvTarget | undefined): Promise<ApiV1DbCredentials> {
   const own = await created(ctx, 'user');
@@ -165,16 +216,26 @@ export const keyDatabases = {
     const row = await keyInstance(ctx, instanceId);
     const target = await databaseOf(ctx, row.id, dbId);
     if (!(await created(ctx, 'database')).has(target.id)) throw new AppError(403, 'A key deletes only the databases it created', 'keyNotCreator');
-    await databaseService.deleteDatabase(req, ctx.actor, row.id, target.id, confirm);
+    // A wrong confirmation is refused before anything is asked of a human.
+    if (confirm !== target.name) throw new AppError(400, 'Type the database name to confirm', 'confirmMismatch');
+    await keyGated(ctx, req, { action: 'db.drop', target: instanceTarget(row), params: { database: target.name, databaseId: target.id, instanceId: row.id } },
+      () => databaseService.deleteDatabase(req, ctx.actor, row.id, target.id, confirm));
   },
 
   async createUser(ctx: ApiKeyContext, req: Request, instanceId: number, body: { username: string; password?: string | null; grants?: DbGrantInput[]; env?: ApiV1DbEnvTarget }): Promise<ApiV1DbCredentials> {
     const row = await keyInstance(ctx, instanceId);
     await assertGrants(ctx, row.id, body.grants);
     await checkEnvTarget(ctx, body.env);
-    const r = await databaseService.createUser(req, ctx.actor, row.id, { username: body.username, password: body.password, grants: body.grants });
-    await record(ctx, 'user', r.user.id);
-    return credentials(ctx, req, row.id, r.user, r.password, body.env);
+    const run = async () => {
+      const r = await databaseService.createUser(req, ctx.actor, row.id, { username: body.username, password: body.password, grants: body.grants });
+      await record(ctx, 'user', r.user.id);
+      return credentials(ctx, req, row.id, r.user, r.password, body.env);
+    };
+    if (!body.env) return run();
+    // Credentials written into a site's environment: site.env_write, gated before the user exists.
+    return keyGated(ctx, req, await envGate(ctx, body.env, {
+      from: 'database user', instanceId: row.id, username: body.username, grants: body.grants ?? [],
+    }, body.password), run);
   },
 
   async setGrants(ctx: ApiKeyContext, req: Request, instanceId: number, userId: number, grants: DbGrantInput[]): Promise<ApiV1DbUser> {
@@ -186,7 +247,9 @@ export const keyDatabases = {
       .filter((g) => ctx.siteScope !== 'all' && !grants.some((w) => w.databaseId === g.database_id));
     const ownDb = await created(ctx, 'database');
     const keep = hidden.filter((g) => !ownDb.has(g.database_id)).map((g) => ({ databaseId: g.database_id, level: g.level }));
-    const u = await databaseService.updateUser(req, ctx.actor, row.id, user.id, { grants: [...grants, ...keep] });
+    const u = await keyGated(ctx, req, {
+      action: 'db.user_grants', target: instanceTarget(row), params: { username: user.username, userId: user.id, instanceId: row.id, grants },
+    }, () => databaseService.updateUser(req, ctx.actor, row.id, user.id, { grants: [...grants, ...keep] }));
     return viewUser(u, await created(ctx, 'user'));
   },
 
@@ -194,15 +257,24 @@ export const keyDatabases = {
     const row = await keyInstance(ctx, instanceId);
     const user = await userOf(ctx, row.id, userId);
     await checkEnvTarget(ctx, body.env);
-    const r = await databaseService.resetPassword(req, ctx.actor, row.id, user.id, body.password);
-    return credentials(ctx, req, row.id, r.user, r.password, body.env);
+    const origin = { username: user.username, userId: user.id, instanceId: row.id };
+    // db.user_password_reset, and site.env_write when the password goes into a site: one gate, the strictest.
+    const gates: GateSpec[] = [
+      { action: 'db.user_password_reset', target: instanceTarget(row), params: { ...origin, env: body.env ?? null }, secretParams: body.password ? { password: body.password } : {} },
+      ...(body.env ? [await envGate(ctx, body.env, { from: 'database password reset', ...origin }, body.password)] : []),
+    ];
+    return keyGated(ctx, req, gates, async () => {
+      const r = await databaseService.resetPassword(req, ctx.actor, row.id, user.id, body.password);
+      return credentials(ctx, req, row.id, r.user, r.password, body.env);
+    });
   },
 
   async deleteUser(ctx: ApiKeyContext, req: Request, instanceId: number, userId: number): Promise<void> {
     const row = await keyInstance(ctx, instanceId);
     const user = await userOf(ctx, row.id, userId);
     if (!(await created(ctx, 'user')).has(user.id)) throw new AppError(403, 'A key deletes only the database users it created', 'keyNotCreator');
-    await databaseService.deleteUser(req, ctx.actor, row.id, user.id);
+    await keyGated(ctx, req, { action: 'db.user_delete', target: instanceTarget(row), params: { username: user.username, userId: user.id, instanceId: row.id } },
+      () => databaseService.deleteUser(req, ctx.actor, row.id, user.id));
   },
 
   /** Tables and views of a database (estimated rows, size). */
@@ -230,30 +302,43 @@ export const keyDatabases = {
     const log = (details: Record<string, unknown>) => auditService.logReqAs(req, t.instance.tenant_id, 'db.key.query', {
       resourceType: 'database', resourcePath: `${t.instance.id}/${t.database.id}`, details: { database: t.database.name, write, sql: cut, ...details },
     });
-    try {
-      const { statement: _statement, ...r } = await explorerService.keyQuery(t.instance, t.database, keyOwner(ctx), body.sql, {
-        write, maxRows: body.maxRows, timeoutS: body.timeoutS,
-      });
-      await log({ ok: true, rows: r.rowCount, affectedRows: r.affectedRows, truncated: r.truncated });
-      return r;
-    } catch (err) {
-      await log({ ok: false, code: err instanceof AppError ? err.code : null });
-      throw err;
-    }
+    const run = async (): Promise<ApiV1DbQueryResult> => {
+      try {
+        const { statement: _statement, ...r } = await explorerService.keyQuery(t.instance, t.database, keyOwner(ctx), body.sql, {
+          write, maxRows: body.maxRows, timeoutS: body.timeoutS,
+        });
+        await log({ ok: true, rows: r.rowCount, affectedRows: r.affectedRows, truncated: r.truncated });
+        return r;
+      } catch (err) {
+        await log({ ok: false, code: err instanceof AppError ? err.code : null });
+        throw err;
+      }
+    };
+    if (!write) return run();
+    // db.query_write (default: sensitive, keys only). The decider reads the statement with its
+    // literals masked (as the audit); the exact statement is bound by its digest.
+    return keyGated(ctx, req, {
+      action: 'db.query_write', target: instanceTarget(t.instance),
+      params: {
+        database: t.database.name, databaseId: t.database.id, instanceId: t.instance.id, sql: cut, write: true,
+        sqlSha256: crypto.createHash('sha256').update(body.sql).digest('hex'),
+      },
+    }, run);
   },
 
   /** gzip SQL dump streamed to `res`. */
   async dump(ctx: ApiKeyContext, req: Request, res: Response, instanceId: number, dbId: number): Promise<void> {
     const row = await keyInstance(ctx, instanceId);
     const target = await databaseOf(ctx, row.id, dbId);
-    await databaseService.dump(req, res, ctx.actor, row.id, target.id);
+    await keyGated(ctx, req, { action: 'db.dump', target: instanceTarget(row), params: { database: target.name, databaseId: target.id, instanceId: row.id } },
+      () => databaseService.dump(req, res, ctx.actor, row.id, target.id));
   },
 
   /** Runs an SQL dump (plain or gzip) into a database: the request body, or `source` (a file of a site). */
   async importSql(ctx: ApiKeyContext, req: Request, instanceId: number, dbId: number, source?: { stream: Readable; contentType: string }): Promise<{ restored: true }> {
     const row = await keyInstance(ctx, instanceId);
     const target = await databaseOf(ctx, row.id, dbId);
-    return databaseService.restore(req, ctx.actor, row.id, target.id, source);
+    return gatedImport(ctx, req, row, target, source, { from: 'request body' });
   },
 
   /** Imports an SQL dump (.sql or .sql.gz) that is a file of one of the key's sites (needs files.read too). */
@@ -266,7 +351,7 @@ export const keyDatabases = {
       throw new AppError(404, 'File not found', 'notFound');
     }
     try {
-      return await databaseService.restore(req, ctx.actor, row.id, target.id, { stream: stream.body, contentType: 'application/octet-stream' });
+      return await gatedImport(ctx, req, row, target, { stream: stream.body, contentType: 'application/octet-stream' }, { from: 'site file', siteId, area, path });
     } finally {
       stream.body.destroy();
     }
