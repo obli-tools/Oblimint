@@ -311,7 +311,9 @@ test('IP security of the key surfaces', { timeout: 600_000 }, async (t: TestCont
   const OPEN = await apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'open', scopes: ['files.read'], siteScope: 'all' });
   assert.equal(OPEN.open, true);
   assert.equal((await apiKeysService.verifyDetailed(OPEN.key!, '203.0.113.99')).ok, true);
+  assert.equal((await apiKeysService.grantable(owner, acct)).requireIp, false, 'the key form: address optional');
   await db('tenants').where({ id: A }).update({ key_require_ip: true });
+  assert.equal((await apiKeysService.grantable(owner, acct)).requireIp, true, 'the key form marks the address mandatory');
   assert.deepEqual(await apiKeysService.verifyDetailed(OPEN.key!, '203.0.113.99'), { ok: false, reason: 'ipRequired' });
   assert.equal((await apiKeysService.list(owner, acct)).find((k) => k.id === OPEN.id)?.ipMissing, true);
   await assert.rejects(apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'open2', scopes: ['files.read'], siteScope: 'all' }), (e: { code?: string }) => e.code === 'ipRequired');
@@ -321,8 +323,10 @@ test('IP security of the key surfaces', { timeout: 600_000 }, async (t: TestCont
   await platformSettings.update({ keySecurity: { requireIp: true } });
   platformSettings.invalidate();
   assert.equal((await apiKeysService.verifyDetailed(OPEN.key!, '203.0.113.99')).ok, true, 'false overrides the platform');
+  assert.equal((await apiKeysService.grantable(owner, acct)).requireIp, false, 'the workspace false overrides the platform in the form too');
   await db('tenants').where({ id: A }).update({ key_require_ip: null });
   assert.deepEqual(await apiKeysService.verifyDetailed(OPEN.key!, '203.0.113.99'), { ok: false, reason: 'ipRequired' }, 'null inherits');
+  assert.equal((await apiKeysService.grantable(owner, acct)).requireIp, true, 'the form inherits the platform setting');
   await platformSettings.update({ keySecurity: { requireIp: false } });
   refresh();
 

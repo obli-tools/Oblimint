@@ -71,6 +71,7 @@
       "connectorRanges": "+ connectors",
       "connectorRangesHint": "Added automatically: the outbound addresses of the connectors (Anthropic).",
       "openBanner": "Without an allowed address, this key can be used from anywhere, and an open key keeps the strict IP mode of the access keys off for the whole platform. An IP may also be mandatory in this workspace.",
+      "requiredHint": "An allowed address is mandatory on the access keys of this workspace: list the addresses or networks the key will be used from (e.g. 203.0.113.0/24). A Claude connector needs none: Anthropic's ranges are added automatically.",
       "connectorBanner": "Claude calls this connector from Anthropic's published outbound addresses: they are allowed automatically and never banned. Any other address must be listed here: a connector used from Claude Code or Claude Desktop calls from your own machine."
     },
     "trust": {

@@ -71,6 +71,7 @@
       "connectorRanges": "+ connecteurs",
       "connectorRangesHint": "Ajoutées automatiquement : les adresses sortantes des connecteurs (Anthropic).",
       "openBanner": "Sans adresse autorisée, cette clé est utilisable de partout, et une clé ouverte désactive le mode strict des clés d’accès pour toute la plateforme. Une IP peut aussi être obligatoire dans cet espace.",
+      "requiredHint": "Une adresse autorisée est obligatoire sur les clés d’accès de cet espace : indiquez les adresses ou réseaux depuis lesquels la clé sera utilisée (ex. 203.0.113.0/24). Un connecteur Claude n’en a pas besoin : les plages d’Anthropic sont ajoutées automatiquement.",
       "connectorBanner": "Claude appelle ce connecteur depuis les adresses sortantes publiées par Anthropic : elles sont autorisées automatiquement et jamais bannies. Toute autre adresse doit figurer ici : un connecteur utilisé depuis Claude Code ou Claude Desktop appelle depuis votre propre machine."
     },
     "trust": {

@@ -150,6 +150,13 @@ export interface ApiKeyGrantable {
   scopes: ApiKeyScope[];
   /** The caller holds domains.manage: he may give domains to a key. */
   canGrantDomains: boolean;
+  /**
+   * An allowed IP is mandatory on the access keys of this workspace
+   * (tenants.key_require_ip, else the platform keySecurity.requireIp): the form
+   * marks the field required. Never for a connector (covered by the connectors' ranges).
+   * Absent = unknown: the server still answers 400 ipRequired on save.
+   */
+  requireIp?: boolean;
 }
 
 // ── Presets of the key form ─────────────────────────────────────────────────

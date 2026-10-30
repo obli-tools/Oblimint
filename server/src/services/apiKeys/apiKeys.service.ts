@@ -382,7 +382,11 @@ export const apiKeysService = {
   async grantable(actor: HostingActor, accountId: number): Promise<ApiKeyGrantable> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
     const target = { tenantId: account.tenant_id, accountId: account.id };
-    return { scopes: heldScopes(actor, target, [...API_KEY_SCOPES]), canGrantDomains: actorCan(actor, 'domains.manage', target) };
+    return {
+      scopes: heldScopes(actor, target, [...API_KEY_SCOPES]),
+      canGrantDomains: actorCan(actor, 'domains.manage', target),
+      requireIp: await keyIpRequired(account.tenant_id),
+    };
   },
 
   async create(req: Request, actor: HostingActor, accountId: number, body: ApiKeyCreate): Promise<ApiKeyCreated> {

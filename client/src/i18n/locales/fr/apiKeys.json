@@ -37,6 +37,7 @@
     "days": "{{count}} jours",
     "oneYear": "1 an",
     "allowedIps": "Adresses autorisées (facultatif)",
+    "allowedIpsRequired": "Adresses autorisées (obligatoire)",
     "createdTitle": "Clé « {{name}} » créée",
     "savedIt": "Je l'ai enregistrée",
     "shownOnce": "Cette clé n'est affichée qu'une fois : copiez-la en lieu sûr. Elle ne pourra plus être affichée (révoquez-la et créez-en une autre si elle est perdue).",

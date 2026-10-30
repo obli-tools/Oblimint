@@ -37,6 +37,7 @@
     "days": "{{count}} days",
     "oneYear": "1 year",
     "allowedIps": "Allowed addresses (optional)",
+    "allowedIpsRequired": "Allowed addresses (mandatory)",
     "createdTitle": "Key \"{{name}}\" created",
     "savedIt": "I saved it",
     "shownOnce": "This key is shown only now: copy it somewhere safe. It cannot be displayed again (revoke it and create another one if lost).",

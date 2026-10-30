@@ -120,8 +120,8 @@ test('API access keys on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
 
   // ── grantable scopes (the key form's presets) and the preset recorded in the audit ──
   assert.deepEqual(await apiKeysService.grantable(ownerActor, acme), {
-    scopes: ['files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'logs.read'], canGrantDomains: false,
-  }, 'what sites.manage + files.manage + releases.publish allow, no domain');
+    scopes: ['files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'logs.read'], canGrantDomains: false, requireIp: false,
+  },'what sites.manage + files.manage + releases.publish allow, no domain');
   await assert.rejects(apiKeysService.grantable(readerActor, acme), (e: { statusCode: number }) => e.statusCode === 403, 'a reader manages no key');
   await assert.rejects(apiKeysService.grantable(ownerActor, other), (e: { statusCode: number }) => e.statusCode === 404);
   const presetOf = async (keyId: number) => {

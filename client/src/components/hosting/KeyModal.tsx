@@ -111,6 +111,9 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
   }, [accountId]);
   const grantList: readonly ApiKeyScope[] = grantable?.scopes ?? API_KEY_SCOPES;
   const canGrantDomains = grantable?.canGrantDomains ?? true;
+  // An address is mandatory on the keys of this workspace (never on a connector: its ranges cover it).
+  const ipRequired = kind !== 'connector' && (grantable?.requireIp ?? false);
+  const ipMissing = ipRequired && !ips.trim();
 
   const createdSites = initial?.createdSiteIds ?? [];
   const presetState = {
@@ -203,7 +206,7 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
       footer={(
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>{t('common.cancel') || 'Cancel'}</Button>
-          <Button loading={busy} disabled={!name.trim()} onClick={() => void save()}>{initial ? (t('common.save') || 'Save') : kind === 'connector' ? (t('apiKeys.connector.createButton') || 'Create the connector') : (t('apiKeys.create') || 'Create the key')}</Button>
+          <Button loading={busy} disabled={!name.trim() || ipMissing} onClick={() => void save()}>{initial ? (t('common.save') || 'Save') : kind === 'connector' ? (t('apiKeys.connector.createButton') || 'Create the connector') : (t('apiKeys.create') || 'Create the key')}</Button>
         </div>
       )}>
       <div className="space-y-4">
@@ -301,12 +304,21 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
           </div>
           {kind !== 'connector' && (
             <div>
-              <label className={labelCls}>{t('apiKeys.allowedIps') || 'Allowed addresses (optional)'}</label>
-              <textarea className={cn(inputCls, 'h-[38px] min-h-[38px] resize-y font-mono text-xs')} value={ips} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.0/24" />
+              <label className={labelCls}>
+                {ipRequired ? (t('apiKeys.allowedIpsRequired') || 'Allowed addresses (mandatory)') : (t('apiKeys.allowedIps') || 'Allowed addresses (optional)')}
+              </label>
+              <textarea className={cn(inputCls, 'h-[38px] min-h-[38px] resize-y font-mono text-xs', ipMissing && 'border-amber-400/60')} value={ips} required={ipRequired}
+                aria-invalid={ipMissing || undefined} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.0/24" />
             </div>
           )}
         </div>
-        {kind !== 'connector' && !ips.trim() && (
+        {ipRequired && (
+          <p className="flex items-start gap-2 rounded-lg bg-amber-400/10 p-3 text-xs text-amber-400">
+            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {t('keySecurity.key.requiredHint') || 'An allowed address is mandatory on the access keys of this workspace: list the addresses or networks the key will be used from (e.g. 203.0.113.0/24). A Claude connector needs none: Anthropic\'s ranges are added automatically.'}
+          </p>
+        )}
+        {kind !== 'connector' && !ipRequired && !ips.trim() && (
           <p className="flex items-start gap-2 rounded-lg bg-amber-400/10 p-3 text-xs text-amber-400">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             {t('keySecurity.key.openBanner') || 'Without an allowed address, this key can be used from anywhere, and an open key keeps the strict IP mode of the access keys off for the whole platform. An IP may also be mandatory in this workspace.'}
