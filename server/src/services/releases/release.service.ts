@@ -6,7 +6,7 @@ import type { Readable } from 'stream';
 import type { Knex } from 'knex';
 import type {
   CurrentReleaseVia, ProfileDetection, Release, ReleaseDetail, ReleaseDiff, ReleaseDiffFile, ReleaseFileContent, ReleaseFileList, ReleaseLogLine,
-  ReleaseStatus, ReleaseTrigger, ScanSummary, StagingRestoreResult, StagingRestoreRunning, StagingRestoreState, StagingStatus,
+  LeakReport, ReleaseStatus, ReleaseTrigger, ScanSummary, StagingRestoreResult, StagingRestoreRunning, StagingRestoreState, StagingStatus,
 } from '@oblimint/shared';
 import { detectAppProfile, HostingSocketEvents, normalizeRelPath } from '@oblimint/shared';
 import { db } from '../../db';
@@ -33,7 +33,8 @@ import { dataLinksMatch, materializeRelease, readCurrent, removeTmpEntries, remo
 import { releaseDeps } from './deps';
 import { getScanner } from './scan';
 import { liveStates } from './liveState';
-import { AUTO_REVERT_TEXT, AUTO_REVERT_TO_TEXT, HEALTHCHECK_FAILED_TEXT, HEALTHCHECK_OK_TEXT, INTERNAL_TEXT, INTERRUPTED_TEXT, RELOAD_FAILED_TEXT, STAGING_EMPTY_TEXT } from './outcome';
+import { AUTO_REVERT_TEXT, AUTO_REVERT_TO_TEXT, HEALTHCHECK_FAILED_TEXT, HEALTHCHECK_OK_TEXT, INTERNAL_TEXT, INTERRUPTED_TEXT, LEAK_BLOCKED_TEXT, RELOAD_FAILED_TEXT, STAGING_EMPTY_TEXT } from './outcome';
+import { commitLeakReport, leakLogLines, leakSummaryLine } from '../scan/leakRelease';
 import { REFLECT_BATCH, reflectToStaging } from './changeset';
 import { cleanReleasePath, pageEntries, readReleaseBlob, releaseTree, streamReleaseBlob, toFileEntry, utf8SafeCut, type ReleaseTreeEntry } from './releaseFiles';
 
@@ -479,7 +480,48 @@ async function commitAndScan(run: Run): Promise<boolean> {
   const summary = normalizeScan(await scanner.scan({
     siteId: ctx.site.id, accountId: ctx.account.id, stagingDir: ctx.paths.staging, commitSha: sha, changedFiles: stats.changed,
   }));
+  summary.leaks = await leakGuard(ctx, sha, stats.changed);
   return scanGate(run, summary, { approvedBy: null, scanOverrideBy: null, notifyThreat: true });
+}
+
+/**
+ * Leak guard of a release (scan/leakGuard.ts): the COMMIT being published,
+ * file rules on the whole tree, content rules on the changed files. Policy and
+ * allowlist are read fresh (a change made while the release waited counts).
+ * A failure to read the commit fails the publication (closed).
+ */
+async function leakGuard(ctx: SiteContext, sha: string, changed: string[]): Promise<LeakReport> {
+  const fresh = await db('sites').where({ id: ctx.site.id }).first('docroot', 'base', 'leak_policy', 'leak_allowlist') as
+    Pick<SiteRow, 'docroot' | 'base' | 'leak_policy' | 'leak_allowlist'> | undefined;
+  return commitLeakReport(ctx.paths.repo, sha, changed, fresh ?? ctx.site);
+}
+
+/**
+ * Leak guard verdict in the release log; policy block with a critical finding
+ * fails the release (LEAK_BLOCKED_TEXT → errorCode leakBlocked: nothing goes
+ * live, the fix is to remove the file or allowlist its path, then publish
+ * again — no staff override). A critical finding is notified either way.
+ */
+async function leakGate(run: Run, leaks: LeakReport): Promise<void> {
+  const { ctx, release } = run;
+  const findings = leaks.critical + leaks.warn;
+  run.line(findings ? 'warn' : 'info', leakSummaryLine(leaks));
+  for (const l of leakLogLines(leaks)) run.line('warn', l);
+  if (leaks.critical > 0) {
+    const where = [...new Set(leaks.findings.filter((f) => f.severity === 'critical').map((f) => f.path))].slice(0, 3).join(', ');
+    const keys = [...new Set(leaks.findings.map((f) => f.keyId).filter((k): k is number => typeof k === 'number'))];
+    notify('scan.threat', {
+      tenantId: ctx.site.tenant_id, accountId: ctx.account.id, key: `leak:${release.id}`, severity: 'critical',
+      title: leaks.blocked ? `Publication bloquée (fuite) : ${ctx.site.name}` : `Fuite publiée : ${ctx.site.name}`,
+      message: `La release #${release.number} du site ${ctx.site.name} contient ${leaks.critical} élément(s) sensible(s) (${where})`
+        + (keys.length ? `, dont la clé d’accès #${keys.join(', #')} : révoquez-la` : '')
+        + (leaks.blocked ? '. Elle n’est pas publiée.' : '. Politique « avertir » : elle est publiée.'),
+      link: `/sites/${ctx.site.id}?tab=releases&release=${release.id}`,
+    });
+  }
+  if (leaks.blocked) {
+    throw new PipelineError(`${LEAK_BLOCKED_TEXT} : ${leaks.critical} détection(s) critique(s) — retirez ces fichiers ou ajoutez leur chemin aux exceptions du site, puis publiez à nouveau`);
+  }
 }
 
 /** P3 (docs/P3-PLAN.md §9.3): `blocked` = risk ≥ blockScore or a ClamAV hit; a P1-style 'infected' verdict counts as blocked. */
@@ -502,6 +544,7 @@ function riskText(scan: ScanSummary): string {
 async function scanGate(run: Run, scan: ScanSummary, opts: { approvedBy: number | null; scanOverrideBy: number | null; notifyThreat: boolean }): Promise<boolean> {
   const { ctx, release } = run;
   await run.step('info', `analyse (${scan.scanner}) : ${scan.verdict}${scan.risk ? `, ${riskText(scan)}` : ''}`, { scan: JSON.stringify(scan) });
+  if (scan.leaks) await leakGate(run, scan.leaks);
   if (scan.blocked) {
     if (opts.notifyThreat) {
       notify('scan.threat', {
@@ -705,6 +748,8 @@ async function prepareCommit(run: Run, opts: CommitRunOptions): Promise<boolean>
       commitSha: sha, changedFiles: stats.changed,
     }));
   }
+  // The leak guard runs on every release, a scan computed by the caller (window / adapter) included.
+  scan = { ...scan, leaks: await leakGuard(ctx, sha, stats.changed) };
   if (opts.scanOverrideBy && scan.blocked) {
     scan = { ...scan, override: { by: await userName(opts.scanOverrideBy), at: new Date().toISOString(), reason: opts.overrideReason ?? null } };
   }
@@ -1020,7 +1065,18 @@ export const releaseService = {
 
   /** Feature B (B6): scan summary of a commit against a base (blocked normalized as for a release). */
   async scanCommit(siteId: number, accountId: number, stagingDir: string, commitSha: string, changedFiles: string[]): Promise<ScanSummary> {
-    return normalizeScan(await getScanner().scan({ siteId, accountId, stagingDir, commitSha, changedFiles }));
+    const summary = normalizeScan(await getScanner().scan({ siteId, accountId, stagingDir, commitSha, changedFiles }));
+    // The leak guard too (informative here: a preview is never public), as the publication will see it.
+    const site = await db('sites').where({ id: siteId, account_id: accountId }).first('docroot', 'base', 'leak_policy', 'leak_allowlist') as
+      Pick<SiteRow, 'docroot' | 'base' | 'leak_policy' | 'leak_allowlist'> | undefined;
+    if (site) {
+      try {
+        summary.leaks = await commitLeakReport(localPaths.repo(accountId, siteId), commitSha, changedFiles, site);
+      } catch (err) {
+        logger.warn({ err, siteId }, 'Leak guard of a preview commit failed');
+      }
+    }
+    return summary;
   },
 
   async lockForTeardown(siteIds: number[]): Promise<() => void> {

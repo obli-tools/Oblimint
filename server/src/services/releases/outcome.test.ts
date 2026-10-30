@@ -68,6 +68,37 @@ test('releaseOutcome: live, health check, automatic return, scan, hint', () => {
   assert.equal(target.autoReverted, false);
 });
 
+test('releaseOutcome: leak guard verdict, leakBlocked code and hint', () => {
+  const leaks = {
+    policy: 'block' as const, blocked: true, critical: 1, warn: 1, allowlisted: 0, contentScanned: 3, contentSkipped: 0,
+    findings: [
+      { path: 'dump.sql', line: 4, rule: 'expose.dump' as const, severity: 'critical' as const, served: true, message: 'm' },
+      { path: '.env', line: 2, rule: 'secret.env-file' as const, severity: 'warn' as const, served: false, message: 'm' },
+    ],
+  };
+  const err = 'garde anti-fuite : 1 détection(s) critique(s) — retirez ces fichiers ou ajoutez leur chemin aux exceptions du site, puis publiez à nouveau';
+  assert.equal(releaseErrorCode({ status: 'failed', error: err, scan: null }), 'leakBlocked');
+  assert.ok((RELEASE_ERROR_CODES as readonly string[]).includes('leakBlocked'));
+  const o = releaseOutcome({ id: 4, status: 'failed', error: err, scan: { scanner: 'none', verdict: 'clean', findings: [], leaks }, log: [] }, null);
+  assert.equal(o.errorCode, 'leakBlocked');
+  assert.match(o.hint ?? '', /check_leaks/);
+  assert.deepEqual(o.leaks, {
+    policy: 'block', blocked: true, critical: 1, warn: 1,
+    findings: [
+      { path: 'dump.sql', line: 4, rule: 'expose.dump', severity: 'critical', served: true },
+      { path: '.env', line: 2, rule: 'secret.env-file', severity: 'warn', served: false },
+    ],
+  });
+  // Policy warn: live, the hint still mentions the findings.
+  const w = releaseOutcome({
+    id: 5, status: 'ready', error: null, scan: { scanner: 'none', verdict: 'clean', findings: [], leaks: { ...leaks, policy: 'warn', blocked: false } },
+    log: [line('healthcheck OK (HTTP 200, essai 1)')],
+  }, { id: 5, number: 2 });
+  assert.deepEqual([w.errorCode, w.live, w.leaks?.blocked], [null, true, false]);
+  assert.match(w.hint ?? '', /leak guard reported 1 critical/);
+  assert.equal(releaseOutcome({ id: 6, status: 'ready', error: null, scan: null, log: [] }, null).leaks, null);
+});
+
 test('maskStaffIds: the id of a staff member never reaches a key', () => {
   const staff = new Set([12]);
   assert.deepEqual(loggedUserIds('analyse bloquante levée par dérogation du staff (utilisateur #12)'), [12]);

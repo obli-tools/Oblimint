@@ -627,6 +627,9 @@ export interface Site {
   previewUrl: string | null;
   php: PhpSettings;
   customNginx: string | null;
+  /** Leak guard of the publications: policy and allowlisted paths (globs relative to the code root). */
+  leakPolicy: LeakPolicy;
+  leakAllowlist: string[];
   /** First domain routed to this site at '/', if any. */
   primaryDomain: string | null;
   createdAt: string;
@@ -659,6 +662,9 @@ export interface SiteUpdate {
   healthcheckPath?: string;
   php?: PhpSettings;
   customNginx?: string | null;
+  /** Relaxing the guard (block → warn, a new allowlist entry) takes the right to approve releases. */
+  leakPolicy?: LeakPolicy;
+  leakAllowlist?: string[];
 }
 
 export interface SiteDataPath {
@@ -870,6 +876,91 @@ export interface ScanSummary {
   blocked?: boolean;
   /** P3: staff override of a blocked scan (who / when / why). */
   override?: { by: string; at: string; reason: string | null } | null;
+  /** Leak guard of the publication (secrets, dumps, backups…), run on every release; absent on older releases. */
+  leaks?: LeakReport;
+}
+
+// ─── LEAK GUARD (publication) ────────────────────────────────────────────────
+// Every release is checked for committed secrets and files that should never
+// be published (dumps, configuration backups, phpinfo…). A finding names the
+// file, the line and the rule, NEVER the secret itself. Per site: the policy
+// (block: a critical finding stops the publication; warn: reported only) and
+// an allowlist of paths (globs) the guard ignores.
+
+/** block (default): a critical finding fails the release (errorCode leakBlocked); warn: findings are only reported. */
+export type LeakPolicy = 'warn' | 'block';
+export const LEAK_POLICIES: readonly LeakPolicy[] = ['warn', 'block'];
+
+/**
+ * secret.panel-token — an access key / token of this panel (obk_, oba_, obt_), critical everywhere;
+ * secret.private-key — a PEM / OpenSSH private key block;
+ * secret.cloud — a cloud / SaaS credential (AWS, Stripe live, GitHub, GitLab, Slack, Google, SendGrid, OpenAI, Anthropic);
+ * secret.env-file — a .env file holding secret-looking values (use the site variables instead);
+ * secret.key-file — a key store or credentials file (id_rsa, .p12 / .pfx, .htpasswd, .git-credentials, .npmrc with a token…);
+ * expose.dump — an SQL / database dump with data;
+ * expose.config-backup — a copy of a PHP / config file served as plain text (wp-config.php.bak, config.php~…);
+ * expose.backup-archive — an archive named like a site or database backup;
+ * expose.diagnostic — a phpinfo() page;
+ * expose.db-tool — a database manager dropped in the code (Adminer…);
+ * expose.vcs — version control metadata (.svn, .hg, .bzr, CVS folders; .git never reaches a release);
+ * expose.log — a log file (debug.log, error_log…).
+ */
+export const LEAK_RULES = [
+  'secret.panel-token', 'secret.private-key', 'secret.cloud', 'secret.env-file', 'secret.key-file',
+  'expose.dump', 'expose.config-backup', 'expose.backup-archive', 'expose.diagnostic', 'expose.db-tool', 'expose.vcs', 'expose.log',
+] as const;
+export type LeakRule = typeof LEAK_RULES[number];
+
+/** Allowlist of a site: at most this many globs, each at most LEAK_ALLOWLIST_ENTRY_MAX characters. */
+export const LEAK_ALLOWLIST_MAX = 100;
+export const LEAK_ALLOWLIST_ENTRY_MAX = 200;
+/** Findings kept in a report (the counts stay exact). */
+export const LEAK_FINDINGS_MAX = 200;
+
+export interface LeakFinding {
+  /** Path relative to the release root. */
+  path: string;
+  /** 1-based line of a content rule, null for a rule on the file itself. */
+  line: number | null;
+  rule: LeakRule;
+  severity: 'warn' | 'critical';
+  /** The web server would hand the file out as is (inside the document root, not executed, not refused). */
+  served: boolean;
+  /** secret.panel-token on an access key (obk_<id>_…): its id, to revoke it in « Access keys ». */
+  keyId?: number | null;
+  /** Short English explanation (no secret in it). */
+  message: string;
+}
+
+export interface LeakReport {
+  policy: LeakPolicy;
+  /** Policy block and at least one critical finding: the release does not go live. */
+  blocked: boolean;
+  critical: number;
+  warn: number;
+  /** First LEAK_FINDINGS_MAX findings, critical first. */
+  findings: LeakFinding[];
+  /** Findings ignored because their path is in the allowlist. */
+  allowlisted: number;
+  /** Files whose content was read (changed text files), and the ones left unread (budget, too large). */
+  contentScanned: number;
+  contentSkipped: number;
+}
+
+/**
+ * Normalized allowlist entry ("/backups/" → "backups/", "\\" → "/"), null
+ * when invalid: empty, too long, NUL / control characters, a ".." segment,
+ * braces (no alternatives), or a bare "**" (that would switch the guard off: use the warn policy).
+ */
+export function normalizeLeakAllowlistEntry(raw: string): string | null {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim().replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/{2,}/g, '/');
+  if (!v || v.length > LEAK_ALLOWLIST_ENTRY_MAX) return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f{}]/.test(v)) return null;
+  if (v.split('/').some((s) => s === '..' || s === '.')) return null;
+  if (/^[*/]+$/.test(v)) return null;
+  return v;
 }
 
 export interface ReleaseLogLine {
@@ -918,10 +1009,11 @@ export interface ReleaseDetail extends Release {
  * healthcheckFailed — the site did not answer its health check after the switch (previous release put back);
  * reloadFailed — a container could not be reloaded on the new code (previous release put back);
  * scanBlocked — the pre-publication scan blocks it: only an audited staff override publishes it;
+ * leakBlocked — the leak guard found a secret / a file that must not be published (policy block): nothing went live;
  * stagingEmpty — nothing to publish; interrupted — a restart of the panel stopped it;
  * internalError — unexpected failure (details for the administrators); publishFailed — any other failure.
  */
-export const RELEASE_ERROR_CODES = ['healthcheckFailed', 'reloadFailed', 'scanBlocked', 'stagingEmpty', 'interrupted', 'internalError', 'publishFailed'] as const;
+export const RELEASE_ERROR_CODES = ['healthcheckFailed', 'reloadFailed', 'scanBlocked', 'leakBlocked', 'stagingEmpty', 'interrupted', 'internalError', 'publishFailed'] as const;
 export type ReleaseErrorCode = typeof RELEASE_ERROR_CODES[number];
 
 /**
@@ -943,6 +1035,8 @@ export interface ReleaseOutcome {
   /** The release serving the site now (null: none). */
   liveRelease: { id: number; number: number } | null;
   scan: { verdict: ScanVerdict; riskScore: number | null; riskLevel: string | null; blocked: boolean; overridden: boolean } | null;
+  /** Leak guard verdict (null: not run, older release): counts and the first findings (file:line and rule, never the secret). */
+  leaks: { policy: LeakPolicy; blocked: boolean; critical: number; warn: number; findings: Array<Pick<LeakFinding, 'path' | 'line' | 'rule' | 'severity' | 'served'>> } | null;
   errorCode: ReleaseErrorCode | null;
   /** What to do next (English, for a model). */
   hint: string | null;

@@ -206,6 +206,25 @@ test('server-app security fixes on PostgreSQL (PGlite)', { timeout: 300_000 }, a
       assert.equal((await sitesService.update(fakeReq(bob, tenantA), await actorOf(fakeReq(bob, tenantA)), siteId, { publishMode: 'approval' })).publishMode, 'approval');
     });
 
+    await t.test('leak guard: tightening with sites.manage, relaxing (warn, a new allowlisted path) needs releases.approve', async () => {
+      const bob = Number((await db('users').where({ username: 'bob' }).first('id')).id);
+      const bobReq = () => fakeReq(bob, tenantA);
+      const aliceReq = () => fakeReq(alice, tenantA);
+      const parse = (b: unknown) => schema.siteUpdateSchema.parse(b);
+      const fresh = await db('sites').where({ id: siteId }).first('leak_policy', 'leak_allowlist');
+      assert.equal(fresh.leak_policy, 'block', 'default policy');
+      await rejectsWith(sitesService.update(bobReq(), await actorOf(bobReq()), siteId, parse({ leakPolicy: 'warn' })), 403, 'approvalRequired');
+      await rejectsWith(sitesService.update(bobReq(), await actorOf(bobReq()), siteId, parse({ leakAllowlist: ['dump.sql'] })), 403, 'approvalRequired');
+      const relaxed = await sitesService.update(aliceReq(), await actorOf(aliceReq()), siteId, parse({ leakPolicy: 'warn', leakAllowlist: ['/backups/', 'dump.sql', 'dump.sql'] }));
+      assert.deepEqual([relaxed.leakPolicy, relaxed.leakAllowlist], ['warn', ['backups/', 'dump.sql']]);
+      // Tightening (back to block, an entry removed): sites.manage is enough.
+      const tight = await sitesService.update(bobReq(), await actorOf(bobReq()), siteId, parse({ leakPolicy: 'block', leakAllowlist: ['dump.sql'] }));
+      assert.deepEqual([tight.leakPolicy, tight.leakAllowlist], ['block', ['dump.sql']]);
+      assert.throws(() => parse({ leakAllowlist: ['**'] }));
+      assert.throws(() => parse({ leakAllowlist: ['../etc/passwd'] }));
+      assert.throws(() => parse({ leakPolicy: 'off' }));
+    });
+
     await t.test('publish mode auto needs releases.publish; a creation without it starts in manual (M6)', async () => {
       const dave = Number((await clientUsersService.add(asStaffA(), await db('hosting_accounts').where({ id: shop.id }).first(),
         schema.clientUserAddSchema.parse({ mode: 'create', username: 'dave', password: 'correct horse battery', capabilities: ['sites.manage'] }))).userId);

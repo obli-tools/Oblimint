@@ -350,6 +350,17 @@ export const sitesService = {
       }
       if (text !== row.custom_nginx) patch.custom_nginx = text;
     }
+    // Leak guard: tightening is free; relaxing it (block → warn, a new allowlisted path) is the
+    // approvers' control, like leaving approval mode (a client must not wave its own leaks through).
+    const curPolicy = row.leak_policy === 'warn' ? 'warn' : 'block';
+    const curList = json<unknown[]>(row.leak_allowlist, []).filter((x): x is string => typeof x === 'string');
+    const relaxes = (body.leakPolicy === 'warn' && curPolicy === 'block')
+      || (body.leakAllowlist !== undefined && body.leakAllowlist.some((e) => !curList.includes(e)));
+    if (relaxes && !actorCan(actor, 'releases.approve', { tenantId: row.tenant_id, accountId: row.account_id })) {
+      throw new AppError(403, 'Relaxing the leak guard requires the right to approve releases', 'approvalRequired');
+    }
+    if (body.leakPolicy !== undefined && body.leakPolicy !== curPolicy) patch.leak_policy = body.leakPolicy;
+    if (body.leakAllowlist !== undefined && JSON.stringify(body.leakAllowlist) !== JSON.stringify(curList)) patch.leak_allowlist = JSON.stringify(body.leakAllowlist);
     if (Object.keys(patch).length > 0) {
       patch.updated_at = db.fn.now();
       await db('sites').where({ id: row.id, tenant_id: row.tenant_id }).update(patch);

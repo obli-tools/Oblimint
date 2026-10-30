@@ -1,6 +1,6 @@
 import type {
   AccessMode, DnsZoneKind, DomainVerificationMethod, DomainVerificationStatus, OverQuotaState,
-  AccountSshKey, AppProfileId, CertificateSummary, ClientCapability, CurrentReleaseVia, DataPathPolicy, Domain, HostingAccount, PhpSettings,
+  AccountSshKey, AppProfileId, CertificateSummary, ClientCapability, CurrentReleaseVia, DataPathPolicy, Domain, HostingAccount, LeakPolicy, PhpSettings,
   Plan, PlanLimits, Release, ReleaseDetail, ReleaseLogLine, ScanSummary, Site, SiteBaseId, SiteDataPath, SiteRoute,
 } from '@oblimint/shared';
 import { CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS } from '@oblimint/shared';
@@ -41,6 +41,8 @@ export interface SiteRow {
   /** migration 016: provenance of the live release, release a human rolled back from. */
   current_release_at?: Date | string | null; current_release_by?: number | null; current_release_via?: CurrentReleaseVia | null;
   current_release_key_id?: number | null; current_release_reason?: string | null; rolled_back_from_release_id?: number | null;
+  /** migration 026: leak guard of the publications (policy, allowlist JSON). */
+  leak_policy?: LeakPolicy | null; leak_allowlist?: unknown;
   /** joined */ account_username?: string; current_release_number?: number | null; primary_domain?: string | null;
   /** joined */ current_release_by_name?: string | null; rolled_back_from_number?: number | null;
 }
@@ -208,6 +210,8 @@ export function toSite(r: SiteRow, extras: { previewUrl?: string | null } = {}):
     previewUrl: extras.previewUrl ?? null,
     php: json<PhpSettings>(r.php_settings, {}),
     customNginx: r.custom_nginx,
+    leakPolicy: r.leak_policy === 'warn' ? 'warn' : 'block',
+    leakAllowlist: json<unknown[]>(r.leak_allowlist, []).filter((x): x is string => typeof x === 'string'),
     primaryDomain: r.primary_domain ?? null,
     createdAt: isoReq(r.created_at),
     updatedAt: isoReq(r.updated_at),

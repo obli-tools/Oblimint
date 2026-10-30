@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
-  APP_PROFILES, CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS, SITE_BASE_IDS, normalizePathPrefix, normalizeRelPath,
+  APP_PROFILES, CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS, LEAK_ALLOWLIST_ENTRY_MAX, LEAK_ALLOWLIST_MAX, SITE_BASE_IDS,
+  normalizeLeakAllowlistEntry, normalizePathPrefix, normalizeRelPath,
   type AppProfileId, type ClientCapability, type SiteBaseId,
 } from '@oblimint/shared';
 import {
@@ -200,6 +201,20 @@ export const siteUpdateSchema = z.object({
   healthcheckPath: healthcheckPath.optional(),
   php: phpSettingsSchema.optional(),
   customNginx: z.string().max(64 * 1024).nullable().optional(),
+  leakPolicy: z.enum(['warn', 'block']).optional(),
+  leakAllowlist: z.array(z.string().max(LEAK_ALLOWLIST_ENTRY_MAX + 16)).max(LEAK_ALLOWLIST_MAX).transform((v, ctx) => {
+    const out: string[] = [];
+    for (const raw of v) {
+      if (!raw.trim()) continue;
+      const n = normalizeLeakAllowlistEntry(raw);
+      if (n === null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Invalid allowlist entry "${raw.slice(0, 60)}": a path or glob relative to the code root (no "..", no braces, not "**" alone)` });
+        return z.NEVER;
+      }
+      if (!out.includes(n)) out.push(n);
+    }
+    return out;
+  }).optional(),
 }).strict();
 
 const extensions = z.array(z.string().max(16)).max(200).transform((v, ctx) => {

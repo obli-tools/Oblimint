@@ -272,6 +272,38 @@ test('scan: infected → blocked awaiting_approval (nothing live, override neede
   await assert.rejects(m.releaseService.approve(s.siteId, sus.id, userId), (e: any) => e.code === 'releaseNotAwaitingApproval');
 });
 
+test('leak guard: block fails the release (nothing live, leakBlocked), warn publishes with the findings, allowlist ignores a path', { skip: SKIP }, async () => {
+  const token = 'ob' + 'k_7_' + 'z'.repeat(43);
+  const s = await newSite({ files: { 'index.php': '<?php echo 1;', 'assets/app.js': `const k = "${token}";`, 'dump.sql': 'INSERT INTO t VALUES (1);' } });
+  const blocked = await publish(s.siteId);
+  assert.equal(blocked.status, 'failed', JSON.stringify(blocked.log));
+  assert.match(blocked.error, /^garde anti-fuite/);
+  assert.equal(await currentId(s.siteId), null);
+  assert.equal(calls.reload.length, 0);
+  const scan = JSON.parse(typeof blocked.scan === 'string' ? blocked.scan : JSON.stringify(blocked.scan));
+  assert.deepEqual([scan.leaks.policy, scan.leaks.blocked, scan.leaks.critical], ['block', true, 2]);
+  assert.equal(scan.leaks.findings.find((f: any) => f.rule === 'secret.panel-token').keyId, 7);
+  const detail = await m.releaseService.get(s.siteId, blocked.id);
+  assert.equal(detail.errorCode, 'leakBlocked');
+  assert.ok(detail.log.some((l) => l.message.startsWith('fuite : assets/app.js:1 — secret.panel-token')));
+  assert.ok(!JSON.stringify(detail).includes(token), 'the secret never reaches the release (log, scan, error)');
+
+  // Policy warn: published, findings kept in the scan and the log.
+  await m.db('sites').where({ id: s.siteId }).update({ leak_policy: 'warn' });
+  const warned = await publish(s.siteId);
+  assert.equal(warned.status, 'ready', JSON.stringify(warned.log));
+  const ws = JSON.parse(typeof warned.scan === 'string' ? warned.scan : JSON.stringify(warned.scan));
+  assert.deepEqual([ws.leaks.blocked, ws.leaks.critical], [false, 2]);
+
+  // Back to block: the token is removed, the dump is allowlisted → clean release.
+  await m.db('sites').where({ id: s.siteId }).update({ leak_policy: 'block', leak_allowlist: JSON.stringify(['dump.sql']) });
+  fs.writeFileSync(`${s.staging}/assets/app.js`, 'const k = process.env.KEY;');
+  const clean = await publish(s.siteId);
+  assert.equal(clean.status, 'ready', JSON.stringify(clean.log));
+  const cs = JSON.parse(typeof clean.scan === 'string' ? clean.scan : JSON.stringify(clean.scan));
+  assert.deepEqual([cs.leaks.critical, cs.leaks.warn, cs.leaks.allowlisted], [0, 0, 1]);
+});
+
 test('approval mode always waits; reject closes the release', { skip: SKIP }, async () => {
   const s = await newSite({ mode: 'approval', files: { 'index.php': 'v1' } });
   const r = await publish(s.siteId);

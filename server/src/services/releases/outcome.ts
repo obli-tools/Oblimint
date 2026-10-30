@@ -24,8 +24,12 @@ export const AUTO_REVERT_TEXT = 'retour automatique';
 export const AUTO_REVERT_TO_TEXT = `${AUTO_REVERT_TEXT} à la release #`;
 /** Log line of a passed health check. */
 export const HEALTHCHECK_OK_TEXT = 'healthcheck OK';
+/** Start of the error of a release stopped by the leak guard (policy block, a critical finding). */
+export const LEAK_BLOCKED_TEXT = 'garde anti-fuite';
 
 const IN_FLIGHT: ReleaseStatus[] = ['queued', 'scanning', 'publishing'];
+/** Leak findings carried by an outcome (the full list is in scan.leaks of the release). */
+export const OUTCOME_LEAK_FINDINGS = 20;
 
 interface OutcomeInput {
   status: ReleaseStatus;
@@ -43,6 +47,7 @@ export function releaseErrorCode(r: OutcomeInput): ReleaseErrorCode | null {
   if (e.startsWith(HEALTHCHECK_FAILED_TEXT)) return 'healthcheckFailed';
   if (e.startsWith(RELOAD_FAILED_TEXT)) return 'reloadFailed';
   if (e.startsWith(INTERRUPTED_TEXT)) return 'interrupted';
+  if (e.startsWith(LEAK_BLOCKED_TEXT)) return 'leakBlocked';
   if (e.startsWith(STAGING_EMPTY_TEXT)) return 'stagingEmpty';
   if (e.startsWith(INTERNAL_TEXT)) return 'internalError';
   return 'publishFailed';
@@ -52,6 +57,7 @@ const HINTS: Record<ReleaseErrorCode, string> = {
   healthcheckFailed: 'The site did not pass its health check on this release: the previous release is live again. Read the error logs (read_logs source "error", since the release date), fix the staging, publish again.',
   reloadFailed: 'A container could not be reloaded on this release: the previous release is live again. Retry the publication later; tell the human if it fails again.',
   scanBlocked: 'The security scan blocks this release: only a staff override publishes it. Show the findings (scan) to the human; remove the flagged code if it is not intended.',
+  leakBlocked: 'The leak guard stopped this release (nothing went live): a secret or a file that must not be published (outcome.leaks: file:line and rule). Remove it from the staging (secrets go into the site variables, set_env), run check_leaks, publish again. If the human says the path is intended, they add it to the site\'s leak allowlist in the panel. A panel key found in the code must be revoked by the human.',
   stagingEmpty: 'The staging is empty: write the code first.',
   interrupted: 'A restart of the panel stopped this publication: publish again.',
   internalError: 'Unexpected failure of the panel: retry later, then tell the human.',
@@ -93,9 +99,17 @@ export function releaseOutcome(
     blocked: r.scan.blocked === true || r.scan.verdict === 'infected',
     overridden: !!r.scan.override,
   } : null;
+  const l = r.scan?.leaks;
+  const leaks: ReleaseOutcome['leaks'] = l ? {
+    policy: l.policy, blocked: l.blocked, critical: l.critical, warn: l.warn,
+    findings: l.findings.slice(0, OUTCOME_LEAK_FINDINGS).map((f) => ({ path: f.path, line: f.line, rule: f.rule, severity: f.severity, served: f.served })),
+  } : null;
+  if (hint && leaks && !leaks.blocked && leaks.critical + leaks.warn > 0 && r.status === 'ready') {
+    hint += ` The leak guard reported ${leaks.critical} critical / ${leaks.warn} warning finding(s) (outcome.leaks): remove them from the staging and publish again.`;
+  }
   return {
     settled, timedOut: opts.timedOut === true && !settled, status: r.status, live: live?.id === r.id,
-    healthcheck, autoReverted, liveRelease: live, scan, errorCode, hint,
+    healthcheck, autoReverted, liveRelease: live, scan, leaks, errorCode, hint,
   };
 }
 

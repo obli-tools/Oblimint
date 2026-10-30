@@ -49,7 +49,11 @@ function statOf(e: Entry): TreeStat {
  * listing is loaded once (lazily). Throws (GitError) when the commit cannot be
  * listed: the caller fails closed.
  */
-export function commitContentTree(repoDir: string, commit: string): ContentTree & { load(): Promise<void> } {
+export function commitContentTree(repoDir: string, commit: string): ContentTree & {
+  load(): Promise<void>;
+  /** Every file and symlink of the commit (gitlinks left out), for whole-tree rules (leak guard). */
+  entries(): Promise<Array<{ path: string; size: number; type: 'file' | 'symlink' }>>;
+} {
   if (!OID.test(commit)) throw new Error('invalid commit id');
   let listing: Promise<{ files: Map<string, Entry>; dirs: Set<string> }> | null = null;
   const load = () => {
@@ -76,6 +80,15 @@ export function commitContentTree(repoDir: string, commit: string): ContentTree 
   return {
     root: `${repoDir}#${commit}`,
     async load() { await load(); },
+    async entries() {
+      const { files } = await load();
+      const out: Array<{ path: string; size: number; type: 'file' | 'symlink' }> = [];
+      for (const [p, e] of files) {
+        const st = statOf(e);
+        if (st.type === 'file' || st.type === 'symlink') out.push({ path: p, size: st.size, type: st.type });
+      }
+      return out;
+    },
     async stat(rel) {
       const { files, dirs } = await load();
       const e = files.get(rel);
