@@ -32,6 +32,8 @@ export * from './backups';
 // Feature B: release / staging previews
 export * from './previews';
 export * from './apiGuide';
+// Deep health endpoint + outbound heartbeat
+export * from './health';
 // PHP advisories and end of life (exact version of the running containers)
 export * from './phpSecurity';
 // PHP errors grouped by release

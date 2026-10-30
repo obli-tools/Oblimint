@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, Archive, Database, FolderOpen, Code2, Play, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Archive, Database, FolderOpen, Code2, GitBranch, Play, RotateCcw } from 'lucide-react';
 import type { BackupObject, BackupRestoreItem, BackupRun } from '@oblimint/shared';
 import { backupsApi } from '@/api/backups.api';
 import { isStepUpHandled } from '@/api/client';
@@ -17,6 +17,8 @@ import { Card, EmptyState, toastHostingError } from './hostingUi';
 // « Sauvegardes » of an account: the external backups made of it (daily
 // schedule of the platform, or on demand), restore of a site's code / data or
 // of a database from one of them.
+
+type RestoreCan = { code: boolean; data: boolean; db: boolean; repo: boolean };
 
 export function AccountBackupsTab({ accountId, siteId, databaseIds, canRun, canManage, can }: {
   accountId: number;
@@ -34,7 +36,8 @@ export function AccountBackupsTab({ accountId, siteId, databaseIds, canRun, canM
   canRun: boolean;
   /** accounts.manage (staff): exclude the account from the schedule. */
   canManage: boolean;
-  can: { code: boolean; data: boolean; db: boolean };
+  /** Restore rights, as the server checks them: code = sites + files, repo (release history) = sites.manage alone. */
+  can: RestoreCan;
 }) {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<{ runs: BackupRun[]; enabled: boolean; scheduled: boolean } | null>(null);
@@ -80,7 +83,7 @@ export function AccountBackupsTab({ accountId, siteId, databaseIds, canRun, canM
     : databaseIds != null ? o.kind === 'db' && o.databaseId != null && databaseIds.includes(o.databaseId)
       : true);
   const scoped = siteId != null || databaseIds != null;
-  const scopeCan = siteId != null ? { ...can, db: false } : databaseIds != null ? { code: false, data: false, db: can.db } : can;
+  const scopeCan = siteId != null ? { ...can, db: false } : databaseIds != null ? { code: false, data: false, db: can.db, repo: false } : can;
   const canRestore = scopeCan.code || scopeCan.data || scopeCan.db;
   const runs = scoped ? state.runs.filter((r) => r.objects.some(inScope)) : state.runs;
   const title = siteId != null ? (t('backups.siteTitle') || 'Backups of the site')
@@ -104,7 +107,7 @@ export function AccountBackupsTab({ accountId, siteId, databaseIds, canRun, canM
           {!state.scheduled
             ? (t('backups.accountNotScheduled') || 'The daily backups are not enabled on the platform (Settings > Backups).')
             : state.enabled
-              ? (t('backups.accountScheduled') || 'This account is backed up every day off-site, encrypted: site code, site data and databases.')
+              ? (t('backups.accountScheduled') || 'This account is backed up every day off-site, encrypted: site code, site data, release history and databases.')
               : (t('backups.accountExcluded') || 'This account is excluded from the daily backups.')}
         </p>
         {canManage && (
@@ -132,13 +135,13 @@ export function AccountBackupsTab({ accountId, siteId, databaseIds, canRun, canM
 }
 
 function itemOf(o: BackupObject): BackupRestoreItem | null {
-  if ((o.kind === 'code' || o.kind === 'data') && o.siteId) return { kind: o.kind, siteId: o.siteId };
+  if ((o.kind === 'code' || o.kind === 'data' || o.kind === 'repo') && o.siteId) return { kind: o.kind, siteId: o.siteId };
   if (o.kind === 'db' && o.databaseId) return { kind: 'db', databaseId: o.databaseId };
   return null;
 }
 
 function RestoreModal({ accountId, inScope, run, can, fmt, onClose }: {
-  accountId: number; inScope: (o: BackupObject) => boolean; run: BackupRun | null; can: { code: boolean; data: boolean; db: boolean }; fmt: (iso: string | null) => string; onClose: () => void;
+  accountId: number; inScope: (o: BackupObject) => boolean; run: BackupRun | null; can: RestoreCan; fmt: (iso: string | null) => string; onClose: () => void;
 }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
@@ -148,7 +151,9 @@ function RestoreModal({ accountId, inScope, run, can, fmt, onClose }: {
   useEffect(() => { setPicked(new Set()); setResult(null); }, [run]);
   if (!run) return null;
 
-  const objects = run.objects.filter((o) => itemOf(o) && can[o.kind as 'code' | 'data' | 'db'] && inScope(o));
+  // The release history goes with the code (same site rights; the server asks sites.manage).
+  const allowed = (o: BackupObject) => can[o.kind as keyof RestoreCan] === true;
+  const objects = run.objects.filter((o) => itemOf(o) && allowed(o) && inScope(o));
   const keyOf = (o: BackupObject) => o.key;
   const word = t('backups.restoreWord') || 'RESTORE';
 
@@ -180,12 +185,14 @@ function RestoreModal({ accountId, inScope, run, can, fmt, onClose }: {
     } finally { setBusy(false); }
   };
 
-  const icon = (o: BackupObject) => (o.kind === 'db' ? <Database size={14} /> : o.kind === 'code' ? <Code2 size={14} /> : <FolderOpen size={14} />);
+  const icon = (o: BackupObject) => (o.kind === 'db' ? <Database size={14} /> : o.kind === 'code' ? <Code2 size={14} /> : o.kind === 'repo' ? <GitBranch size={14} /> : <FolderOpen size={14} />);
   const label = (o: BackupObject) => (o.kind === 'db'
     ? t('backups.objDb', { name: o.databaseName, defaultValue: 'Database {{name}}' })
     : o.kind === 'code'
       ? t('backups.objCode', { site: o.siteSlug, defaultValue: 'Code of the site {{site}}' })
-      : t('backups.objData', { site: o.siteSlug, defaultValue: 'Data of the site {{site}} (uploads…)' }));
+      : o.kind === 'repo'
+        ? t('backups.objRepo', { site: o.siteSlug, defaultValue: 'Release history of the site {{site}}' })
+        : t('backups.objData', { site: o.siteSlug, defaultValue: 'Data of the site {{site}} (uploads…)' }));
 
   return (
     <Modal
@@ -210,6 +217,7 @@ function RestoreModal({ accountId, inScope, run, can, fmt, onClose }: {
             );
           })}
           {result.some((r) => r.ok && r.kind === 'code') && <p className="pt-2 text-xs text-text-muted">{t('backups.restoreCodeHint') || 'The code went back into the staging folder: it goes live with the next release (automatic or to publish, depending on the site).'}</p>}
+          {result.some((r) => r.ok && r.kind === 'repo') && <p className="pt-2 text-xs text-text-muted">{t('backups.restoreRepoHint') || 'The release history is back as it was at the backup: its releases can be rolled back to again. The live site does not change.'}</p>}
         </ul>
       ) : (
         <div className="space-y-4">

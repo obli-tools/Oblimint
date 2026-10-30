@@ -1,12 +1,14 @@
 import apiClient from './client';
 import type { ApiResponse } from '@oblimint/shared';
-import type { AuditLogRow } from '@/types';
+import type { AuditApiKeyRef, AuditLogRow } from '@/types';
 
-export type { AuditLogRow };
+export type { AuditApiKeyRef, AuditLogRow };
 
 export interface AuditLogFilters {
   action?: string;        // exact match, or prefix if ends with "."
   userId?: number;
+  /** Entries made through this access key. */
+  apiKeyId?: number;
   search?: string;
   since?: string;
   until?: string;
@@ -32,6 +34,18 @@ export const auditApi = {
     if (filterTenantId) params.filterTenantId = filterTenantId;
     try {
       const res = await apiClient.get<ApiResponse<string[]>>('/audit/distinct-actions', { params });
+      return res.data.data ?? [];
+    } catch {
+      return [];
+    }
+  },
+
+  /** Access keys seen in the log, for the "Key" filter. */
+  async distinctKeys(filterTenantId?: number): Promise<AuditApiKeyRef[]> {
+    const params: Record<string, number> = {};
+    if (filterTenantId) params.filterTenantId = filterTenantId;
+    try {
+      const res = await apiClient.get<ApiResponse<AuditApiKeyRef[]>>('/audit/distinct-keys', { params });
       return res.data.data ?? [];
     } catch {
       return [];

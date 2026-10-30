@@ -22,13 +22,14 @@ const date = (v: unknown): Date | undefined => {
 };
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.length > 0 && v.length <= 200 ? v : undefined);
 
-// GET ?action=user.&userId=&since=&until=&search=&resourceType=&limit=100&offset=0&filterTenantId=
+// GET ?action=user.&userId=&apiKeyId=&since=&until=&search=&resourceType=&limit=100&offset=0&filterTenantId=
 router.get('/', async (req, res, next) => {
   try {
     const { items, total } = await auditService.list({
       tenantId: req.tenantId,
       action: str(req.query.action),
       userId: int(req.query.userId),
+      apiKeyId: int(req.query.apiKeyId),
       resourceType: str(req.query.resourceType),
       search: str(req.query.search),
       since: date(req.query.since),
@@ -50,6 +51,18 @@ router.get('/distinct-actions', async (req, res, next) => {
     else if (filter !== undefined) q.where({ tenant_id: filter });
     const rows = await q;
     res.json({ success: true, data: rows.map((r: any) => r.action) });
+  } catch (err) { next(err); }
+});
+
+// Access keys seen in the log, for the "Key" filter.
+router.get('/distinct-keys', async (req, res, next) => {
+  try {
+    const data = await auditService.distinctApiKeys({
+      tenantId: req.tenantId,
+      filterTenantId: int(req.query.filterTenantId),
+      globalView: globalView(req),
+    });
+    res.json({ success: true, data });
   } catch (err) { next(err); }
 });
 

@@ -251,7 +251,7 @@ export function DbInstancePage() {
         databaseIds={inst.databases.map((d) => d.id)}
         canRun={can('sites.manage', inst.accountId)}
         canManage={false}
-        can={{ code: false, data: false, db: manage }}
+        can={{ code: false, data: false, db: manage, repo: false }}
       />
     </PageContainer>
   );

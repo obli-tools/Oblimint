@@ -30,6 +30,7 @@ import v1Routes from './v1.routes';                      // API access keys (/ap
 import siteEnvRoutes from './siteEnv.routes';            // site environment variables
 import previewsRoutes from './previews.routes';          // release / staging previews (feature B)
 import { accountBackupsRouter, systemBackupsRouter } from './backups.routes'; // external backups
+import healthMonitorRoutes from './healthMonitor.routes';      // deep health token + outbound heartbeat
 import apiKeysRoutes from './apiKeys.routes';            // API access keys (management)
 import { oauthApiRouter } from '../services/apiKeys/oauth'; // Claude connectors: OAuth consent
 import infraRoutes from './infra.routes';                // orchestration
@@ -98,6 +99,7 @@ router.use('/system/edge', requireAuth, requireRole('admin'), systemEdgeUnitsRou
 router.use('/system/network', requireAuth, requireRole('admin'), systemNetworkRoutes); // P4b segmentation
 router.use('/system/hosting-settings', requireAuth, requireRole('admin'), hostingSettingsRoutes); // P2 architect
 router.use('/system/backups', requireAuth, requireRole('admin'), systemBackupsRouter);  // external backups
+router.use('/system/health-monitor', requireAuth, requirePlatformAdminOnMaster, healthMonitorRoutes); // /health/deep token + heartbeat
 router.use('/system/dns', requireAuth, requireRole('admin'), systemDnsRoutes);           // P2 dns
 router.use('/system/firewall', requireAuth, requireRole('admin'), systemFirewallRoutes); // P2 hostd-firewall
 router.use('/system/scanner', requireAuth, requireRole('admin'), scannerRoutes);         // P3 scanners

@@ -118,12 +118,30 @@ test('external backups', { timeout: 300_000 }, async (t: TestContext) => {
   assert.equal(settings.passphraseSet, true);
   assert.equal(JSON.stringify(settings).includes('horse'), false);
 
+  // The site's release history: a real repo.git with two releases (bundled by the run).
+  const { localPaths } = await import('../hosting/paths');
+  const { commitStaging, initBareRepo } = await import('../releases/repo');
+  const { repoRefs } = await import('./repoBundle');
+  const repoDir = localPaths.repo(accountId, siteId);
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'oblimint-backup-staging-'));
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  const author = { name: 'T', email: 't@example.com' };
+  await initBareRepo(repoDir);
+  fs.writeFileSync(path.join(work, 'index.html'), 'v1');
+  await commitStaging({ repoDir, stagingDir: work, dataPaths: [], nestedRepos: [], message: 'r1', author });
+  fs.writeFileSync(path.join(work, 'index.html'), 'v2');
+  await commitStaging({ repoDir, stagingDir: work, dataPaths: [], nestedRepos: [], message: 'r2', author });
+  const refsAtBackup = await repoRefs(repoDir);
+
   // A run: one object per part, encrypted on disk.
   const runId = await runAccountBackupForTests(accountId);
   const { runs } = await backupService.accountRuns(actor, accountId);
   const run = runs.find((x) => x.id === runId)!;
   assert.equal(run.status, 'ok', JSON.stringify(run.errors));
-  assert.deepEqual(run.objects.map((o) => o.kind).sort(), ['code', 'data', 'manifest']);
+  assert.deepEqual(run.objects.map((o) => o.kind).sort(), ['code', 'data', 'manifest', 'repo']);
+  const repoObj = run.objects.find((o) => o.kind === 'repo')!;
+  assert.match(repoObj.key, /\/site-shop-repo\.bundle\.obkp$/);
+  assert.equal(repoObj.siteId, siteId);
   const codeObj = run.objects.find((o) => o.kind === 'code')!;
   assert.match(codeObj.key, new RegExp(`^accounts/${username}-${accountId}/[0-9TZ-]+/site-shop-code\\.tar\\.gz\\.obkp$`));
   const onDisk = fs.readFileSync(path.join(LOCAL_BACKUP_ROOT, suffix, ...codeObj.key.split('/')));
@@ -142,6 +160,28 @@ test('external backups', { timeout: 300_000 }, async (t: TestContext) => {
   assert.equal(untarred[0].body.length, 5000);
   assert.ok(untarred[1].body.startsWith('TAR:data/shop:'));
   await assert.rejects(backupService.restore(req, actor, accountId + 1, runId, [{ kind: 'code', siteId }]), (e: { statusCode: number }) => e.statusCode === 404);
+
+  // Release history: the repo moves on (a third release), then is put back in place; lost, it is recreated.
+  fs.writeFileSync(path.join(work, 'index.html'), 'v3');
+  await commitStaging({ repoDir, stagingDir: work, dataPaths: [], nestedRepos: [], message: 'r3', author });
+  assert.notDeepEqual(await repoRefs(repoDir), refsAtBackup);
+  await assert.rejects(backupService.restore(req, readerActor, accountId, runId, [{ kind: 'repo', siteId }]), (e: { statusCode: number }) => e.statusCode === 403);
+  const rr = await backupService.restore(req, sitesOnlyActor, accountId, runId, [{ kind: 'repo', siteId }]);
+  assert.deepEqual(rr.restored.map((x) => [x.kind, x.ok, x.refs]), [['repo', true, Object.keys(refsAtBackup).length]], JSON.stringify(rr));
+  assert.deepEqual(await repoRefs(repoDir), refsAtBackup);
+  fs.rmSync(repoDir, { recursive: true, force: true });
+  const rr2 = await backupService.restore(req, actor, accountId, runId, [{ kind: 'repo', siteId }]);
+  assert.equal(rr2.restored[0].ok, true, JSON.stringify(rr2));
+  assert.deepEqual(await repoRefs(repoDir), refsAtBackup);
+  // A publication in progress holds the site: the repo restore is refused for this item only.
+  const { releaseService } = await import('../releases/release.service');
+  let releaseLock!: () => void;
+  const held = releaseService.withSiteLock(siteId, () => new Promise<void>((r) => { releaseLock = r; }));
+  const busy = await backupService.restore(req, actor, accountId, runId, [{ kind: 'repo', siteId }]);
+  releaseLock();
+  await held;
+  assert.equal(busy.restored[0].ok, false);
+  assert.equal(untarred.length, 2, 'the repo restores never touched the staging / data');
 
   // A wrong passphrase cannot restore (simulated by replacing it).
   await backupService.updateSettings(req, { passphrase: 'a different passphrase', replacePassphrase: true });

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { RefreshCw, ArrowRight, Building2, Users, Server, Mail, Database, Globe, FolderOpen, ChevronRight, BellRing, BarChart3 } from 'lucide-react';
+import { RefreshCw, ArrowRight, Building2, Users, Server, Mail, Database, Globe, FolderOpen, ChevronRight, BellRing, BarChart3, Bot } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DashboardSummary, HostingAccount, TenantUsage, UsageAlert } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
 import { useAuthStore } from '@/store/authStore';
 import { useTenantStore } from '@/store/tenantStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
+import { useHostingMe } from '@/store/hostingStore';
 import { dashboardApi } from '@/api/dashboard.api';
 import { accountsApi } from '@/api/accounts.api';
 import { PageContainer } from '@/components/common/PageContainer';
@@ -204,6 +205,7 @@ function StaffDashboard() {
 
 function ClientDashboard() {
   const { t } = useTranslation();
+  const { can } = useHostingMe();
   const currentTenantId = useTenantStore((s) => s.currentTenantId);
   const [accounts, setAccounts] = useState<HostingAccount[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -298,6 +300,17 @@ function ClientDashboard() {
                   <MiniStat icon={<Globe size={15} />} label={t('clientSpace.domains') || 'Domains'} value={a.domainCount} to={`/accounts/${a.id}?tab=domains`} />
                   <MiniStat icon={<FolderOpen size={15} />} label={t('clientSpace.files') || 'Files'} value={t('clientSpace.sftp') || 'SFTP'} to={`/accounts/${a.id}?tab=files`} />
                 </div>
+                {/* No site yet: an AI agent can build it (opens the account's key form, agent preset). */}
+                {a.siteCount === 0 && a.status === 'active' && can('sites.manage', a.id) && (
+                  <Link
+                    to={`/accounts/${a.id}?agent=1`}
+                    className="mt-3 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-accent hover:bg-accent/10"
+                  >
+                    <Bot size={14} className="shrink-0" />
+                    <span>{t('agentConnect.dashboardCta') || 'No site yet: connect an AI agent to build and publish it'}</span>
+                    <ChevronRight size={14} className="ml-auto shrink-0" />
+                  </Link>
+                )}
               </div>
             ))}
           </div>

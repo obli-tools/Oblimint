@@ -207,5 +207,24 @@
       "oauthInvalidRequest": "The authorization request is incomplete (PKCE missing).",
       "oauthNoAccess": "Your account has no access to the hosting account of this connector: sign in with an account that has."
     }
+  },
+  "agentConnect": {
+    "title": "Connect an AI agent",
+    "step": "An AI agent connected",
+    "connect": "Connect",
+    "intro": "Give Claude Code, Claude or another AI agent access to this account, limited to the sites and rights you choose. Every change goes through a preview and a release you can roll back.",
+    "introNoSite": "This account has no site yet: let an AI agent (Claude Code, Claude…) create it, show you a preview and publish it. It only gets this account, with the rights you choose.",
+    "key": "Access key (Claude Code, agents)",
+    "keyName": "AI agent",
+    "promptTitle": "Starter prompt",
+    "promptHint": "Paste it as the first message once the agent is connected.",
+    "dashboardCta": "No site yet: connect an AI agent to build and publish it",
+    "prompt": {
+      "intro": "You are connected to my Oblimint hosting account \"{{account}}\" through its MCP server (\"oblimint\").",
+      "guide": "Start by calling get_guide and follow it: the code in production is immutable, you write in the staging area, check the result on a preview, then publish a release (a rollback is always possible).",
+      "create": "This account has no site yet. Ask me what the site is for, then create it (create_site), write its files, start a preview and give me its link.",
+      "work": "Sites you may work on: {{sites}}. Read the current files and the latest release before changing anything, then show me a preview of your changes.",
+      "confirm": "Never publish before I have approved the preview, and tell me what you changed in each release."
+    }
   }
 }

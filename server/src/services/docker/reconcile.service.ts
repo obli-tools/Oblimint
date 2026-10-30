@@ -30,6 +30,7 @@ import { clearReloadPending, readReloadPending } from './runtimeConfig';
 import { reloadSiteContainers, writeSiteRuntimeConfigs } from './siteOps';
 import { runAccountTeardownHooks } from './extensions';
 import type { NetworkCreateOptions } from './dockerOps';
+import { recordWorkerTick } from '../healthMonitor/workerTicks';
 
 /**
  * P4b: creation options of an account fabric (segmentation module,
@@ -746,7 +747,11 @@ export const reconcileService = {
   /** Queue a full pass (boot, infra deploy, periodic every 5 min). */
   requestAll(reason: string): void {
     void db('hosting_accounts').whereNot({ status: 'deleting' }).orderBy('id').pluck('id')
-      .then((ids: number[]) => { for (const id of ids) reconcileService.requestAccount(Number(id), reason); })
+      .then((ids: number[]) => {
+        // Deep health: the periodic pass is alive (timers firing, database answering).
+        if (reason === 'periodic' || reason === 'boot') recordWorkerTick('reconcile');
+        for (const id of ids) reconcileService.requestAccount(Number(id), reason);
+      })
       .catch((err: unknown) => logger.error({ err: errText(err) }, 'requestAll failed'));
   },
 
@@ -826,6 +831,7 @@ export const reconcileService = {
   start(): void {
     stopped = false;
     if (bootTimer || periodicTimer) return;
+    recordWorkerTick('reconcile');
     bootTimer = setTimeout(() => {
       bootTimer = null;
       void bootPass().catch((err) => logger.error({ err: errText(err) }, 'Reconcile boot pass failed'));

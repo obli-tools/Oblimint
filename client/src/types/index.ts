@@ -124,20 +124,7 @@ export interface ObligateConfigInput {
   inboundSecret?: string;
 }
 
-/** Row of GET /api/audit. */
-export interface AuditLogRow {
-  id: number;
-  tenantId: number | null;
-  tenantName: string | null;
-  userId: number | null;
-  username: string | null;
-  action: string;
-  resourceType: string | null;
-  resourceId: string | number | null;
-  resourceName?: string | null;
-  details: Record<string, unknown> | null;
-  ipAddress: string | null;
-  createdAt: string;
-}
+/** Row of GET /api/audit (the server's type: resourcePath, apiKeyId…). */
+export type { AuditLogRow, AuditApiKeyRef } from '@oblimint/shared';
 
 export type { User };

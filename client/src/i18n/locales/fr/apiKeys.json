@@ -207,5 +207,24 @@
       "oauthInvalidRequest": "La demande d'autorisation est incomplète (PKCE manquant).",
       "oauthNoAccess": "Ton compte n'a pas accès au compte d'hébergement de ce connecteur : connecte-toi avec un compte qui y a accès."
     }
+  },
+  "agentConnect": {
+    "title": "Connecter un agent IA",
+    "step": "Un agent IA connecté",
+    "connect": "Connecter",
+    "intro": "Donne à Claude Code, Claude ou un autre agent IA l'accès à ce compte, limité aux sites et aux droits que tu choisis. Chaque changement passe par un aperçu et une release que tu peux annuler.",
+    "introNoSite": "Ce compte n'a pas encore de site : laisse un agent IA (Claude Code, Claude…) le créer, te montrer un aperçu et le publier. Il n'accède qu'à ce compte, avec les droits que tu choisis.",
+    "key": "Clé d'accès (Claude Code, agents)",
+    "keyName": "Agent IA",
+    "promptTitle": "Prompt de départ",
+    "promptHint": "Colle-le comme premier message une fois l'agent connecté.",
+    "dashboardCta": "Pas encore de site : connecte un agent IA pour le construire et le publier",
+    "prompt": {
+      "intro": "Tu es connecté à mon compte d'hébergement Oblimint « {{account}} » par son serveur MCP (« oblimint »).",
+      "guide": "Commence par appeler get_guide et suis-le : le code en production est immuable, tu écris dans la zone de staging, tu vérifies le résultat sur un aperçu, puis tu publies une release (un retour arrière est toujours possible).",
+      "create": "Ce compte n'a pas encore de site. Demande-moi à quoi il doit servir, puis crée-le (create_site), écris ses fichiers, lance un aperçu et donne-moi son lien.",
+      "work": "Sites sur lesquels tu peux travailler : {{sites}}. Lis les fichiers actuels et la dernière release avant de modifier quoi que ce soit, puis montre-moi un aperçu de tes changements.",
+      "confirm": "Ne publie jamais avant que j'aie validé l'aperçu, et dis-moi ce que tu as changé dans chaque release."
+    }
   }
 }

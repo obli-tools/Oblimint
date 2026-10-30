@@ -59,7 +59,7 @@ function panelOrigin(): string {
   return window.location.origin;
 }
 
-export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, kind, initial, initialSiteIds, onClose, onSaved }: {
+export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, kind, initial, initialSiteIds, initialPreset, initialName, onClose, onSaved }: {
   accountId: number;
   /** Sites / domains of the account (loaded here when not given). */
   sites?: Site[];
@@ -68,6 +68,10 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
   initial: ApiKey | null;
   /** New key: sites ticked from the start (e.g. opened from a site page). */
   initialSiteIds?: number[];
+  /** New key: the preset it starts with (« Updates only » by default), e.g. « Manage one site » for an AI agent. */
+  initialPreset?: ApiKeyPresetId;
+  /** New key: a suggested name. */
+  initialName?: string;
   onClose: () => void;
   onSaved: (k: ApiKey | ApiKeyCreated) => void;
 }) {
@@ -83,10 +87,11 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
   }, [accountId, sitesProp, domainsProp]);
   const sites = sitesProp ?? loadedSites;
   const domains = domainsProp ?? loadedDomains;
-  const [name, setName] = useState(initial?.name ?? '');
-  // A new key starts as « Updates only » (cut down to the grantable scopes once they are known).
-  const [scopes, setScopes] = useState<Set<ApiKeyScope>>(new Set(initial?.scopes ?? apiKeyPresetScopes(apiKeyPreset('update'), API_KEY_SCOPES)));
-  const [siteScope, setSiteScope] = useState<ApiKeySiteScope>(initial?.siteScope ?? 'selected');
+  const [name, setName] = useState(initial?.name ?? initialName ?? '');
+  // A new key starts as « Updates only » or the given preset (cut down to the grantable scopes once they are known).
+  const startPreset: ApiKeyPresetId = initialPreset ?? 'update';
+  const [scopes, setScopes] = useState<Set<ApiKeyScope>>(new Set(initial?.scopes ?? apiKeyPresetScopes(apiKeyPreset(startPreset), API_KEY_SCOPES)));
+  const [siteScope, setSiteScope] = useState<ApiKeySiteScope>(initial?.siteScope ?? apiKeyPreset(startPreset).siteScopes[0] ?? 'selected');
   const [siteIds, setSiteIds] = useState<Set<number>>(new Set(initial?.siteIds ?? initialSiteIds ?? []));
   const [domainScope, setDomainScope] = useState<ApiKeyDomainScope>(initial?.domainScope ?? 'selected');
   const [domainIds, setDomainIds] = useState<Set<number>>(new Set(initial?.domainIds ?? []));
@@ -94,7 +99,7 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
   const [ips, setIps] = useState((initial?.allowedIps ?? []).join('\n'));
   const [busy, setBusy] = useState(false);
   const [grantable, setGrantable] = useState<ApiKeyGrantable | null>(null);
-  const [preset, setPreset] = useState<ApiKeyPresetId | null>(initial ? null : 'update');
+  const [preset, setPreset] = useState<ApiKeyPresetId | null>(initial ? null : startPreset);
   const [touched, setTouched] = useState(false);
   const toggle = <T,>(set: Set<T>, v: T) => { const s = new Set(set); if (s.has(v)) s.delete(v); else s.add(v); return s; };
 
