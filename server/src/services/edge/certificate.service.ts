@@ -73,7 +73,8 @@ import { isReservedPlatformName, platformHostNames, SERVED_ACCOUNT_STATUSES, typ
 // state, retryPlatform() (staff « retry now ») resets the backoff of one; an
 // issuance for such a name first waits for the pending DNS push (its A / AAAA
 // record, set with the host name), and their first failure / their
-// certificate notify the platform channels (certificate.failed / issued).
+// certificate notify the platform channels (certificate.failed / issued); for
+// a tenant's domain, the same two events reach its holder (holderNotified).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LOG_CAP = 200;
@@ -489,6 +490,16 @@ async function dns01SolvesAll(names: string[]): Promise<boolean> {
   return names.length > 0;
 }
 
+/**
+ * A certificate whose issued / failed outcome reaches its holder (notification
+ * center of the account's members and the tenant's staff): a tenant domain or
+ * a host name contributed for a tenant — not the platform's own names (their
+ * channel above) nor a preview host (the platform's preview domain).
+ */
+function holderNotified(target: CertTarget): boolean {
+  return !target.platformOwn && target.kind !== 'preview' && Number.isInteger(target.tenantId) && target.tenantId > 0;
+}
+
 /** The issuance itself (runs inside the queue). Never throws: the outcome is in the row. */
 async function runIssuance(target: CertTarget): Promise<void> {
   let row: CertificateRow;
@@ -620,6 +631,18 @@ async function runIssuance(target: CertTarget): Promise<void> {
         platform: true,
         link: '/settings#settings-platform-certificates',
       });
+    } else if (holderNotified(target) && !keepValid) {
+      // A tenant's domain (or contributed host name) that had no served certificate:
+      // its holder (account members, tenant staff) hears it in the notification center.
+      notify('certificate.issued', {
+        tenantId: target.tenantId,
+        accountId: target.accountId,
+        key: `cert-issued:${certId}:${issued.notAfter.toISOString()}`,
+        title: `Certificat délivré pour ${target.names[0]}`,
+        message: `Le certificat HTTPS de ${issued.names.join(', ')} a été délivré (valide jusqu'au ${issued.notAfter.toISOString().slice(0, 10)}).`,
+        severity: 'info',
+        link: '/domains',
+      });
     }
   } catch (err) {
     clearTimeout(deadlineTimer);
@@ -657,6 +680,22 @@ async function runIssuance(target: CertTarget): Promise<void> {
         severity: 'warning',
         platform: true,
         link: '/settings#settings-platform-certificates',
+      });
+    } else if (holderNotified(target) && failureCount === 1) {
+      // The holder of a tenant domain: first failure of a streak only, the client-safe
+      // sentence (never the raw ACME / edge text: staff-only, A6).
+      const since = current.last_attempt_at ? new Date(current.last_attempt_at).getTime() : now;
+      notify('certificate.failed', {
+        tenantId: target.tenantId,
+        accountId: target.accountId,
+        key: `cert-failed:${certId}:${since}`,
+        title: `Échec du certificat de ${target.names[0]}`,
+        message: `La demande de certificat HTTPS pour ${target.names.join(', ')} a échoué : ${clientCertificateError(message)}\n`
+          + (stillValid ? 'Le certificat actuel reste servi. ' : 'Le site est servi avec un certificat non reconnu par les navigateurs. ')
+          + (retryAt !== null ? `Nouvelle tentative automatique vers ${utcLabel(retryAt)}. ` : '')
+          + 'Vérifiez que le domaine pointe vers ce serveur (A / AAAA).',
+        severity: 'warning',
+        link: '/domains',
       });
     }
     if (wasIssued) {
