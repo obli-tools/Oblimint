@@ -192,6 +192,25 @@ async function nonMembers(accountId: number, userIds: Array<number | null | unde
   return new Set(rows.filter((r) => r.kind === 'staff' || r.member === null).map((r) => Number(r.id)));
 }
 
+/**
+ * Notification families a key reads (list_notifications, GET /v1/notifications).
+ * A notification row carries its account, not its site or domain: a key limited
+ * to some sites reads none, and the domain families (domains, certificates)
+ * need a key on every domain — it could otherwise learn about the sites and
+ * domains kept out of its view. Then the families its scopes cover; never
+ * security / platform (staff-only), nor mail / apps (no key scope covers them).
+ */
+export function keyNotificationFamilies(ctx: Pick<ApiKeyContext, 'scopes' | 'siteScope' | 'domainScope'>): NotificationFamily[] {
+  if (ctx.siteScope !== 'all') return [];
+  const s = ctx.scopes;
+  const out: NotificationFamily[] = [];
+  if (s.has('releases.publish')) out.push('releases');
+  if (ctx.domainScope === 'all' && (s.has('routes.manage') || s.has('domains.subdomain') || s.has('sites.manage'))) out.push('domains', 'certificates');
+  if (s.has('files.write') || s.has('releases.publish') || s.has('sites.manage')) out.push('quota');
+  if (s.has('cron.manage')) out.push('monitoring');
+  return out;
+}
+
 /** Paths in an audit entry: the first 50 of a batch. */
 const sample = (paths: string[]) => (paths.length > 50 ? [...paths.slice(0, 50), `… +${paths.length - 50}`] : paths);
 
@@ -255,12 +274,14 @@ export const keyApi = {
 
   /**
    * Notifications of the key's creator about the key's account only (releases awaiting
-   * approval, certificates, quota…), newest first. Read-only: reading them here does not
-   * mark them read for the human.
+   * approval, certificates, quota…), newest first, within the key's reach
+   * (keyNotificationFamilies). Read-only: reading them here does not mark them read for the human.
    */
   async notifications(ctx: ApiKeyContext, q: { unread?: boolean; family?: NotificationFamily | null; before?: number | null; limit?: number }): Promise<UserNotificationPage> {
     await accountRow(ctx);
-    return userNotificationService.list(ctx.creatorId, ctx.tenantId, { ...q, limit: Math.min(q.limit ?? 30, 50), accountId: ctx.accountId });
+    const families = keyNotificationFamilies(ctx);
+    if (families.length === 0) return { items: [], unreadCount: 0, hasMore: false };
+    return userNotificationService.list(ctx.creatorId, ctx.tenantId, { ...q, limit: Math.min(q.limit ?? 30, 50), accountId: ctx.accountId, families });
   },
 
   async getSite(ctx: ApiKeyContext, siteId: number): Promise<ApiV1Site> {

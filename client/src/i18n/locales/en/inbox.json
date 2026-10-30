@@ -67,6 +67,7 @@
     "password": "Password",
     "passwordKept": "•••••••• (kept — type to replace)",
     "passwordAgain": "The server changed: enter the password again (the stored one only goes where it was given).",
+    "mailboxPasswordAgain": "The mailbox changed: enter its password again (the stored one only goes with the mailbox it was given for).",
     "saved": "E-mail sender saved",
     "saveFailed": "Failed to save the e-mail sender",
     "testTo": "Send a test to",

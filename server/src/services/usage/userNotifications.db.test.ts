@@ -53,9 +53,15 @@ test('notification center: recipients, preferences, inbox, e-mail', { timeout: 3
 
   const sent: Array<{ options: Record<string, unknown>; mail: Record<string, unknown> }> = [];
   let failNext = false;
+  let failAll = false;
+  let attempts = 0;
+  let hold: Promise<void> | null = null;
   tm.setTransactionalDepsForTests({
     transport: (options) => ({
       async sendMail(mail: Record<string, unknown>) {
+        attempts++;
+        if (hold) await hold;
+        if (failAll) throw new Error('Connection timeout');
         if (failNext) { failNext = false; throw Object.assign(new Error('mailbox unavailable'), { responseCode: 550 }); }
         sent.push({ options, mail });
         return {};
@@ -205,13 +211,34 @@ test('notification center: recipients, preferences, inbox, e-mail', { timeout: 3
   await t.test('API key (REST v1 / MCP): the creator\'s notifications about the key\'s account only', async () => {
     const { keyApi } = await import('../apiKeys/keyApi');
     const { actorForUser } = await import('../hosting/access');
-    const ctx = { id: 1, name: 'agent', tenantId: A, accountId: a2, creatorId: staffA, actor: await actorForUser(staffA, A) } as never;
+    const actor = await actorForUser(staffA, A);
+    const keyCtx = (over: Record<string, unknown>) => ({
+      id: 1, name: 'agent', tenantId: A, accountId: a2, creatorId: staffA, actor,
+      scopes: new Set(['releases.publish', 'routes.manage']), siteScope: 'all', siteIds: new Set(), domainScope: 'all', domainIds: new Set(),
+      ...over,
+    }) as never;
+    // Something of every reach on account a2: a domain event, a security event of the creator.
+    await db('user_notifications').insert({ user_id: staffA, tenant_id: A, account_id: a2, event: 'security.banned', family: 'security', title: 'IP bannie : 203.0.113.7', dedup_key: 'ban:1' });
+    assert.ok((await svc.userNotificationService.list(staffA, A, { accountId: a2 })).items.some((n) => n.family === 'security'));
+    const ctx = keyCtx({});
     const page = await keyApi.notifications(ctx, { limit: 50 });
     assert.ok(page.items.length >= 1);
     assert.ok(page.items.every((n) => n.accountId === a2), 'never another account of the creator');
+    assert.ok(page.items.some((n) => n.event === 'domain.verified'));
+    assert.ok(page.items.every((n) => n.family === 'domains' || n.family === 'certificates' || n.family === 'releases'), 'only what the scopes cover');
+    assert.ok(!page.items.some((n) => n.family === 'security'), 'never the security family (staff only)');
     assert.equal(page.unreadCount, page.items.filter((n) => !n.readAt).length);
     // Read-only: nothing marked read.
     assert.equal((await keyApi.notifications(ctx, { unread: true })).items.length, page.unreadCount);
+    // A key limited to one site reads nothing (the rows carry no site: other sites could leak).
+    const oneSite = await keyApi.notifications(keyCtx({ siteScope: 'selected', siteIds: new Set([12345]) }), { limit: 50 });
+    assert.deepEqual(oneSite, { items: [], unreadCount: 0, hasMore: false });
+    // Domains given one by one: no domain / certificate notification.
+    assert.equal((await keyApi.notifications(keyCtx({ domainScope: 'selected' }), { limit: 50 })).items.length, 0);
+    // Scopes without any notification family (files.read only): nothing.
+    assert.equal((await keyApi.notifications(keyCtx({ scopes: new Set(['files.read']) }), { limit: 50 })).items.length, 0);
+    // Asking for a family out of reach: nothing.
+    assert.equal((await keyApi.notifications(ctx, { family: 'security' })).items.length, 0);
   });
 
   await t.test('transactional sender: settings, write-only password, SMTP and platform', async () => {
@@ -256,8 +283,17 @@ test('notification center: recipients, preferences, inbox, e-mail', { timeout: 3
     assert.equal(p.options.port, 587);
     assert.equal(p.options.requireTLS, true);
     assert.deepEqual(p.options.auth, { user: 'noreply@example.com', pass: 'mb-pass' });
-    // Another mailbox without a password: the old one is not reused.
-    s = await tm.transactionalMailService.update(req, { platform: { mailbox: 'other@example.com' } });
+    // Another mailbox without a password: refused (the old one is not reused, nor silently dropped).
+    await assert.rejects(tm.transactionalMailService.update(req, { platform: { mailbox: 'other@example.com' } }), /mailbox changed: enter the password again/);
+    s = await tm.transactionalMailService.get();
+    assert.equal(s.platform.mailbox, 'noreply@example.com');
+    assert.equal(s.platform.passwordSet, true);
+    assert.equal(s.ready, true);
+    // With its password: accepted.
+    s = await tm.transactionalMailService.update(req, { platform: { mailbox: 'other@example.com', password: 'other-pass' } });
+    assert.equal(s.platform.passwordSet, true);
+    // The mailbox removed: its password goes with it.
+    s = await tm.transactionalMailService.update(req, { platform: { mailbox: null } });
     assert.equal(s.platform.passwordSet, false);
     assert.equal(s.ready, false);
     await tm.transactionalMailService.update(req, { platform: { mailbox: 'noreply@example.com', password: 'mb-pass' } });
@@ -270,6 +306,7 @@ test('notification center: recipients, preferences, inbox, e-mail', { timeout: 3
     assert.equal(settings.emailAvailable, true);
     assert.equal(settings.emailAddress, 'approver@example.com');
     await svc.deliverToUsers('release.rejected', { ...base, tenantId: A, accountId: a1, key: 'release:7', title: 'Release rejetée : blog' });
+    await svc.userMailQueueIdle();
     const mails = sent.slice(before);
     assert.equal(mails.length, 1, 'only the user who asked for e-mails');
     assert.equal(mails[0].mail.to, 'approver@example.com');
@@ -280,7 +317,46 @@ test('notification center: recipients, preferences, inbox, e-mail', { timeout: 3
     assert.ok(!(await svc.userNotificationService.list(c1, A)).items.some((n) => n.event === 'release.rejected'));
     // Deduplicated like the bell (no second e-mail).
     await svc.deliverToUsers('release.rejected', { ...base, tenantId: A, accountId: a1, key: 'release:7' });
+    await svc.userMailQueueIdle();
     assert.equal(sent.length - before, 1);
+  });
+
+  await t.test('a hung SMTP never holds the delivery nor the notify() queue (own mail queue)', async () => {
+    let release!: () => void;
+    hold = new Promise<void>((r) => { release = r; });
+    const before = sent.length;
+    const n = await svc.deliverToUsers('release.rejected', { ...base, tenantId: A, accountId: a1, key: 'release:hung' });
+    assert.ok(n >= 1, 'stored while the e-mail is still being sent');
+    assert.ok(await db('user_notifications').where({ user_id: c1, dedup_key: 'release:hung' }).first('id'));
+    // notify(): the job (center + channels) completes while the SMTP hangs.
+    notify('release.rejected', { ...base, tenantId: A, accountId: a1, key: 'release:hung-2' });
+    await notificationQueueIdle();
+    assert.equal(sent.length, before, 'nothing sent yet');
+    hold = null;
+    release();
+    await svc.userMailQueueIdle();
+    assert.equal(sent.length - before, 2);
+  });
+
+  await t.test('circuit breaker: repeated transport failures suspend the e-mails for a while', async () => {
+    svc.setUserMailQueueForTests({ breakerThreshold: 2, breakerMs: 60_000, concurrency: 1 });
+    t.after(() => svc.setUserMailQueueForTests(null));
+    failAll = true;
+    const tries = attempts;
+    for (let i = 0; i < 5; i++) await svc.deliverToUsers('release.rejected', { ...base, tenantId: A, accountId: a1, key: `release:cb${i}` });
+    await svc.userMailQueueIdle();
+    assert.equal(attempts - tries, 2, 'after 2 failures, the next e-mails are not attempted');
+    const log = await tm.transactionalMailService.log(5);
+    assert.deepEqual(log.slice(0, 3).map((e) => e.status), ['skipped', 'skipped', 'skipped']);
+    assert.match(String(log[0].error), /Envoi suspendu/);
+    // Every notification is still in the database (the bell does not depend on the mail).
+    assert.equal(Number((await db('user_notifications').where({ user_id: c1 }).where('dedup_key', 'like', 'release:cb%').count({ n: '*' }))[0].n), 5);
+    failAll = false;
+    svc.setUserMailQueueForTests(null);
+    const ok = attempts;
+    await svc.deliverToUsers('release.rejected', { ...base, tenantId: A, accountId: a1, key: 'release:cb-after' });
+    await svc.userMailQueueIdle();
+    assert.equal(attempts - ok, 1, 'reset: sending again');
   });
 
   await t.test('retention: 90 days, 500 per user and tenant', async () => {

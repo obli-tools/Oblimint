@@ -114,7 +114,7 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 |---|---|---|
 | \`whoami\` | The key, its rights, the account | — |
 | \`get_guide\` | This guide (\`lang\`: \`en\` or \`fr\`) | — |
-| \`list_notifications\` | Notifications of the key's human about this account (release awaiting approval / approved / rejected, certificate issued or failing, domain verified, quota, mail, cron…): \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Read-only: they stay unread for the human | — |
+| \`list_notifications\` | Notifications of the key's human about this account (release awaiting approval / approved / rejected, certificate issued or failing, domain verified, quota, cron…): \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Only for a key on every site, and only the families its scopes cover (releases: \`releases.publish\`; domains and certificates: every domain too; cron: \`cron.manage\`). Read-only: they stay unread for the human | — |
 | \`list_sites\` / \`get_site\` | Sites of the key (id, slug, domains, status, document root, publish mode); \`liveRelease\` (since when, how: \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, by whom), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
 | \`create_site\` | Create a site: \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (URL prefix it expects, e.g. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Change a site: \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
@@ -285,7 +285,7 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 |---|---|---|---|
 | GET | \`/me\` | | — |
 | GET | \`/guide\` | \`?lang=en\` or \`fr\`: this guide as Markdown | — |
-| GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50): \`{ items, unreadCount, hasMore }\`, this account only, read-only | — |
+| GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50): \`{ items, unreadCount, hasMore }\`, this account only, within the key's reach (see \`list_notifications\`), read-only | — |
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
 | PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |
@@ -526,7 +526,7 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 |---|---|---|
 | \`whoami\` | La clé, ses droits, le compte | — |
 | \`get_guide\` | Ce guide (\`lang\`: \`fr\` ou \`en\`) | — |
-| \`list_notifications\` | Notifications de l'humain de la clé sur ce compte (release en attente d'approbation / approuvée / rejetée, certificat délivré ou en échec, domaine vérifié, quota, mail, cron…) : \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Lecture seule : elles restent non lues pour l'humain | — |
+| \`list_notifications\` | Notifications de l'humain de la clé sur ce compte (release en attente d'approbation / approuvée / rejetée, certificat délivré ou en échec, domaine vérifié, quota, cron…) : \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Seulement pour une clé sur tous les sites, et seulement les familles que couvrent ses portées (releases : \`releases.publish\` ; domaines et certificats : tous les domaines aussi ; cron : \`cron.manage\`). Lecture seule : elles restent non lues pour l'humain | — |
 | \`list_sites\` / \`get_site\` | Sites de la clé (id, slug, domaines, statut, racine web, mode de publication) ; \`liveRelease\` (depuis quand, comment : \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, par qui), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
 | \`create_site\` | Créer un site : \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (préfixe d'URL attendu, ex. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Modifier un site : \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
@@ -697,7 +697,7 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 |---|---|---|---|
 | GET | \`/me\` | | — |
 | GET | \`/guide\` | \`?lang=fr\` ou \`en\` : ce guide en Markdown | — |
-| GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50) : \`{ items, unreadCount, hasMore }\`, ce compte seulement, lecture seule | — |
+| GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50) : \`{ items, unreadCount, hasMore }\`, ce compte seulement, dans la portée de la clé (voir \`list_notifications\`), lecture seule | — |
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
 | PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |

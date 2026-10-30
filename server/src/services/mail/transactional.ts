@@ -281,16 +281,28 @@ async function prepare(s: Stored): Promise<{ options: Record<string, unknown>; f
 
 const toOk = (to: string) => email.safeParse(to).success;
 
-/** Sends one e-mail now. Never throws; journaled. */
-export async function sendTransactional(m: TransactionalMessage): Promise<TransactionalSendResult> {
-  const msg: TransactionalMessage = {
+/** Error of a refused recipient address (not a transport failure). */
+export const INVALID_ADDRESS = 'Adresse invalide';
+
+function cleanMessage(m: TransactionalMessage): TransactionalMessage {
+  return {
     ...m,
     to: String(m.to ?? '').trim().toLowerCase(),
     subject: String(m.subject ?? '').replace(/[\r\n]+/g, ' ').slice(0, 250),
   };
+}
+
+/** Journals an e-mail not attempted (e.g. sender suspended after repeated failures). */
+export async function recordSkippedTransactional(m: TransactionalMessage, reason: string): Promise<void> {
+  await journal(cleanMessage(m), 'skipped', null, reason);
+}
+
+/** Sends one e-mail now. Never throws; journaled. */
+export async function sendTransactional(m: TransactionalMessage): Promise<TransactionalSendResult> {
+  const msg = cleanMessage(m);
   if (!toOk(msg.to)) {
-    await journal(msg, 'failed', null, 'Adresse invalide');
-    return { ok: false, status: 'failed', error: 'Adresse invalide' };
+    await journal(msg, 'failed', null, INVALID_ADDRESS);
+    return { ok: false, status: 'failed', error: INVALID_ADDRESS };
   }
   let transportKind: 'platform' | 'smtp' | null = null;
   try {
@@ -376,8 +388,12 @@ export const transactionalMailService = {
     if (body.platform) {
       if (body.platform.mailbox !== undefined) {
         const mb = body.platform.mailbox || null;
-        // A kept password only goes with the mailbox it was given for.
-        if (mb !== current.platform.mailbox && secrets.platformPassword && typeof body.platform.password !== 'string') secrets.platformPassword = null;
+        // A kept password only goes with the mailbox it was given for (L8, as the SMTP server):
+        // refused rather than silently dropped (the sender would quietly stop being ready).
+        if (mb !== current.platform.mailbox && secrets.platformPassword && typeof body.platform.password !== 'string') {
+          if (mb !== null) throw invalid('The mailbox changed: enter the password again (or clear it)', 'platform.password');
+          secrets.platformPassword = null; // mailbox removed: its password goes with it
+        }
         next.platform.mailbox = mb;
         changed.push('platform.mailbox');
       }

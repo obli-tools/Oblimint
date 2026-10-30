@@ -67,6 +67,7 @@
     "password": "Mot de passe",
     "passwordKept": "•••••••• (conservé — saisir pour remplacer)",
     "passwordAgain": "Le serveur a changé : saisissez de nouveau le mot de passe (celui enregistré ne part que là où il a été donné).",
+    "mailboxPasswordAgain": "La boîte d’envoi a changé : saisissez de nouveau son mot de passe (celui enregistré ne va qu’avec la boîte pour laquelle il a été donné).",
     "saved": "Expéditeur enregistré",
     "saveFailed": "Impossible d’enregistrer l’expéditeur",
     "testTo": "Envoyer un test à",

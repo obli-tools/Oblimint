@@ -14,7 +14,9 @@ import { getIO } from '../../socket';
 import { logger } from '../../utils/logger';
 import { actorCan, actorForUser, type HostingActor, type HostingNeed } from '../hosting/access';
 import { clientCapabilities } from '../hosting/rows';
-import { purgeTransactionalLog, sendTransactional, transactionalMailReady } from '../mail/transactional';
+import {
+  INVALID_ADDRESS, purgeTransactionalLog, recordSkippedTransactional, sendTransactional, transactionalMailReady,
+} from '../mail/transactional';
 import { htmlBody, plainText, type RenderedNotification } from './notifications/plugins';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,6 +37,7 @@ import { htmlBody, plainText, type RenderedNotification } from './notifications/
 // preferences (per family: in-app, e-mail) decide; a same (event, key) is
 // kept once per user for 24 h; 90 days and 500 rows per user and tenant.
 // Live push on the socket room user:<id> (the client filters on its tenant).
+// E-mails: their own bounded queue (never the notify() slot), see below.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Audience {
@@ -272,7 +275,9 @@ export async function deliverToUsers(event: NotificationEvent, p: DeliverPayload
       if (!row.in_app) continue;
       emitToUser(row.user_id, UserNotificationSocketEvents.NEW, { tenantId: row.tenant_id, notification: toNotification(row) });
     }
-    if (wantsEmail.size > 0) await sendEmails(rows.filter((r) => wantsEmail.has(r.user_id)), event, p, rendered ?? null);
+    // The e-mails never hold the caller (the notify() slot of this event, its
+    // webhook / Slack channels): queued, sent by the mail queue below.
+    if (wantsEmail.size > 0) await queueEmails(rows.filter((r) => wantsEmail.has(r.user_id)), event, p, rendered ?? null);
     return rows.length;
   } catch (err) {
     logger.warn({ err: (err as Error).message, event }, 'user notifications: delivery failed');
@@ -280,7 +285,38 @@ export async function deliverToUsers(event: NotificationEvent, p: DeliverPayload
   }
 }
 
-async function sendEmails(rows: Row[], event: NotificationEvent, p: DeliverPayload, rendered: RenderedNotification | null): Promise<void> {
+// ── e-mail queue ─────────────────────────────────────────────────────────────
+// A slow or blackholed SMTP (10 s connection timeout, 30 s deadline per
+// message) must not hold the notify() queue: the notification e-mails go
+// through their own bounded queue (oldest dropped when full) with a small
+// concurrency, and a circuit breaker: after N consecutive transport failures,
+// the e-mails are skipped (journaled 'skipped') for a while instead of each
+// waiting for its own timeout.
+
+interface MailJob { rowId: number | string; userId: number; to: string; subject: string; text: string; html: string }
+
+const mailDefaults = { maxQueue: 500, concurrency: 2, breakerThreshold: 5, breakerMs: 5 * 60_000 };
+let mailCfg = { ...mailDefaults };
+const mailQueue: MailJob[] = [];
+let mailBusy = 0;
+let mailFailures = 0;
+let mailBreakerUntil = 0;
+let mailIdleWaiters: Array<() => void> = [];
+
+/** Tests: queue / breaker settings (null restores) — also resets the breaker. */
+export function setUserMailQueueForTests(override: Partial<typeof mailDefaults> | null): void {
+  mailCfg = { ...mailDefaults, ...(override ?? {}) };
+  mailFailures = 0;
+  mailBreakerUntil = 0;
+}
+
+/** Tests / shutdown: resolves once the notification e-mails queued so far are sent (or skipped). */
+export function userMailQueueIdle(): Promise<void> {
+  if (mailBusy === 0 && mailQueue.length === 0) return Promise.resolve();
+  return new Promise((r) => mailIdleWaiters.push(r));
+}
+
+async function queueEmails(rows: Row[], event: NotificationEvent, p: DeliverPayload, rendered: RenderedNotification | null): Promise<void> {
   const list = rows.slice(0, MAX_EMAILS_PER_EVENT);
   const users = await db('users').whereIn('id', list.map((r) => r.user_id)).whereNotNull('email').where({ is_active: true })
     .select('id', 'email') as Array<{ id: number; email: string }>;
@@ -289,13 +325,56 @@ async function sendEmails(rows: Row[], event: NotificationEvent, p: DeliverPaylo
     event, eventLabel: event, title: p.title, message: p.message, severity: p.severity, url: null,
     tenantId: p.tenantId, accountId: p.accountId ?? null, key: p.key, timestamp: new Date().toISOString(),
   };
+  const subject = `[Oblimint] ${n.title}`;
+  const text = plainText(n);
+  const html = htmlBody(n);
   for (const row of list) {
     const to = emails.get(row.user_id);
     if (!to) continue;
-    const r = await sendTransactional({ to, kind: 'notification', userId: row.user_id, subject: `[Oblimint] ${n.title}`, text: plainText(n), html: htmlBody(n) });
-    if (r.ok) {
-      try { await db('user_notifications').where({ id: row.id, user_id: row.user_id }).update({ emailed_at: db.fn.now() }); } catch { /* journal only */ }
+    if (mailQueue.length >= mailCfg.maxQueue) {
+      const dropped = mailQueue.shift();
+      logger.warn({ userId: dropped?.userId }, 'notification e-mail queue full: oldest e-mail dropped');
     }
+    mailQueue.push({ rowId: row.id, userId: row.user_id, to, subject, text, html });
+  }
+  setImmediate(pumpMail);
+}
+
+async function sendOne(job: MailJob): Promise<void> {
+  const m = { to: job.to, kind: 'notification' as const, userId: job.userId, subject: job.subject, text: job.text, html: job.html };
+  if (Date.now() < mailBreakerUntil) {
+    await recordSkippedTransactional(m, 'Envoi suspendu : le serveur d’envoi a échoué plusieurs fois de suite');
+    return;
+  }
+  const r = await sendTransactional(m);
+  if (r.status === 'failed' && r.error !== INVALID_ADDRESS) {
+    mailFailures++;
+    if (mailFailures >= mailCfg.breakerThreshold) {
+      mailBreakerUntil = Date.now() + mailCfg.breakerMs;
+      mailFailures = 0;
+      logger.warn({ minutes: Math.round(mailCfg.breakerMs / 60_000) }, 'notification e-mails: sender failing, suspended for a while');
+    }
+  } else if (r.ok) {
+    mailFailures = 0;
+    try { await db('user_notifications').where({ id: job.rowId, user_id: job.userId }).update({ emailed_at: db.fn.now() }); } catch { /* journal only */ }
+  }
+}
+
+function pumpMail(): void {
+  while (mailBusy < mailCfg.concurrency && mailQueue.length > 0) {
+    const job = mailQueue.shift() as MailJob;
+    mailBusy++;
+    sendOne(job)
+      .catch((err) => logger.warn({ err: (err as Error).message }, 'notification e-mail failed'))
+      .finally(() => {
+        mailBusy--;
+        pumpMail();
+        if (mailBusy === 0 && mailQueue.length === 0) {
+          const w = mailIdleWaiters;
+          mailIdleWaiters = [];
+          for (const f of w) f();
+        }
+      });
   }
 }
 
@@ -346,6 +425,16 @@ export interface InboxQuery {
   limit?: number;
   /** API keys: only the notifications about this account. */
   accountId?: number | null;
+  /** API keys: only these families (what the key's scopes cover; empty: nothing). */
+  families?: readonly NotificationFamily[] | null;
+}
+
+type Reach = Pick<InboxQuery, 'accountId' | 'families'>;
+
+function applyReach<Q extends ReturnType<typeof scope>>(q: Q, r: Reach): Q {
+  if (r.accountId) q.where('account_id', r.accountId);
+  if (r.families) q.whereIn('family', r.families.length ? [...r.families] : ['-']);
+  return q;
 }
 
 function scope(userId: number, tenantId: number) {
@@ -354,9 +443,8 @@ function scope(userId: number, tenantId: number) {
   return db('user_notifications').where({ user_id: userId, tenant_id: tenantId, in_app: true });
 }
 
-async function unreadCount(userId: number, tenantId: number, accountId?: number | null): Promise<number> {
-  const q = scope(userId, tenantId).whereNull('read_at');
-  if (accountId) q.where('account_id', accountId);
+async function unreadCount(userId: number, tenantId: number, reach: Reach = {}): Promise<number> {
+  const q = applyReach(scope(userId, tenantId).whereNull('read_at'), reach);
   const row = await q.count<{ n: string }[]>({ n: '*' }).first();
   return Number(row?.n ?? 0);
 }
@@ -375,11 +463,12 @@ export const userNotificationService = {
     if (q.unread) query.whereNull('read_at');
     if (q.family && NOTIFICATION_FAMILIES.includes(q.family)) query.where('family', q.family);
     if (q.before && Number.isInteger(q.before) && q.before > 0) query.where('id', '<', q.before);
-    if (q.accountId) query.where('account_id', q.accountId);
+    const reach: Reach = { accountId: q.accountId ?? null, families: q.families ?? null };
+    applyReach(query, reach);
     const rows = await query.orderBy('id', 'desc').limit(limit + 1) as Row[];
     return {
       items: rows.slice(0, limit).map(toNotification),
-      unreadCount: await unreadCount(userId, tenantId, q.accountId ?? null),
+      unreadCount: await unreadCount(userId, tenantId, reach),
       hasMore: rows.length > limit,
     };
   },

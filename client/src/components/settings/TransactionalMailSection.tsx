@@ -113,9 +113,11 @@ export function TransactionalMailSection() {
     } catch (err) {
       if (isStepUpHandled(err)) return;
       const msg = errText(err);
-      setError(msg && /enter the password again/i.test(msg)
-        ? (t('transactionalMail.passwordAgain') || 'The server changed: enter the password again (the stored one only goes where it was given).')
-        : msg ?? (t('transactionalMail.saveFailed') || 'Failed to save the e-mail sender'));
+      setError(msg && /mailbox changed/i.test(msg)
+        ? (t('transactionalMail.mailboxPasswordAgain') || 'The mailbox changed: enter its password again (the stored one only goes with the mailbox it was given for).')
+        : msg && /enter the password again/i.test(msg)
+          ? (t('transactionalMail.passwordAgain') || 'The server changed: enter the password again (the stored one only goes where it was given).')
+          : msg ?? (t('transactionalMail.saveFailed') || 'Failed to save the e-mail sender'));
     } finally {
       setSaving(false);
     }

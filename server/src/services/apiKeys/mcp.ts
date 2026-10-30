@@ -116,7 +116,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'list_notifications', title: 'Notifications', readOnly: true,
-    description: 'Notifications of the key\'s user about this account, newest first: releases awaiting approval / approved / rejected, certificates issued or failing, domain ownership verified, quota, mail, cron, monitoring. Read-only (they stay unread for the human). unreadCount counts the unread ones; hasMore: call again with before = the last id.',
+    description: 'Notifications of the key\'s user about this account, newest first: releases awaiting approval / approved / rejected, certificates issued or failing, domain ownership verified, quota, cron. Only for a key on every site, and only the families its scopes cover (releases: releases.publish; domains / certificates: every domain too; monitoring: cron.manage); otherwise empty. Read-only (they stay unread for the human). unreadCount counts the unread ones; hasMore: call again with before = the last id.',
     inputSchema: obj({
       unread: { type: 'boolean', description: 'Only the unread ones.' },
       family: { type: 'string', enum: [...NOTIFICATION_FAMILIES], description: 'Only one family of events.' },

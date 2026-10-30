@@ -425,11 +425,15 @@ async function targetsFor(event: NotificationEvent, p: NotificationPayload): Pro
 
 async function processJob(job: Job): Promise<void> {
   const n = await render(job.event, job.payload);
-  // Notification center (bell / e-mail of the users concerned): never throws.
-  await deliverToUsers(job.event, job.payload, n);
-  const rows = await targetsFor(job.event, job.payload);
-  if (rows.length === 0) return;
-  await Promise.all(rows.map((r) => deliverWithRetry(r, n)));
+  // Notification center (bell; its e-mails go through their own queue) beside
+  // the channels: neither waits for the other. deliverToUsers never throws.
+  await Promise.all([
+    deliverToUsers(job.event, job.payload, n),
+    (async () => {
+      const rows = await targetsFor(job.event, job.payload);
+      await Promise.all(rows.map((r) => deliverWithRetry(r, n)));
+    })(),
+  ]);
 }
 
 /** Index of the first queued job whose tenant is under its concurrency cap, -1 if none. */
