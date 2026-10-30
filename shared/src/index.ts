@@ -34,3 +34,5 @@ export * from './previews';
 export * from './apiGuide';
 // PHP advisories and end of life (exact version of the running containers)
 export * from './phpSecurity';
+// PHP errors grouped by release
+export * from './siteErrors';

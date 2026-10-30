@@ -4,11 +4,14 @@ import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { validate } from '../middleware/validate';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { assertSource, logsService, type LogQuery } from '../services/logs/logs.service';
+import { errorListQuery, errorListShape, siteErrorsService, type ErrorListShape } from '../services/siteErrors/siteErrors.service';
 
 // /api/sites/:id/logs — OWNED BY MODULE `cron-logs` (docs/P2-PLAN.md §6.7). NO catch-all.
 //   GET  /:id/logs            ?source=access|error|app&since=&until=&q=&status=&limit= → LogQueryResult (read; heavyOpLimiter)
 //   GET  /:id/logs/files      → LogFileInfo[]                                                       (read)
 //   GET  /:id/logs/download   ?source=access&date=YYYY-MM-DD | source=error|app (last 24 h, one container after the other, ≤ 50 000 lines each) → text/plain attachment (read; heavyOpLimiter)
+//   GET  /:id/errors          ?release_id=&since_release_id=&new_only=1&level=fatal,parse&limit= → SiteErrorList (read)
+//   GET  /:id/errors/:gid     → SiteErrorGroupDetail (sample with stack, same fingerprint in other releases)  (read)
 // Live tail: Socket.io 'logs:subscribe' / 'logs:unsubscribe' (services/logs/socketHandlers.ts).
 // Lines are in chronological order (the newest last), at most `limit` (1 … 2000, default 500).
 // Codes: logSourceInvalid (400), logDateInvalid (400), siteNotRunning (409: no container),
@@ -43,6 +46,21 @@ router.get('/:id/logs', heavyOpLimiter, validate(queryShape, 'query'), async (re
       limit: q.limit ?? null,
     };
     res.json({ success: true, data: await logsService.query(actor, idParam(req), query) });
+  } catch (err) { next(err); }
+});
+
+// PHP errors grouped by release (services/siteErrors): same right as the error log (read).
+router.get('/:id/errors', validate(errorListShape, 'query'), async (req, res, next) => {
+  try {
+    const actor = await resolveActor(req);
+    res.json({ success: true, data: await siteErrorsService.list(actor, idParam(req), errorListQuery(req.query as unknown as ErrorListShape)) });
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/errors/:gid', async (req, res, next) => {
+  try {
+    const actor = await resolveActor(req);
+    res.json({ success: true, data: await siteErrorsService.get(actor, idParam(req), Number(req.params.gid)) });
   } catch (err) { next(err); }
 });
 
