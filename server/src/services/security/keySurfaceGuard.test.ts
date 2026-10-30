@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import type { KeySecuritySettings } from '@oblimint/shared';
 import { DEFAULT_KEY_SECURITY_SETTINGS, effectiveKeyStrictMode } from '@oblimint/shared';
 import {
-  computeRegime, effectiveKeyList, FailureWindow, ipMatcher, requireIpFor, type ActiveKeyRow,
+  BAN_SATURATION, computeRegime, effectiveKeyList, FailureWindow, ipMatcher, requireIpFor, SaturationIndex, widerNetworks, type ActiveKeyRow,
 } from './keySurfaceRules';
-import { keySurfaceGuard, type KeySurfaceDeps } from './keySurfaceGuard';
+import { keySurfaceGuard, MAX_NEW_BANS_PER_HOUR, type KeySurfaceDeps } from './keySurfaceGuard';
 import type { KeySurfaceBanInput } from './bans.service';
 
 // Spec §9 keySurfaceGuard.test.ts: regime (no key → watch, an open key → watch,
@@ -233,6 +233,91 @@ test('auto: 48 h of log-only from the first run, then strict with one notificati
   await keySurfaceGuard.tick();
   assert.deepEqual(h.notified.map((n) => n.key), ['auto-strict-on']);
   assert.deepEqual(await keySurfaceGuard.gate('203.0.113.97', 'mcp'), { allowed: false, reason: 'intrusion' });
+});
+
+test('regime: a key entry wider than an IPv4 /16 or an IPv6 /48 counts as open (tooWide)', () => {
+  const r = computeRegime([
+    key(1, 'key', ['203.0.113.4']), key(2, 'key', ['11.0.0.0/8']), key(3, 'key', ['2001:db8::/32']),
+    key(4, 'key', ['2001:db8:1::/48', '198.51.0.0/16']), key(5, 'connector', []), key(6, 'key', []),
+  ], [ANTHROPIC]);
+  assert.equal(r.regime, 'watch');
+  assert.deepEqual(r.openKeys.map((k) => [k.id, k.why]), [[2, 'tooWide'], [3, 'tooWide'], [6, 'noIp']]);
+  assert.ok(!r.allowList.includes('11.0.0.0/8'), 'a wide entry never joins the allow-list');
+  assert.ok(r.allowList.includes('2001:db8:1::/48') && r.allowList.includes(ANTHROPIC));
+  // The connectors' ranges (platform setting) never make a connector "wide".
+  assert.equal(computeRegime([key(5, 'connector', [])], ['160.0.0.0/8']).regime, 'strict');
+  // An IP-less connector's list is the ranges (what contextFor and /oauth/token enforce).
+  assert.deepEqual(effectiveKeyList('connector', [], [ANTHROPIC]), [ANTHROPIC]);
+  assert.equal(effectiveKeyList('connector', [], []), null);
+});
+
+test('saturation index: /64 bans counted per /48 and /32', () => {
+  const s = new SaturationIndex();
+  for (let i = 0; i < BAN_SATURATION[0].max - 1; i++) s.add(`2001:db8:aa:${i.toString(16)}::/64`);
+  assert.equal(s.saturated('2001:db8:aa:ff::/64'), null);
+  s.add('2001:db8:aa:ff::/64');
+  s.add('2001:db8:aa:ff::/64'); // counted once
+  assert.equal(s.saturated('2001:db8:aa:1234::/64'), '2001:db8:aa::/48');
+  assert.equal(s.saturated('2001:db8:bb:1::/64'), null);
+  assert.equal(s.saturated('203.0.113.9'), null, 'IPv4 is never aggregated');
+  assert.deepEqual(widerNetworks('2001:db8:aa:1::/64'), ['2001:db8:aa::/48', '2001:db8::/32']);
+});
+
+test('IPv6: an exempt address protects its whole /64 (the ban key) — never a neighbour ban that locks it out', async (t) => {
+  t.after(() => keySurfaceGuard.setDepsForTests(null));
+  const h = harness({ trustedIps: ['2001:db8:7:8::1'] });
+  h.sessions = ['2001:db8:1:2::a'];
+  assert.deepEqual(await keySurfaceGuard.gate('2001:db8:1:2::b', 'mcp'), { allowed: true, exempt: 'adminSession' });
+  assert.deepEqual(await keySurfaceGuard.gate('2001:db8:7:8::99', 'mcp'), { allowed: true, exempt: 'trusted' });
+  for (let i = 0; i < 10; i++) assert.deepEqual(await keySurfaceGuard.recordFailure('2001:db8:1:2::c', 'mcp', 'unknown'), { banned: false });
+  assert.equal(h.banned.length, 0);
+  // Another /64 of the same /48 is not exempt.
+  assert.deepEqual(await keySurfaceGuard.gate('2001:db8:1:3::b', 'mcp'), { allowed: false, reason: 'intrusion' });
+  assert.equal(h.banned[0].key, '2001:db8:1:3::/64');
+});
+
+test('IPv6 rotation: past BAN_SATURATION bans in a /48, the /48 is refused without new ban rows', async (t) => {
+  t.after(() => keySurfaceGuard.setDepsForTests(null));
+  const h = harness();
+  h.keys = [...h.keys, key(7, 'key', ['2001:db8:aa:fff0::/64'])];
+  const max = BAN_SATURATION[0].max;
+  for (let i = 0; i < max; i++) assert.deepEqual(await keySurfaceGuard.gate(`2001:db8:aa:${i.toString(16)}::1`, 'mcp'), { allowed: false, reason: 'intrusion' });
+  assert.equal(h.banned.length, max);
+  for (let i = max; i < max + 50; i++) assert.deepEqual(await keySurfaceGuard.gate(`2001:db8:aa:${i.toString(16)}::1`, 'mcp'), { allowed: false, reason: 'banned' });
+  assert.equal(h.banned.length, max, 'no new row for the rest of the /48');
+  // Bad keys from a saturated /48 never reach a ban either (refused at the gate).
+  // A key's own address inside the saturated /48 still reaches its credentials.
+  assert.deepEqual(await keySurfaceGuard.gate('2001:db8:aa:fff0::5', 'mcp'), { allowed: true, exempt: null });
+  // Another /48: banned normally.
+  assert.deepEqual(await keySurfaceGuard.gate('2001:db8:bb:1::1', 'mcp'), { allowed: false, reason: 'intrusion' });
+  assert.equal(h.banned.length, max + 1);
+  // After a reload from the database (15 s cache), still saturated.
+  h.now += 20_000;
+  assert.deepEqual(await keySurfaceGuard.gate('2001:db8:aa:9999::1', 'mcp'), { allowed: false, reason: 'banned' });
+});
+
+test('log-only: rotating IPv6 /64s journals one "would have banned" per /48', async (t) => {
+  t.after(() => keySurfaceGuard.setDepsForTests(null));
+  const h = harness({ strictMode: 'log' });
+  for (let i = 0; i < 40; i++) await keySurfaceGuard.gate(`2001:db8:cc:${i.toString(16)}::1`, 'mcp');
+  assert.deepEqual(h.wouldBan, ['2001:db8:cc::/64']);
+});
+
+test('ban budget: past MAX_NEW_BANS_PER_HOUR new bans in an hour, refused without a ban row, one alert', async (t) => {
+  t.after(() => keySurfaceGuard.setDepsForTests(null));
+  const h = harness();
+  for (let i = 0; i < MAX_NEW_BANS_PER_HOUR + 20; i++) {
+    const verdict = await keySurfaceGuard.gate(`5.5.${Math.floor(i / 250)}.${(i % 250) + 1}`, 'mcp');
+    assert.equal(verdict.allowed, false);
+  }
+  assert.equal(h.banned.length, MAX_NEW_BANS_PER_HOUR);
+  assert.ok(h.notified.some((n) => n.key === 'keyban-budget'));
+  // Bad keys past the budget: no ban either.
+  for (let i = 0; i < 5; i++) await keySurfaceGuard.recordFailure('203.0.113.4', 'mcp', 'unknown');
+  assert.equal(h.banned.length, MAX_NEW_BANS_PER_HOUR);
+  h.now += 3_600_000 + 1;
+  for (let i = 0; i < 5; i++) await keySurfaceGuard.recordFailure('203.0.113.4', 'mcp', 'unknown');
+  assert.equal(h.banned.length, MAX_NEW_BANS_PER_HOUR + 1, 'the budget refills after an hour');
 });
 
 test('tick: regime switches are notified; a CLI change resyncs the edge', async (t) => {

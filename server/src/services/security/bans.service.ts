@@ -13,7 +13,7 @@ import { appConfigService } from '../appConfig.service';
 import { auditService } from '../audit.service';
 import { engineFor, localNodeId } from '../docker/engine';
 import { registerEdgeUnitProvider } from '../edge/units';
-import { banKey } from '../firewall/addresses';
+import { banKey, normalizeCidr } from '../firewall/addresses';
 import { hostdFor, type HostdWebFirewallState } from '../hostd/client';
 import {
   actorCan, actorSees, assertNeedSomewhere, loadAccount, scopeToActor, type HostingActor,
@@ -25,7 +25,7 @@ import { platformSettings } from '../platformSettings';
 import { errText } from '../setup/docker';
 import { subscribeEdgeLog, type EdgeLogEntry } from '../usage/edgeLog';
 import { notify } from '../usage/notifications.service';
-import { parseBanInput, refuseBanKey, webBanKey, type BanKeyRefusal, type WebBanGuard } from './addresses';
+import { keyOverlaps, parseBanInput, refuseBanKey, webBanKey, type BanKeyRefusal, type WebBanGuard } from './addresses';
 import { bansUnit, buildWebFirewallState, BANS_UNIT_ID, type ActiveBan } from './bansUnit';
 import { banUntil, countIndependentPrincipals, DAY_MS, durationForLevel, endsLater, nextOffenceLevel, PROMOTION_ACCOUNTS, PROMOTION_PRINCIPALS } from './escalation';
 import { geoipService } from './geoip.service';
@@ -786,14 +786,23 @@ export async function banFromKeySurface(input: KeySurfaceBanInput): Promise<{ ki
  * Obliguard, edge + nftables resynced. Returns the lifted ban ids.
  */
 export async function liftPlatformBans(ip: string, by: { req?: Request; actor?: string }): Promise<number[]> {
-  const key = banKey(ip) ?? parseBanInput(ip);
+  // An address: its ban key (IPv6: its /64). A CIDR (a trusted range): every
+  // platform ban that overlaps it — not only its network address.
+  let key: string | null = banKey(ip);
+  if (!key && ip.includes('/')) {
+    try { key = normalizeCidr(ip.trim(), { 4: 0, 6: 0 }).cidr; } catch { key = null; }
+  }
   if (!key) return [];
+  const range = key;
   const now = backends.now();
-  const rows = await db('web_bans').where({ ip: key, scope: 'platform', is_active: true })
+  const active = await db('web_bans').where({ scope: 'platform', is_active: true }).select('id', 'ip') as Array<{ id: number; ip: string }>;
+  const ids = active.filter((r) => r.ip === range || keyOverlaps(r.ip, range)).map((r) => Number(r.id));
+  if (!ids.length) return [];
+  const rows = await db('web_bans').whereIn('id', ids).where({ scope: 'platform', is_active: true })
     .update({ is_active: false, deactivated_at: now })
     .returning(['id', 'tenant_id', 'account_id', 'scope', 'source']) as Array<Pick<WebBanRow, 'id' | 'tenant_id' | 'account_id' | 'scope' | 'source'>>;
   for (const r of rows) {
-    const details = { ip: key, scope: 'platform', accountId: null, source: r.source, by: by.actor ?? null };
+    const details = { ip: active.find((a) => Number(a.id) === Number(r.id))?.ip ?? range, scope: 'platform', accountId: null, source: r.source, by: by.actor ?? null };
     if (by.req) await auditService.logReqAs(by.req, MASTER_TENANT_ID, 'bans.delete', { resourceType: 'web_ban', resourcePath: `/bans/${r.id}`, details });
     else await auditService.log({ tenantId: MASTER_TENANT_ID, action: 'bans.delete', resourceType: 'web_ban', resourcePath: `/bans/${r.id}`, details });
     emitBan(r, 'deleted');

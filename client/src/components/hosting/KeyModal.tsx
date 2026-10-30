@@ -314,7 +314,7 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
         )}
         {kind === 'connector' && (
           <p className="text-[11px] text-text-muted">
-            {t('keySecurity.key.connectorBanner') || 'Claude calls this connector from Anthropic\'s published outbound addresses: they are allowed automatically and never banned.'}
+            {t('keySecurity.key.connectorBanner') || 'Claude calls this connector from Anthropic\'s published outbound addresses: they are allowed automatically and never banned. Any other address must be listed here: a connector used from Claude Code or Claude Desktop calls from your own machine.'}
             {(initial?.connectorRanges?.length ?? 0) > 0 && <span className="ml-1 font-mono">{initial!.connectorRanges!.join(', ')}</span>}
           </p>
         )}

@@ -98,6 +98,8 @@ test('Claude connectors (OAuth) on PostgreSQL', { timeout: 300_000 }, async (t: 
 
   const connector = await apiKeysService.create(fakeReq(), ownerActor, acme, {
     kind: 'connector', name: 'Claude', scopes: ['files.read', 'files.write'], siteScope: 'selected', siteIds: [s1],
+    // An IP-less connector is limited to the connectors' ranges (Anthropic): this test calls from loopback.
+    allowedIps: ['127.0.0.1', '::1', '203.0.113.7'],
   });
   assert.equal(connector.kind, 'connector');
   assert.equal(connector.key, null, 'a connector has no bearer key');

@@ -11,13 +11,18 @@ import { auditService } from '../audit.service';
 import { banKey } from '../firewall/addresses';
 import { platformSettings } from '../platformSettings';
 import { notify, type NotificationPayload } from '../usage/notifications.service';
-import { refuseBanKey, type WebBanGuard } from './addresses';
+import { keyOverlaps, refuseBanKey, type WebBanGuard } from './addresses';
 import {
   activePlatformBanKeys, banFromKeySurface, platformBansChangedElsewhere, webBanGuard, type KeySurfaceBanInput,
 } from './bans.service';
-import { computeRegime, FailureWindow, ipMatcher, type ActiveKeyRow, type RegimeResult } from './keySurfaceRules';
+import {
+  computeRegime, FailureWindow, ipMatcher, SaturationIndex, widerNetworks, type ActiveKeyRow, type RegimeResult,
+} from './keySurfaceRules';
 
-export { computeRegime, effectiveKeyList, FailureWindow, ipMatcher, requireIpFor, type ActiveKeyRow, type RegimeResult } from './keySurfaceRules';
+export {
+  BAN_SATURATION, computeRegime, effectiveKeyList, FailureWindow, ipMatcher, requireIpFor, SaturationIndex, widerNetworks,
+  type ActiveKeyRow, type RegimeResult,
+} from './keySurfaceRules';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IP security of the key surfaces — /mcp, /api/v1, /oauth/token (spec §5),
@@ -38,6 +43,12 @@ export { computeRegime, effectiveKeyList, FailureWindow, ipMatcher, requireIpFor
 // it, an IP-less key where an IP is mandatory…) more than maxFailures times
 // within failureWindowMinutes is banned on the escalation ladder
 // (bans.escalation, source key-bruteforce).
+//
+// Bounded growth: an IPv6 /48 (or /32) already holding BAN_SATURATION bans is
+// refused as a whole without new rows (rotating /64s mints nothing), and at
+// most MAX_NEW_BANS_PER_HOUR new bans are created per hour (beyond: refused,
+// alert security.keyAbuse). A key whose own entry is wider than an IPv4 /16 /
+// IPv6 /48 counts as open (KEY_REGIME_MAX_WIDTH).
 //
 // Never banned (and their bad keys never counted — apiKeyAuthLimiter's 429
 // remains): addresses the web bans never ban (non-public, Docker, node,
@@ -60,6 +71,8 @@ const WORKER_MS = 60_000;
 const BOOT_DELAY_MS = 5_000;
 const WOULD_BAN_DEDUP_MS = 10 * 60_000;
 const MAX_TRACKED = 20_000;
+/** New key-surface bans per hour, all addresses (beyond: refused without a ban row). */
+export const MAX_NEW_BANS_PER_HOUR = 500;
 
 export const KEY_SECURITY_CONFIG = {
   generation: 'key_security.generation',
@@ -166,7 +179,8 @@ interface RegimeCache extends RegimeResult { at: number; match: (ip: string) => 
 class KeySurfaceGuard {
   private deps: KeySurfaceDeps = defaultDeps();
   private regimeCache: RegimeCache | null = null;
-  private bans: { at: number; map: Map<string, number | null> } | null = null;
+  private bans: { at: number; map: Map<string, number | null>; saturation: SaturationIndex } | null = null;
+  private banStamps: number[] = [];
   private sessions: { at: number; match: (ip: string) => boolean; list: string[] } | null = null;
   private failures = new FailureWindow();
   private rangeFailures = new FailureWindow();
@@ -189,6 +203,7 @@ class KeySurfaceGuard {
     this.failures.clear();
     this.rangeFailures.clear();
     this.wouldBan.clear();
+    this.banStamps = [];
     this.autoStrictSaving = null;
     this.generation = null;
   }
@@ -201,8 +216,18 @@ class KeySurfaceGuard {
 
   /** A platform ban of the address was lifted: forget it and its failures now. */
   banLifted(ip: string): void {
+    if (!banKey(ip) && ip.includes('/')) {
+      // A range (trusted CIDR): reload the bans, forget every counter.
+      this.bans = null;
+      this.failures.clear();
+      this.rangeFailures.clear();
+      this.wouldBan.clear();
+      return;
+    }
     const key = banKey(ip) ?? ip;
     this.bans?.map.delete(key);
+    // The saturation counts too: reloaded from the database at the next request.
+    this.bans = null;
     this.failures.clear(key);
     this.rangeFailures.clear(key);
     this.wouldBan.delete(key);
@@ -247,14 +272,55 @@ class KeySurfaceGuard {
     if (this.sessions && now - this.sessions.at < CACHE_MS) return this.sessions;
     let list: string[] = [];
     try { list = await this.deps.adminSessionIps(); } catch (err) { logger.debug({ err }, 'key surfaces: session addresses unavailable'); }
-    this.sessions = { at: now, list, match: ipMatcher(list) };
+    // By ban key: a session from 2001:db8:1:2::a exempts 2001:db8:1:2::/64 (what a ban would block).
+    const keys = new Set(list.map((a) => banKey(normalizeIp(a))).filter((k): k is string => !!k));
+    this.sessions = { at: now, list, match: (ip: string) => { const k = banKey(normalizeIp(ip)); return !!k && keys.has(k); } };
     return this.sessions;
   }
 
-  private async banMap(): Promise<Map<string, number | null>> {
+  private async loadBans(): Promise<{ at: number; map: Map<string, number | null>; saturation: SaturationIndex }> {
     const now = this.deps.now();
-    if (!this.bans || now - this.bans.at >= CACHE_MS) this.bans = { at: now, map: await this.deps.platformBans() };
-    return this.bans.map;
+    if (!this.bans || now - this.bans.at >= CACHE_MS) {
+      const map = await this.deps.platformBans();
+      this.bans = { at: now, map, saturation: new SaturationIndex(map.keys()) };
+    }
+    return this.bans;
+  }
+
+  private async banMap(): Promise<Map<string, number | null>> {
+    return (await this.loadBans()).map;
+  }
+
+  private async noteBan(key: string, until: number | null): Promise<void> {
+    const b = await this.loadBans();
+    b.map.set(key, until);
+    b.saturation.add(key);
+  }
+
+  /** The wider IPv6 network of the key already holding too many bans (BAN_SATURATION), or null. */
+  private async saturatedNetwork(key: string): Promise<string | null> {
+    return (await this.loadBans()).saturation.saturated(key);
+  }
+
+  /**
+   * Budget of new key-surface bans (MAX_NEW_BANS_PER_HOUR, all addresses):
+   * past it the request is still refused, but no ban row (edge, nftables,
+   * Obliguard) is created — the tables never grow without bound.
+   */
+  private takeBanBudget(): boolean {
+    const now = this.deps.now();
+    this.banStamps = this.banStamps.filter((t) => now - t < 3_600_000);
+    if (this.banStamps.length >= MAX_NEW_BANS_PER_HOUR) {
+      this.deps.notify('security.keyAbuse', {
+        tenantId: MASTER_TENANT_ID, key: 'keyban-budget', severity: 'warning', platform: true, link: '/security/bans',
+        title: 'Clés d’accès : trop de bannissements en une heure',
+        message: `${MAX_NEW_BANS_PER_HOUR} adresses ont été bannies en une heure par la sécurité des clés d’accès. `
+          + 'Les suivantes sont refusées sans nouveau bannissement jusqu’à ce que le rythme retombe (attaque distribuée probable).',
+      });
+      return false;
+    }
+    this.banStamps.push(now);
+    return true;
   }
 
   private async isBanned(key: string): Promise<boolean> {
@@ -278,7 +344,10 @@ class KeySurfaceGuard {
       if (refuseBanKey(key, await this.deps.banGuard()) !== null) return 'neverBanned';
     } catch { return 'neverBanned'; }
     const settings = s ?? await this.settings();
-    if (ipMatcher(settings.trustedIps)(ip)) return 'trusted';
+    // Compared at the ban key's granularity (an IPv6 /64, what the edge and nftables block):
+    // a trusted / admin-session address protects its whole /64 — banning a neighbour's /64
+    // would lock the exempt address out too.
+    if (settings.trustedIps.some((e) => keyOverlaps(key, e))) return 'trusted';
     if ((await this.adminSessions()).match(ip)) return 'adminSession';
     if (ipMatcher(settings.connectorSourceRanges)(ip)) return 'connectorRange';
     return null;
@@ -298,26 +367,32 @@ class KeySurfaceGuard {
     if (await this.isBanned(key)) return { allowed: false, reason: 'banned' };
     if (exempt === 'connectorRange') return { allowed: true, exempt };
     const regime = await this.regime(s);
+    // An IPv6 network already holding too many bans: refused as a whole, no new ban row
+    // (an address of a key's list is still let through to its credentials).
+    if (!regime.match(ip) && await this.saturatedNetwork(key)) return { allowed: false, reason: 'banned' };
     if (regime.regime !== 'strict' || regime.match(ip)) return { allowed: true, exempt: null };
     const mode = await this.strictMode(s);
     if (mode === 'off') return { allowed: true, exempt: null };
     if (mode === 'log') {
-      const last = this.wouldBan.get(key);
+      // Deduplicated by the /48 for IPv6: rotating /64s does not flood the audit log.
+      const dedup = widerNetworks(key)[0] ?? key;
+      const last = this.wouldBan.get(dedup);
       const now = this.deps.now();
       if (last === undefined || now - last >= WOULD_BAN_DEDUP_MS) {
         if (this.wouldBan.size >= MAX_TRACKED) this.wouldBan.clear();
-        this.wouldBan.set(key, now);
+        this.wouldBan.set(dedup, now);
         logger.warn({ ip: key, surface }, 'key surfaces: would have banned (strict mode in log-only)');
         await this.deps.logWouldBan(key, surface).catch(() => undefined);
       }
       return { allowed: true, exempt: null };
     }
+    if (!this.takeBanBudget()) return { allowed: false, reason: 'intrusion' };
     const out = await this.deps.ban({
       key, source: 'key-intrusion', permanent: true,
       reason: `Accès à ${surfacePath(surface)} depuis une adresse hors de toutes les clés (tentative d'intrusion)`,
     });
     if (!out) return { allowed: true, exempt: 'neverBanned' };
-    (await this.banMap()).set(key, out.until);
+    await this.noteBan(key, out.until);
     return { allowed: false, reason: 'intrusion' };
   }
 
@@ -350,12 +425,13 @@ class KeySurfaceGuard {
     if (this.failures.record(key, now, windowMs) < s.maxFailures) return { banned: false };
     const n = this.failures.count(key, now, windowMs);
     this.failures.clear(key);
+    if (!this.takeBanBudget()) return { banned: false };
     const out = await this.deps.ban({
       key, source: 'key-bruteforce', permanent: false,
       reason: `${n} tentatives de clé refusées sur ${surfacePath(surface)} (${reason})`,
     });
     if (!out) return { banned: false };
-    (await this.banMap()).set(key, out.until);
+    await this.noteBan(key, out.until);
     return { banned: true };
   }
 
@@ -380,6 +456,7 @@ class KeySurfaceGuard {
       .select('resource_path', 'details', 'created_at') as Array<{ resource_path: string; details: unknown; created_at: Date | string }>;
     const openKeys: KeySecurityOpenKey[] = r.openKeys.slice(0, 200).map((k) => ({
       id: k.id, name: k.name, kind: k.kind, tenantId: k.tenantId, tenantName: k.tenantName, accountId: k.accountId, accountUsername: k.accountUsername, owner: k.owner,
+      why: k.why,
     }));
     return {
       regime: r.regime,

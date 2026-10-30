@@ -15,11 +15,17 @@ usage (inside the panel container):
   docker exec <panel container> node dist/src/cli/keySecurity.js <command>
 
 commands:
-  unban <ip>    lifts every platform ban of the address (an IPv6 address: its /64),
+  unban <ip> [--lift-only]
+                lifts every platform ban of the address (an IPv6 address: its /64),
                 whatever its source (key-intrusion, key-bruteforce, manual…), withdraws
-                it from Obliguard and pushes nftables now; nginx follows within a minute
-  trust <ip>    adds the address (IPv6: its /64) or CIDR to the trusted IPs — never
-                banned by the key surfaces' guard — and lifts its platform bans (unban)
+                it from Obliguard and pushes nftables now; nginx follows within a minute.
+                The address is ALSO added to the trusted IPs (like trust): otherwise its
+                next call to /mcp or /api/v1 in strict mode would ban it again at once.
+                --lift-only: only lift the bans (it may be banned again)
+  trust <ip|cidr>
+                adds the address (IPv6: its /64) or CIDR to the trusted IPs — never
+                banned by the key surfaces' guard — and lifts every platform ban inside
+                it (a CIDR: every banned address of the range)
   status        regime (strict / watch), strict mode, open keys, trusted IPs, the
                 latest key-* bans
   help          this text
@@ -39,7 +45,7 @@ function entryFor(raw: string): string | null {
   }
 }
 
-async function unban(ip: string): Promise<number[]> {
+async function lift(ip: string): Promise<number[]> {
   const lifted = await liftPlatformBans(ip, { actor: 'cli' });
   keySurfaceGuard.banLifted(ip);
   const flushed = await flushPlatformBansNow();
@@ -61,7 +67,19 @@ async function trust(raw: string): Promise<void> {
   }
   await auditService.log({ tenantId: MASTER_TENANT_ID, action: 'keySecurity.cli_trust', resourceType: 'ip', resourcePath: entry, details: {} });
   console.log(`${entry} is a trusted address of the key surfaces.`);
-  await unban(raw.split('/')[0]);
+  // A CIDR: every platform ban overlapping the range, not only its network address.
+  await lift(entry);
+}
+
+async function unban(ip: string, liftOnly: boolean): Promise<void> {
+  if (!liftOnly) {
+    try { await trust(ip); return; } catch (err) {
+      // Never stay locked out: the bans are lifted even when the address cannot be trusted.
+      console.error(`Not added to the trusted IPs (${(err as Error)?.message ?? err}): lifting the bans only.`);
+    }
+  }
+  await lift(ip);
+  console.log('Warning: not added to the trusted IPs — in strict mode its next call to /mcp, /api/v1 or /oauth/token bans it again.');
 }
 
 async function status(): Promise<void> {
@@ -70,7 +88,9 @@ async function status(): Promise<void> {
   console.log(`regime        ${st.regime}${st.regime === 'strict' ? ` (allow-list: ${st.allowListSize} entries)` : ''}`);
   console.log(`strict mode   ${s.strictMode} → ${effectiveKeyStrictMode(s)}${s.strictMode === 'auto' && s.autoStrictAt ? ` (strict from ${s.autoStrictAt})` : ''}`);
   console.log(`active keys   ${st.activeKeys}, open: ${st.openKeys.length}`);
-  for (const k of st.openKeys.slice(0, 20)) console.log(`  open ${k.kind} #${k.id} "${k.name}" — account ${k.accountUsername ?? k.accountId}, tenant ${k.tenantName ?? k.tenantId}, owner ${k.owner ?? '?'}`);
+  for (const k of st.openKeys.slice(0, 20)) {
+    console.log(`  open ${k.kind} #${k.id} "${k.name}" (${k.why === 'tooWide' ? 'range too wide' : 'no address'}) — account ${k.accountUsername ?? k.accountId}, tenant ${k.tenantName ?? k.tenantId}, owner ${k.owner ?? '?'}`);
+  }
   console.log(`require IP    ${s.requireIp ? 'yes' : 'no'} (platform default)`);
   console.log(`failures      ${s.maxFailures} in ${s.failureWindowMinutes} min`);
   console.log(`trusted IPs   ${s.trustedIps.join(', ') || '—'}`);
@@ -86,8 +106,9 @@ async function status(): Promise<void> {
 }
 
 async function main(argv: string[]): Promise<number> {
-  const [cmd, arg] = argv;
-  if (cmd === 'unban' && arg) { await unban(arg); return 0; }
+  const flags = argv.filter((a) => a.startsWith('--'));
+  const [cmd, arg] = argv.filter((a) => !a.startsWith('--'));
+  if (cmd === 'unban' && arg) { await unban(arg, flags.includes('--lift-only')); return 0; }
   if (cmd === 'trust' && arg) { await trust(arg); return 0; }
   if (cmd === 'status') { await status(); return 0; }
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') { console.log(HELP); return 0; }

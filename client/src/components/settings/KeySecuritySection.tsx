@@ -162,6 +162,9 @@ export function KeySecuritySection() {
                       <Link className="text-accent hover:underline" to={`/accounts/${k.accountId}?tab=keys`}>{k.name}</Link>
                       {' · '}{k.kind === 'connector' ? (t('apiKeys.connector.badge') || 'Claude connector') : (t('keySecurity.status.key') || 'key')}
                       {' · '}{k.accountUsername ?? `#${k.accountId}`}{' · '}{k.tenantName ?? `#${k.tenantId}`}{' · '}{k.owner ?? '—'}
+                      {' · '}<span className="text-amber-400">{k.why === 'tooWide'
+                        ? (t('keySecurity.status.whyTooWide') || 'range too wide (wider than an IPv4 /16 or an IPv6 /48)')
+                        : (t('keySecurity.status.whyNoIp') || 'no allowed address')}</span>
                     </li>
                   ))}
                 </ul>

@@ -43,6 +43,8 @@
       "ipNotCovered": "Your current address ({{ip}}) is in no key's list: outside your panel session it would be banned in strict mode. Add it to the trusted IPs if you call the API from here.",
       "openKeys": "Open keys keeping the strict mode off ({{count}}):",
       "key": "key",
+      "whyNoIp": "no allowed address",
+      "whyTooWide": "range too wide (wider than an IPv4 /16 or an IPv6 /48)",
       "sessions": "Exempt (open platform-admin sessions):",
       "lastBan": "Last ban: {{ip}} ({{date}}).",
       "bansLink": "Bans",
@@ -67,7 +69,7 @@
       "connectorRanges": "+ connectors",
       "connectorRangesHint": "Added automatically: the outbound addresses of the connectors (Anthropic).",
       "openBanner": "Without an allowed address, this key can be used from anywhere, and an open key keeps the strict IP mode of the access keys off for the whole platform. An IP may also be mandatory in this workspace.",
-      "connectorBanner": "Claude calls this connector from Anthropic's published outbound addresses: they are allowed automatically and never banned."
+      "connectorBanner": "Claude calls this connector from Anthropic's published outbound addresses: they are allowed automatically and never banned. Any other address must be listed here: a connector used from Claude Code or Claude Desktop calls from your own machine."
     },
     "trust": {
       "title": "Add to the trusted IPs",

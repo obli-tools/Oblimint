@@ -34,6 +34,10 @@ function keyAddress(key: string): string {
 }
 
 /** Do a key and a (normalized-or-not) CIDR overlap? */
+export function keyOverlaps(key: string, cidr: string): boolean {
+  return overlaps(key, cidr);
+}
+
 function overlaps(key: string, cidr: string): boolean {
   let net: string;
   try {

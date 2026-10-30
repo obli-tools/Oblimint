@@ -43,6 +43,8 @@
       "ipNotCovered": "Votre adresse actuelle ({{ip}}) n’est dans la liste d’aucune clé : hors de votre session du panel, elle serait bannie en mode strict. Ajoutez-la aux IP de confiance si vous appelez l’API d’ici.",
       "openKeys": "Clés ouvertes qui empêchent le mode strict ({{count}}) :",
       "key": "clé",
+      "whyNoIp": "aucune adresse autorisée",
+      "whyTooWide": "plage trop large (plus large qu’un /16 IPv4 ou un /48 IPv6)",
       "sessions": "Exemptées (sessions admin plateforme ouvertes) :",
       "lastBan": "Dernier ban : {{ip}} ({{date}}).",
       "bansLink": "Bannissements",
@@ -67,7 +69,7 @@
       "connectorRanges": "+ connecteurs",
       "connectorRangesHint": "Ajoutées automatiquement : les adresses sortantes des connecteurs (Anthropic).",
       "openBanner": "Sans adresse autorisée, cette clé est utilisable de partout, et une clé ouverte désactive le mode strict des clés d’accès pour toute la plateforme. Une IP peut aussi être obligatoire dans cet espace.",
-      "connectorBanner": "Claude appelle ce connecteur depuis les adresses sortantes publiées par Anthropic : elles sont autorisées automatiquement et jamais bannies."
+      "connectorBanner": "Claude appelle ce connecteur depuis les adresses sortantes publiées par Anthropic : elles sont autorisées automatiquement et jamais bannies. Toute autre adresse doit figurer ici : un connecteur utilisé depuis Claude Code ou Claude Desktop appelle depuis votre propre machine."
     },
     "trust": {
       "title": "Ajouter aux IP de confiance",

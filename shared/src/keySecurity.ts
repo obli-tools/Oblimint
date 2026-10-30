@@ -76,7 +76,19 @@ export interface KeySecurityOpenKey {
   accountId: number;
   accountUsername: string | null;
   owner: string | null;
+  /** noIp: no allowed address; tooWide: an entry wider than KEY_REGIME_MAX_WIDTH (counts as open for the regime). */
+  why: 'noIp' | 'tooWide';
 }
+
+/**
+ * Widest entry a key may carry and still count as "closed" for the strict
+ * regime: an IPv4 /16, an IPv6 /48 (a site). A wider list would silently
+ * allow-list large parts of the Internet (any client managing keys could
+ * switch the platform's protection off while the status still says
+ * "strict"). Such a key still works from its list; it only keeps the
+ * platform in watch mode, and is listed with why = tooWide.
+ */
+export const KEY_REGIME_MAX_WIDTH = { 4: 16, 6: 48 } as const;
 
 /** GET /api/system/key-security/status */
 export interface KeySecurityStatus {

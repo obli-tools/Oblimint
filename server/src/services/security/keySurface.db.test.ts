@@ -333,6 +333,52 @@ test('IP security of the key surfaces', { timeout: 600_000 }, async (t: TestCont
   assert.equal((await mcp('203.0.113.80')).status, 401);
   assert.equal(await activeBan('203.0.113.80'), undefined);
 
+  // An IP-less connector is limited to the connectors' ranges — enforced even in watch mode
+  // (the regime and the key list count it as closed by them).
+  await db('api_keys').where({ id: CONN.id }).update({ allowed_ips: JSON.stringify([]) });
+  assert.deepEqual(await apiKeysService.verifyAccessTokenDetailed(accessToken, '203.0.113.99'), { ok: false, reason: 'ipNotAllowed' });
+  assert.equal((await apiKeysService.verifyAccessTokenDetailed(accessToken, '160.79.104.10')).ok, true);
+  assert.equal((await mcp('203.0.113.81', `Bearer ${accessToken}`)).status, 401, 'a leaked access token from elsewhere');
+  const connForm = (rt: string) => new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rt, client_id: CONN.oauthClientId!, client_secret: CONN.clientSecret! }).toString();
+  const tokElsewhere = await call('POST', '/oauth/token', '203.0.113.82', { form: connForm('obr_nope') });
+  assert.equal(tokElsewhere.status, 401);
+  assert.equal(tokElsewhere.body.error, 'invalid_client', 'client secret used from outside the ranges');
+  const tokRange = await call('POST', '/oauth/token', '160.79.104.30', { form: connForm('obr_nope') });
+  assert.equal(tokRange.status, 400);
+  assert.equal(tokRange.body.error, 'invalid_grant', 'from the ranges: authenticated, then the grant is checked');
+
+  // Editing an IP-less key where an IP is mandatory: 400 ipRequired (a narrowing edit is never blocked).
+  await db('tenants').where({ id: A }).update({ key_require_ip: true });
+  await assert.rejects(apiKeysService.update(fakeReq(OWNER), owner, acct, OPEN.id, { name: 'open-renamed' }), (e: { code?: string }) => e.code === 'ipRequired');
+  await apiKeysService.update(fakeReq(OWNER), owner, acct, OPEN.id, { expiresAt: new Date(Date.now() + 2 * 3_600_000).toISOString() });
+  const fixed = await apiKeysService.update(fakeReq(OWNER), owner, acct, OPEN.id, { name: 'open-fixed', allowedIps: ['198.51.100.0/24'] });
+  assert.equal(fixed.open, false);
+  await apiKeysService.update(fakeReq(OWNER), owner, acct, OPEN.id, { allowedIps: [] }).then(
+    () => assert.fail('an empty list where one is mandatory'), (e: { code?: string }) => assert.equal(e.code, 'ipRequired'));
+  await db('tenants').where({ id: A }).update({ key_require_ip: null });
+  await db('api_keys').where({ id: OPEN.id }).update({ allowed_ips: JSON.stringify([]) });
+  refresh();
+
+  // A key whose list is too wide keeps the platform in watch mode, and says why.
+  const WIDE = await apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'wide', scopes: ['files.read'], siteScope: 'all', allowedIps: ['11.0.0.0/8'] });
+  refresh();
+  st = await call('GET', '/api/system/key-security/status', '198.51.100.5');
+  assert.deepEqual(st.body.data.openKeys.map((k: { id: number; why: string }) => [k.id, k.why]).sort(), [[OPEN.id, 'noIp'], [WIDE.id, 'tooWide']].sort());
+  await apiKeysService.remove(fakeReq(OWNER), owner, acct, WIDE.id);
+  refresh();
+
+  // "Trust" a CIDR: every platform ban inside the range is lifted, not only its network address.
+  await bans.banFromKeySurface({ key: '192.0.2.17', source: 'key-intrusion', permanent: true, reason: 'test' });
+  await bans.banFromKeySurface({ key: '192.0.2.200', source: 'key-bruteforce', permanent: false, reason: 'test' });
+  const trustNet = await call('POST', '/api/system/key-security/trust', '198.51.100.5', { body: { ip: '192.0.2.0/24' } });
+  assert.equal(trustNet.status, 200);
+  assert.equal(trustNet.body.data.liftedBans.length, 2);
+  assert.equal(await activeBan('192.0.2.17'), undefined);
+  assert.equal(await activeBan('192.0.2.200'), undefined);
+  // IPv6: lifting an address lifts its /64; a trusted range lifts the /64s inside it.
+  await bans.banFromKeySurface({ key: '2001:db8:42:1::/64', source: 'key-intrusion', permanent: true, reason: 'test' });
+  assert.deepEqual((await bans.liftPlatformBans('2001:db8:42::/48', { actor: 'cli' })).length, 1);
+
   // ── settings route: validated, gated by platform.key_security ──
   const put = await call('PUT', '/api/system/key-security', '198.51.100.5', { body: { trustedIps: ['192.0.2.0/24'], maxFailures: 4 } });
   assert.equal(put.status, 200);

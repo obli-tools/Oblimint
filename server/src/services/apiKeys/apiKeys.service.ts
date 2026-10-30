@@ -6,7 +6,7 @@ import type {
 } from '@oblimint/shared';
 import { API_KEY_SCOPES, DEFAULT_KEY_SECURITY_SETTINGS, MAX_API_KEYS_PER_ACCOUNT, matchApiKeyPreset } from '@oblimint/shared';
 import { platformSettings } from '../platformSettings';
-import { ipMatcher, requireIpFor } from '../security/keySurfaceRules';
+import { effectiveKeyList, ipMatcher, requireIpFor } from '../security/keySurfaceRules';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
@@ -485,8 +485,12 @@ export const apiKeysService = {
     const account = await loadAccount(actor, accountId, 'sites.manage');
     const { row, creator } = await managedKey(actor, account, keyId, { label: 'Key' });
     const n = await normalize(actor, account, body, false);
-    if (n.allowedIps !== undefined) await assertIpWhenRequired(account.tenant_id, row.kind ?? 'key', n.allowedIps);
     const wider = await widens(row, n);
+    // Spec §5.8: editing a key without an address where one is mandatory is a 400 ipRequired —
+    // its current list counts when the edit leaves the addresses alone. A change that only
+    // narrows it (fewer rights, an earlier expiry) is never blocked.
+    if (n.allowedIps !== undefined) await assertIpWhenRequired(account.tenant_id, row.kind ?? 'key', n.allowedIps);
+    else if (wider || n.name !== undefined) await assertIpWhenRequired(account.tenant_id, row.kind ?? 'key', ipsOf(row.allowed_ips));
     if (beforeWrite) await beforeWrite({ widens: wider, account, keyId: row.id, name: row.name });
     const newOwner = !creator && wider ? actor.userId : null;
     // Feature B (B9): a key losing previews.manage, or expired now, stops its previews first.
@@ -641,7 +645,9 @@ async function contextFor(row: KeyWithAccount, userId: number, ip: string): Prom
   const ips = ipsOf(row.allowed_ips);
   const connector = (row.kind ?? 'key') === 'connector';
   if (requireIpFor(row.tenant_key_require_ip, ks.requireIp) && ips.length === 0 && (!connector || ks.connectorSourceRanges.length === 0)) return fail('ipRequired');
-  const allowed = ips.length && connector ? [...ips, ...ks.connectorSourceRanges] : ips;
+  // Same list as the regime / the key list show (spec §5.3): a connector = its addresses ∪ the
+  // connectors' ranges — an IP-less connector is limited to the ranges, not open.
+  const allowed = effectiveKeyList(connector ? 'connector' : 'key', ips, ks.connectorSourceRanges) ?? [];
   if (allowed.length && !ipMatcher(allowed)(ip)) return fail('ipNotAllowed');
   let user: HostingActor;
   try { user = await actorForUser(userId, row.tenant_id); } catch { return fail('ownerInactive'); }

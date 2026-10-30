@@ -80,9 +80,10 @@ router.post('/trust', validate(z.object({ ip: z.string().trim().min(2).max(64) }
     const trustedIps = s.trustedIps.includes(entry) ? s.trustedIps : [...s.trustedIps, entry];
     if (trustedIps.length > 256) throw new AppError(400, 'At most 256 trusted addresses', 'validation');
     await platformSettings.update({ keySecurity: { trustedIps } });
-    const lifted = await liftPlatformBans(key ?? raw.split('/')[0], { req });
+    // A CIDR: every platform ban inside (or overlapping) the trusted range, not only its network address.
+    const lifted = await liftPlatformBans(key ?? entry, { req });
     keySurfaceGuard.invalidate();
-    keySurfaceGuard.banLifted(key ?? raw);
+    keySurfaceGuard.banLifted(key ?? entry);
     await auditService.logReqAs(req, MASTER_TENANT_ID, 'settings.keySecurity.trust', {
       resourceType: 'settings', resourcePath: 'keySecurity', details: { ip: entry, liftedBans: lifted },
     });

@@ -13,7 +13,7 @@ import { gateAction } from '../restrictions/gate';
 import { clientSecretMatches, hashKey, invalidateKeySurfaces, scopesHeldBy } from './apiKeys.service';
 import { answerBanned, keySurfaceGate, recordKeySurfaceFailure } from '../../middleware/keySurfaceGate';
 import { platformSettings } from '../platformSettings';
-import { ipMatcher } from '../security/keySurfaceRules';
+import { effectiveKeyList, ipMatcher } from '../security/keySurfaceRules';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OAuth 2.1 authorization server of the « Connecteurs Claude » (api_keys of
@@ -177,10 +177,10 @@ export const oauthService = {
     // Spec §5.3: a connector's own addresses restrict its token endpoint too (+ the connectors' source ranges).
     if (ip !== undefined) {
       const ips = Array.isArray(connector.allowed_ips) ? connector.allowed_ips.filter((x): x is string => typeof x === 'string') : [];
-      if (ips.length) {
-        const ranges = (await platformSettings.section('keySecurity').catch(() => null))?.connectorSourceRanges ?? [];
-        if (!ipMatcher([...ips, ...ranges])(ip)) return fail(401, 'invalid_client', 'This client is not allowed from this address');
-      }
+      const ranges = (await platformSettings.section('keySecurity').catch(() => null))?.connectorSourceRanges ?? [];
+      // Its addresses ∪ the ranges, whenever that union is non-empty (an IP-less connector: the ranges).
+      const allowed = effectiveKeyList('connector', ips, ranges);
+      if (allowed && !ipMatcher(allowed)(ip)) return fail(401, 'invalid_client', 'This client is not allowed from this address');
     }
 
     const grant = str(body.grant_type, 64);
