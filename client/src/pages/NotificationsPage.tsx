@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
@@ -24,7 +24,7 @@ const PAGE = 30;
  * Full notification center of the signed-in user (current workspace): every
  * notification kept (90 days), unread / all, per family, load more; then the
  * preferences (in-app / e-mail per family). Live: the bell's store version
- * triggers a refetch of the first page.
+ * triggers a merge of the first page (sync), never a reset of what is loaded.
  */
 export function NotificationsPage() {
   const { t } = useTranslation();
@@ -39,18 +39,71 @@ export function NotificationsPage() {
   const version = useInboxStore((s) => s.version);
   const refreshBell = useInboxStore((s) => s.refresh);
 
+  // Answers of an older filter (tab / family changed meanwhile) are dropped.
+  const filterKey = `${tab}|${family}`;
+  const filterRef = useRef(filterKey);
+  filterRef.current = filterKey;
+  const itemsRef = useRef<UserNotification[] | null>(null);
+  itemsRef.current = items;
+  const hasMoreRef = useRef(false);
+  hasMoreRef.current = hasMore;
+
+  /** Full (re)load: first page only (filter change, refresh button). */
   const load = useCallback(async () => {
+    const k = `${tab}|${family}`;
     try {
       const page = await inboxApi.list({ unread: tab === 'unread', family: family || null, limit: PAGE });
+      if (filterRef.current !== k) return;
       setItems(page.items);
       setHasMore(page.hasMore);
       setUnread(page.unreadCount);
     } catch {
+      if (filterRef.current !== k) return;
       setItems([]);
       toast.error(t('inbox.loadFailed') || 'Failed to load the notifications');
     }
   }, [tab, family, t]);
-  useEffect(() => { void load(); }, [load, version]);
+  useEffect(() => { void load(); }, [load]);
+
+  /**
+   * Live change (bell store version: a new notification, a read elsewhere, this
+   * page's own actions): the first page is fetched again and MERGED — new
+   * items on top, the window it covers updated (read state, removed ones),
+   * the older pages already loaded kept as they are (no collapse to 30 items,
+   * the scroll position stays).
+   */
+  const sync = useCallback(async () => {
+    const k = `${tab}|${family}`;
+    try {
+      const page = await inboxApi.list({ unread: tab === 'unread', family: family || null, limit: PAGE });
+      if (filterRef.current !== k) return;
+      setUnread(page.unreadCount);
+      const cur = itemsRef.current;
+      if (cur === null) {
+        setItems(page.items);
+        setHasMore(page.hasMore);
+        return;
+      }
+      // Window of the fresh page: every id down to its last one (everything when it is the whole list).
+      const floor = page.hasMore && page.items.length ? page.items[page.items.length - 1].id : 0;
+      const older = cur.filter((n) => n.id < floor);
+      // More new items than one page: the gap could never be loaded by « load more » — start over.
+      if (older.length > 0 && cur.length > 0 && !cur.some((n) => n.id >= floor)) {
+        setItems(page.items);
+        setHasMore(page.hasMore);
+        return;
+      }
+      setItems([...page.items, ...older]);
+      setHasMore(older.length > 0 ? hasMoreRef.current : page.hasMore);
+    } catch {
+      /* the next change or the refresh button retries */
+    }
+  }, [tab, family]);
+  const firstVersion = useRef(version);
+  useEffect(() => {
+    if (version === firstVersion.current) return; // the mount's load() covers it
+    void sync();
+  }, [version, sync]);
 
   useEffect(() => {
     if (location.hash === '#preferences') {
@@ -72,14 +125,30 @@ export function NotificationsPage() {
     }
   };
 
+  // Actions: the list is updated here at once; the bell refresh that follows
+  // bumps the store version, whose sync() merges (never a reload from scratch).
   const after = async (p: Promise<unknown>) => {
     try { await p; } catch { toast.error(t('inbox.actionFailed') || 'The action failed'); }
     await refreshBell();
   };
-  const read = (n: UserNotification) => after(inboxApi.markRead([n.id]));
+  const read = (n: UserNotification) => {
+    if (!n.readAt) {
+      const now = new Date().toISOString();
+      setItems((cur) => (cur ?? []).map((x) => (x.id === n.id ? { ...x, readAt: now } : x)));
+      setUnread((u) => Math.max(0, u - 1));
+    }
+    return after(inboxApi.markRead([n.id]));
+  };
   const remove = (n: UserNotification) => {
     setItems((cur) => (cur ?? []).filter((x) => x.id !== n.id));
+    if (!n.readAt) setUnread((u) => Math.max(0, u - 1));
     void after(inboxApi.remove([n.id]));
+  };
+  const readAll = () => {
+    const now = new Date().toISOString();
+    setItems((cur) => (cur ?? []).map((x) => (x.readAt ? x : { ...x, readAt: now })));
+    setUnread(0);
+    void after(inboxApi.markAllRead());
   };
   const open = (n: UserNotification) => {
     if (!n.readAt) void read(n);
@@ -100,7 +169,7 @@ export function NotificationsPage() {
         </div>
         <div className="flex items-center gap-2">
           {unread > 0 && (
-            <Button size="sm" variant="secondary" onClick={() => { void after(inboxApi.markAllRead()); }}>
+            <Button size="sm" variant="secondary" onClick={readAll}>
               <CheckCheck size={14} className="mr-1.5" />{t('notificationCenter.markAllRead') || 'Mark all as read'}
             </Button>
           )}

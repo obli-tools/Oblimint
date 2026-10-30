@@ -22,7 +22,7 @@ interface InboxState {
   items: UserNotification[];
   unreadCount: number;
   loaded: boolean;
-  /** Bumped on every change (socket / action): the full page refetches. */
+  /** Bumped on every change (socket / action): the full page merges its first page again. */
   version: number;
   refresh: () => Promise<void>;
   markRead: (ids: number[]) => Promise<void>;
@@ -38,16 +38,21 @@ export const useInboxStore = create<InboxState>((set, get) => ({
   loaded: false,
   version: 0,
 
+  // Every answer is dropped when the user / tenant changed while it was in
+  // flight (tenant switch): never another workspace's items or badge.
   async refresh() {
+    const key = get().key;
     try {
       const page = await inboxApi.list({ limit: DROPDOWN_SIZE });
+      if (get().key !== key) return;
       set((s) => ({ items: page.items, unreadCount: page.unreadCount, loaded: true, version: s.version + 1 }));
     } catch {
-      set({ loaded: true });
+      if (get().key === key) set({ loaded: true });
     }
   },
 
   async markRead(ids) {
+    const key = get().key;
     const unread = ids.filter((id) => get().items.some((n) => n.id === id && !n.readAt));
     if (ids.length === 0) return;
     const now = new Date().toISOString();
@@ -57,30 +62,32 @@ export const useInboxStore = create<InboxState>((set, get) => ({
     }));
     try {
       const r = await inboxApi.markRead(ids);
-      set((s) => ({ unreadCount: r.unreadCount, version: s.version + 1 }));
+      if (get().key === key) set((s) => ({ unreadCount: r.unreadCount, version: s.version + 1 }));
     } catch {
-      void get().refresh();
+      if (get().key === key) void get().refresh();
     }
   },
 
   async markAllRead() {
+    const key = get().key;
     const now = new Date().toISOString();
     set((s) => ({ items: s.items.map((n) => (n.readAt ? n : { ...n, readAt: now })), unreadCount: 0 }));
     try {
       await inboxApi.markAllRead();
-      set((s) => ({ version: s.version + 1 }));
+      if (get().key === key) set((s) => ({ version: s.version + 1 }));
     } catch {
-      void get().refresh();
+      if (get().key === key) void get().refresh();
     }
   },
 
   async remove(ids) {
+    const key = get().key;
     set((s) => ({ items: s.items.filter((n) => !ids.includes(n.id)) }));
     try {
       const r = await inboxApi.remove(ids);
-      set((s) => ({ unreadCount: r.unreadCount, version: s.version + 1 }));
+      if (get().key === key) set((s) => ({ unreadCount: r.unreadCount, version: s.version + 1 }));
     } catch {
-      void get().refresh();
+      if (get().key === key) void get().refresh();
     }
   },
 
@@ -113,8 +120,9 @@ export function useInboxLive(): void {
     if (!socket || !userId || !tenantId) return;
     // Reconnected: what was missed meanwhile.
     if (status === 'connected') void useInboxStore.getState().refresh();
+    const key = `${userId}:${tenantId}`;
     const onNew = (payload: { tenantId?: number; notification?: UserNotification }) => {
-      if (payload?.tenantId !== tenantId || !payload.notification) return;
+      if (payload?.tenantId !== tenantId || !payload.notification || useInboxStore.getState().key !== key) return;
       const n = payload.notification;
       useInboxStore.setState((s) => (s.items.some((x) => x.id === n.id) ? s : {
         items: [n, ...s.items].slice(0, DROPDOWN_SIZE),
@@ -126,7 +134,9 @@ export function useInboxLive(): void {
     const onRead = (payload: { tenantId?: number }) => {
       if (payload?.tenantId !== tenantId) return;
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => { void useInboxStore.getState().refresh(); }, 300);
+      timer = window.setTimeout(() => {
+        if (useInboxStore.getState().key === key) void useInboxStore.getState().refresh();
+      }, 300);
     };
     socket.on(UserNotificationSocketEvents.NEW, onNew);
     socket.on(UserNotificationSocketEvents.READ, onRead);
