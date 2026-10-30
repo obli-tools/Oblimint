@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { Readable } from 'stream';
 import { StringDecoder } from 'string_decoder';
-import vm from 'vm';
+import { Worker } from 'worker_threads';
 import {
   FILE_EDIT_MAX_BYTES, FILE_HASH_MAX_BYTES, FILE_LIST_HASH_MAX_BYTES, FILE_LIST_HASH_MAX_FILES, FILE_READ_MAX_CHARS, FILE_READ_MAX_LINES,
   FILE_READ_MAX_RANGE, FILE_SEARCH_DEFAULT_RESULTS, FILE_SEARCH_MAX_BYTES, FILE_SEARCH_MAX_FILE_BYTES, FILE_SEARCH_MAX_FILES, FILE_SEARCH_MAX_MS,
@@ -17,9 +17,11 @@ import { assertWritable, fileError, filesBackend, filesService, joinVirtual, spl
 // Fine file tools of the access keys (shared/src/files.ts « Fine file tools »):
 // bounded search, partial reads, exact edits, SHA-256 preconditions. Every
 // disk access goes through hostd like the explorer (no link followed); paths
-// are virtual (/staging/<slug>/…). The precondition is checked right before
-// the write and the write itself is pinned to the mtime seen (putSmall's
-// expectedMtime): only a change landing within that last instant can slip by.
+// are virtual (/staging/<slug>/…). The precondition (content hash) is checked
+// before the write, which is then pinned to the mtime seen (expectedMtime +
+// mustExist): checked again once the whole body is in, right before hostd's
+// rename (putSmall, the last chunk of a session). Only a change landing between
+// that last stat and the rename (one hostd round trip) can slip by.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const NUL_SNIFF_BYTES = 8192;
@@ -127,6 +129,24 @@ async function assertSha256(a: AccountRow, rawPath: unknown, expected: unknown):
   if (cur.sha256 === null) throw new AppError(413, 'The file is too large to be hashed: write it without expectedSha256', 'fileTooLarge');
   if (cur.sha256 !== want) throw changed(path, cur);
   return cur.mtime;
+}
+
+/**
+ * A bare fileChanged (the mtime pin of putSmall / an upload's commit) →
+ * the same error with the current state (currentSha256 null: the file is
+ * gone or no longer a regular file). Any other error is returned unchanged.
+ */
+async function withCurrent(a: AccountRow, rawPath: unknown, err: unknown, shownPath?: string): Promise<unknown> {
+  if (!(err instanceof AppError) || err.code !== 'fileChanged' || (err.details && 'currentSha256' in (err.details as object))) return err;
+  const segs = splitVirtual(rawPath);
+  const path = shownPath ?? joinVirtual(segs);
+  try {
+    const e = await entryOf(a, segs);
+    if (!e || e.kind !== 'file') return changed(path, { sha256: null, size: null, mtime: null });
+    return changed(path, await hashFile(a, segs));
+  } catch {
+    return changed(path, { sha256: null, size: null, mtime: null }); // vanished meanwhile
+  }
 }
 
 // ── Partial read ─────────────────────────────────────────────────────────────
@@ -283,9 +303,13 @@ async function readBytes(a: AccountRow, segs: string[], base: FileRange, offset:
 
 // ── Exact edits ──────────────────────────────────────────────────────────────
 
-function countOf(hay: string, needle: string): number {
+/** Replacements of one edit_file call at most (each costs CPU on the event loop). */
+const EDIT_MAX_REPLACEMENTS = 100_000;
+
+/** Non-overlapping occurrences, counting stops past `limit`. */
+function countOf(hay: string, needle: string, limit = Number.MAX_SAFE_INTEGER): number {
   let n = 0;
-  for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + needle.length)) n++;
+  for (let i = hay.indexOf(needle); i !== -1 && n <= limit; i = hay.indexOf(needle, i + needle.length)) n++;
   return n;
 }
 
@@ -310,23 +334,34 @@ async function edit(a: AccountRow, rawPath: unknown, edits: FileEdit[], expected
   let text = cur.buf.toString('utf8');
   if (!Buffer.from(text, 'utf8').equals(cur.buf)) throw new AppError(400, `${path} is not valid UTF-8: write it whole`, 'notUtf8');
   let replacements = 0;
+  let bytes = cur.buf.length;
   edits.forEach((ed, index) => {
     if (typeof ed?.oldString !== 'string' || typeof ed?.newString !== 'string' || ed.oldString === '') {
       throw new AppError(400, `Edit ${index}: oldString must be a non-empty string, newString a string`, 'invalid');
     }
     if (ed.oldString === ed.newString) throw new AppError(400, `Edit ${index}: oldString and newString are the same`, 'editNoChange', { index });
-    const n = countOf(text, ed.oldString);
+    const n = countOf(text, ed.oldString, EDIT_MAX_REPLACEMENTS - replacements);
+    if (replacements + n > EDIT_MAX_REPLACEMENTS) {
+      throw new AppError(400, `Edit ${index}: more than ${EDIT_MAX_REPLACEMENTS} replacements in one call: write the file whole`, 'tooManyReplacements', { index });
+    }
     if (n === 0) throw new AppError(409, `Edit ${index}: oldString was not found (read the file again: exact text, spaces and line endings included)`, 'editNotFound', { index, currentSha256: cur.sha256 });
     if (n > 1 && ed.replaceAll !== true) {
       throw new AppError(409, `Edit ${index}: oldString occurs ${n} times: add surrounding lines to make it unique, or replaceAll`, 'editNotUnique', { index, occurrences: n, currentSha256: cur.sha256 });
     }
-    text = text.split(ed.oldString).join(ed.newString);
+    // The size the content will have, BEFORE building it (chained replaceAll can grow it exponentially).
+    bytes += n * (Buffer.byteLength(ed.newString, 'utf8') - Buffer.byteLength(ed.oldString, 'utf8'));
+    if (bytes > FILE_EDIT_MAX_BYTES) throw new AppError(413, `Edit ${index}: the edited file would be larger than 8 MB`, 'fileTooLarge', { index });
+    text = text.split(ed.oldString).join(ed.newString); // literal ("$&" / "$1" stay as is)
     replacements += n;
   });
   const out = Buffer.from(text, 'utf8');
   if (out.length > FILE_EDIT_MAX_BYTES) throw new AppError(413, 'The edited file would be larger than 8 MB', 'fileTooLarge');
-  // Pinned to the mtime of the content just read (409 fileChanged when it moved since).
-  await filesService.putSmall(a, { path, size: out.length, expectedMtime: cur.mtime }, Readable.from([out]));
+  // Pinned to the mtime of the content just read (409 fileChanged when it moved, or vanished, since).
+  try {
+    await filesService.putSmall(a, { path, size: out.length, expectedMtime: cur.mtime, mustExist: true }, Readable.from([out]));
+  } catch (err) {
+    throw await withCurrent(a, path, err);
+  }
   return {
     path, size: out.length, sha256: crypto.createHash('sha256').update(out).digest('hex'), previousSha256: cur.sha256, replacements,
     executableBitLost: (e.mode & 0o111) !== 0,
@@ -386,34 +421,87 @@ const BINARY_EXT = new Set([
   'so', 'dll', 'exe', 'bin', 'dat', 'db', 'sqlite', 'sqlite3', 'mo', 'class', 'pyc', 'wasm', 'swf',
 ]);
 
-/** A glob ("*.php", "wp-content/**", "src/{a,b}/*.js") → RegExp on a slash-separated relative path. */
-export function globToRegExp(glob: string): RegExp {
-  const g = glob.trim().replace(/^\/+/, '');
-  let re = '';
-  let inBraces = false;
+// Globs are matched by a dynamic program over (glob token, path character):
+// O(tokens × length) whatever the glob, never a backtracking RegExp (a glob
+// like "*a*a*a*a*a*b" against a long name would hold the event loop).
+const enum Tok { Char, One, Star, Globstar, GlobstarSlash }
+type GlobToken = { t: Tok; c?: number };
+const SLASH = 47;
+const GLOB_MAX_ALTERNATIVES = 16;
+const GLOB_MAX_TOKENS = 4000; // all globs of one search, alternatives included
+
+function tokenize(g: string): GlobToken[] {
+  const out: GlobToken[] = [];
   for (let i = 0; i < g.length; i++) {
     const c = g[i];
+    const last = out[out.length - 1]?.t;
     if (c === '*') {
       if (g[i + 1] === '*') {
         const slash = g[i + 2] === '/';
-        re += slash ? '(?:.*/)?' : '.*';
         i += slash ? 2 : 1;
-      } else re += '[^/]*';
-    } else if (c === '?') re += '[^/]';
-    else if (c === '{' && !inBraces) { re += '(?:'; inBraces = true; }
-    else if (c === '}' && inBraces) { re += ')'; inBraces = false; }
-    else if (c === ',' && inBraces) re += '|';
-    else re += c.replace(/[.+^$()|[\]\\{}]/g, '\\$&');
+        if (slash || last !== Tok.Globstar) out.push({ t: slash ? Tok.GlobstarSlash : Tok.Globstar });
+      } else if (last !== Tok.Globstar) out.push({ t: Tok.Star }); // "***…": one "**" covers the run
+    } else if (c === '?') out.push({ t: Tok.One });
+    else out.push({ t: Tok.Char, c: g.charCodeAt(i) });
   }
-  if (inBraces) throw new AppError(400, `Invalid glob: ${glob}`, 'invalid');
-  return new RegExp(`^${re}$`);
+  return out;
+}
+
+function tokensMatch(toks: GlobToken[], s: string): boolean {
+  const n = s.length;
+  let prev = new Uint8Array(n + 1);
+  let cur = new Uint8Array(n + 1);
+  prev[0] = 1;
+  for (const tk of toks) {
+    cur.fill(0);
+    let anyOn = false;
+    let seen = 0; // some prev[k] with k < j
+    for (let j = 0; j <= n; j++) {
+      let v = 0;
+      switch (tk.t) {
+        case Tok.Char: v = j > 0 && prev[j - 1] && s.charCodeAt(j - 1) === tk.c ? 1 : 0; break;
+        case Tok.One: v = j > 0 && prev[j - 1] && s.charCodeAt(j - 1) !== SLASH ? 1 : 0; break;
+        case Tok.Star: v = prev[j] || (j > 0 && cur[j - 1] && s.charCodeAt(j - 1) !== SLASH) ? 1 : 0; break;
+        case Tok.Globstar: v = prev[j] || (j > 0 && cur[j - 1]) ? 1 : 0; break;
+        case Tok.GlobstarSlash: v = prev[j] || (j > 0 && seen && s.charCodeAt(j - 1) === SLASH) ? 1 : 0; break; // (?:.*\/)?
+      }
+      seen |= prev[j];
+      cur[j] = v;
+      if (v) anyOn = true;
+    }
+    if (!anyOn) return false;
+    [prev, cur] = [cur, prev];
+  }
+  return prev[n] === 1;
+}
+
+/** "{a,b}" groups (not nested) → the plain globs (at most GLOB_MAX_ALTERNATIVES). */
+function expandBraces(glob: string, g: string): string[] {
+  let outs = [''];
+  for (let i = 0; i < g.length; i++) {
+    if (g[i] !== '{') { outs = outs.map((o) => o + g[i]); continue; }
+    const end = g.indexOf('}', i + 1);
+    if (end === -1) throw new AppError(400, `Invalid glob: ${glob}`, 'invalid');
+    const alts = g.slice(i + 1, end).split(',');
+    if (outs.length * alts.length > GLOB_MAX_ALTERNATIVES) throw new AppError(400, `Glob ${glob}: at most ${GLOB_MAX_ALTERNATIVES} alternatives`, 'invalid');
+    outs = outs.flatMap((o) => alts.map((x) => o + x));
+    i = end;
+  }
+  return outs;
+}
+
+/** A glob ("*.php", "wp-content/**", "src/{a,b}/*.js") → a matcher of a slash-separated relative path. */
+export function compileGlob(glob: string): { test: (s: string) => boolean; tokens: number } {
+  const alts = expandBraces(glob, glob.trim().replace(/^\/+/, '')).map(tokenize);
+  return { test: (s) => alts.some((t) => tokensMatch(t, s)), tokens: alts.reduce((n, t) => n + t.length, 0) };
 }
 
 /** A glob without "/" matches the file name, otherwise the path relative to the area root. */
 function globMatcher(globs: string[] | undefined): ((rel: string) => boolean) | null {
   if (!globs?.length) return null;
-  const list = globs.map((g) => ({ re: globToRegExp(g), base: !g.replace(/^\/+/, '').includes('/') }));
-  return (rel) => list.some(({ re, base }) => re.test(base ? rel.slice(rel.lastIndexOf('/') + 1) : rel));
+  const list = globs.map((g) => ({ m: compileGlob(g), base: !g.replace(/^\/+/, '').includes('/') }));
+  if (list.reduce((n, x) => n + x.m.tokens, 0) > GLOB_MAX_TOKENS) throw new AppError(400, 'The include / exclude globs are too long', 'invalid');
+  return (rel) => list.some(({ m, base }) => m.test(base ? rel.slice(rel.lastIndexOf('/') + 1) : rel));
 }
 
 export interface SearchOptions {
@@ -432,21 +520,97 @@ export interface SearchOptions {
 export interface SearchLimits { files: number; bytes: number; ms: number; fileBytes: number }
 const DEFAULT_LIMITS: SearchLimits = { files: FILE_SEARCH_MAX_FILES, bytes: FILE_SEARCH_MAX_BYTES, ms: FILE_SEARCH_MAX_MS, fileBytes: FILE_SEARCH_MAX_FILE_BYTES };
 
-/** Regular expressions run in a separate V8 context with a time limit (no catastrophic backtracking can hold the server). */
-const REGEX_SCRIPT = new vm.Script(`(function () {
-  var re = new RegExp(src, flags);
-  var out = [];
-  var lines = text.split('\\n');
-  for (var i = 0; i < lines.length && out.length < max * 2; i++) {
-    var m = re.exec(lines[i]);
-    if (m) out.push(i + 1, m.index);
+/**
+ * Regular expressions run in a worker thread (one per regex search), never on
+ * the event loop: a slow or catastrophic one only costs that worker, which is
+ * terminated when a file takes longer than its time. Lines lose one trailing
+ * "\r" first (CRLF files: "…;$" matches like on LF files).
+ */
+const REGEX_WORKER = `
+const { parentPort } = require('worker_threads');
+let re = null;
+parentPort.on('message', (m) => {
+  if (m.src !== undefined) { re = new RegExp(m.src, m.flags); return; }
+  const out = [];
+  const lines = m.text.split('\\n');
+  for (let i = 0; i < lines.length && out.length < m.max * 2; i++) {
+    const l = lines[i].endsWith('\\r') ? lines[i].slice(0, -1) : lines[i];
+    const r = re.exec(l);
+    if (r) out.push(i + 1, r.index);
   }
-  return out.join(',');
-})()`);
+  parentPort.postMessage(out);
+});`;
+
+class RegexRunner {
+  private w: Worker | null = null;
+  private tail: Promise<unknown> = Promise.resolve();
+  private closed = false;
+
+  constructor(private readonly src: string, private readonly flags: string) {}
+
+  /** [line, index] pairs of a text, 'timeout' past `timeoutMs` (calls run one after the other). */
+  run(text: string, max: number, timeoutMs: () => number): Promise<number[] | 'timeout'> {
+    const p = this.tail.then(() => this.exec(text, max, timeoutMs));
+    this.tail = p.catch(() => undefined);
+    return p;
+  }
+
+  private async exec(text: string, max: number, timeoutMs: () => number): Promise<number[] | 'timeout'> {
+    if (this.closed) return 'timeout';
+    if (!this.w) {
+      const w = new Worker(REGEX_WORKER, { eval: true, resourceLimits: { maxOldGenerationSizeMb: 64, maxYoungGenerationSizeMb: 16 } });
+      w.postMessage({ src: this.src, flags: this.flags });
+      this.w = w;
+      // Its start-up is not the regex's time.
+      await new Promise<void>((resolve, reject) => {
+        w.once('online', () => resolve());
+        w.once('error', reject);
+      });
+    }
+    const w = this.w;
+    const ms = timeoutMs();
+    if (this.closed || !w || ms <= 0) return 'timeout';
+    return new Promise((resolve, reject) => {
+      const settle = (fn: () => void) => {
+        clearTimeout(timer);
+        w.off('message', onMessage);
+        w.off('error', onError);
+        w.off('exit', onExit);
+        fn();
+      };
+      const onMessage = (out: number[]) => settle(() => resolve(out));
+      const onError = (err: Error) => settle(() => { this.kill(); reject(err); });
+      const onExit = () => settle(() => { this.w = null; reject(new Error('The regular expression worker stopped')); });
+      const timer = setTimeout(() => settle(() => { this.kill(); resolve('timeout'); }), ms);
+      w.on('message', onMessage);
+      w.on('error', onError);
+      w.on('exit', onExit);
+      w.postMessage({ text, max });
+    });
+  }
+
+  private kill(): void {
+    const w = this.w;
+    this.w = null;
+    if (w) void w.terminate().catch(() => undefined);
+  }
+
+  close(): void {
+    this.closed = true;
+    this.kill();
+  }
+}
 
 /** Searches running at once per account (each holds hostd reads). */
 const MAX_SEARCHES_PER_ACCOUNT = 2;
 const running = new Map<number, number>();
+/** Regex searches running at once on the whole server (one worker thread each). */
+const MAX_REGEX_SEARCHES = 4;
+let regexRunning = 0;
+/** Per file: a regex still running past this is too slow (smaller when the search's whole budget is smaller). */
+const REGEX_FILE_MS = 2000;
+/** Walk: the event loop is given back every so many entries (long folders, many globs). */
+const WALK_YIELD_EVERY = 64;
 
 const LINE_SHOWN = 300;
 function shown(line: string, col: number): string {
@@ -486,7 +650,10 @@ async function search(a: AccountRow, rawDir: unknown, opts: SearchOptions, rootR
 
   const busy = running.get(a.id) ?? 0;
   if (busy >= MAX_SEARCHES_PER_ACCOUNT) throw new AppError(429, 'Searches already running for this account: retry in a few seconds', 'searchBusy');
+  if (opts.regex && regexRunning >= MAX_REGEX_SEARCHES) throw new AppError(429, 'Too many regular expression searches running: retry in a few seconds, or search a literal text', 'searchBusy');
   running.set(a.id, busy + 1);
+  if (opts.regex) regexRunning++;
+  const runner = opts.regex ? new RegexRunner(query, flags) : null;
   try {
     const hostd = filesBackend.hostd();
     const t = filesBackend.target(a);
@@ -497,6 +664,7 @@ async function search(a: AccountRow, rawDir: unknown, opts: SearchOptions, rootR
     const files: Array<{ segs: string[]; size: number }> = [];
     let bytes = 0;
     const queue: string[][] = [root];
+    let seen = 0;
     walk: while (queue.length) {
       if (overTime()) { stoppedBy = 'time'; break; }
       const dir = queue.shift() as string[];
@@ -508,6 +676,10 @@ async function search(a: AccountRow, rawDir: unknown, opts: SearchOptions, rootR
         continue; // vanished, or not readable: skipped
       }
       for (const e of [...entries].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0))) {
+        if (++seen % WALK_YIELD_EVERY === 0) {
+          await new Promise((r) => setImmediate(r));
+          if (overTime()) { stoppedBy = 'time'; break walk; }
+        }
         const segs = [...dir, e.name];
         if (e.kind === 'dir') {
           if (!opts.includeVendor && (FILE_SEARCH_VENDOR_DIRS as readonly string[]).includes(e.name)) {
@@ -532,7 +704,8 @@ async function search(a: AccountRow, rawDir: unknown, opts: SearchOptions, rootR
     }
 
     // 2. Read and match, in order (several reads at once).
-    const ctx = opts.regex ? vm.createContext({ src: query, flags, text: '', max: maxPerFile }) : null;
+    // A file's regex time: REGEX_FILE_MS (less with a small budget), cut by what is left of the budget.
+    const fileCap = Math.min(REGEX_FILE_MS, Math.max(50, Math.floor(limits.ms / 2)));
     const needle = opts.caseSensitive === true ? query : query.toLowerCase();
     let found = 0;
     let scanned = 0;
@@ -560,19 +733,27 @@ async function search(a: AccountRow, rawDir: unknown, opts: SearchOptions, rootR
       const text = buf.toString('utf8');
       const lines = text.split('\n');
       const hits: Array<[number, number]> = [];
-      if (ctx) {
-        ctx.text = text;
-        let raw: string;
+      if (runner) {
+        let given = 0;
+        let nums: number[] | 'timeout';
         try {
-          raw = REGEX_SCRIPT.runInContext(ctx, { timeout: Math.max(50, Math.min(2000, limits.ms - (Date.now() - t0))) }) as string;
-        } catch (err) {
+          nums = await runner.run(text, maxPerFile, () => {
+            given = Math.min(fileCap, limits.ms - (Date.now() - t0));
+            return given;
+          });
+        } catch {
           failed = true;
-          if ((err as { code?: string }).code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+          throw new AppError(400, 'The regular expression could not be run on this content: simplify it, or search a literal text', 'regexTooSlow');
+        }
+        if (nums === 'timeout') {
+          // Too slow on its own (it had its full time): the pattern. Otherwise the search's budget ran out.
+          if (given >= fileCap) {
+            failed = true;
             throw new AppError(400, 'The regular expression is too slow on this content (catastrophic backtracking): simplify it, or search a literal text', 'regexTooSlow');
           }
-          throw err;
+          stoppedBy ??= 'time';
+          return [];
         }
-        const nums = raw ? raw.split(',').map(Number) : [];
         for (let i = 0; i + 1 < nums.length; i += 2) hits.push([nums[i], nums[i + 1]]);
       } else {
         for (let i = 0; i < lines.length && hits.length < maxPerFile; i++) {
@@ -603,9 +784,11 @@ async function search(a: AccountRow, rawDir: unknown, opts: SearchOptions, rootR
       durationMs: Date.now() - t0,
     };
   } finally {
+    runner?.close();
+    if (opts.regex) regexRunning--;
     const n = (running.get(a.id) ?? 1) - 1;
     if (n > 0) running.set(a.id, n); else running.delete(a.id);
   }
 }
 
-export const fileTools = { readRange, edit, assertSha256, hashListing, search };
+export const fileTools = { readRange, edit, assertSha256, withCurrent, hashListing, search };

@@ -197,6 +197,25 @@ test('fine file tools through an access key (REST + MCP)', { timeout: 300_000 },
   assert.match((await tool('edit_file', { site_id: siteId, path: '/inc/db.php', edits: [{ old_string: 'a', new_string: 'b' }] }, kRo.key!)).text, /keyScope/);
   assert.match((await tool('read_file', { site_id: otherSite, path: '/index.php' })).text, /not found/i);
 
+  // ── REST: an upload session with expectedSha256 — a change during the upload is never overwritten ──
+  mem.put('staging/web/big.bin', 'original');
+  const session = await post(`/sites/${siteId}/uploads`, { path: '/big.bin', size: 5, expectedSha256: sha('original') });
+  assert.equal(session.status, 200, JSON.stringify(session.body));
+  mem.put('staging/web/big.bin', 'human change over SFTP');
+  const last = await call(`/uploads/${session.body.data.id}/0`, { method: 'PUT', body: 'agent', headers: { 'content-type': 'application/octet-stream' } });
+  assert.deepEqual([last.status, last.body.code, last.body.details?.currentSha256], [409, 'fileChanged', sha('human change over SFTP')]);
+  assert.equal(mem.text('staging/web/big.bin'), 'human change over SFTP', 'the human change is kept');
+  const staleStart = await post(`/sites/${siteId}/uploads`, { path: '/big.bin', size: 5, expectedSha256: sha('original') });
+  assert.deepEqual([staleStart.status, staleStart.body.details?.currentSha256], [409, sha('human change over SFTP')]);
+
+  // ── a write-only key: no edit (its answers tell the content), no current hash in a 409 ──
+  const kWo = await apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'writer', scopes: ['files.write'], siteScope: 'selected', siteIds: [siteId] });
+  assert.equal((await post(`/sites/${siteId}/files/edit`, { path: '/new.txt', edits: [{ oldString: 'new', newString: 'x' }] }, kWo.key!)).body.code, 'keyScope');
+  const blind = await call(`/sites/${siteId}/files/content?path=/new.txt&expectedSha256=${sha('guess')}`,
+    { method: 'PUT', body: 'w', headers: { 'content-type': 'application/octet-stream' } }, kWo.key!);
+  assert.deepEqual([blind.status, blind.body.code, blind.body.details?.currentSha256], [409, 'fileChanged', undefined]);
+  assert.equal(mem.text('staging/web/new.txt'), 'new');
+
   // ── audit: the edit and the writes, with the key ──
   const audits = (await db('audit_logs').where({ tenant_id: tA }).whereIn('action', ['files.edit', 'files.upload']).orderBy('id')
     .select('action', 'details') as Array<{ action: string; details: unknown }>)

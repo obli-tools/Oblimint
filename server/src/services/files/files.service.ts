@@ -317,6 +317,9 @@ interface UploadSession {
   size: number;
   count: number;
   overwrite: boolean;
+  /** Editor save / key precondition: checked again right before the commit. */
+  expectedMtime?: number;
+  mustExist: boolean;
   received: Set<number>;
   inflight: number;
   touchedAt: number;
@@ -360,17 +363,30 @@ function session(a: AccountRow, userId: number, id: string): UploadSession {
   return s;
 }
 
-/** Editor save: the file must not have changed since it was opened (409 fileChanged). */
-async function assertUnchanged(a: AccountRow, segs: string[], expectedMtime: number): Promise<void> {
+/**
+ * A write with a precondition: `expectedMtime` = the mtime the writer saw;
+ * `mustExist` (the keys' SHA-256 precondition): a file that vanished or is no
+ * longer a regular file is a change too (the editor recreates it).
+ */
+export type FileWriteRequest = FileUploadRequest & { mustExist?: boolean };
+
+const fileChanged = () => new AppError(409, 'The file was changed since it was opened', 'fileChanged');
+
+/** Editor save / key precondition: the file must not have changed since it was read (409 fileChanged). */
+async function assertUnchanged(a: AccountRow, segs: string[], expectedMtime: number, mustExist = false): Promise<void> {
   let current: number | null = null;
   try {
     const parent = await deps.hostd.list(target(a), rel(segs.slice(0, -1)));
     current = parent.entries.find((e) => e.name === segs[segs.length - 1] && e.kind === 'file')?.mtime ?? null;
-  } catch (err) { throw fileError(err); }
-  if (current !== null && current !== expectedMtime) throw new AppError(409, 'The file was changed since it was opened', 'fileChanged');
+  } catch (err) {
+    const e = fileError(err);
+    if (mustExist && e.code === 'fileNotFound') throw fileChanged(); // its folder is gone
+    throw e;
+  }
+  if (current === null ? mustExist : current !== expectedMtime) throw fileChanged();
 }
 
-async function uploadStart(a: AccountRow, userId: number, req: FileUploadRequest): Promise<FileUploadSession> {
+async function uploadStart(a: AccountRow, userId: number, req: FileWriteRequest): Promise<FileUploadSession> {
   const segs = splitVirtual(req.path);
   if (segs.length < 3 || !validName(segs[segs.length - 1])) throw invalidPath();
   if (!Number.isSafeInteger(req.size) || req.size < 0 || req.size > MAX_UPLOAD_BYTES) throw new AppError(400, 'Invalid size', 'invalid');
@@ -378,7 +394,8 @@ async function uploadStart(a: AccountRow, userId: number, req: FileUploadRequest
   if ([...sessions.values()].filter((s) => s.accountId === a.id && !s.done).length >= UPLOAD_MAX_SESSIONS_PER_ACCOUNT) {
     throw new AppError(429, 'Too many uploads in progress for this account', 'tooManyUploads');
   }
-  if (req.expectedMtime !== undefined) await assertUnchanged(a, segs, req.expectedMtime);
+  const mustExist = req.mustExist === true && req.expectedMtime !== undefined;
+  if (req.expectedMtime !== undefined) await assertUnchanged(a, segs, req.expectedMtime, mustExist);
   const id = crypto.randomBytes(16).toString('hex');
   const overwrite = req.overwrite === true || req.expectedMtime !== undefined;
   try {
@@ -387,6 +404,7 @@ async function uploadStart(a: AccountRow, userId: number, req: FileUploadRequest
   const count = Math.max(1, Math.ceil(req.size / UPLOAD_CHUNK_SIZE));
   sessions.set(id, {
     id, accountId: a.id, userId, account: a, segs, size: req.size, count, overwrite,
+    ...(req.expectedMtime !== undefined ? { expectedMtime: req.expectedMtime } : {}), mustExist,
     received: new Set(), inflight: 0, touchedAt: deps.now(), committing: false, done: false,
   });
   startSweeper();
@@ -427,6 +445,19 @@ async function uploadChunk(a: AccountRow, userId: number, id: string, index: num
   if (s.received.size === s.count && !s.committing && !s.done) {
     s.committing = true;
     try {
+      // The precondition again, right before the rename: the upload may have
+      // lasted minutes, a change meanwhile is never overwritten. The session ends.
+      if (s.expectedMtime !== undefined) {
+        try {
+          await assertUnchanged(a, s.segs, s.expectedMtime, s.mustExist);
+        } catch (err) {
+          if (err instanceof AppError && err.code === 'fileChanged') {
+            sessions.delete(id);
+            await deps.hostd.uploadAbort(target(a), owner(a), rel(s.segs), id).catch(() => undefined);
+          }
+          throw err;
+        }
+      }
       await deps.hostd.uploadCommit(target(a), owner(a), rel(s.segs), id, s.size, s.overwrite);
       s.done = true;
     } catch (err) {
@@ -453,12 +484,13 @@ async function uploadAbort(a: AccountRow, userId: number, id: string): Promise<v
  * body as one chunk, commit — a folder of many small files costs one request
  * per file. Same rules as uploadStart (quota block, conflicts, editor mtime).
  */
-async function putSmall(a: AccountRow, req: FileUploadRequest, body: Readable): Promise<string> {
+async function putSmall(a: AccountRow, req: FileWriteRequest, body: Readable): Promise<string> {
   const segs = splitVirtual(req.path);
   if (segs.length < 3 || !validName(segs[segs.length - 1])) throw invalidPath();
   if (!Number.isSafeInteger(req.size) || req.size < 0 || req.size > UPLOAD_CHUNK_SIZE) throw new AppError(400, 'Invalid size', 'invalid');
   await assertWritable(a);
-  if (req.expectedMtime !== undefined) await assertUnchanged(a, segs, req.expectedMtime);
+  const mustExist = req.mustExist === true && req.expectedMtime !== undefined;
+  if (req.expectedMtime !== undefined) await assertUnchanged(a, segs, req.expectedMtime, mustExist);
   const id = crypto.randomBytes(16).toString('hex');
   const overwrite = req.overwrite === true || req.expectedMtime !== undefined;
   try {
@@ -466,6 +498,8 @@ async function putSmall(a: AccountRow, req: FileUploadRequest, body: Readable): 
   } catch (err) { throw fileError(err); }
   try {
     await deps.hostd.uploadChunk(target(a), owner(a), rel(segs), id, 0, req.size, body);
+    // Again once the body is in (a slow client streams for a while), right before the rename.
+    if (req.expectedMtime !== undefined) await assertUnchanged(a, segs, req.expectedMtime, mustExist);
     await deps.hostd.uploadCommit(target(a), owner(a), rel(segs), id, req.size, overwrite);
   } catch (err) {
     await deps.hostd.uploadAbort(target(a), owner(a), rel(segs), id).catch(() => undefined);

@@ -168,6 +168,17 @@ async function filesAccount(ctx: ApiKeyContext, write: boolean): Promise<Account
 }
 
 /**
+ * A precondition failure of a write: the current state (currentSha256) for a
+ * key that may read the files; a write-only key gets the bare 409 (the hash of
+ * content it may not read is none of its business).
+ */
+async function preconditionError(ctx: ApiKeyContext, a: AccountRow, virtual: string, err: unknown, shownPath?: string): Promise<unknown> {
+  if (!(err instanceof AppError) || err.code !== 'fileChanged') return err;
+  if (!ctx.scopes.has('files.read')) return new AppError(409, err.message, 'fileChanged');
+  return fileTools.withCurrent(a, virtual, err, shownPath);
+}
+
+/**
  * Audit of a file write through the key (M13): the same actions and details
  * as the panel's explorer (files.routes.ts: virtual paths), plus the site;
  * logReqAs files it under the key's user with the key (apiKey {id, name}).
@@ -390,6 +401,8 @@ export const keyApi = {
 
   /** Exact replacements in a text file, all or nothing (expectedSha256: 409 fileChanged when it moved). */
   async edit(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, edits: FileEdit[], expectedSha256: string | null): Promise<FileEditResult> {
+    // Its answers (which edit matched, occurrences, hashes) tell the content: files.read too.
+    requireScope(ctx, 'files.read');
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     const r = await fileTools.edit(a, areaPath(site, area, path), edits, expectedSha256);
@@ -428,16 +441,21 @@ export const keyApi = {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     const virtual = areaPath(site, area, path);
-    const expectedMtime = expectedSha256 !== null ? await fileTools.assertSha256(a, virtual, expectedSha256) : undefined;
+    let expectedMtime: number | undefined;
+    try {
+      if (expectedSha256 !== null) expectedMtime = await fileTools.assertSha256(a, virtual, expectedSha256);
+    } catch (err) {
+      throw await preconditionError(ctx, a, virtual, err, path);
+    }
     const h = crypto.createHash('sha256');
     const tap = new Transform({ transform(c: Buffer, _e, cb) { h.update(c); cb(null, c); } });
     pipeline(body, tap, () => { /* errors reach the upload through tap */ });
     let p: string;
     try {
-      p = await filesService.putSmall(a, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime } : { overwrite }) }, tap);
+      p = await filesService.putSmall(a, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime, mustExist: true } : { overwrite }) }, tap);
     } catch (err) {
       tap.resume(); // the body is drained, never left hanging
-      throw err;
+      throw await preconditionError(ctx, a, virtual, err, path);
     }
     const sha256 = h.digest('hex');
     await fileAudit(req, a, site.id, 'files.upload', { path: p, size, sha256 });
@@ -448,14 +466,25 @@ export const keyApi = {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     const virtual = areaPath(site, area, path);
-    const expectedMtime = expectedSha256 !== null ? await fileTools.assertSha256(a, virtual, expectedSha256) : undefined;
-    return filesService.uploadStart(a, ctx.creatorId, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime } : { overwrite }) });
+    try {
+      const expectedMtime = expectedSha256 !== null ? await fileTools.assertSha256(a, virtual, expectedSha256) : undefined;
+      // expectedMtime: checked again by the chunk that completes the file, right before its commit.
+      return await filesService.uploadStart(a, ctx.creatorId, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime, mustExist: true } : { overwrite }) });
+    } catch (err) {
+      throw await preconditionError(ctx, a, virtual, err, path);
+    }
   },
 
   async uploadChunk(ctx: ApiKeyContext, req: Request, uploadId: string, index: number, length: number, body: Readable): Promise<FileUploadChunkResult> {
     const a = await filesAccount(ctx, true);
     const info = filesService.uploadInfo(uploadId);
-    const res = await filesService.uploadChunk(a, ctx.creatorId, uploadId, index, length, body);
+    let res: FileUploadChunkResult;
+    try {
+      res = await filesService.uploadChunk(a, ctx.creatorId, uploadId, index, length, body);
+    } catch (err) {
+      // The file changed during the upload (expectedSha256): the session is over, the current state attached.
+      throw info ? await preconditionError(ctx, a, info.path, err, info.path.slice(info.path.lastIndexOf('/') + 1)) : err;
+    }
     // One entry per uploaded file (the chunk that completed it), as in the panel.
     if (res.done && info) await fileAudit(req, a, null, 'files.upload', info);
     return res;

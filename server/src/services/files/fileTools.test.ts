@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'crypto';
-import type { AppError } from '../../middleware/errorHandler';
+import { AppError } from '../../middleware/errorHandler';
 import type { AccountRow } from '../hosting/rows';
-import { setFilesDeps } from './files.service';
-import { fileTools, globToRegExp, normalizeSha256 } from './fileTools';
+import { Readable } from 'stream';
+import { filesService, setFilesDeps } from './files.service';
+import { compileGlob, fileTools, normalizeSha256 } from './fileTools';
 import { memHostd, type MemHostd } from './testUtil';
 
 // Fine file tools of the keys (fileTools.ts) on an in-memory hostd: partial
@@ -137,6 +138,71 @@ test('precondition: a human change since the read is never overwritten (409 file
   assert.equal(normalizeSha256(`"${sha('x').toUpperCase()}"`), sha('x'), 'an ETag-style quoted value is accepted');
 });
 
+test('precondition: a file changed or deleted between the edit\'s read and its write (currentSha256, null when gone)', async () => {
+  mem.put('staging/web/e.php', 'v1');
+  mem.onOpen = (r) => { mem.onOpen = null; mem.put(r, 'human'); };
+  await assert.rejects(fileTools.edit(account, '/staging/web/e.php', [{ oldString: 'v1', newString: 'v2' }], sha('v1')),
+    (e: AppError) => e.code === 'fileChanged' && (e.details as { currentSha256: string }).currentSha256 === sha('human'));
+  assert.equal(mem.text('staging/web/e.php'), 'human');
+  mem.onOpen = (r) => { mem.onOpen = null; mem.files.delete(r); };
+  await assert.rejects(fileTools.edit(account, '/staging/web/e.php', [{ oldString: 'human', newString: 'agent' }], sha('human')),
+    (e: AppError) => e.code === 'fileChanged' && (e.details as { currentSha256: null }).currentSha256 === null);
+  assert.equal(mem.files.has('staging/web/e.php'), false, 'a file deleted meanwhile is not recreated');
+});
+
+test('precondition: checked again right before the commit (slow body, long upload session)', async () => {
+  // One request: the change lands while the body streams.
+  mem.put('staging/web/p.txt', 'v1');
+  const mtime = mem.files.get('staging/web/p.txt')!.mtime;
+  mem.onUpload = (r) => { mem.onUpload = null; mem.put(r, 'human'); };
+  await assert.rejects(filesService.putSmall(account, { path: '/staging/web/p.txt', size: 5, expectedMtime: mtime, mustExist: true }, Readable.from([Buffer.from('agent')])),
+    code('fileChanged'));
+  assert.equal(mem.text('staging/web/p.txt'), 'human');
+  // Deleted while streaming: refused with mustExist (key precondition), recreated by the editor's save.
+  const m2 = mem.files.get('staging/web/p.txt')!.mtime;
+  mem.onUpload = (r) => { mem.onUpload = null; mem.files.delete(r); };
+  await assert.rejects(filesService.putSmall(account, { path: '/staging/web/p.txt', size: 5, expectedMtime: m2, mustExist: true }, Readable.from([Buffer.from('agent')])),
+    code('fileChanged'));
+  assert.equal(mem.files.has('staging/web/p.txt'), false);
+  mem.onUpload = (r) => { mem.onUpload = null; mem.files.delete(r); };
+  await filesService.putSmall(account, { path: '/staging/web/p.txt', size: 6, expectedMtime: m2 }, Readable.from([Buffer.from('editor')]));
+  assert.equal(mem.text('staging/web/p.txt'), 'editor');
+  // A session: the change lands between its start and its last chunk.
+  const m3 = mem.files.get('staging/web/p.txt')!.mtime;
+  const s = await filesService.uploadStart(account, 5, { path: '/staging/web/p.txt', size: 5, expectedMtime: m3, mustExist: true });
+  mem.put('staging/web/p.txt', 'human over SFTP');
+  await assert.rejects(filesService.uploadChunk(account, 5, s.id, 0, 5, Readable.from([Buffer.from('agent')])), code('fileChanged'));
+  assert.equal(mem.text('staging/web/p.txt'), 'human over SFTP');
+  assert.throws(() => filesService.uploadStatus(account, 5, s.id), code('uploadNotFound'), 'the session is over');
+  // withCurrent: the bare 409 of the pin → the current hash.
+  const e = await fileTools.withCurrent(account, '/staging/web/p.txt', new AppError(409, 'x', 'fileChanged')) as AppError;
+  assert.equal((e.details as { currentSha256: string }).currentSha256, sha('human over SFTP'));
+  // Unchanged: the session commits.
+  const m4 = mem.files.get('staging/web/p.txt')!.mtime;
+  const ok = await filesService.uploadStart(account, 5, { path: '/staging/web/p.txt', size: 5, expectedMtime: m4, mustExist: true });
+  assert.equal((await filesService.uploadChunk(account, 5, ok.id, 0, 5, Readable.from([Buffer.from('agent')]))).done, true);
+  assert.equal(mem.text('staging/web/p.txt'), 'agent');
+});
+
+test('edit: the size is checked before each replacement (no exponential growth)', async () => {
+  mem.put('staging/web/g.txt', 'a'.repeat(1024));
+  const t0 = Date.now();
+  // Each edit doubles the content: stopped by the replacement cap (100 000 per call) at the 7th.
+  await assert.rejects(fileTools.edit(account, '/staging/web/g.txt', Array.from({ length: 20 }, () => ({ oldString: 'a', newString: 'aa', replaceAll: true }))),
+    (e: AppError) => e.code === 'tooManyReplacements' && (e.details as { index: number }).index === 6);
+  // 4 MB, then 12 MB: refused at the one that would pass 8 MB, before it is built.
+  await assert.rejects(fileTools.edit(account, '/staging/web/g.txt', [
+    { oldString: 'a', newString: 'b'.repeat(4096), replaceAll: true },
+    { oldString: 'b'.repeat(4096), newString: 'c'.repeat(3 * 4096), replaceAll: true },
+  ]), (e: AppError) => e.code === 'fileTooLarge' && e.statusCode === 413 && (e.details as { index: number }).index === 1);
+  assert.ok(Date.now() - t0 < 3000, `${Date.now() - t0} ms`);
+  assert.equal(mem.text('staging/web/g.txt'), 'a'.repeat(1024), 'nothing written');
+  const big = '€'.repeat(1000);
+  mem.put('staging/web/u.txt', big);
+  await assert.rejects(fileTools.edit(account, '/staging/web/u.txt', [{ oldString: '€', newString: '€'.repeat(3000), replaceAll: true }]),
+    (e: AppError) => e.code === 'fileTooLarge' && (e.details as { index: number }).index === 0, 'counted in UTF-8 bytes');
+});
+
 test('listing hashes: files only, folders untouched', async () => {
   mem.put('staging/web/a.txt', 'A');
   mem.put('staging/web/sub/b.txt', 'B');
@@ -150,11 +216,29 @@ test('listing hashes: files only, folders untouched', async () => {
 });
 
 test('globs', () => {
-  assert.ok(globToRegExp('*.php').test('index.php') && !globToRegExp('*.php').test('a/index.php'));
-  assert.ok(globToRegExp('wp-content/**/*.php').test('wp-content/plugins/x/a.php'));
-  assert.ok(globToRegExp('wp-content/**/*.php').test('wp-content/a.php'));
-  assert.ok(globToRegExp('/src/{a,b}/?.js').test('src/b/x.js') && !globToRegExp('src/{a,b}/?.js').test('src/c/x.js'));
-  assert.ok(globToRegExp('a.(b)+').test('a.(b)+'), 'regex characters are literal');
+  const g = (glob: string, s: string) => compileGlob(glob).test(s);
+  assert.ok(g('*.php', 'index.php') && !g('*.php', 'a/index.php'));
+  assert.ok(g('wp-content/**/*.php', 'wp-content/plugins/x/a.php'));
+  assert.ok(g('wp-content/**/*.php', 'wp-content/a.php'));
+  assert.ok(!g('wp-content/**/*.php', 'wp-contentx/a.php') && !g('wp-content/**/*.php', 'wp-content/a.js'));
+  assert.ok(g('wp-content/**', 'wp-content/a/b.txt') && g('**/readme.txt', 'readme.txt') && g('**/readme.txt', 'a/b/readme.txt'));
+  assert.ok(g('a**b', 'a/x/b') && g('***.js', 'x/y.js') && !g('a*b', 'a/b'));
+  assert.ok(g('/src/{a,b}/?.js', 'src/b/x.js') && !g('src/{a,b}/?.js', 'src/c/x.js') && !g('src/{a,b}/?.js', 'src/a/xy.js'));
+  assert.ok(g('a.(b)+', 'a.(b)+') && !g('a.(b)+', 'axb'), 'regex characters are literal');
+  assert.throws(() => compileGlob('src/{a,b'), code('invalid'));
+  assert.throws(() => compileGlob('{a,b}{c,d}{e,f}{g,h}{i,j}'), code('invalid'), 'at most 16 alternatives');
+});
+
+test('globs: no backtracking, whatever the glob (linear in the name)', async () => {
+  const t0 = Date.now();
+  assert.equal(compileGlob('*a*a*a*a*a*a*a*a*a*a*a*a*b').test('a'.repeat(250)), false);
+  assert.ok(Date.now() - t0 < 200, `${Date.now() - t0} ms`);
+  mem.put(`staging/web/${'a'.repeat(200)}`, 'needle');
+  mem.put('staging/web/ab', 'needle');
+  const t1 = Date.now();
+  const r = await fileTools.search(account, '/staging/web', { query: 'needle', include: [...Array.from({ length: 19 }, () => `${'*a'.repeat(30)}*b`), '*b'] }, rel);
+  assert.deepEqual(r.matches.map((m) => m.path), ['/ab']);
+  assert.ok(Date.now() - t1 < 2000, `${Date.now() - t1} ms`);
 });
 
 const rel = (v: string) => v.replace(/^\/staging\/web/, '') || '/';
@@ -212,4 +296,32 @@ test('search: a catastrophic regular expression is stopped (regexTooSlow), the s
   await assert.rejects(fileTools.search(account, '/staging/web', { query: '^(a+)+$', regex: true }, rel, { files: 10, bytes: 1e6, ms: 400, fileBytes: 1e6 }),
     code('regexTooSlow'));
   assert.ok(Date.now() - t0 < 5000, `stopped in ${Date.now() - t0} ms`);
+});
+
+test('search: the regex runs off the event loop (timers keep firing during a catastrophic one)', async () => {
+  mem.put('staging/web/evil.txt', `${'a'.repeat(40)}!`);
+  let ticks = 0;
+  const timer = setInterval(() => { ticks++; }, 10);
+  try {
+    await assert.rejects(fileTools.search(account, '/staging/web', { query: '^(a+)+$', regex: true }, rel, { files: 10, bytes: 1e6, ms: 1000, fileBytes: 1e6 }),
+      code('regexTooSlow'));
+  } finally { clearInterval(timer); }
+  assert.ok(ticks >= 10, `${ticks} ticks during a 500 ms regex`);
+});
+
+test('search: regex anchors work on CRLF files', async () => {
+  mem.put('staging/web/win.php', '<?php\r\nexit;\r\n$a = f( 1 )  \r\n');
+  const r = await fileTools.search(account, '/staging/web', { query: 'exit;$', regex: true }, rel);
+  assert.deepEqual(r.matches.map((m) => [m.line, m.column, m.text]), [[2, 1, 'exit;']]);
+  assert.equal((await fileTools.search(account, '/staging/web', { query: '\\)\\s*$', regex: true }, rel)).matches[0]?.line, 3);
+});
+
+test('search: a regex slow only because the budget is nearly spent stops with stoppedBy time (results kept)', async () => {
+  mem.put('staging/web/a.txt', 'aaaa');
+  mem.put('staging/web/b.txt', `${'a'.repeat(40)}!`);
+  // Reading b.txt eats most of the budget: its regex gets the little time left, not the per-file cap.
+  mem.onOpen = (r) => { if (r.endsWith('b.txt')) { const end = Date.now() + 2000; while (Date.now() < end) { /* busy */ } } };
+  const r = await fileTools.search(account, '/staging/web', { query: '^(a+)+$', regex: true }, rel, { files: 10, bytes: 1e6, ms: 3000, fileBytes: 1e6 });
+  mem.onOpen = null;
+  assert.deepEqual([r.matches.map((m) => m.path), r.stoppedBy, r.truncated], [['/a.txt'], 'time', true]);
 });

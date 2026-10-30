@@ -20,6 +20,8 @@ export interface MemHostd {
   text(rel: string): string | undefined;
   /** Called after a file was opened for reading (e.g. a concurrent SFTP write). */
   onOpen: ((rel: string) => void) | null;
+  /** Called after an upload chunk was written, before its commit (a change while the body streams). */
+  onUpload: ((rel: string) => void) | null;
   /** Bytes per chunk of a read (small: chunk boundaries inside characters / lines). */
   chunkSize: number;
   opened: string[];
@@ -39,7 +41,7 @@ export function memHostd(): MemHostd {
   };
   const notFound = (rel: string) => new HostdError(404, `hostd GET /v1/accounts/1/files: ${rel}: not found`, 'notFound');
   const m: MemHostd = {
-    files, dirs, links, onOpen: null, chunkSize: 64 * 1024, opened: [],
+    files, dirs, links, onOpen: null, onUpload: null, chunkSize: 64 * 1024, opened: [],
     put(rel, content, mode = 0o644) {
       mkdirs(parentOf(rel));
       files.set(rel, { data: Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8'), mtime: ++clock, mode });
@@ -90,7 +92,7 @@ export function memHostd(): MemHostd {
         if (files.has(rel) && !overwrite) throw new HostdError(409, `hostd POST x: ${rel} already exists`, 'exists');
         temps.set(id, Buffer.alloc(0));
       },
-      uploadChunk: async (_t, _o, _rel, id, offset, _length, body) => {
+      uploadChunk: async (_t, _o, rel, id, offset, _length, body) => {
         const parts: Buffer[] = [];
         for await (const c of body as AsyncIterable<Buffer>) parts.push(Buffer.from(c));
         const cur = temps.get(id) ?? Buffer.alloc(0);
@@ -99,6 +101,7 @@ export function memHostd(): MemHostd {
         cur.copy(out);
         data.copy(out, offset);
         temps.set(id, out);
+        m.onUpload?.(rel);
       },
       uploadCommit: async (_t, _o, rel, id, size, overwrite) => {
         const data = temps.get(id);
