@@ -1,4 +1,4 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { MemoryStore } from 'express-rate-limit';
 import type { Request } from 'express';
 import { isIP } from 'net';
 import { normalizeIp } from '../utils/clientIp';
@@ -176,15 +176,29 @@ export const filesLimiter = rateLimit({
 });
 
 // Expensive host operations (disk usage walk, staging tree walk, git diff,
-// Docker engine checks, container-creating changes): per user, 60 / min.
+// Docker engine checks, container-creating changes): per user, 60 / min; per
+// access key on /api/v1, and the same bucket for its heavy MCP tools (countHeavyOp).
+const HEAVY_OP_MAX_PER_MIN = 60;
+const heavyOpStore = new MemoryStore();
+const heavyOpKey = (req: Request): string => `heavy:${req.session?.userId ?? (req.apiKey ? `key-${req.apiKey.id}` : reqIpKey(req))}`;
 export const heavyOpLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 60,
+  max: HEAVY_OP_MAX_PER_MIN,
+  store: heavyOpStore,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => `heavy:${req.session?.userId ?? reqIpKey(req)}`,
+  keyGenerator: heavyOpKey,
   message: { success: false, error: 'Too many requests, please try again in a minute', code: 'rateLimited' },
 });
+
+/**
+ * Counts one heavy operation outside the middleware (an MCP tools/call: one
+ * HTTP request, many operations) in heavyOpLimiter's bucket. false: over the limit.
+ */
+export async function countHeavyOp(req: Request): Promise<boolean> {
+  const hit = await heavyOpStore.increment(heavyOpKey(req));
+  return hit.totalHits <= HEAVY_OP_MAX_PER_MIN;
+}
 
 // Feature B: claim links of the release previews (public, no session), 30 / min per address.
 export const previewClaimLimiter = rateLimit({

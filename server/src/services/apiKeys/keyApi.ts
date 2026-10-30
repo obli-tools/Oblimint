@@ -24,7 +24,7 @@ import type { DataPathInputBody, DataPathUpdateBody } from '../../validators/hos
 import { assertSource, logsService } from '../logs/logs.service';
 import { releaseService } from '../releases/release.service';
 import { liveStates } from '../releases/liveState';
-import { publicReleaseText, releaseOutcome } from '../releases/outcome';
+import { loggedUserIds, maskStaffIds, publicReleaseText, releaseOutcome } from '../releases/outcome';
 import { previewService } from '../previews/previews.service';
 import { apiKeysService, keyAllowsDomain, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
 
@@ -189,13 +189,48 @@ async function nonMembers(accountId: number, userIds: Array<number | null | unde
   if (!ids.length) return new Set();
   const rows = await db('users as u').leftJoin('account_users as au', function joinMember() { this.on('au.user_id', '=', 'u.id').andOnVal('au.account_id', '=', accountId); })
     .whereIn('u.id', ids).select('u.id', 'u.kind', 'au.user_id as member') as Array<{ id: number; kind: string; member: number | null }>;
-  return new Set(rows.filter((r) => r.kind === 'staff' || r.member === null).map((r) => Number(r.id)));
+  // A user deleted since (no row) is not known as a member either.
+  const found = new Set(rows.map((r) => Number(r.id)));
+  return new Set([...rows.filter((r) => r.kind === 'staff' || r.member === null).map((r) => Number(r.id)), ...ids.filter((id) => !found.has(id))]);
 }
 
 /** publish with wait: longest wait for the release to settle. */
 export const PUBLISH_WAIT_MAX_MS = 25_000;
 /** wait_for_release / GET …/releases/:rid/wait: longest wait. */
 export const RELEASE_WAIT_MAX_MS = 60_000;
+/** Waits held at once (publish with wait, wait_for_release), per key and per site: 429 rateLimited above. */
+export const MAX_WAITS_PER_KEY = 3;
+export const MAX_WAITS_PER_SITE = 6;
+const waitsByKey = new Map<number, number>();
+const waitsBySite = new Map<number, number>();
+const bump = (m: Map<number, number>, k: number, d: number) => {
+  const v = (m.get(k) ?? 0) + d;
+  if (v > 0) m.set(k, v); else m.delete(k);
+};
+
+/**
+ * Runs `fn` in one of the key's wait slots, with a signal aborted when the
+ * client goes away (the polling stops with it): a key cannot pile up long
+ * polling loops (each one holds a request open up to 60 s).
+ */
+async function withWaitSlot<T>(ctx: ApiKeyContext, req: Request | null, siteId: number, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  if ((waitsByKey.get(ctx.id) ?? 0) >= MAX_WAITS_PER_KEY || (waitsBySite.get(siteId) ?? 0) >= MAX_WAITS_PER_SITE) {
+    throw new AppError(429, `Too many waits running at once (at most ${MAX_WAITS_PER_KEY} per key): let one end, or call again without waiting`, 'rateLimited');
+  }
+  bump(waitsByKey, ctx.id, 1);
+  bump(waitsBySite, siteId, 1);
+  const ac = new AbortController();
+  const res = req?.res;
+  const gone = () => ac.abort();
+  res?.once('close', gone);
+  try {
+    return await fn(ac.signal);
+  } finally {
+    res?.off('close', gone);
+    bump(waitsByKey, ctx.id, -1);
+    bump(waitsBySite, siteId, -1);
+  }
+}
 
 /**
  * Releases as a key reads them: the name of a platform staff member is never
@@ -206,7 +241,9 @@ async function keyReleases<T extends Release & { log?: ReleaseLogLine[] }>(site:
   if (!items.length) return items;
   const approvers = await db('releases').whereIn('id', items.map((r) => r.id)).select('id', 'approved_by') as Array<{ id: number; approved_by: number | null }>;
   const approverOf = new Map(approvers.map((a) => [Number(a.id), a.approved_by]));
-  const hidden = await nonMembers(site.account_id, [...items.map((r) => r.authorUserId), ...approvers.map((a) => a.approved_by)]);
+  // Users named in the log lines ("dérogation du staff (utilisateur #12)", "rejetée par l’utilisateur #12 : …").
+  const logged = items.flatMap((r) => (Array.isArray(r.log) ? r.log.flatMap((l) => loggedUserIds(l.message)) : []));
+  const hidden = await nonMembers(site.account_id, [...items.map((r) => r.authorUserId), ...approvers.map((a) => a.approved_by), ...logged]);
   return items.map((r) => {
     const approver = approverOf.get(r.id);
     const out: T = {
@@ -217,7 +254,7 @@ async function keyReleases<T extends Release & { log?: ReleaseLogLine[] }>(site:
       // Only a staff member overrides a blocked scan (M5): never named to a key.
       ...(r.scan?.override ? { scan: { ...r.scan, override: { ...r.scan.override, by: 'staff' } } } : {}),
     };
-    if (Array.isArray(r.log)) out.log = r.log.map((l) => ({ ...l, message: publicReleaseText(l.message) }));
+    if (Array.isArray(r.log)) out.log = r.log.map((l) => ({ ...l, message: maskStaffIds(publicReleaseText(l.message), hidden) }));
     return out;
   });
 }
@@ -421,18 +458,22 @@ export const keyApi = {
     requireScope(ctx, 'releases.publish');
     const site = await keySite(ctx, siteId);
     await loadSite(ctx.actor, site.id, 'releases.publish');
-    const release = await releaseService.publish(site.id, {
-      trigger: 'manual', userId: ctx.creatorId, message, apiKeyId: ctx.id, rollbackGuard: opts.overrideRollback ? 'off' : 'refuse',
-    });
-    await auditService.logReqAs(req, site.tenant_id, 'release.publish', {
-      resourceType: 'release', resourcePath: String(release.id),
-      details: { siteId: site.id, number: release.number, ...(opts.overrideRollback ? { overrideRollback: true } : {}) },
-    });
     const waitMs = Math.min(PUBLISH_WAIT_MAX_MS, Math.max(0, Math.trunc(opts.waitMs ?? 0)));
-    if (!waitMs) return (await keyReleases(site, [release]))[0];
-    await releaseService.waitForRelease(site.id, release.id, waitMs);
-    const { log: _log, ...rest } = await releaseDetail(site, release.id, true); // eslint-disable-line @typescript-eslint/no-unused-vars
-    return rest;
+    const go = async (signal: AbortSignal | null): Promise<ApiV1ReleaseResult> => {
+      const release = await releaseService.publish(site.id, {
+        trigger: 'manual', userId: ctx.creatorId, message, apiKeyId: ctx.id, rollbackGuard: opts.overrideRollback ? 'off' : 'refuse',
+      });
+      await auditService.logReqAs(req, site.tenant_id, 'release.publish', {
+        resourceType: 'release', resourcePath: String(release.id),
+        details: { siteId: site.id, number: release.number, ...(opts.overrideRollback ? { overrideRollback: true } : {}) },
+      });
+      if (!signal) return (await keyReleases(site, [release]))[0];
+      await releaseService.waitForRelease(site.id, release.id, waitMs, { signal });
+      const { log: _log, ...rest } = await releaseDetail(site, release.id, true); // eslint-disable-line @typescript-eslint/no-unused-vars
+      return rest;
+    };
+    // The wait slot is taken before publishing: a refused wait (429) publishes nothing.
+    return waitMs ? withWaitSlot(ctx, req, site.id, go) : go(null);
   },
 
   /** Releases, newest first; the name of a platform staff member is never shown (author, approver). */
@@ -449,12 +490,14 @@ export const keyApi = {
   },
 
   /** Waits (≤ 60 s) until the release is settled (ready, failed, rejected, awaiting approval), then as release(). */
-  async waitRelease(ctx: ApiKeyContext, siteId: number, releaseId: unknown, timeoutMs: number): Promise<ApiV1ReleaseDetail> {
+  async waitRelease(ctx: ApiKeyContext, req: Request | null, siteId: number, releaseId: unknown, timeoutMs: number): Promise<ApiV1ReleaseDetail> {
     const site = await keySite(ctx, siteId);
     const rid = releaseIdOf(releaseId);
     const ms = Math.min(RELEASE_WAIT_MAX_MS, Math.max(0, Math.trunc(timeoutMs) || 0));
-    await releaseService.waitForRelease(site.id, rid, ms);
-    return releaseDetail(site, rid, ms > 0);
+    if (!ms) return releaseDetail(site, rid);
+    // A release already settled when the wait begins returns at once (the site lock of another run is not waited for).
+    await withWaitSlot(ctx, req, site.id, (signal) => releaseService.waitForRelease(site.id, rid, ms, { signal, lockGrace: 'ifRunning' }));
+    return releaseDetail(site, rid, true);
   },
 
   /**

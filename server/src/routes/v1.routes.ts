@@ -42,7 +42,8 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //                                                        {liveRelease, rolledBackFrom, count, paths}) releases.publish
 //   GET    /sites/:id/releases?limit=&offset=           → { items: Release[]; total }
 //   GET    /sites/:id/releases/:rid                     → ApiV1ReleaseDetail (log without staff names / backend details, outcome)
-//   GET    /sites/:id/releases/:rid/wait?timeout=≤60    → ApiV1ReleaseDetail once settled (outcome.timedOut otherwise)
+//   GET    /sites/:id/releases/:rid/wait?timeout=≤60    → ApiV1ReleaseDetail once settled (outcome.timedOut otherwise;
+//                                                        429 rateLimited over 3 waits at once per key, publish with wait included)
 //   GET    /sites/:id/releases/:rid/diff?against=previous|live|empty|<rid>&file= → ReleaseDiff (file: one patch ≤ 256 KiB) files.read (+ code right)
 //   POST   /sites/:id/releases/:rid/rollback            → { rolledBack: true }         releases.publish
 //   GET    /sites/:id/releases/:rid/files?path=&limit=&offset= → ReleaseFileList (limit ≤ 5000)  files.read (+ code right)
@@ -245,7 +246,7 @@ router.get('/sites/:id/releases', h(async (req, res) => {
 router.get('/sites/:id/releases/:rid', h(async (req, res) => ok(res, await keyApi.release(ctxOf(req), siteId(req), req.params.rid))));
 router.get('/sites/:id/releases/:rid/wait', h(async (req, res) => {
   const q = parseBody(waitQuery, req.query);
-  ok(res, await keyApi.waitRelease(ctxOf(req), siteId(req), req.params.rid, q.timeout * 1000));
+  ok(res, await keyApi.waitRelease(ctxOf(req), req, siteId(req), req.params.rid, q.timeout * 1000));
 }));
 router.get('/sites/:id/releases/:rid/diff', heavyOpLimiter, h(async (req, res) => {
   const q = parseBody(diffQuery, req.query);

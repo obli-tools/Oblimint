@@ -33,7 +33,7 @@ import { dataLinksMatch, materializeRelease, readCurrent, removeTmpEntries, remo
 import { releaseDeps } from './deps';
 import { getScanner } from './scan';
 import { liveStates } from './liveState';
-import { AUTO_REVERT_TEXT, HEALTHCHECK_FAILED_TEXT, HEALTHCHECK_OK_TEXT, INTERNAL_TEXT, INTERRUPTED_TEXT, RELOAD_FAILED_TEXT, STAGING_EMPTY_TEXT } from './outcome';
+import { AUTO_REVERT_TEXT, AUTO_REVERT_TO_TEXT, HEALTHCHECK_FAILED_TEXT, HEALTHCHECK_OK_TEXT, INTERNAL_TEXT, INTERRUPTED_TEXT, RELOAD_FAILED_TEXT, STAGING_EMPTY_TEXT } from './outcome';
 import { REFLECT_BATCH, reflectToStaging } from './changeset';
 import { cleanReleasePath, pageEntries, readReleaseBlob, releaseTree, streamReleaseBlob, toFileEntry, utf8SafeCut, type ReleaseTreeEntry } from './releaseFiles';
 
@@ -402,7 +402,7 @@ async function switchAndVerify(ctx: SiteContext, number: number, run: Run): Prom
   const hc = rl.ok ? await healthcheck(ctx, run) : { ok: false, error: `${RELOAD_FAILED_TEXT} : ${rl.error}` };
   if (hc.ok) return null;
   switchCurrent(ctx.paths.releases, prevExists ? prevNumber : null, deps.links);
-  run.line('warn', prevExists ? `${AUTO_REVERT_TEXT} à la release #${prevNumber}` : `${AUTO_REVERT_TEXT} : aucune release précédente`);
+  run.line('warn', prevExists ? `${AUTO_REVERT_TO_TEXT}${prevNumber}` : `${AUTO_REVERT_TEXT} : aucune release précédente`);
   await reload(ctx, run);
   return hc.error ?? HEALTHCHECK_FAILED_TEXT;
 }
@@ -1368,18 +1368,30 @@ export const releaseService = {
     }
   },
 
-  /** Resolves when the release reaches ready / failed / rejected / awaiting_approval (or the timeout: current row). */
-  async waitForRelease(siteId: number, releaseId: number, timeoutMs: number): Promise<Release> {
+  /**
+   * Resolves when the release reaches ready / failed / rejected / awaiting_approval (or the timeout, or
+   * `signal` aborted — the caller went away: current row). Polls the status alone, reads the full row
+   * once at the end. lockGrace 'ifRunning' (access keys): the site lock is only waited for when the
+   * release was still running when the wait began — never for a release long settled.
+   */
+  async waitForRelease(
+    siteId: number, releaseId: number, timeoutMs: number, opts: { signal?: AbortSignal; lockGrace?: 'always' | 'ifRunning' } = {},
+  ): Promise<Release> {
     const deadline = Date.now() + Math.max(0, timeoutMs);
     let settledAt: number | null = null;
+    let first = true;
+    let waitLock = true;
     for (;;) {
-      const row = await fetchRelease(siteId, releaseId);
+      const row = await db('releases').where({ id: releaseId, site_id: siteId }).first('status') as { status: ReleaseStatus } | undefined;
+      if (!row) throw new AppError(404, 'Release not found', 'notFound');
       const settled = !IN_FLIGHT.includes(row.status);
+      if (first && settled && opts.lockGrace === 'ifRunning') waitLock = false;
+      first = false;
       if (settled && settledAt === null) settledAt = Date.now();
       // A terminal status is final, but the run still holds the site lock while it prunes: the caller's
       // next step (revertTo, reopening a window) would get publishInProgress. Wait for it (bounded).
-      const lockFree = !locks.has(siteId) || (settledAt !== null && Date.now() - settledAt > WAIT_LOCK_GRACE_MS);
-      if ((settled && lockFree) || Date.now() >= deadline) return toRelease(row);
+      const lockFree = !waitLock || !locks.has(siteId) || (settledAt !== null && Date.now() - settledAt > WAIT_LOCK_GRACE_MS);
+      if ((settled && lockFree) || Date.now() >= deadline || opts.signal?.aborted) return toRelease(await fetchRelease(siteId, releaseId));
       await new Promise((r) => setTimeout(r, WAIT_POLL_MS));
     }
   },

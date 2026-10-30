@@ -209,10 +209,25 @@ test('publication tracking through an access key (REST + MCP)', { timeout: 300_0
   assert.deepEqual([p5.status, p5.errorCode, p5.outcome.errorCode, p5.outcome.scan.blocked, p5.outcome.settled], ['awaiting_approval', 'scanBlocked', 'scanBlocked', true, true]);
   assert.match(p5.outcome.hint, /staff override/);
   setScanner(noopScanner);
-  await db('releases').where({ id: p5.id }).update({ status: 'rejected', scan: JSON.stringify({ ...p5.scan, override: { by: 'Staff Person', at: new Date().toISOString(), reason: 'ok' } }) });
+  // The pipeline's own lines name the staff member by id (override, rejection): never shown to a key, a member keeps its id.
+  const [st] = await db('users').insert({ username: `ptstaff-${suffix}`, display_name: 'Staff Person', kind: 'staff', role: 'admin', is_active: true }).returning('id');
+  const staffId = Number(st.id ?? st);
+  const at = new Date().toISOString();
+  await db('releases').where({ id: p5.id }).update({
+    status: 'rejected', scan: JSON.stringify({ ...p5.scan, override: { by: 'Staff Person', at, reason: 'ok' } }),
+    log: JSON.stringify([
+      { at, level: 'warn', message: `analyse bloquante levée par dérogation du staff (utilisateur #${staffId})` },
+      { at, level: 'warn', message: `rejetée par l’utilisateur #${staffId} : trop risqué` },
+      { at, level: 'info', message: `restauration demandée par l’utilisateur #${owner}` },
+    ]),
+  });
   const g5 = json(await tool('get_release', { site_id: siteId, release_id: p5.id }));
   assert.equal(g5.scan.override.by, 'staff');
   assert.ok(!JSON.stringify(g5).includes('Staff Person'));
+  assert.ok(!JSON.stringify(g5.log).includes(`#${staffId}`), JSON.stringify(g5.log));
+  assert.deepEqual(g5.log.map((l: { message: string }) => l.message), [
+    'analyse bloquante levée par dérogation du staff', 'rejetée par le staff : trop risqué', `restauration demandée par l’utilisateur #${owner}`,
+  ]);
 
   // ── publish without wait: the queued release at once; wait_for_release follows it ──
   let release: () => void = () => {};
@@ -221,14 +236,45 @@ test('publication tracking through an access key (REST + MCP)', { timeout: 300_0
   const p6 = json(await tool('publish', { site_id: siteId, wait: false }));
   assert.ok(['queued', 'scanning', 'publishing'].includes(p6.status));
   assert.equal(p6.outcome, undefined);
+  // The key is on the answer without wait too (the publish row is read with its key).
+  assert.deepEqual([p6.apiKeyId, p6.apiKeyName], [kAgent.id, 'ci-agent']);
   const w6 = json(await tool('wait_for_release', { site_id: siteId, release_id: p6.id, timeout_s: 1 }));
   assert.deepEqual([w6.outcome.settled, w6.outcome.timedOut], [false, true]);
   assert.match(w6.outcome.hint, /wait_for_release/);
+  // At most 3 waits at once per key: the 4th, and a publish with wait, are refused (429, nothing published).
+  const held = [1, 2, 3].map(() => call(`/sites/${siteId}/releases/${p6.id}/wait?timeout=30`));
+  await new Promise((res) => setTimeout(res, 400));
+  const fourth = await tool('wait_for_release', { site_id: siteId, release_id: p6.id, timeout_s: 5 });
+  assert.equal(fourth.isError, true);
+  assert.match(fourth.text, /rateLimited/);
+  const pubRefused = await call(`/sites/${siteId}/publish`, { method: 'POST', body: JSON.stringify({ wait: true }) });
+  assert.equal(pubRefused.status, 429);
+  assert.equal(await db('releases').where({ site_id: siteId }).count('* as n').first().then((x) => Number((x as { n: number }).n)), p6.number);
+  // Without wait it is not limited (the release in flight answers publishInProgress).
+  assert.equal((await call(`/sites/${siteId}/publish`, { method: 'POST', body: JSON.stringify({}) })).status, 409);
   release();
   probe = async () => ({ ok: true, status: 200, error: null });
+  for (const w of await Promise.all(held)) {
+    assert.equal(w.status, 200);
+    assert.deepEqual([w.body.data.status, w.body.data.outcome.live, w.body.data.outcome.timedOut], ['ready', true, false]);
+  }
   const w6b = await call(`/sites/${siteId}/releases/${p6.id}/wait?timeout=30`);
   assert.equal(w6b.status, 200);
   assert.deepEqual([w6b.body.data.status, w6b.body.data.outcome.live, w6b.body.data.outcome.timedOut], ['ready', true, false]);
+  await settle(p6.id);
+  // A release already settled answers at once, even while another run holds the site lock.
+  __releaseInternals.locks.add(siteId);
+  try {
+    const t0 = Date.now();
+    assert.equal((await call(`/sites/${siteId}/releases/${r1.id}/wait?timeout=20`)).status, 200);
+    assert.ok(Date.now() - t0 < 3000, `settled release waited ${Date.now() - t0} ms`);
+    // The polling stops with its caller (aborted signal), even for the lock wait of the internal callers.
+    const t1 = Date.now();
+    await releaseService.waitForRelease(siteId, r1.id, 20_000, { signal: AbortSignal.abort() });
+    assert.ok(Date.now() - t1 < 3000);
+  } finally {
+    __releaseInternals.locks.delete(siteId);
+  }
   assert.equal((await call(`/sites/${siteId}/releases/${p6.id}/wait?timeout=61`)).status, 400, 'at most 60 s');
   const badWait = await tool('wait_for_release', { site_id: siteId, release_id: p6.id, timeout_s: 120 });
   assert.equal(badWait.isError, true);
@@ -250,6 +296,18 @@ test('publication tracking through an access key (REST + MCP)', { timeout: 300_0
   assert.equal(denied.isError, true);
   assert.match(denied.text, /keyScope/);
   assert.equal((await call(`/sites/${siteId}/releases/${p6.id}/diff`, {}, kPubOnly.key!)).status, 403);
+  // diff_release counts in the heavy operations' bucket (60 / min per key, as its REST route), batches included.
+  const kHeavy = await apiKeysService.create(fakeReq(), ownerActor, acme, { name: 'heavy', scopes: ['files.read'], siteScope: 'all' });
+  const batchDiff = async () => {
+    const rr = await fetch(`${base}/mcp`, {
+      method: 'POST', headers: { authorization: `Bearer ${kHeavy.key!}`, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(Array.from({ length: 20 }, (_, i) => ({ jsonrpc: '2.0', id: i + 1, method: 'tools/call', params: { name: 'diff_release', arguments: { site_id: siteId, release_id: 999999 } } }))),
+    });
+    return (await rr.json() as Array<{ result: { isError?: boolean; content: Array<{ text: string }> } }>).map((x) => x.result.content[0].text);
+  };
+  const heavyTexts = [...await batchDiff(), ...await batchDiff(), ...await batchDiff(), ...await batchDiff()];
+  assert.equal(heavyTexts.filter((x) => /rateLimited/.test(x)).length, 20, 'calls past 60 refused');
+  assert.equal((await call(`/sites/${siteId}/releases/${p6.id}/diff`, {}, kHeavy.key!)).status, 429, 'the REST route shares the bucket');
   // get_release / list_releases need no extra scope.
   assert.equal(json(await tool('get_release', { site_id: siteId, release_id: p6.id }, kPubOnly.key!)).id, p6.id);
   const lr = json(await tool('list_releases', { site_id: siteId }, kPubOnly.key!));
