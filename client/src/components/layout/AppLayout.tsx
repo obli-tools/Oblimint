@@ -9,9 +9,12 @@ import { useTenantStore } from '@/store/tenantStore';
 import { TransferDock } from '@/components/files/TransferDock';
 import { GlobalDomainDrawer } from '@/components/hosting/DomainDrawer';
 import { cn } from '@/utils/cn';
+import { usePendingActionsLive } from '@/store/pendingActionsStore';
 
 export function AppLayout() {
   const { t } = useTranslation();
+  // Sensitive-action requests: sidebar badge + live updates (socket).
+  usePendingActionsLive();
   // ── Tenant-switch safety net ──────────────────────────────────────────────
   // Tenant-scoped pages (account detail, site detail, etc.)
   // hold an ID in the URL that only resolves under the active tenant. When

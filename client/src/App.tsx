@@ -12,6 +12,9 @@ import { LoginPage } from '@/pages/LoginPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { ProfilePage } from '@/pages/ProfilePage';
 import { NotificationsPage } from '@/pages/NotificationsPage';
+import { ApprovalsPage } from '@/pages/ApprovalsPage';
+import { RestrictionsPage } from '@/pages/RestrictionsPage';
+import { PendingApprovalGate } from '@/components/approvals/PendingApprovalGate';
 import { AdminUsersPage } from '@/pages/AdminUsersPage';
 import { TenantsPage } from '@/pages/TenantsPage';
 import { NodesPage } from '@/pages/NodesPage';
@@ -144,6 +147,9 @@ function NormalRoutes() {
           {/* User */}
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
+          {/* Sensitive actions: confirmations / approvals (staff and client spaces; the server scopes) */}
+          <Route path="/approvals" element={<ApprovalsPage />} />
+          <Route path="/approvals/:id" element={<ApprovalsPage />} />
 
           {/* Admin-only */}
           <Route element={<ProtectedRoute requiredRole="admin" />}>
@@ -158,6 +164,8 @@ function NormalRoutes() {
               capability (notification channels only; SettingsPage gates each section). */}
           <Route element={<ProtectedRoute requiredCapabilities={['settings']} />}>
             <Route path="/settings" element={<SettingsPage />} />
+            {/* Protected actions matrix of the workspace (platform admins: Users > Protected actions) */}
+            <Route path="/manage/restrictions" element={<RestrictionsPage />} />
           </Route>
 
           {/* Platform admin on the master tenant (god view) */}
@@ -236,6 +244,9 @@ export default function App() {
       {/* Singleton modal that pops whenever the server replies
           401 twoFactorRequired — no need to wire anything at call sites. */}
       <TwoFactorGate />
+      {/* Singleton waiting modal of a 'restricted' action (202 pendingApproval): follows the
+          request live and replays it once approved. */}
+      <PendingApprovalGate />
       {/* Host for useConfirm() / usePrompt() / confirmDialog() / promptDialog(). */}
       <ConfirmProvider />
     </BrowserRouter>

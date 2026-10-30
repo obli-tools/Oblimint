@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  Plus, Pencil, Trash2, Key, Building2, Shield, ShieldOff, User as UserIcon, UserX, ChevronRight, Loader2,
+  Plus, Pencil, Trash2, Key, Building2, Shield, ShieldAlert, ShieldOff, User as UserIcon, UserX, ChevronRight, Loader2,
 } from 'lucide-react';
 import type { PermissionSet, User } from '@oblimint/shared';
 import { usersApi } from '@/api/users.api';
@@ -20,13 +20,14 @@ import { MasterDetail } from '@/components/common/MasterDetail';
 import { SegmentedTabs, type SegmentedTab } from '@/components/common/SegmentedTabs';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { PermissionSetsTab } from '@/components/PermissionSetsTab';
+import { RestrictionsTab } from '@/components/restrictions/RestrictionsTab';
 import { useOpenClientAccount } from '@/components/hosting/useOpenClientAccount';
 
-type Tab = 'users' | 'permissionSets';
+type Tab = 'users' | 'permissionSets' | 'restrictions';
 type UserFormMode = 'create' | 'edit' | 'password' | null;
 type TenantDraft = Record<number, { isMember: boolean; role: string }>;
 
-const TABS: Tab[] = ['users', 'permissionSets'];
+const TABS: Tab[] = ['users', 'permissionSets', 'restrictions'];
 
 /** Permission set of client logins: theirs only, and only theirs (server: membershipRoleRefusal). */
 const CLIENT_ROLE = 'client';
@@ -328,6 +329,7 @@ export function AdminUsersPage() {
   const mainTabs: SegmentedTab<Tab>[] = [
     { id: 'users', label: t('users.tabUsers') || 'Users', icon: <UserIcon size={14} /> },
     { id: 'permissionSets', label: t('users.tabPermissionSets') || 'Permission sets', icon: <Shield size={14} /> },
+    { id: 'restrictions', label: t('restrictions.tab') || 'Protected actions', icon: <ShieldAlert size={14} /> },
   ];
 
   const selectCls = 'w-full rounded-md bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent coarse:min-h-10';
@@ -355,6 +357,9 @@ export function AdminUsersPage() {
 
             {/* ── Permission Sets Tab ── */}
             {tab === 'permissionSets' && <PermissionSetsTab />}
+
+            {/* ── Restrictions Tab (sensitive actions matrix) ── */}
+            {tab === 'restrictions' && <RestrictionsTab />}
 
             {/* ── Users Tab ── */}
             {tab === 'users' && (

@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test:webmail": "node --import tsx --test src/webmail/lib/htmlPolicy.test.ts src/webmail/lib/compose.test.ts",
     "test:hosting": "node --import tsx --test src/components/hosting/domainParent.test.ts src/components/hosting/agentPrompt.test.ts",
-    "test:dns": "node --import tsx --test src/components/dns/ownershipResult.test.ts"
+    "test:dns": "node --import tsx --test src/components/dns/ownershipResult.test.ts",
+    "test:approvals": "tsx --tsconfig tsconfig.test.json --test src/components/restrictions/restrictionsLogic.test.ts src/api/pendingReplay.test.ts src/components/approvals/approvalsLogic.test.ts"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",

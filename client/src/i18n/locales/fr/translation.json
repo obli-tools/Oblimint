@@ -248,7 +248,9 @@
     "traffic": "Requêtes HTTP",
     "edge": "Edge",
     "migration": "Migration CWP",
-    "myAccount": "Mon compte"
+    "myAccount": "Mon compte",
+    "approvals": "Approbations",
+    "restrictions": "Actions protégées"
   },
   "nodes": {
     "col": {

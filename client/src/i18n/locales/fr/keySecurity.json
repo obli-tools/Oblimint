@@ -48,7 +48,9 @@
       "sessions": "Exemptées (sessions admin plateforme ouvertes) :",
       "lastBan": "Dernier ban : {{ip}} ({{date}}).",
       "bansLink": "Bannissements",
-      "wouldBan": "Auraient été bannies (journal seul) :"
+      "wouldBan": "Auraient été bannies (journal seul) :",
+      "autoLeft": "(encore {{h}} h {{m}} min)",
+      "autoEnding": "(bascule imminente)"
     },
     "requireIp": "Une adresse IP est obligatoire sur les clés d’accès",
     "requireIpHint": "Valeur par défaut de chaque espace (un espace peut la surcharger). Une clé sans adresse est refusée à l’usage tant qu’elle n’est pas restreinte ; un connecteur est couvert par les plages des connecteurs.",

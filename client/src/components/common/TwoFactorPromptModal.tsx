@@ -19,7 +19,15 @@ const BUILTIN_ACTIONS: Record<string, [key: string, fallback: string]> = {
   'profile.totp_manage': ['twoFactorPrompt.actions.totpManage', 'Change your authenticator app'],
   'profile.recovery_codes': ['identity.prompt.recoveryCodes', 'Generate new recovery codes'],
   'profile.email_change': ['identity.prompt.emailChange', 'Change your e-mail address'],
+  'pending_action.confirm': ['approvals.prompt.confirm', 'Confirm the requested action'],
+  'pending_action.approve': ['approvals.prompt.approve', 'Approve the request (your own code)'],
 };
+
+/** Readable label of a protected action of the matrix (restrictions.actions.*), or the raw key. */
+function restrictedActionLabel(t: (k: string, o?: Record<string, unknown>) => string, key: string): string {
+  if (!/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(key)) return key;
+  return t(`restrictions.actions.${key.replace(/\./g, '_')}`, { defaultValue: key });
+}
 
 export function TwoFactorPromptModal({
   actionLabel,
@@ -54,7 +62,7 @@ export function TwoFactorPromptModal({
   useEffect(() => { inputRef.current?.focus(); }, []);
 
   const builtin = BUILTIN_ACTIONS[actionLabel];
-  const label = builtin ? t(builtin[0], builtin[1]) : actionLabel;
+  const label = builtin ? t(builtin[0], builtin[1]) : restrictedActionLabel(t as never, actionLabel);
   const ready = isPassword ? code.length > 0 : code.length === 6;
   const showTrust = trustIpAllowed && !isPassword;
 

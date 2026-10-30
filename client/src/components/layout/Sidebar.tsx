@@ -31,6 +31,8 @@ import {
   Activity,
   Workflow,
   ShieldBan,
+  ShieldCheck,
+  ShieldAlert,
   LineChart,
   ServerCog,
   // P5
@@ -45,6 +47,7 @@ import { IconButton } from '@/components/common/IconButton';
 import { useRememberedAccount } from '@/components/common/AccountScope';
 import { hostingCan, useHostingMe, type HostingNeed } from '@/store/hostingStore';
 import { useMaintenanceBadge } from './useNavBadges';
+import { usePendingActionsStore } from '@/store/pendingActionsStore';
 
 // ── localStorage helpers ─────────────────────────────────────────────────────
 
@@ -199,6 +202,8 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
   const may = (need: HostingNeed) => hostingMe === null || hostingCan(hostingMe, need);
   const canRead = may('read');
   const maintenanceBadge = useMaintenanceBadge(canRead && hostingMe !== null);
+  // Sensitive actions waiting for me (my confirmations + approvals I may give): staff and clients.
+  const approvalsBadge = usePendingActionsStore((s) => s.todo);
   // A client of a single account: « My account » leads straight to it.
   const clientAccounts = hostingMe?.kind === 'client' ? Object.keys(hostingMe.accounts).map(Number) : [];
   const ownAccount = clientAccounts.length === 1 ? clientAccounts[0] : null;
@@ -224,6 +229,8 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     { family: 'network', label: t('nav.proxy') || 'Proxy', path: '/proxy', icon: <Waypoints size={18} />, hidden: !canRead },
     { family: 'network', label: t('nav.network') || 'Network links', path: '/network', icon: <Network size={18} />, hidden: !canRead },
     { family: 'network', label: t('nav.bans') || 'Bans', path: '/security/bans', icon: <ShieldBan size={18} />, hidden: !canRead },
+    // Confirmations / approvals of the protected actions: everyone (the server lists only his own).
+    { family: 'network', label: t('nav.approvals') || 'Approvals', path: '/approvals', icon: <ShieldCheck size={18} />, badgeCount: approvalsBadge },
     // ── Observation
     { family: 'observation', label: t('nav.uptime') || 'Uptime', path: '/uptime', icon: <Activity size={18} />, hidden: !canRead },
     { family: 'observation', label: t('nav.traffic') || 'HTTP requests', path: '/traffic', icon: <LineChart size={18} />, hidden: !canRead },
@@ -248,6 +255,8 @@ export function Sidebar({ variant = 'default', onRequestClose }: SidebarProps = 
     ...(admin && isMaster ? [{ label: t('nav.migration') || 'CWP migration', path: '/manage/migration', icon: <ArrowRightLeft size={18} /> } as NavItem] : []),
     ...(admin ? [{ label: t('nav.auditLog') || 'Audit log', path: '/manage/audit-log', icon: <ScrollText size={18} /> } as NavItem] : []),
     ...(canSettings ? [{ label: t('nav.settings') || 'Settings', path: '/settings', icon: <Settings size={18} /> } as NavItem] : []),
+    // Protected actions matrix: platform admins find it in Users; workspace staff with 'settings' here.
+    ...(!admin && canSettings ? [{ label: t('nav.restrictions') || 'Protected actions', path: '/manage/restrictions', icon: <ShieldAlert size={18} /> } as NavItem] : []),
   ];
 
   const strippedUsername = user?.username?.startsWith('og_') ? user.username.slice(3) : user?.username;

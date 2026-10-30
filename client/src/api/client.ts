@@ -1,5 +1,8 @@
 import axios from 'axios';
 import { awaitTwoFactorCode, isTwoFactorCancelled } from '@/utils/twoFactorGate';
+import { awaitPendingApproval, hasPendingApprovalListener, keepReplay } from '@/utils/pendingApprovalGate';
+import { bodyCarriesSecret, parsePendingApproval, replayConfig } from './pendingReplay';
+import { restrictionErrorOf } from './restrictionErrors';
 
 // ObliTools (cross-site iframe / WebView2 shell): Chrome blocks all cookies for cross-site
 // iframes, so we use X-Auth-Token header instead. The token = req.sessionID, stored in
@@ -82,6 +85,7 @@ export function isStepUpHandled(err: unknown): boolean {
   const body = e?.response?.data;
   if (isStepUpThrottleBody(status, body)) return true;
   const method = (e?.config?.method || 'get').toLowerCase();
+  if (method !== 'get' && restrictionErrorOf(status, body)) return true;
   return (status === 401 || status === 403 || status === 423) && typeof body?.error === 'string' && method !== 'get';
 }
 
@@ -110,19 +114,32 @@ export function apiErrorMessage(err: unknown, fallback: string): string {
 }
 
 apiClient.interceptors.response.use(
-  (response) => {
+  async (response) => {
     // ── Restricted action filed for approval (202) ─────────────────────────
-    const d = response?.status === 202 ? (response.data as { data?: { status?: unknown; pendingActionId?: unknown; description?: unknown; expiresAt?: unknown } } | null)?.data : null;
-    if (d && d.status === 'pendingApproval') {
-      const id = Number(d.pendingActionId);
+    // The waiting modal (PendingApprovalGate) follows the request live; once
+    // a second person approves it, « Run now » sends the very same request
+    // again naming its approval and the call site continues as if nothing
+    // had happened. Closed before that: PendingApprovalError (handled), and
+    // the request is kept for a « Run now » toast at approval time — unless
+    // its body carries a secret or a file (never kept beyond the modal).
+    const info = parsePendingApproval(response?.status, response?.data);
+    if (!info) return response;
+    const config = (response.config ?? {}) as any;
+    const id = info.pendingActionId;
+    const reject = () => Promise.reject(new PendingApprovalError(id, info.description, info.expiresAt));
+    if (!hasPendingApprovalListener() || config._pendingReplay === id) {
       Promise.all([import('react-hot-toast'), import('i18next')]).then(([{ default: toast }, { default: i18n }]) => {
         toast(i18n.t('twoFactorPrompt.pendingApprovalFiled', {
           id, defaultValue: 'Request #{{id}} sent for approval: a second authorised person must approve it. Nothing was done yet — run the action again once it is approved.',
         }), { duration: 10000 });
       }).catch(() => {});
-      return Promise.reject(new PendingApprovalError(id, typeof d.description === 'string' ? d.description : null, typeof d.expiresAt === 'string' ? d.expiresAt : null));
+      return reject();
     }
-    return response;
+    const replayableLater = !bodyCarriesSecret(config.data);
+    const decision = await awaitPendingApproval(info, replayableLater);
+    if (decision === 'run') return apiClient(replayConfig(config, id));
+    if (replayableLater) keepReplay(id, () => apiClient(replayConfig(config, id)));
+    return reject();
   },
   async (error) => {
     const status = error?.response?.status;
@@ -182,9 +199,19 @@ apiClient.interceptors.response.use(
       }).catch(() => {});
     }
 
-    // ── Surface actionable restriction errors ─────────────────────────────
     const method = (config.method || 'get').toLowerCase();
     const url = String(config.url ?? '');
+
+    // ── Refusals of the sensitive-actions gate (translated, with their fix) ─
+    const restriction = method !== 'get' ? restrictionErrorOf(status, body) : null;
+    if (restriction) {
+      import('@/components/approvals/restrictionToast')
+        .then(({ showRestrictionError }) => showRestrictionError(restriction, typeof body?.error === 'string' ? body.error : undefined))
+        .catch(() => {});
+      return Promise.reject(error);
+    }
+
+    // ── Surface actionable restriction errors ─────────────────────────────
     const stepUpMsg = stepUpErrorMessage(status, body);
     const shouldSurface =
       ((status === 401 || status === 403 || status === 423) || (stepUpMsg !== null))

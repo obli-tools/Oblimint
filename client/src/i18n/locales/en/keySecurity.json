@@ -48,7 +48,9 @@
       "sessions": "Exempt (open platform-admin sessions):",
       "lastBan": "Last ban: {{ip}} ({{date}}).",
       "bansLink": "Bans",
-      "wouldBan": "Would have been banned (log only):"
+      "wouldBan": "Would have been banned (log only):",
+      "autoLeft": "({{h}} h {{m}} min left)",
+      "autoEnding": "(switching now)"
     },
     "requireIp": "An IP address is mandatory on the access keys",
     "requireIpHint": "Default of every workspace (a workspace may override it). A key without address is refused at use until restricted; a connector is covered by the connectors' ranges.",

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { AlertTriangle, CheckCircle2, RefreshCw, ShieldCheck, Terminal } from 'lucide-react';
@@ -23,6 +24,15 @@ const draftOf = (s: KeySecuritySettings): Draft => ({
   requireIp: s.requireIp, strictMode: s.strictMode, maxFailures: s.maxFailures, failureWindowMinutes: s.failureWindowMinutes,
   trustedIps: [...s.trustedIps], connectorSourceRanges: [...s.connectorSourceRanges],
 });
+
+/** Time left of the log-only period (« 31 h 12 min left »), or « ending ». */
+function logOnlyLeft(iso: string, t: TFunction): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return t('keySecurity.status.autoEnding', { defaultValue: '(switching now)' });
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  return t('keySecurity.status.autoLeft', { h, m, defaultValue: '({{h}} h {{m}} min left)' });
+}
 
 /**
  * Settings page, group « API access & agents » (platform admin, master
@@ -138,7 +148,11 @@ export function KeySecuritySection() {
         {status ? (
           <div className="space-y-2 text-xs text-text-secondary">
             {settings.strictMode === 'auto' && status.autoStrictAt && effective === 'log' && (
-              <p>{t('keySecurity.status.autoAt', { date: fmt(status.autoStrictAt), defaultValue: 'Strict from {{date}} (end of the 48 h log-only period).' })}</p>
+              <p>
+                {t('keySecurity.status.autoAt', { date: fmt(status.autoStrictAt), defaultValue: 'Strict from {{date}} (end of the 48 h log-only period).' })}
+                {' '}
+                <span className="font-medium text-blue-400">{logOnlyLeft(status.autoStrictAt, t)}</span>
+              </p>
             )}
             <p>
               {t('keySecurity.status.keys', { active: status.activeKeys, size: status.allowListSize, defaultValue: '{{active}} active key(s), allow-list of {{size}} entries.' })}
