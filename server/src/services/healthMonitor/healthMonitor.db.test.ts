@@ -130,6 +130,7 @@ test('deep health and heartbeat', { timeout: 120_000 }, async (t: TestContext) =
   const red = await get(port, '/health/deep', { authorization: `Bearer ${second.token}` });
   assert.equal(red.status, 503);
   assert.equal(red.body.status, 'fail');
+  assert.equal(red.body.checks.find((c: { id: string }) => c.id === 'edge').detail, 'not running', 'generic reason in the public body');
 
   // Removal and revocation.
   const cleared = await svc.healthMonitorService.updateSettings(req, { heartbeatUrl: null });

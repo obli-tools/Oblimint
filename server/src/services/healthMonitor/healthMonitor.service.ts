@@ -12,7 +12,7 @@ import { auditService } from '../audit.service';
 import { platformSettings } from '../platformSettings';
 import { nodeRefusal } from '../monitoring/nodeAddresses';
 import { TargetRefusedError, type TargetPolicy } from '../monitoring/targetGuard';
-import { runDeepChecks, type DeepProbes } from './checks';
+import { runDeepChecks, type DeepProbes, type DeepRun } from './checks';
 import { assertHeartbeatUrl, HeartbeatUrlError, heartbeatOrigin, parseHeartbeatUrl, sendHeartbeat, urlPort, type HeartbeatDeps } from './heartbeat';
 import { lastWorkerTick } from './workerTicks';
 
@@ -21,7 +21,9 @@ import { lastWorkerTick } from './workerTicks';
 //  - GET /health/deep: token in `Authorization: Bearer`, `X-Oblimint-Health-Token`
 //    or `?token=` (push-less monitors only take a URL). 404 while no token
 //    exists, 401 on a wrong one, else the report (200 ok / 503 fail). Only the
-//    SHA-256 of the token is stored; reports are cached CACHE_MS.
+//    SHA-256 of the token is stored; reports are cached CACHE_MS. The body
+//    carries generic reasons only; the raw ones go to the log and to the
+//    admin settings (lastReport).
 //  - Heartbeat: every minute (workers on), the deep checks run; when all are
 //    green the sealed URL ('notification' secret) is called through the
 //    anti-SSRF guard. Nothing is sent on a red check: the external monitor
@@ -92,8 +94,27 @@ const realProbes: DeepProbes = {
     if (!h.ok) throw new Error('hostd reports not ok');
   },
   async infra() {
+    // The engine must answer: status() reports an unreachable Docker as
+    // "not deployed" components, which would read as 'skipped'.
+    const { engineFor, localNodeId } = await import('../docker/engine');
+    try {
+      await (await engineFor(await localNodeId())).ping();
+    } catch (err) {
+      throw new Error(`Docker engine unreachable: ${(err as Error)?.message ?? String(err)}`);
+    }
     const { infraService } = await import('../docker/infra.service');
-    return (await infraService.status()).components;
+    const { extraInfraComponents } = await import('../docker/extensions');
+    const [status, extra] = await Promise.all([infraService.status(), extraInfraComponents()]);
+    // What the boot pass deploys (workers on) is required: missing = fail.
+    const workers = config.hosting.workersEnabled;
+    const wanted = new Set<string>(workers ? ['edge'] : []);
+    if (workers) {
+      for (const p of extra) {
+        if (p.id !== 'dns' && p.id !== 'mail') continue;
+        try { if (await p.wantedAtBoot()) wanted.add(p.id); } catch { /* not wanted */ }
+      }
+    }
+    return status.components.map((c) => ({ ...c, required: wanted.has(c.id) }));
   },
   workers: () => ({ enabled: config.hosting.workersEnabled, lastTick: lastWorkerTick('reconcile'), startedAt: STARTED_AT }),
   async disk() {
@@ -112,17 +133,27 @@ let heartbeatDeps: Partial<HeartbeatDeps> = {};
 
 // ── runtime state ───────────────────────────────────────────────────────────
 
-let cached: { at: number; report: Promise<DeepHealthReport> } | null = null;
+let cached: { at: number; report: Promise<DeepRun> } | null = null;
 let lastReport: DeepHealthReport | null = null;
+let lastFailingKey = '';
 let lastHeartbeatAt: string | null = null;
 let lastHeartbeatError: string | null = null;
 let timer: NodeJS.Timeout | null = null;
 let ticking = false;
 
-function deepReport(fresh = false): Promise<DeepHealthReport> {
+/** Admin report (raw reasons) in lastReport and the log; the public one (generic texts) for /health/deep. */
+function deepReport(fresh = false): Promise<DeepRun> {
   const now = Date.now();
   if (fresh || !cached || now - cached.at > CACHE_MS) {
-    const report = runDeepChecks(probes, serverVersion).then((r) => { lastReport = r; return r; });
+    const report = runDeepChecks(probes, serverVersion).then((r) => {
+      lastReport = r.admin;
+      const failing = r.admin.checks.filter((c) => c.status === 'fail');
+      // Logged once per change of the failing set (the heartbeat runs every minute).
+      const key = failing.map((c) => c.id).join(',');
+      if (key && key !== lastFailingKey) logger.warn({ checks: failing.map((c) => ({ id: c.id, detail: c.detail })) }, 'Deep health: failing checks');
+      lastFailingKey = key;
+      return r;
+    });
     cached = { at: now, report };
     report.catch(() => { cached = null; });
   }
@@ -164,7 +195,7 @@ async function heartbeatTick(): Promise<void> {
       lastHeartbeatError = 'heartbeat URL unreadable (SESSION_SECRET rotated?): set it again';
       return;
     }
-    const report = await deepReport(true);
+    const report = (await deepReport(true)).admin;
     if (report.status !== 'ok') {
       const red = report.checks.filter((x) => x.status === 'fail').map((x) => x.id).join(', ');
       lastHeartbeatError = `not sent: failing checks (${red})`;
@@ -263,7 +294,7 @@ export const deepHealthHandler: RequestHandler = async (req, res) => {
     const c = await loadConfig();
     if (!c.tokenHash) { res.status(404).json({ status: 'disabled', error: 'Deep health is not enabled: create a token in Settings' }); return; }
     if (!tokenMatches(presentedToken(req), c.tokenHash)) { res.status(401).json({ status: 'unauthorized', error: 'Invalid or missing health token' }); return; }
-    const report = await deepReport();
+    const report = (await deepReport()).public;
     res.status(report.status === 'ok' ? 200 : 503).json(report);
   } catch {
     // The database itself is down (the token cannot be read): a failed check, no detail (unauthenticated).
@@ -277,6 +308,7 @@ export function setHealthMonitorForTests(p: Partial<DeepProbes> | null, hb?: Par
   heartbeatDeps = hb ?? {};
   cached = null;
   lastReport = null;
+  lastFailingKey = '';
   lastHeartbeatAt = null;
   lastHeartbeatError = null;
 }

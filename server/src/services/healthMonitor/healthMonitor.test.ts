@@ -24,35 +24,66 @@ function probes(over: Partial<DeepProbes> = {}): DeepProbes {
 }
 
 test('deep checks: all green, a component not deployed is skipped', async () => {
-  const r = await runDeepChecks(probes(), '1.2.3');
+  const { admin: r, public: p } = await runDeepChecks(probes(), '1.2.3');
   assert.equal(r.status, 'ok');
   assert.equal(r.version, '1.2.3');
   assert.deepEqual(r.checks.map((c) => c.id), ['postgres', 'hostd', 'edge', 'dns', 'mail', 'workers', 'disk']);
   assert.equal(r.checks.find((c) => c.id === 'mail')!.status, 'skipped');
   assert.equal(r.checks.find((c) => c.id === 'disk')!.detail, '40% free');
+  assert.deepEqual(p, r, 'nothing to hide when all is green');
 });
 
 test('deep checks: a failing probe, a stopped container, a hung probe', async () => {
-  const r = await runDeepChecks(probes({
-    postgres: async () => { throw new Error('connection refused'); },
-    infra: async () => [comp('edge', true, false, 'exited (exit 1)'), comp('dns', true, true)],
+  const { admin: r, public: p } = await runDeepChecks(probes({
+    postgres: async () => { throw new Error('connect ECONNREFUSED 198.51.100.7:5432'); },
+    infra: async () => [comp('edge', true, false, 'exited (exit 1): mount /srv/oblimint/x denied'), comp('dns', true, true)],
     hostd: () => new Promise(() => undefined),
   }), 'v', 50);
   assert.equal(r.status, 'fail');
+  assert.equal(p.status, 'fail');
   const by = Object.fromEntries(r.checks.map((c) => [c.id, c]));
   assert.equal(by.postgres.status, 'fail');
-  assert.match(by.postgres.detail!, /connection refused/);
+  assert.match(by.postgres.detail!, /ECONNREFUSED/);
   assert.equal(by.edge.status, 'fail');
   assert.match(by.edge.detail!, /not running/);
   assert.equal(by.hostd.status, 'fail');
   assert.match(by.hostd.detail!, /timed out/);
   assert.equal(by.dns.status, 'ok');
   assert.equal(by.mail.status, 'skipped');
+  // The public body: same statuses, fixed generic reasons (no address, no path).
+  const pub = Object.fromEntries(p.checks.map((c) => [c.id, c]));
+  assert.deepEqual(p.checks.map((c) => c.status), r.checks.map((c) => c.status));
+  assert.equal(pub.postgres.detail, 'unreachable');
+  assert.equal(pub.hostd.detail, 'timed out');
+  assert.equal(pub.edge.detail, 'not running');
+  const body = JSON.stringify(p);
+  assert.equal(/198\.51|5432|\/srv|ECONNREFUSED/.test(body), false, body);
 });
 
-test('deep checks: infra unreachable fails edge / dns / mail', async () => {
-  const r = await runDeepChecks(probes({ infra: async () => { throw new Error('docker down'); } }), 'v');
-  for (const id of ['edge', 'dns', 'mail']) assert.equal(r.checks.find((c) => c.id === id)!.status, 'fail');
+test('deep checks: Docker unreachable fails edge / dns / mail, generic public reason', async () => {
+  const { admin: r, public: p } = await runDeepChecks(probes({ infra: async () => { throw new Error('Docker engine unreachable: connect ENOENT /var/run/docker.sock'); } }), 'v');
+  assert.equal(r.status, 'fail');
+  for (const id of ['edge', 'dns', 'mail'] as const) {
+    assert.equal(r.checks.find((c) => c.id === id)!.status, 'fail');
+    assert.equal(p.checks.find((c) => c.id === id)!.detail, 'container status unavailable');
+  }
+  assert.equal(JSON.stringify(p).includes('docker.sock'), false);
+});
+
+test('deep checks: a required component missing fails, an optional one is skipped', async () => {
+  // Edge container removed (docker rm -f) while the workers run: required → fail.
+  const { admin: r, public: p } = await runDeepChecks(probes({
+    infra: async () => [{ ...comp('edge', false, false), required: true }, comp('dns', false, false), { ...comp('mail', false, false, 'Not deployed'), required: false }],
+  }), 'v');
+  assert.equal(r.status, 'fail');
+  const by = Object.fromEntries(r.checks.map((c) => [c.id, c]));
+  assert.equal(by.edge.status, 'fail');
+  assert.equal(p.checks.find((c) => c.id === 'edge')!.detail, 'not deployed');
+  assert.equal(by.dns.status, 'skipped');
+  assert.equal(by.mail.status, 'skipped');
+  // PowerDNS wanted (required) but gone: fail too.
+  const dnsGone = await runDeepChecks(probes({ infra: async () => [comp('edge', true, true), { ...comp('dns', false, false), required: true }] }), 'v');
+  assert.equal(dnsGone.admin.checks.find((c) => c.id === 'dns')!.status, 'fail');
 });
 
 test('workers check', () => {
