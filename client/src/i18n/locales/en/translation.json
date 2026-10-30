@@ -767,7 +767,8 @@
     "openClientAccount": "Open the hosting account",
     "clientNoAccount": "This customer is attached to no hosting account visible in this workspace.",
     "clientSeveralAccounts": "Member of {{count}} accounts: {{username}} is opened.",
-    "clientAccountFailed": "Failed to find the account of this customer"
+    "clientAccountFailed": "Failed to find the account of this customer",
+    "ownEmailHint": "Your own address is changed from your profile: the new address is confirmed by a link."
   },
   "objectPage": {
     "account": {

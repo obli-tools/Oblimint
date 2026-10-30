@@ -160,7 +160,8 @@ export function AdminUsersPage() {
       await usersApi.update(editingUser.id, {
         username: formUsername.trim(),
         displayName: formDisplayName.trim() || null,
-        email: formEmail.trim() || null,
+        // One's own address changes from the profile (step-up + confirmation link): never sent from here.
+        ...(editingUser.id === currentUser?.id ? {} : { email: formEmail.trim() || null }),
         ...(isPlatformAdmin ? { role: formRole } : {}),
       });
       toast.success(t('users.updated') || 'User updated');
@@ -376,7 +377,11 @@ export function AdminUsersPage() {
                     <form onSubmit={userFormMode === 'create' ? handleCreateUser : handleEditUser} className="space-y-3">
                       <Input label={t('users.usernameLabel') || 'Username'} value={formUsername} onChange={(e) => setFormUsername(e.target.value)} required pattern="[a-zA-Z0-9_.\-]+" autoCapitalize="off" autoCorrect="off" spellCheck={false} autoComplete="off" />
                       <Input label={t('users.displayNameLabel') || 'Display name'} value={formDisplayName} onChange={(e) => setFormDisplayName(e.target.value)} />
-                      <Input label={t('users.emailLabel') || 'E-mail'} type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} autoComplete="off" />
+                      <Input label={t('users.emailLabel') || 'E-mail'} type="email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} autoComplete="off"
+                        disabled={userFormMode === 'edit' && editingUser?.id === currentUser?.id} />
+                      {userFormMode === 'edit' && editingUser?.id === currentUser?.id && (
+                        <p className="text-xs text-text-muted">{t('users.ownEmailHint') || 'Your own address is changed from your profile: the new address is confirmed by a link.'}</p>
+                      )}
                       {userFormMode === 'create' && (
                         <Input label={t('users.passwordLabel') || 'Password'} type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} required minLength={12} autoComplete="new-password" />
                       )}

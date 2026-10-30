@@ -38,6 +38,8 @@ async function otherActiveAdmins(exceptId: number): Promise<number> {
   return Number(row?.n ?? 0);
 }
 
+const normEmail = (v: string | null | undefined): string => (v ?? '').trim().toLowerCase();
+
 export async function usernameTaken(username: string): Promise<boolean> {
   return !!(await db('users').whereRaw('lower(username) = lower(?)', [username]).first('id'));
 }
@@ -90,7 +92,17 @@ export async function updateUserAccount(actor: ScopeActor, targetId: number, dat
     throw new AppError(403, 'Only a platform administrator can change a user role');
   }
   if (scoped.foreign_source === 'obligate') throw new AppError(400, 'Cannot modify SSO user — manage from Obligate');
-  const kindRow = await db('users').where({ id: targetId }).first('kind') as { kind: string } | undefined;
+  const kindRow = await db('users').where({ id: targetId }).first('kind', 'email') as { kind: string; email: string | null } | undefined;
+  // One's OWN address never changes here (an address written by an operator
+  // counts as verified, a reset link may go to it): the profile route asks
+  // the step-up and confirms it by a link, like the own password (users.routes).
+  if (targetId === actor.userId && data.email !== undefined) {
+    if (normEmail(data.email) !== normEmail(kindRow?.email)) {
+      throw new AppError(409, 'Use your profile to change your own e-mail address: the new address is confirmed by a link', 'emailChangeRequiresConfirmation');
+    }
+    // The same address sent back by the form: never rewritten (it would turn an unverified address into a verified one).
+    data = { ...data, email: undefined };
+  }
   if (data.role === 'admin' && kindRow?.kind === 'client') throw new AppError(400, 'A client account cannot be an administrator');
   if ((data.role === 'user' || data.isActive === false) && scoped.role === 'admin') {
     if ((await otherActiveAdmins(targetId)) === 0) throw new AppError(400, 'Cannot remove the last active admin');

@@ -767,7 +767,8 @@
     "openClientAccount": "Ouvrir le compte d'hébergement",
     "clientNoAccount": "Ce client n'est rattaché à aucun compte d'hébergement visible dans cet espace de travail.",
     "clientSeveralAccounts": "Membre de {{count}} comptes : {{username}} est ouvert.",
-    "clientAccountFailed": "Impossible de trouver le compte de ce client"
+    "clientAccountFailed": "Impossible de trouver le compte de ce client",
+    "ownEmailHint": "Votre propre adresse se change depuis votre profil : la nouvelle adresse est confirmée par un lien."
   },
   "objectPage": {
     "account": {
