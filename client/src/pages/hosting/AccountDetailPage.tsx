@@ -280,7 +280,7 @@ export function AccountDetailPage() {
           accountId={account.id}
           canRun={can('sites.manage', accountId)}
           canManage={manage}
-          can={{ code: can('sites.manage', accountId) && can('files.manage', accountId), data: can('files.manage', accountId), db: can('databases.manage', accountId) }}
+          can={{ code: can('sites.manage', accountId) && can('files.manage', accountId), data: can('files.manage', accountId), db: can('databases.manage', accountId), repo: can('sites.manage', accountId) }}
         />
       )}
       {tab === 'access' && <AccountAccessTab account={account} />}

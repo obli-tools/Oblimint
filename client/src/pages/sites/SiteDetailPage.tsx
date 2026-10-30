@@ -312,7 +312,7 @@ export function SiteDetailPage() {
             siteId={site.id}
             canRun={canManage}
             canManage={false}
-            can={{ code: canManage && can('files.manage', site.accountId), data: can('files.manage', site.accountId), db: false }}
+            can={{ code: canManage && can('files.manage', site.accountId), data: can('files.manage', site.accountId), db: false, repo: canManage }}
           />
         </div>
       )}

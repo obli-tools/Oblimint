@@ -18,6 +18,8 @@ import { Card, EmptyState, toastHostingError } from './hostingUi';
 // schedule of the platform, or on demand), restore of a site's code / data or
 // of a database from one of them.
 
+type RestoreCan = { code: boolean; data: boolean; db: boolean; repo: boolean };
+
 export function AccountBackupsTab({ accountId, siteId, databaseIds, canRun, canManage, can }: {
   accountId: number;
   /**
@@ -34,7 +36,8 @@ export function AccountBackupsTab({ accountId, siteId, databaseIds, canRun, canM
   canRun: boolean;
   /** accounts.manage (staff): exclude the account from the schedule. */
   canManage: boolean;
-  can: { code: boolean; data: boolean; db: boolean };
+  /** Restore rights, as the server checks them: code = sites + files, repo (release history) = sites.manage alone. */
+  can: RestoreCan;
 }) {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<{ runs: BackupRun[]; enabled: boolean; scheduled: boolean } | null>(null);
@@ -80,7 +83,7 @@ export function AccountBackupsTab({ accountId, siteId, databaseIds, canRun, canM
     : databaseIds != null ? o.kind === 'db' && o.databaseId != null && databaseIds.includes(o.databaseId)
       : true);
   const scoped = siteId != null || databaseIds != null;
-  const scopeCan = siteId != null ? { ...can, db: false } : databaseIds != null ? { code: false, data: false, db: can.db } : can;
+  const scopeCan = siteId != null ? { ...can, db: false } : databaseIds != null ? { code: false, data: false, db: can.db, repo: false } : can;
   const canRestore = scopeCan.code || scopeCan.data || scopeCan.db;
   const runs = scoped ? state.runs.filter((r) => r.objects.some(inScope)) : state.runs;
   const title = siteId != null ? (t('backups.siteTitle') || 'Backups of the site')
@@ -138,7 +141,7 @@ function itemOf(o: BackupObject): BackupRestoreItem | null {
 }
 
 function RestoreModal({ accountId, inScope, run, can, fmt, onClose }: {
-  accountId: number; inScope: (o: BackupObject) => boolean; run: BackupRun | null; can: { code: boolean; data: boolean; db: boolean }; fmt: (iso: string | null) => string; onClose: () => void;
+  accountId: number; inScope: (o: BackupObject) => boolean; run: BackupRun | null; can: RestoreCan; fmt: (iso: string | null) => string; onClose: () => void;
 }) {
   const { t } = useTranslation();
   const confirm = useConfirm();
@@ -149,7 +152,7 @@ function RestoreModal({ accountId, inScope, run, can, fmt, onClose }: {
   if (!run) return null;
 
   // The release history goes with the code (same site rights; the server asks sites.manage).
-  const allowed = (o: BackupObject) => (o.kind === 'repo' ? can.code : can[o.kind as 'code' | 'data' | 'db']);
+  const allowed = (o: BackupObject) => can[o.kind as keyof RestoreCan] === true;
   const objects = run.objects.filter((o) => itemOf(o) && allowed(o) && inScope(o));
   const keyOf = (o: BackupObject) => o.key;
   const word = t('backups.restoreWord') || 'RESTORE';
