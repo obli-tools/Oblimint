@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import type { Request } from 'express';
 import { pipeline, Transform, type Readable } from 'stream';
 import type {
-  ApiV1Me, ApiV1ParentDomain, ApiV1ReleaseDetail, ApiV1ReleaseResult, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileEdit, FileEditResult, FileExtractResult, FileListing, FileOpResult, FileRange, FileSearchResult, FileText, FileWriteResult,
+  ApiV1LeakCheck, ApiV1Me, ApiV1ParentDomain, ApiV1ReleaseDetail, ApiV1ReleaseResult, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileEdit, FileEditResult, FileExtractResult, FileListing, FileOpResult, FileRange, FileSearchResult, FileText, FileWriteResult,
   FileUploadChunkResult, FileUploadSession, LogQueryResult, Release, ReleaseDiff, ReleaseLogLine, SiteErrorGroupDetail, SiteErrorList,
   PreviewFetchResult, PreviewLink, PreviewStartResult, SitePreview,
   ReleaseFileContent, ReleaseFileList, SiteCreate, StagingRestoreResult, StagingRestoreRunning, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
@@ -29,6 +29,8 @@ import { releaseService } from '../releases/release.service';
 import { liveStates } from '../releases/liveState';
 import { loggedUserIds, maskStaffIds, publicReleaseText, releaseOutcome } from '../releases/outcome';
 import { previewService } from '../previews/previews.service';
+import { leakSettingsOf, stagingLeakReport } from '../scan/leakRelease';
+import { localPaths } from '../hosting/paths';
 import { apiKeysService, keyAllowsDomain, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -290,10 +292,13 @@ async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV
   const q = db('sites as s')
     .leftJoin('releases as r', 'r.id', 's.current_release_id')
     .where('s.account_id', ctx.accountId)
-    .select('s.id', 's.name', 's.slug', 's.status', 's.base', 's.docroot', 's.publish_mode', 'r.number as release_number')
+    .select('s.id', 's.name', 's.slug', 's.status', 's.base', 's.docroot', 's.publish_mode', 's.leak_policy', 's.leak_allowlist', 'r.number as release_number')
     .orderBy('s.id');
   if (ids) q.whereIn('s.id', ids);
-  const rows = (await q as Array<{ id: number; name: string; slug: string; status: string; base: string; docroot: string; publish_mode: string; release_number: number | null }>)
+  const rows = (await q as Array<{
+    id: number; name: string; slug: string; status: string; base: string; docroot: string; publish_mode: string; release_number: number | null;
+    leak_policy: string | null; leak_allowlist: unknown;
+  }>)
     .filter((r) => keyAllowsSite(ctx, r.id));
   if (!rows.length) return [];
   const doms = await db('site_routes as sr').join('domains as d', 'd.id', 'sr.domain_id').whereIn('sr.site_id', rows.map((r) => r.id))
@@ -307,6 +312,7 @@ async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV
     const primary = mine.find((d) => d.path_prefix === '/') ?? mine[0];
     const st = states.get(r.id);
     const revert = st?.via === 'revert';
+    const leak = leakSettingsOf(r);
     return {
       id: r.id, name: r.name, slug: r.slug, status: r.status, base: r.base, docroot: r.docroot, publishMode: r.publish_mode,
       primaryDomain: primary?.name ?? null, domains: [...new Set(mine.map((d) => d.name))], currentRelease: r.release_number ?? null,
@@ -321,6 +327,7 @@ async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV
       latestRelease: st?.latest ? { id: st.latest.id, number: st.latest.number, publishedAt: st.latest.publishedAt } : null,
       rolledBack: st?.rolledBack ?? false,
       rolledBackFrom: st?.rolledBackFrom ? { id: st.rolledBackFrom.id, number: st.rolledBackFrom.number } : null,
+      leakGuard: { policy: leak.policy, allowlist: leak.allowlist },
     };
   });
 }
@@ -428,6 +435,19 @@ export const keyApi = {
     requireScope(ctx, 'files.read');
     const site = await keySite(ctx, siteId);
     return releaseService.stagingStatus(site.id);
+  },
+
+  /**
+   * The leak guard on the staging, as the next publication would see it
+   * (files.read and the right to read the code): file:line and rule of each
+   * finding, never the secret. Every file's content is read, within the budget.
+   */
+  async checkLeaks(ctx: ApiKeyContext, siteId: number): Promise<ApiV1LeakCheck> {
+    await filesAccount(ctx, false);
+    const site = await keySite(ctx, siteId);
+    assertReadsCode(ctx.actor, site);
+    const dataPaths = await db('site_data_paths').where({ site_id: site.id }).pluck('path') as string[];
+    return stagingLeakReport(localPaths.siteStaging(site.account_id, site.slug), dataPaths, site);
   },
 
   /**

@@ -1,5 +1,5 @@
 import type { DbConnectionInfo, DbDatabase, DbEngine, DbFamily, DbInstanceStatus, DbUser } from './databases';
-import type { CurrentReleaseVia, SiteUpdate } from './hosting';
+import type { CurrentReleaseVia, LeakPolicy, LeakReport, SiteUpdate } from './hosting';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API access keys of a hosting account (« Clés d'accès »): a script, a CI or an
@@ -325,6 +325,16 @@ export interface ApiV1Site {
   rolledBack: boolean;
   /** The release abandoned by that rollback. */
   rolledBackFrom: { id: number; number: number } | null;
+  /** Leak guard of the publications (read only for a key: set by a human in the panel). */
+  leakGuard: { policy: LeakPolicy; allowlist: string[] };
+}
+
+/** GET /api/v1/sites/:id/leak-check (MCP check_leaks): the leak guard run on the staging, as the next publish would see it. */
+export interface ApiV1LeakCheck extends LeakReport {
+  /** Files of the staging that would be published (data paths and nested repositories excluded). */
+  files: number;
+  /** The walk stopped at its bound: some files were not checked. */
+  truncated: boolean;
 }
 
 /** How the live release of a site became live. */

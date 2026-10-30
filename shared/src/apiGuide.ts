@@ -127,6 +127,7 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`delete_paths\` | Delete files / folders | \`files.write\` |
 | \`extract_archive\` | Extract a \`.zip\` / \`.tar\` / \`.tar.gz\` already in the site | \`files.write\` |
 | \`staging_changes\` | Unpublished changes (\`pendingChanges\`, \`files\`), \`base\` / \`baseIsLive\`, \`liveChanges\` (what \`publish\` would change on the live site), \`rolledBack\`, \`warningItems\`, \`restore\` | \`files.read\` |
+| \`check_leaks\` | The leak guard of the publication run on the staging (see §5 « Secrets and leaks »): \`policy\`, \`blocked\`, \`critical\` / \`warn\`, \`findings\` (\`path\`, \`line\`, \`rule\`, \`severity\`, \`served\`; never the secret), \`allowlisted\` | \`files.read\` + code right |
 | \`publish\` | Publish (new live release), \`message?\`, \`override_rollback?\` (only on the human's explicit request), \`wait?\` (default true: waits ≤ 25 s and returns the release with its \`outcome\`, see §5 « After publishing ») | \`releases.publish\` |
 | \`list_releases\` | Release history, newest first (\`limit\`); \`apiKeyName\` (the key that published it), \`errorCode\` | — |
 | \`get_release\` | One release: its pipeline log (French; backend details removed) and its \`outcome\` | — |
@@ -184,7 +185,8 @@ The idea: the agent develops on the platform, puts things live **only once the w
 
 ### After publishing
 
-1. Read the \`outcome\` returned by \`publish\` (or \`wait_for_release\` when \`outcome.timedOut\`): \`live\`, \`healthcheck\` (\`passed\` / \`failed\` / \`notRun\`), \`autoReverted\` (the previous release was put back), \`scan\` (verdict, risk), \`errorCode\` and \`hint\`.
+1. Read the \`outcome\` returned by \`publish\` (or \`wait_for_release\` when \`outcome.timedOut\`): \`live\`, \`healthcheck\` (\`passed\` / \`failed\` / \`notRun\`), \`autoReverted\` (the previous release was put back), \`scan\` (verdict, risk), \`leaks\` (leak guard), \`errorCode\` and \`hint\`.
+   - \`leakBlocked\`: the leak guard found a secret or a file that must not be published (\`outcome.leaks.findings\`: \`path\`, \`line\`, \`rule\`); nothing went live. Remove it from the staging, \`check_leaks\`, publish again (see « Secrets and leaks » below).
    - \`healthcheckFailed\`: the site did not answer its health check on the new code; the previous release is live again. \`get_release\` for the log, \`read_logs\` (\`source: "error"\`, \`since\`: the release's \`createdAt\`), fix, publish again.
    - \`reloadFailed\`: a container could not be reloaded; the previous release is live again. Retry later; tell the human if it happens again.
    - \`scanBlocked\`: the security scan blocks the release (\`awaiting_approval\`); only a staff override publishes it. Show the findings to the human.
@@ -195,6 +197,29 @@ The idea: the agent develops on the platform, puts things live **only once the w
    - \`errorClass: "execRefused"\`: PHP refused a script outside the release (a data path, \`/tmp\`): PHP code must come from the staging, never be written at runtime.
 4. Broken: \`rollback\` to the previous release at once, then fix in the staging.
 5. A preview still running (\`get_preview\`): \`stop_preview\`.
+
+### Secrets and leaks
+
+Every release goes through a **leak guard** before it goes live. It reports the file, the line and the rule, **never the secret**:
+
+| Rule | What |
+|---|---|
+| \`secret.panel-token\` | A key or token of this panel (\`obk_…\`, \`oba_…\`, \`obt_…\`): critical everywhere. **Never write your own key into a file.** One found must be revoked by the human (\`keyId\`) |
+| \`secret.private-key\` | A PEM / OpenSSH private key |
+| \`secret.cloud\` | AWS, Stripe live, GitHub, GitLab, Slack, Google, SendGrid, OpenAI, Anthropic credentials |
+| \`secret.env-file\` | A \`.env\` file with secret values |
+| \`secret.key-file\` | \`id_rsa\`, \`.p12\` / \`.pfx\`, \`.htpasswd\`, \`.git-credentials\`, \`.npmrc\` / \`auth.json\` with a token… |
+| \`expose.dump\` | An SQL / database dump **with data** (\`INSERT\`, \`COPY\`), compressed dumps |
+| \`expose.config-backup\` | \`wp-config.php.bak\`, \`config.php~\`, \`settings.php.old\`… (served as plain text) |
+| \`expose.backup-archive\` | \`backup.zip\`, \`site.tar.gz\`, \`*.wpress\`… |
+| \`expose.diagnostic\` | A \`phpinfo()\` page (it shows the environment variables, secrets included) |
+| \`expose.db-tool\` | Adminer, phpMyAdmin dropped in the code |
+| \`expose.vcs\` / \`expose.log\` | \`.svn\`, \`.hg\`, \`.bzr\`, \`CVS\`; a log file served |
+
+- \`severity\`: \`critical\` when the web server would hand the file out as is (inside the document root, not PHP, not refused), \`warn\` otherwise (a secret in a \`.php\` file, a \`.env\` outside the document root, a test fixture, a sample dump shipped by a plugin or a library…).
+- The site's \`policy\` (\`get_site\` → \`leakGuard\`): \`block\` (default) — a critical finding makes the release fail with \`leakBlocked\`, nothing goes live; \`warn\` — reported only (\`outcome.leaks\`, the release log). The human may allowlist paths (\`allowlist\`, \`allowlisted\` counts them); **a key can change neither the policy nor the allowlist**.
+- Secrets go into the site variables (\`set_env\`, \`secret: true\`), read with \`getenv()\`; database dumps go into the database (\`import_sql\`), then are deleted from the site.
+- **Run \`check_leaks\` before \`publish\`**: the same rules on the staging, as the next publication will see them.
 
 ### Rollbacks by a human
 
@@ -227,7 +252,7 @@ Simpler: a live preview shows the code before it goes live (without database nor
 
 1. \`get_site\` → note the current \`publishMode\`. If it is \`auto\`, **switch the site to manual first**: \`update_site { "site_id": 12, "publish_mode": "manual" }\`. Otherwise every write goes live a few seconds later.
 2. Develop in staging (\`write_file\`, \`extract_archive\`…). The live site does not change.
-3. \`staging_changes\` → check the list (no forgotten archive, test file or secret). Then \`start_preview { "site_id": 12, "staging": true }\` → \`fetch_preview\` → \`stop_preview\`.
+3. \`staging_changes\` → check the list (no forgotten archive, test file or secret), \`check_leaks\`. Then \`start_preview { "site_id": 12, "staging": true }\` → \`fetch_preview\` → \`stop_preview\`.
 4. \`publish\` with a clear \`message\`. Note the number of the previous release (\`list_releases\`).
 5. Test the live site and \`read_logs\` (\`source: "error"\`).
 6. If it breaks: \`rollback\` to the previous release, fix in staging and start again at step 3.
@@ -351,6 +376,7 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | POST | \`/sites/:id/files/move\` · \`/copy\` | \`{ items: [{ from, to }], overwrite? }\` | \`files.write\` |
 | POST | \`/sites/:id/files/extract\` | \`{ path, to?, overwrite? }\` | \`files.write\` |
 | GET | \`/sites/:id/staging\` | unpublished changes, base vs live, rollback pending | \`files.read\` |
+| GET | \`/sites/:id/leak-check\` | leak guard on the staging (as \`check_leaks\`) | \`files.read\` + code right |
 | POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| seconds ≤ 25 }\` (message ≤ 500 characters); with \`wait\`: the release + \`outcome\` | \`releases.publish\` |
 | GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | GET | \`/sites/:id/releases/:releaseId\` | the release, its log and its \`outcome\` | — |
@@ -435,6 +461,7 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`publishInProgress\` / \`noChanges\` (409) | Publish already running / nothing to publish | Wait / check \`staging_changes\` |
 | \`healthcheckFailed\` · \`reloadFailed\` (release \`errorCode\`) | The release failed after the switch: health check failed · a container could not be reloaded; the previous release is live again (\`outcome.autoReverted\`) | \`get_release\`, \`read_logs\` with \`since\`; fix and publish again · retry later |
 | \`scanBlocked\` (release \`errorCode\`) | The security scan blocks the release; only a staff override publishes it | Show \`scan.findings\` to the human |
+| \`leakBlocked\` (release \`errorCode\`) | The leak guard found a secret / a file that must not be published (policy \`block\`); nothing went live | Remove what \`outcome.leaks.findings\` names (secrets → \`set_env\`), \`check_leaks\`, publish again; an intended path is allowlisted by the human |
 | \`stagingEmpty\` · \`interrupted\` · \`internalError\` · \`publishFailed\` (release \`errorCode\`) | Nothing to publish · a restart stopped it · unexpected failure · other failure (see \`error\`) | Write the code · publish again · retry later, tell the human |
 | \`hostdOutdated\` (503) | The server's file service is older than the panel | Tell the human (an update to apply in the panel), then retry |
 | \`hostdBusy\` (503) | The host agent is busy | Retry in a minute |
@@ -581,6 +608,7 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`delete_paths\` | Supprimer fichiers / dossiers | \`files.write\` |
 | \`extract_archive\` | Extraire un \`.zip\` / \`.tar\` / \`.tar.gz\` déjà présent dans le site | \`files.write\` |
 | \`staging_changes\` | Changements non publiés (\`pendingChanges\`, \`files\`), \`base\` / \`baseIsLive\`, \`liveChanges\` (ce que \`publish\` changerait sur le site en ligne), \`rolledBack\`, \`warningItems\`, \`restore\` | \`files.read\` |
+| \`check_leaks\` | La garde anti-fuite de la publication lancée sur le staging (voir §5 « Secrets et fuites ») : \`policy\`, \`blocked\`, \`critical\` / \`warn\`, \`findings\` (\`path\`, \`line\`, \`rule\`, \`severity\`, \`served\` ; jamais le secret), \`allowlisted\` | \`files.read\` + droit sur le code |
 | \`publish\` | Publier (nouvelle release en ligne), \`message?\`, \`override_rollback?\` (seulement à la demande explicite de l'humain), \`wait?\` (true par défaut : attend 25 s au plus et renvoie la release avec son \`outcome\`, voir §5 « Après publication ») | \`releases.publish\` |
 | \`list_releases\` | Historique des releases, la plus récente en premier (\`limit\`) ; \`apiKeyName\` (la clé qui l'a publiée), \`errorCode\` | — |
 | \`get_release\` | Une release : son journal de publication (en français, sans détail technique interne) et son \`outcome\` | — |
@@ -638,7 +666,8 @@ L'idée : l'agent développe sur la plateforme, ne met en ligne **qu'une fois le
 
 ### Après publication
 
-1. Lis l'\`outcome\` renvoyé par \`publish\` (ou par \`wait_for_release\` si \`outcome.timedOut\`) : \`live\`, \`healthcheck\` (\`passed\` / \`failed\` / \`notRun\`), \`autoReverted\` (la release précédente a été remise), \`scan\` (verdict, risque), \`errorCode\` et \`hint\`.
+1. Lis l'\`outcome\` renvoyé par \`publish\` (ou par \`wait_for_release\` si \`outcome.timedOut\`) : \`live\`, \`healthcheck\` (\`passed\` / \`failed\` / \`notRun\`), \`autoReverted\` (la release précédente a été remise), \`scan\` (verdict, risque), \`leaks\` (garde anti-fuite), \`errorCode\` et \`hint\`.
+   - \`leakBlocked\` : la garde anti-fuite a trouvé un secret ou un fichier à ne pas publier (\`outcome.leaks.findings\` : \`path\`, \`line\`, \`rule\`) ; rien n'est parti en ligne. Retire-le du staging, \`check_leaks\`, republie (voir « Secrets et fuites » ci-dessous).
    - \`healthcheckFailed\` : le site n'a pas répondu à son contrôle de santé sur le nouveau code ; la release précédente est de nouveau en ligne. \`get_release\` pour le journal, \`read_logs\` (\`source: "error"\`, \`since\` : le \`createdAt\` de la release), corrige, republie.
    - \`reloadFailed\` : un conteneur n'a pas pu être rechargé ; la release précédente est de nouveau en ligne. Réessaie plus tard ; préviens l'humain si ça recommence.
    - \`scanBlocked\` : l'analyse de sécurité bloque la release (\`awaiting_approval\`) ; seule une dérogation du staff la publie. Montre les détections à l'humain.
@@ -649,6 +678,29 @@ L'idée : l'agent développe sur la plateforme, ne met en ligne **qu'une fois le
    - \`errorClass: "execRefused"\` : PHP a refusé un script hors de la release (chemin de données, \`/tmp\`) : le code PHP doit venir du staging, jamais être écrit pendant l'exécution.
 4. Cassé : \`rollback\` vers la release précédente tout de suite, puis corrige dans le staging.
 5. Un aperçu encore en marche (\`get_preview\`) : \`stop_preview\`.
+
+### Secrets et fuites
+
+Chaque release passe par une **garde anti-fuite** avant d'aller en ligne. Elle indique le fichier, la ligne et la règle, **jamais le secret** :
+
+| Règle | Quoi |
+|---|---|
+| \`secret.panel-token\` | Une clé ou un jeton de ce panel (\`obk_…\`, \`oba_…\`, \`obt_…\`) : critique partout. **N'écris jamais ta propre clé dans un fichier.** Une clé trouvée doit être révoquée par l'humain (\`keyId\`) |
+| \`secret.private-key\` | Une clé privée PEM / OpenSSH |
+| \`secret.cloud\` | Identifiants AWS, Stripe live, GitHub, GitLab, Slack, Google, SendGrid, OpenAI, Anthropic |
+| \`secret.env-file\` | Un fichier \`.env\` avec des valeurs secrètes |
+| \`secret.key-file\` | \`id_rsa\`, \`.p12\` / \`.pfx\`, \`.htpasswd\`, \`.git-credentials\`, \`.npmrc\` / \`auth.json\` avec un jeton… |
+| \`expose.dump\` | Un dump SQL / de base **avec des données** (\`INSERT\`, \`COPY\`), les dumps compressés |
+| \`expose.config-backup\` | \`wp-config.php.bak\`, \`config.php~\`, \`settings.php.old\`… (servis en texte brut) |
+| \`expose.backup-archive\` | \`backup.zip\`, \`site.tar.gz\`, \`*.wpress\`… |
+| \`expose.diagnostic\` | Une page \`phpinfo()\` (elle affiche les variables d'environnement, secrets compris) |
+| \`expose.db-tool\` | Adminer, phpMyAdmin déposés dans le code |
+| \`expose.vcs\` / \`expose.log\` | \`.svn\`, \`.hg\`, \`.bzr\`, \`CVS\` ; un fichier de journal servi |
+
+- \`severity\` : \`critical\` quand le serveur web distribuerait le fichier tel quel (dans la racine web, pas du PHP, pas refusé), \`warn\` sinon (un secret dans un \`.php\`, un \`.env\` hors de la racine web, un jeu de test, un dump d'exemple livré par une extension ou une bibliothèque…).
+- La \`policy\` du site (\`get_site\` → \`leakGuard\`) : \`block\` (par défaut) — une détection critique fait échouer la release avec \`leakBlocked\`, rien ne part en ligne ; \`warn\` — signalé seulement (\`outcome.leaks\`, journal de la release). L'humain peut mettre des chemins en exception (\`allowlist\`, comptés dans \`allowlisted\`) ; **une clé ne peut changer ni la politique ni les exceptions**.
+- Les secrets vont dans les variables du site (\`set_env\`, \`secret: true\`), lues avec \`getenv()\` ; un dump de base va dans la base (\`import_sql\`), puis est supprimé du site.
+- **Lance \`check_leaks\` avant \`publish\`** : les mêmes règles sur le staging, comme la prochaine publication les verra.
 
 ### Retours arrière par un humain
 
@@ -681,7 +733,7 @@ Plus simple : un aperçu en direct montre le code avant sa mise en ligne (sans b
 
 1. \`get_site\` → note le \`publishMode\` actuel. S'il vaut \`auto\`, **passe le site en manuel d'abord** : \`update_site { "site_id": 12, "publish_mode": "manual" }\`. Sinon chaque écriture part en ligne quelques secondes plus tard.
 2. Développe dans le staging (\`write_file\`, \`extract_archive\`…). Le site en ligne ne bouge pas.
-3. \`staging_changes\` → contrôle la liste (pas d'archive, de fichier de test ou de secret oublié). Puis \`start_preview { "site_id": 12, "staging": true }\` → \`fetch_preview\` → \`stop_preview\`.
+3. \`staging_changes\` → contrôle la liste (pas d'archive, de fichier de test ou de secret oublié), \`check_leaks\`. Puis \`start_preview { "site_id": 12, "staging": true }\` → \`fetch_preview\` → \`stop_preview\`.
 4. \`publish\` avec un \`message\` clair. Note le numéro de la release précédente (\`list_releases\`).
 5. Teste le site en ligne et \`read_logs\` (\`source: "error"\`).
 6. Si ça casse : \`rollback\` vers la release précédente, puis corrige dans le staging et recommence à l'étape 3.
@@ -801,6 +853,7 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | POST | \`/sites/:id/files/move\` · \`/copy\` | \`{ items: [{ from, to }], overwrite? }\` | \`files.write\` |
 | POST | \`/sites/:id/files/extract\` | \`{ path, to?, overwrite? }\` | \`files.write\` |
 | GET | \`/sites/:id/staging\` | changements non publiés, base comparée à la release en ligne, retour arrière en attente | \`files.read\` |
+| GET | \`/sites/:id/leak-check\` | garde anti-fuite sur le staging (comme \`check_leaks\`) | \`files.read\` + droit de lire le code |
 | POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| secondes ≤ 25 }\` (message ≤ 500 caractères) ; avec \`wait\` : la release + \`outcome\` | \`releases.publish\` |
 | GET | \`/sites/:id/releases/:releaseId\` | la release, son journal et son \`outcome\` | — |
 | GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (secondes ≤ 60, 30 par défaut) : comme ci-dessus une fois terminée (\`outcome.timedOut\` sinon) | — |
@@ -885,6 +938,7 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`publishInProgress\` / \`noChanges\` (409) | Publication en cours / rien à publier | Attendre / vérifier \`staging_changes\` |
 | \`healthcheckFailed\` · \`reloadFailed\` (\`errorCode\` de la release) | La release a échoué après la bascule : contrôle de santé en échec · un conteneur n'a pas pu être rechargé ; la release précédente est de nouveau en ligne (\`outcome.autoReverted\`) | \`get_release\`, \`read_logs\` avec \`since\` ; corriger et republier · réessayer plus tard |
 | \`scanBlocked\` (\`errorCode\` de la release) | L'analyse de sécurité bloque la release ; seule une dérogation du staff la publie | Montrer \`scan.findings\` à l'humain |
+| \`leakBlocked\` (\`errorCode\` de la release) | La garde anti-fuite a trouvé un secret / un fichier à ne pas publier (politique \`block\`) ; rien n'est en ligne | Retirer ce que nomme \`outcome.leaks.findings\` (secrets → \`set_env\`), \`check_leaks\`, republier ; un chemin voulu est mis en exception par l'humain |
 | \`stagingEmpty\` · \`interrupted\` · \`internalError\` · \`publishFailed\` (\`errorCode\` de la release) | Rien à publier · un redémarrage l'a arrêtée · échec inattendu · autre échec (voir \`error\`) | Écrire le code · republier · réessayer plus tard, prévenir l'humain |
 | \`hostdOutdated\` (503) | Le service de fichiers du serveur est plus ancien que le panel | Prévenir l'humain (mise à jour à appliquer dans le panel), puis réessayer |
 | \`hostdBusy\` (503) | L'agent de l'hôte est occupé | Réessayer dans une minute |

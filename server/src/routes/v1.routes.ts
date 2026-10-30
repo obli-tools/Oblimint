@@ -45,6 +45,7 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   POST   /sites/:id/files/copy    {items, area?}      → FileOpResult[]               files.write
 //   POST   /sites/:id/files/extract {path, to?, overwrite?, area?} → FileExtractResult files.write
 //   GET    /sites/:id/staging                           → StagingStatus (unpublished changes, base vs live, rollback pending) files.read
+//   GET    /sites/:id/leak-check                        → ApiV1LeakCheck (leak guard on the staging: file:line + rule, never the secret) files.read (+ code right)
 //   POST   /sites/:id/publish   {message?, overrideRollback?, wait?: true | seconds ≤ 25} → Release (+ outcome with wait) (201; 409 liveRolledBack
 //                                                        {liveRelease, rolledBackFrom, count, paths}) releases.publish
 //   GET    /sites/:id/releases?limit=&offset=           → { items: Release[]; total }
@@ -283,6 +284,7 @@ router.post('/sites/:id/files/extract', h(async (req, res) => {
 }));
 
 router.get('/sites/:id/staging', h(async (req, res) => ok(res, await keyApi.stagingStatus(ctxOf(req), siteId(req)))));
+router.get('/sites/:id/leak-check', heavyOpLimiter, h(async (req, res) => ok(res, await keyApi.checkLeaks(ctxOf(req), siteId(req)))));
 router.post('/sites/:id/publish', h(async (req, res) => {
   const b = parseBody(publishBody, req.body ?? {});
   ok(res, await keyApi.publish(ctxOf(req), req, siteId(req), b.message ?? null, { overrideRollback: b.overrideRollback === true, waitMs: waitMsOf(b.wait) }), 201);
