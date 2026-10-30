@@ -415,4 +415,93 @@ test('self-service identity: password reset, recovery codes, e-mail change', { t
     assert.equal(await identityService.requestPasswordReset('dave2@example.com', null), 'sent');
     assert.ok(await db('audit_logs').where({ action: 'user.email_verified', user_id: dave }).first('id'));
   });
+
+  // ── review fixes ───────────────────────────────────────────────────────────
+
+  await t.test('an administrator never changes their OWN address through the users route', async () => {
+    const [rootRow] = await db('users').insert({
+      username: 'root_admin', password_hash: pwHash, role: 'admin', kind: 'staff', is_active: true,
+      email: 'root@example.com', email_verified_for: null, preferred_language: 'en',
+    }).returning('id');
+    const root = Number(rootRow.id ?? rootRow);
+    const frank = await mkUser('frank', { verified: false });
+    const { r, cookie } = await login('root_admin', password);
+    assert.equal(r.status, 200, r.body);
+    const sess = cookieOf(r) ?? cookie!;
+
+    const self = await send(port, 'PUT', `/api/users/${root}`, { cookie: sess, body: { email: 'attacker@example.com' } });
+    assert.equal(self.status, 409, self.body);
+    assert.equal(self.json?.code, 'emailChangeRequiresConfirmation');
+    let u = await db('users').where({ id: root }).first('email', 'email_verified_for');
+    assert.deepEqual([u.email, u.email_verified_for], ['root@example.com', null], 'nothing written');
+    assert.equal(await identityService.requestPasswordReset('attacker@example.com', null), 'ignored');
+
+    // The same address sent back by the form (other fields edited): accepted, never marked verified.
+    const same = await send(port, 'PUT', `/api/users/${root}`, { cookie: sess, body: { email: 'ROOT@example.com', displayName: 'Root' } });
+    assert.equal(same.status, 200, same.body);
+    u = await db('users').where({ id: root }).first('email', 'email_verified_for', 'display_name');
+    assert.deepEqual([u.email, u.email_verified_for, u.display_name], ['root@example.com', null, 'Root']);
+
+    // Another account: an operator's address counts as verified (unchanged rule).
+    const other = await send(port, 'PUT', `/api/users/${frank}`, { cookie: sess, body: { email: 'frank.new@example.com' } });
+    assert.equal(other.status, 200, other.body);
+    assert.equal((await db('users').where({ id: frank }).first('email_verified_for')).email_verified_for, 'frank.new@example.com');
+  });
+
+  await t.test('an SSO account with a local TOTP replaces it without recovery codes', async () => {
+    const [row] = await db('users').insert({
+      username: 'og_tina', password_hash: pwHash, role: 'user', kind: 'staff', is_active: true, email: 'tina@example.com',
+      email_verified_for: 'tina@example.com', foreign_source: 'obligate', foreign_id: 78, totp_enabled: true, totp_secret: totpSecret, preferred_language: 'en',
+    }).returning('id');
+    const tina = Number(row.id ?? row);
+    await db('user_tenants').insert({ user_id: tina, tenant_id: A, role: 'admin' });
+    const tinaTotp = async () => { await db('users').where({ id: tina }).update({ totp_last_step: null }); return totpAt(Date.now()); };
+    const { r, cookie } = await login('og_tina', password);
+    assert.equal(r.json?.data?.requires2fa, true, r.body);
+    const v = await send(port, 'POST', '/api/profile/2fa/verify', { cookie, body: { code: await tinaTotp(), method: 'totp' } });
+    assert.equal(v.status, 200, v.body);
+    const sess = cookieOf(v) ?? cookie!;
+
+    const regen = await send(port, 'POST', '/api/profile/2fa/recovery-codes', { cookie: sess, body: { twoFactorCode: await tinaTotp() } });
+    assert.equal(regen.status, 403, regen.body);
+    assert.equal(regen.json?.code, 'ssoTwoFactorManaged');
+
+    const setup = await send(port, 'POST', '/api/profile/2fa/totp/setup', { cookie: sess, body: { twoFactorCode: await tinaTotp() } });
+    assert.equal(setup.status, 200, setup.body);
+    const secret = setup.json?.data?.secret as string;
+    const code = new OTPAuth.TOTP({ secret: OTPAuth.Secret.fromBase32(secret), digits: 6, period: 30, algorithm: 'SHA1' }).generate();
+    const en = await send(port, 'POST', '/api/profile/2fa/totp/enable', { cookie: sess, body: { code } });
+    assert.equal(en.status, 200, en.body);
+    assert.equal(en.json?.data?.recoveryCodes, undefined, 'no recovery codes for an SSO account');
+    assert.equal((await db('users').where({ id: tina }).first('totp_secret')).totp_secret, secret, 'the authenticator was replaced');
+    assert.equal((await db('user_recovery_codes').where({ user_id: tina })).length, 0);
+    assert.ok(await db('audit_logs').where({ action: 'user.totp_replaced', user_id: tina }).first('id'), 'audited');
+  });
+
+  await t.test('confirmation e-mails are capped per account whatever the address', async () => {
+    const gina = await mkUser('gina');
+    const { r, cookie } = await login('gina', password);
+    assert.equal(r.status, 200, r.body);
+    const sess = cookieOf(r) ?? cookie!;
+    const { EMAIL_LINK_MAX_PER_HOUR } = await import('./identity.service');
+    for (let i = 1; i <= EMAIL_LINK_MAX_PER_HOUR; i++) {
+      const ok = await send(port, 'POST', '/api/profile/email', { cookie: sess, body: { email: `third${i}@example.com`, stepUpPassword: password } });
+      assert.equal(ok.status, 200, ok.body);
+      if (i === 2) {
+        // A cancel never resets the count.
+        assert.equal((await send(port, 'DELETE', '/api/profile/email/pending', { cookie: sess })).status, 200);
+      }
+    }
+    const over = await send(port, 'POST', '/api/profile/email', { cookie: sess, body: { email: 'third99@example.com', stepUpPassword: password } });
+    assert.equal(over.status, 429, over.body);
+    assert.equal(over.json?.code, 'tooManyLinks');
+    await sleep(100);
+    assert.equal(mails.filter((m) => /^third\d+@example\.com$/.test(m.to)).length, EMAIL_LINK_MAX_PER_HOUR);
+    // Only the last link is live; the replaced ones no longer confirm anything.
+    const first = tokenIn((await waitMail('third1@example.com', 1))[0].text, '/confirm-email');
+    assert.equal((await send(port, 'POST', '/api/auth/email-change/confirm', { body: { token: first.token } })).json?.code, 'invalidToken');
+    const last = tokenIn((await waitMail(`third${EMAIL_LINK_MAX_PER_HOUR}@example.com`, 1))[0].text, '/confirm-email');
+    assert.equal((await send(port, 'POST', '/api/auth/email-change/confirm', { body: { token: last.token } })).status, 200);
+    void gina;
+  });
 });

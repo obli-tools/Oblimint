@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import type { Knex } from 'knex';
 import { z } from 'zod';
 import type {
   EmailChangeResult, EmailState, PasswordResetTokenState, RecoveryCodesGenerated, RecoveryCodesStatus,
@@ -16,6 +17,7 @@ import { recordSkippedTransactional, sendTransactional, transactionalMailReady, 
 import { panelHosts } from '../panelHosts';
 import { deliverAccountNotice } from '../usage/userNotifications.service';
 import { killSessionsForUser } from '../userSessions.service';
+import { isLocalAccount } from '../userRow';
 import {
   emailChangeRequestedMail, emailChangedNotice, emailConfirmMail, langOf, noticeMail, passwordResetMail, passwordResetNotice,
   recoveryCodeUsedNotice, type Lang,
@@ -49,6 +51,8 @@ import { linkTokenHash, newLinkToken, newRecoveryCodes, recoveryCodeHash } from 
 const RESET_MIN_INTERVAL_MS = 60_000;
 const RESET_MAX_PER_HOUR = 5;
 const EMAIL_LINK_MIN_INTERVAL_MS = 30_000;
+/** Confirmation links per account and hour, WHATEVER the address (never a relay to third parties). */
+export const EMAIL_LINK_MAX_PER_HOUR = 5;
 
 const emailSchema = z.string().trim().toLowerCase().min(3).max(254).regex(/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/, 'an e-mail address');
 const passwordSchema = z.string().min(PASSWORD_MIN_LENGTH).max(PASSWORD_MAX_LENGTH);
@@ -78,7 +82,7 @@ async function userRow(userId: number): Promise<IdentityRow | undefined> {
 const lower = (v: string | null | undefined): string | null => (v ? v.trim().toLowerCase() : null);
 const isVerified = (u: Pick<IdentityRow, 'email' | 'email_verified_for'>): boolean => !!u.email && lower(u.email) === u.email_verified_for;
 /** A local account: never an SSO (Obligate) one, whatever its password column holds. */
-const isLocal = (u: Pick<IdentityRow, 'foreign_source'>): boolean => !u.foreign_source;
+const isLocal = isLocalAccount;
 
 /**
  * https origin of the panel for this kind of account: the client space for a
@@ -122,11 +126,28 @@ async function noticeToUser(u: IdentityRow, event: Parameters<typeof deliverAcco
 
 type Purpose = 'password_reset' | 'email_change';
 
+/**
+ * Kills the live links (of one purpose, or all) WITHOUT deleting them: the
+ * rows still count in the per-account hourly limits (a cancel / a new request
+ * never resets them); the purge drops them after a day.
+ */
+function retireLinks(conn: Knex | Knex.Transaction, where: { user_id: number; purpose?: Purpose }): Promise<number> {
+  return conn('user_action_tokens').where(where).whereNull('used_at').where('expires_at', '>', conn.fn.now())
+    .update({ expires_at: conn.fn.now() }) as unknown as Promise<number>;
+}
+
+/** Links of this purpose created for the account during the last hour (live, retired or used). */
+async function linksLastHour(userId: number, purpose: Purpose): Promise<number> {
+  const row = await db('user_action_tokens').where({ user_id: userId, purpose }).where('created_at', '>', new Date(Date.now() - 3600_000))
+    .count<{ n: string }[]>({ n: '*' }).first();
+  return Number(row?.n ?? 0);
+}
+
 async function issueToken(userId: number, purpose: Purpose, email: string, ttlMs: number, ip: string | null): Promise<string> {
   const token = newLinkToken();
   await db.transaction(async (trx) => {
     // One live link per purpose: a new request replaces the previous one.
-    await trx('user_action_tokens').where({ user_id: userId, purpose }).whereNull('used_at').delete();
+    await retireLinks(trx, { user_id: userId, purpose });
     await trx('user_action_tokens').insert({
       user_id: userId, purpose, token_hash: linkTokenHash(token), email, expires_at: new Date(Date.now() + ttlMs), requested_ip: ip ? ip.slice(0, 64) : null,
     });
@@ -233,7 +254,7 @@ export const identityService = {
       if (!u || !u.is_active || !isLocal(u) || lower(u.email) !== t.email) throw invalidToken();
       // credential_version moves (trigger): every session stamped before is refused by sessionUserGuard.
       await trx('users').where({ id: u.id }).update({ password_hash: passwordHash, updated_at: new Date() });
-      await trx('user_action_tokens').where({ user_id: u.id, purpose: 'password_reset' }).whereNull('used_at').delete();
+      await retireLinks(trx, { user_id: u.id, purpose: 'password_reset' });
       return u;
     });
     await killSessionsForUser(user.id, 'password_reset');
@@ -331,7 +352,7 @@ export const identityService = {
       if (!u.email) return { status: 'changed', state: await this.emailState(userId) };
       await db.transaction(async (trx) => {
         await trx('users').where({ id: userId }).update({ email: null, email_verified_for: null, updated_at: new Date() });
-        await trx('user_action_tokens').where({ user_id: userId }).whereNull('used_at').delete();
+        await retireLinks(trx, { user_id: userId });
       });
       await audit(userId, 'user.email_changed', ip, { via: 'removed' });
       await noticeToUser(u, 'account.emailChanged', emailChangedNotice(lang, null), 'warning', { tenantId: req.session.currentTenantId, emailTo: u.email });
@@ -354,6 +375,10 @@ export const identityService = {
       if (last && last.email === next && Date.now() - new Date(last.created_at).getTime() < EMAIL_LINK_MIN_INTERVAL_MS) {
         throw new AppError(429, 'A link was just sent to this address: wait a moment before asking again', 'tooSoon');
       }
+      if (await linksLastHour(userId, 'email_change') >= EMAIL_LINK_MAX_PER_HOUR) {
+        await audit(userId, 'user.email_change_requested', ip, { to: next, outcome: 'throttled' });
+        throw new AppError(429, 'Too many confirmation e-mails were sent for this account: try again in an hour', 'tooManyLinks');
+      }
       const token = await issueToken(userId, 'email_change', next, EMAIL_CHANGE_TTL_HOURS * 3600_000, ip);
       const r = await sendTransactional({ to: next, kind: 'account', userId, ...emailConfirmMail(lang, u.username, `${origin}/confirm-email?token=${encodeURIComponent(token)}`) });
       if (!r.ok) {
@@ -371,7 +396,7 @@ export const identityService = {
     try {
       await db.transaction(async (trx) => {
         await trx('users').where({ id: userId }).update({ email: next, email_verified_for: null, updated_at: new Date() });
-        await trx('user_action_tokens').where({ user_id: userId }).whereNull('used_at').delete();
+        await retireLinks(trx, { user_id: userId });
       });
     } catch (err) {
       if ((err as { code?: string })?.code === '23505') throw new AppError(409, 'This e-mail address is already used', 'emailTaken');
@@ -383,7 +408,7 @@ export const identityService = {
   },
 
   async cancelEmailChange(userId: number): Promise<EmailState> {
-    await db('user_action_tokens').where({ user_id: userId, purpose: 'email_change' }).whereNull('used_at').delete();
+    await retireLinks(db, { user_id: userId, purpose: 'email_change' });
     return this.emailState(userId);
   },
 
@@ -407,7 +432,7 @@ export const identityService = {
         email = t.email;
         // Password reset links were bound to the old address: they die with it.
         await trx('users').where({ id: t.user_id }).update({ email: t.email, email_verified_for: t.email, updated_at: new Date() });
-        await trx('user_action_tokens').where({ user_id: t.user_id }).whereNull('used_at').delete();
+        await retireLinks(trx, { user_id: t.user_id });
       });
     } catch (err) {
       if ((err as { code?: string })?.code === '23505') throw new AppError(409, 'This e-mail address is already used by another account', 'emailTaken');

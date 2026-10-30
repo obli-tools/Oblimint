@@ -211,6 +211,32 @@ export const stepUpLimiter = rateLimit({
   },
 });
 
+/**
+ * Signed-in requests that make the platform send an e-mail to an address the
+ * caller chooses (POST /api/profile/email, /email/verify): EVERY request
+ * counts (a correct password each time is no excuse), per account and per
+ * address (IPv6 /64). The step-up prompt doubles a request: 20 / hour. The
+ * service caps the links themselves (EMAIL_LINK_MAX_PER_HOUR).
+ */
+export const identityMailLimiter = [
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `idmail-user:${req.session?.userId ?? reqIpKey(req)}`,
+    message: { success: false, error: 'Too many requests, please try again later', code: 'rateLimited' },
+  }),
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 40,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `idmail-ip:${reqIpKey(req)}`,
+    message: { success: false, error: 'Too many requests, please try again later', code: 'rateLimited' },
+  }),
+];
+
 // ── Self-service identity (public routes, auth.routes.ts) ───────────────────
 
 const resetEmail = (req: Request): string => {

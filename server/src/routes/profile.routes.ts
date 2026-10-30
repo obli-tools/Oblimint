@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import { db } from '../db';
 import { attachSessionTenant } from '../middleware/tenant';
 import { validate } from '../middleware/validate';
-import { stepUpLimiter } from '../middleware/rateLimiter';
+import { identityMailLimiter, stepUpLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
 import { comparePassword, hashPassword } from '../utils/crypto';
 import { auditService } from '../services/audit.service';
@@ -144,7 +144,7 @@ router.get('/email', async (req, res, next) => {
 });
 
 /** POST /api/profile/email { email } — null / '' removes it. Step-up: TOTP code, else the current password. */
-router.post('/email', stepUpLimiter, async (req, res, next) => {
+router.post('/email', ...identityMailLimiter, stepUpLimiter, async (req, res, next) => {
   try {
     const sso = await db('users').where({ id: req.session.userId }).first('foreign_source') as { foreign_source: string | null } | undefined;
     if (sso?.foreign_source) {
@@ -160,7 +160,7 @@ router.post('/email', stepUpLimiter, async (req, res, next) => {
 });
 
 /** POST /api/profile/email/verify — a confirmation link to the CURRENT (unverified) address. */
-router.post('/email/verify', stepUpLimiter, async (req, res, next) => {
+router.post('/email/verify', ...identityMailLimiter, stepUpLimiter, async (req, res, next) => {
   try {
     const row = await db('users').where({ id: req.session.userId }).first('email', 'foreign_source') as { email: string | null; foreign_source: string | null } | undefined;
     if (!row?.email) throw new AppError(400, 'The account has no e-mail address', 'noEmail');
