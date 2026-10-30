@@ -3,6 +3,7 @@ import { RECOVERY_LOGIN_GRACE_MINUTES } from '@oblimint/shared';
 import { db } from '../db';
 import { comparePassword } from '../utils/crypto';
 import { acceptTotpStep, hashSessionId, twoFactorService } from './twoFactor.service';
+import { isLocalAccount } from './userRow';
 
 // Step-up for adding / replacing / removing a second factor (Obliance P2,
 // simplified: no trusted IPs, no device keys, no Obligate TOTP in P0):
@@ -41,7 +42,7 @@ export async function checkFactorManagement(req: Request, actionKey: string): Pr
     // Lost authenticator: a session signed in with a recovery code a few
     // minutes ago may remove / replace it (and regenerate its codes) without
     // a TOTP code it no longer has. Never for an SSO account (no local codes).
-    if (!proof.twoFactorCode && RECOVERY_GRACE_ACTIONS.has(actionKey) && recoveryGraceActive(req) && row.foreign_source !== 'obligate') {
+    if (!proof.twoFactorCode && RECOVERY_GRACE_ACTIONS.has(actionKey) && recoveryGraceActive(req) && isLocalAccount(row)) {
       return { ok: true, via: 'recovery' };
     }
     if (!proof.twoFactorCode) {
@@ -58,7 +59,7 @@ export async function checkFactorManagement(req: Request, actionKey: string): Pr
     return { ok: true, via: 'totp' };
   }
 
-  if (row.foreign_source === 'obligate' || !row.password_hash) {
+  if (!isLocalAccount(row) || !row.password_hash) {
     return {
       ok: false, status: 403,
       body: { success: false, error: 'The two-factor authentication of an SSO account is managed in Obligate.', code: 'ssoTwoFactorManaged' },

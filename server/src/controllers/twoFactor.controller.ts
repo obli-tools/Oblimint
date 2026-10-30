@@ -10,6 +10,7 @@ import { tenantService, refuseSignInWithoutTenant } from '../services/tenant.ser
 import { AppError } from '../middleware/errorHandler';
 import { revokeOtherSessions } from '../services/userSessions.service';
 import { identityService } from '../services/identity/identity.service';
+import { isLocalAccount } from '../services/userRow';
 
 // TOTP only in P0 (no e-mail codes, no device keys). Same routes and shapes
 // as Obliance (/api/profile/2fa/*); the e-mail routes answer 400.
@@ -89,9 +90,17 @@ export const twoFactorController = {
       delete req.session.recoveryLoginAt;
       // A new factor: every OTHER session ends (one opened with a phished password included).
       await revokeOtherSessions(req, replaced ? 'totp_replaced' : 'totp_enabled');
-      // A new authenticator, a new batch of recovery codes (shown once, here).
-      const recovery = await identityService.generateRecoveryCodes(req.session.userId!);
       await auditSelf(req, replaced ? 'user.totp_replaced' : 'user.totp_enabled');
+      // A new authenticator, a new batch of recovery codes (shown once, here) —
+      // local accounts only (isLocalAccount, as the step-up): an SSO account
+      // that kept a local TOTP gets none, its old ones (if any) are dropped.
+      const sso = await db('users').where({ id: req.session.userId }).first('foreign_source') as { foreign_source: string | null } | undefined;
+      if (!sso || !isLocalAccount(sso)) {
+        await identityService.clearRecoveryCodes(req.session.userId!);
+        res.json({ success: true, data: {} });
+        return;
+      }
+      const recovery = await identityService.generateRecoveryCodes(req.session.userId!);
       await auditSelf(req, 'user.recovery_codes_generated', { count: recovery.codes.length, reason: replaced ? 'totp_replaced' : 'totp_enabled' });
       res.json({ success: true, data: { recoveryCodes: recovery } });
     } catch (err) { next(err); }
@@ -126,6 +135,9 @@ export const twoFactorController = {
     try {
       const status = await identityService.recoveryStatus(req.session.userId!);
       if (!status.totpEnabled) throw new AppError(400, 'Recovery codes need an authenticator app: enable it first', 'totpRequired');
+      // Refused BEFORE the step-up (its TOTP code is not spent for nothing).
+      const sso = await db('users').where({ id: req.session.userId }).first('foreign_source') as { foreign_source: string | null } | undefined;
+      if (!sso || !isLocalAccount(sso)) throw new AppError(403, 'The two-factor authentication of an SSO account is managed in Obligate.', 'ssoTwoFactorManaged');
       const step = await checkFactorManagement(req, 'profile.recovery_codes');
       if (!step.ok) { sendStepUpFailure(res, step); return; }
       const generated = await identityService.generateRecoveryCodes(req.session.userId!);
