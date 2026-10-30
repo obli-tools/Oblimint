@@ -234,7 +234,7 @@ Every release goes through a **leak guard** before it goes live. It reports the 
 
 ### Method A — twin development site (recommended for a live site)
 
-Lets you **see and test** the work before touching the real site. Rights: \`sites.create\`, \`files.write\`, \`releases.publish\`, \`domains.subdomain\`, \`logs.read\`.
+Lets you **see and test** the work before touching the real site. Rights: \`sites.create\`, \`files.read\`, \`files.write\`, \`releases.publish\`, \`domains.subdomain\`, \`logs.read\` (+ \`databases.manage\` for a development database).
 
 1. \`create_site\`: same \`base\` and \`app_profile\` as the production site, slug \`<slug>-dev\`, \`publish_mode: "auto"\`.
 2. Copy the current production code into it (from your local folder, or \`read_file\` on the production site then \`write_file\` on the dev site; for many files, an archive + \`extract_archive\`).
@@ -244,11 +244,11 @@ Lets you **see and test** the work before touching the real site. Rights: \`site
 6. Test production. If anything breaks: \`list_releases\` then \`rollback\` to the previous release, and fix it on the dev site.
 7. At the end, ask the human whether to keep the dev site (a key cannot delete a site); remove the subdomain with \`remove_subdomain\` if needed.
 
-> The dev site shares neither the production \`data\` files (uploads) nor its database, and a key does not manage databases. If the app needs a development database, ask the human. **Never run destructive tests against the production database.**
+> The dev site shares neither the production \`data\` files (uploads) nor its database. If the app needs a development database, create one with \`databases.manage\` (see « An application's database » below), or ask the human. **Never run destructive tests against the production database.**
 
 ### Method B — directly on the site, with manual publishing
 
-Simpler: a live preview shows the code before it goes live (without database nor writable data), the real test comes after publishing, with the rollback ready. Rights: \`sites.manage\`, \`files.write\`, \`releases.publish\`, \`logs.read\` (+ \`files.read\` and \`previews.manage\` for the preview).
+Simpler: a live preview shows the code before it goes live (without writable data, and without database unless you ask for a throw-away copy), the real test comes after publishing, with the rollback ready. Rights: \`sites.manage\`, \`files.write\`, \`releases.publish\`, \`logs.read\` (+ \`files.read\` and \`previews.manage\` for the preview).
 
 1. \`get_site\` → note the current \`publishMode\`. If it is \`auto\`, **switch the site to manual first**: \`update_site { "site_id": 12, "publish_mode": "manual" }\`. Otherwise every write goes live a few seconds later.
 2. Develop in staging (\`write_file\`, \`extract_archive\`…). The live site does not change.
@@ -356,8 +356,6 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | POST | \`/databases/:instanceId/databases/:dbId/import\` | **raw body** \`application/sql\` or \`application/gzip\`, or JSON \`{ siteId, path, area? }\` (a file of a site) | \`databases.manage\` |
 | GET | \`/databases/:instanceId/databases/:dbId/tables\` · \`…/tables/:table\` | tables and views · description of one table | \`databases.manage\` |
 | POST | \`/databases/:instanceId/databases/:dbId/query\` | \`{ sql, write?, maxRows?, timeoutS? }\` (one statement, read-only unless \`write: true\`) | \`databases.manage\` |
-| GET | \`/databases/:instanceId/databases/:dbId/tables\` · \`…/tables/:table\` | tables et vues · description d'une table | \`databases.manage\` |
-| POST | \`/databases/:instanceId/databases/:dbId/query\` | \`{ sql, write?, maxRows?, timeoutS? }\` (une instruction, lecture seule sauf \`write: true\`) | \`databases.manage\` |
 | POST | \`/databases/:instanceId/users\` | \`{ username, password?, grants?, env?: { siteId, prefix?, databaseId? } }\` | \`databases.manage\` |
 | PUT | \`/databases/:instanceId/users/:userId\` | \`{ grants: [{ databaseId, level: "all" \\| "readonly" }] }\` | \`databases.manage\` |
 | POST | \`/databases/:instanceId/users/:userId/password\` | \`{ password?, env? }\` | \`databases.manage\` |
@@ -383,10 +381,10 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (seconds ≤ 60, default 30): as above once settled (\`outcome.timedOut\` otherwise) | — |
 | GET | \`/sites/:id/releases/:releaseId/diff\` | \`?against=previous\\|live\\|empty\\|<releaseId>&file=\` (one patch ≤ 256 KB) | \`files.read\` + code right |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
-| GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` |
-| GET | \`/sites/:id/releases/:releaseId/files/text\` | \`?path=&encoding=utf8\\|base64&offset=\` (≤ 2 MB text, 8 MB base64) | \`files.read\` |
-| GET | \`/sites/:id/releases/:releaseId/files/content\` | \`?path=\`: the file, streamed with \`Content-Length\` (≤ 64 MB) | \`files.read\` |
-| POST | \`/sites/:id/releases/:releaseId/restore-staging\` | \`{ discardPending? }\` → 200 done, or 202 \`{ status: "running" }\` | \`files.write\` |
+| GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` + code right |
+| GET | \`/sites/:id/releases/:releaseId/files/text\` | \`?path=&encoding=utf8\\|base64&offset=\` (≤ 2 MB text, 8 MB base64) | \`files.read\` + code right |
+| GET | \`/sites/:id/releases/:releaseId/files/content\` | \`?path=\`: the file, streamed with \`Content-Length\` (≤ 64 MB) | \`files.read\` + code right |
+| POST | \`/sites/:id/releases/:releaseId/restore-staging\` | \`{ discardPending? }\` → 200 done, or 202 \`{ status: "running" }\` | \`files.write\` + code right |
 | POST | \`/sites/:id/preview\` | \`{ release_id? \\| staging?: true, ttl_minutes?, wait?, include_key?, database?: "none" \\| "clone", database_ids? }\` → 202 \`{ preview, link, key? }\` | \`previews.manage\` + \`files.read\` (staging: + \`releases.publish\`; clone: + \`databases.manage\`) |
 | GET · DELETE | \`/sites/:id/preview\` | the preview (or \`null\`) · stop it | \`previews.manage\` (DELETE: + \`files.read\`) |
 | POST | \`/sites/:id/preview/link\` | one-shot share link for a human | \`previews.manage\` + \`files.read\` |
@@ -480,8 +478,8 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`previewDbExposed\` (409) · \`dbIsolationLost\` (preview \`errorCode\`) | A database server of the account has external access (or one of the server while the egress filter is off): no preview may run, it could reach the live database | Tell the human (external database access off; egress filter on) |
 | \`previewTooSoon\` (429) · \`previewLimit\` · \`previewCapacity\` · \`previewBusy\` (409) | A preview of this site was started a moment ago · too many previews (account / platform) · another one is starting | Wait (\`details.retryAfterSeconds\`), stop the previews you no longer need |
 | \`previewsDisabled\` · \`previewDomainMissing\` (409) | Previews off on the platform / no preview domain configured | Tell the human |
-| \`scanBlocked\` (409) | The analysis blocked this code | Do not work around it: tell the human |
-| \`stagingEmpty\` (409) | Nothing in the staging to preview | Write the code first |
+| \`scanBlocked\` (409, \`start_preview\`) | The analysis blocked this code | Do not work around it: tell the human |
+| \`stagingEmpty\` (409, \`start_preview\`) | Nothing in the staging to preview | Write the code first |
 
 ---
 
@@ -715,7 +713,7 @@ Chaque release passe par une **garde anti-fuite** avant d'aller en ligne. Elle i
 
 ### Méthode A — site de développement jumeau (recommandée pour un site en ligne)
 
-Permet de **voir et tester** le travail avant de toucher au vrai site. Droits : \`sites.create\`, \`files.write\`, \`releases.publish\`, \`domains.subdomain\`, \`logs.read\`.
+Permet de **voir et tester** le travail avant de toucher au vrai site. Droits : \`sites.create\`, \`files.read\`, \`files.write\`, \`releases.publish\`, \`domains.subdomain\`, \`logs.read\` (+ \`databases.manage\` pour une base de dev).
 
 1. \`create_site\` : même \`base\` et même \`app_profile\` que le site de production, slug \`<slug>-dev\`, \`publish_mode: "auto"\`.
 2. Copie le code actuel de la production dans ce site (depuis ton dossier local, ou \`read_file\` sur le site de production puis \`write_file\` sur le site de dev ; pour beaucoup de fichiers, une archive + \`extract_archive\`).
@@ -725,11 +723,11 @@ Permet de **voir et tester** le travail avant de toucher au vrai site. Droits : 
 6. Teste la production. En cas de problème : \`list_releases\` puis \`rollback\` vers la release précédente, et corrige sur le site de dev.
 7. À la fin, demande à l'humain s'il veut garder le site de dev (une clé ne peut pas supprimer de site) ; retire le sous-domaine avec \`remove_subdomain\` si besoin.
 
-> Le site de dev ne partage ni les fichiers \`data\` (uploads) ni la base de données de la production, et une clé ne gère pas les bases. Si l'appli a besoin d'une base de dev, demande-la à l'humain. **Ne fais jamais de tests destructifs sur la base de production.**
+> Le site de dev ne partage ni les fichiers \`data\` (uploads) ni la base de données de la production. Si l'appli a besoin d'une base de dev, crée-la avec \`databases.manage\` (voir « Base de données d'une application » plus bas), ou demande-la à l'humain. **Ne fais jamais de tests destructifs sur la base de production.**
 
 ### Méthode B — directement sur le site, en publication manuelle
 
-Plus simple : un aperçu en direct montre le code avant sa mise en ligne (sans base ni données modifiables), le vrai test se fait après la publication, avec le retour arrière prêt. Droits : \`sites.manage\`, \`files.write\`, \`releases.publish\`, \`logs.read\` (+ \`files.read\` et \`previews.manage\` pour l'aperçu).
+Plus simple : un aperçu en direct montre le code avant sa mise en ligne (sans données modifiables, et sans base sauf si tu demandes une copie jetable), le vrai test se fait après la publication, avec le retour arrière prêt. Droits : \`sites.manage\`, \`files.write\`, \`releases.publish\`, \`logs.read\` (+ \`files.read\` et \`previews.manage\` pour l'aperçu).
 
 1. \`get_site\` → note le \`publishMode\` actuel. S'il vaut \`auto\`, **passe le site en manuel d'abord** : \`update_site { "site_id": 12, "publish_mode": "manual" }\`. Sinon chaque écriture part en ligne quelques secondes plus tard.
 2. Développe dans le staging (\`write_file\`, \`extract_archive\`…). Le site en ligne ne bouge pas.
@@ -835,6 +833,8 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | DELETE | \`/databases/:instanceId/databases/:dbId\` | \`{ confirm: "<nom>" }\` (créée par la clé) | \`databases.manage\` |
 | GET | \`/databases/:instanceId/databases/:dbId/dump\` | dump gzip | \`databases.manage\` |
 | POST | \`/databases/:instanceId/databases/:dbId/import\` | **corps brut** \`application/sql\` ou \`application/gzip\`, ou JSON \`{ siteId, path, area? }\` (fichier d'un site) | \`databases.manage\` |
+| GET | \`/databases/:instanceId/databases/:dbId/tables\` · \`…/tables/:table\` | tables et vues · description d'une table | \`databases.manage\` |
+| POST | \`/databases/:instanceId/databases/:dbId/query\` | \`{ sql, write?, maxRows?, timeoutS? }\` (une instruction, lecture seule sauf \`write: true\`) | \`databases.manage\` |
 | POST | \`/databases/:instanceId/users\` | \`{ username, password?, grants?, env?: { siteId, prefix?, databaseId? } }\` | \`databases.manage\` |
 | PUT | \`/databases/:instanceId/users/:userId\` | \`{ grants: [{ databaseId, level: "all" \\| "readonly" }] }\` | \`databases.manage\` |
 | POST | \`/databases/:instanceId/users/:userId/password\` | \`{ password?, env? }\` | \`databases.manage\` |
@@ -853,17 +853,17 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | POST | \`/sites/:id/files/move\` · \`/copy\` | \`{ items: [{ from, to }], overwrite? }\` | \`files.write\` |
 | POST | \`/sites/:id/files/extract\` | \`{ path, to?, overwrite? }\` | \`files.write\` |
 | GET | \`/sites/:id/staging\` | changements non publiés, base comparée à la release en ligne, retour arrière en attente | \`files.read\` |
-| GET | \`/sites/:id/leak-check\` | garde anti-fuite sur le staging (comme \`check_leaks\`) | \`files.read\` + droit de lire le code |
+| GET | \`/sites/:id/leak-check\` | garde anti-fuite sur le staging (comme \`check_leaks\`) | \`files.read\` + droit sur le code |
 | POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| secondes ≤ 25 }\` (message ≤ 500 caractères) ; avec \`wait\` : la release + \`outcome\` | \`releases.publish\` |
+| GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | GET | \`/sites/:id/releases/:releaseId\` | la release, son journal et son \`outcome\` | — |
 | GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (secondes ≤ 60, 30 par défaut) : comme ci-dessus une fois terminée (\`outcome.timedOut\` sinon) | — |
 | GET | \`/sites/:id/releases/:releaseId/diff\` | \`?against=previous\\|live\\|empty\\|<releaseId>&file=\` (un patch ≤ 256 Ko) | \`files.read\` + droit sur le code |
-| GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
-| GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` |
-| GET | \`/sites/:id/releases/:releaseId/files/text\` | \`?path=&encoding=utf8\\|base64&offset=\` (≤ 2 Mo texte, 8 Mo base64) | \`files.read\` |
-| GET | \`/sites/:id/releases/:releaseId/files/content\` | \`?path=\` : le fichier, en flux avec \`Content-Length\` (≤ 64 Mo) | \`files.read\` |
-| POST | \`/sites/:id/releases/:releaseId/restore-staging\` | \`{ discardPending? }\` → 200 terminé, ou 202 \`{ status: "running" }\` | \`files.write\` |
+| GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` + droit sur le code |
+| GET | \`/sites/:id/releases/:releaseId/files/text\` | \`?path=&encoding=utf8\\|base64&offset=\` (≤ 2 Mo texte, 8 Mo base64) | \`files.read\` + droit sur le code |
+| GET | \`/sites/:id/releases/:releaseId/files/content\` | \`?path=\` : le fichier, en flux avec \`Content-Length\` (≤ 64 Mo) | \`files.read\` + droit sur le code |
+| POST | \`/sites/:id/releases/:releaseId/restore-staging\` | \`{ discardPending? }\` → 200 terminé, ou 202 \`{ status: "running" }\` | \`files.write\` + droit sur le code |
 | POST | \`/sites/:id/preview\` | \`{ release_id? \\| staging?: true, ttl_minutes?, wait?, include_key?, database?: "none" \\| "clone", database_ids? }\` → 202 \`{ preview, link, key? }\` | \`previews.manage\` + \`files.read\` (staging : + \`releases.publish\` ; copie : + \`databases.manage\`) |
 | GET · DELETE | \`/sites/:id/preview\` | l'aperçu (ou \`null\`) · l'arrêter | \`previews.manage\` (DELETE : + \`files.read\`) |
 | POST | \`/sites/:id/preview/link\` | lien de partage à usage unique pour un humain | \`previews.manage\` + \`files.read\` |
@@ -957,8 +957,8 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`previewDbExposed\` (409) · \`dbIsolationLost\` (\`errorCode\` de l'aperçu) | Un serveur de base du compte a l'accès externe activé (ou un serveur de la machine alors que le filtre de sortie est coupé) : aucun aperçu ne peut tourner, il pourrait joindre la base en ligne | Prévenir l'humain (couper l'accès externe à la base ; filtre de sortie actif) |
 | \`previewTooSoon\` (429) · \`previewLimit\` · \`previewCapacity\` · \`previewBusy\` (409) | Un aperçu de ce site vient d'être démarré · trop d'aperçus (compte / plateforme) · un autre démarre | Attendre (\`details.retryAfterSeconds\`), arrêter les aperçus inutiles |
 | \`previewsDisabled\` · \`previewDomainMissing\` (409) | Aperçus désactivés sur la plateforme / aucun domaine d'aperçu configuré | Prévenir l'humain |
-| \`scanBlocked\` (409) | L'analyse a bloqué ce code | Ne pas contourner : prévenir l'humain |
-| \`stagingEmpty\` (409) | Rien dans le staging à prévisualiser | Écrire le code d'abord |
+| \`scanBlocked\` (409, \`start_preview\`) | L'analyse a bloqué ce code | Ne pas contourner : prévenir l'humain |
+| \`stagingEmpty\` (409, \`start_preview\`) | Rien dans le staging à prévisualiser | Écrire le code d'abord |
 
 ---
 

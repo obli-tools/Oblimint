@@ -465,7 +465,7 @@ const TOOLS: ToolDef[] = [
   // ── live previews (feature B) ──
   {
     name: 'start_preview', title: 'Start a live preview', heavy: true,
-    description: 'Runs the code of a release (release_id) or of a scanned snapshot of the staging (staging: true) in an isolated, temporary container: data read-only, no database, no mail, secret env vars removed. Nothing goes live; the live site is untouched. Use it to check a release or your staging BEFORE publishing (fetch_preview), then stop_preview. One preview per site: a new one replaces the previous. It expires after ttl_minutes (default 60). On a site in approval mode, unapproved code (staging, or a release awaiting approval / rejected / failed) cannot be previewed by a key (previewApprovalRequired). Scope previews.manage + files.read (staging: + releases.publish). Returns { preview, link, key? }: link = a one-shot share link for a human (only when the key\'s creator manages the site), key only with include_key. database: "clone" (needs the databases.manage scope too) gives the preview a THROW-AWAY COPY of the site\'s database(s) — same names, users and passwords, under the live host names, the live server never reachable — filled from a consistent dump at start (production data: treat it as such), every write lost at stop; database_ids picks the databases (default: the ones the site\'s environment references; previewDatabaseChoice lists the candidates when that is ambiguous). get_preview shows dbClone (cloning → ready, or failed + errorCode).',
+    description: 'Runs the code of a release (release_id) or of a scanned snapshot of the staging (staging: true) in an isolated, temporary container: data read-only, no database (unless database: "clone", below), no mail, secret env vars removed. Nothing goes live; the live site is untouched. Use it to check a release or your staging BEFORE publishing (fetch_preview), then stop_preview. One preview per site: a new one replaces the previous. It expires after ttl_minutes (default 60). On a site in approval mode, unapproved code (staging, or a release awaiting approval / rejected / failed) cannot be previewed by a key (previewApprovalRequired). Scope previews.manage + files.read (staging: + releases.publish). Returns { preview, link, key? }: link = a one-shot share link for a human (only when the key\'s creator manages the site), key only with include_key. database: "clone" (needs the databases.manage scope too) gives the preview a THROW-AWAY COPY of the site\'s database(s) — same names, users and passwords, under the live host names, the live server never reachable — filled from a consistent dump at start (production data: treat it as such), every write lost at stop; database_ids picks the databases (default: the ones the site\'s environment references; previewDatabaseChoice lists the candidates when that is ambiguous). get_preview shows dbClone (cloning → ready, or failed + errorCode).',
     inputSchema: obj({
       site_id: siteId,
       release_id: { type: 'integer', description: 'Release to preview (list_releases). Give either release_id or staging.' },
@@ -879,7 +879,8 @@ async function ensureParents(ctx: ApiKeyContext, req: Request, siteId: number, a
   }
 }
 
-const INSTRUCTIONS = [
+/** Server instructions of the initialize answer (exported for the guide consistency test). */
+export const MCP_INSTRUCTIONS = [
   'Oblimint hosting panel. This key works on ONE hosting account and only on the sites list_sites returns. It acts as the human who created or approved it, with that human\'s CURRENT rights.',
   'A site has two file areas: "staging" (its code, never live as is) and "data" (files the site itself writes, live).',
   'Workflow: write / upload code into staging, check staging_changes, then publish to create a release and put it live.',
@@ -960,7 +961,7 @@ export async function handleRpc(ctx: ApiKeyContext, req: Request, msg: RpcMessag
       const protocolVersion = (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(asked) ? asked : MCP_PROTOCOL_VERSIONS[0];
       return {
         jsonrpc: '2.0', id,
-        result: { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'oblimint', title: 'Oblimint', version: serverVersion }, instructions: INSTRUCTIONS },
+        result: { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'oblimint', title: 'Oblimint', version: serverVersion }, instructions: MCP_INSTRUCTIONS },
       };
     }
     case 'ping':
