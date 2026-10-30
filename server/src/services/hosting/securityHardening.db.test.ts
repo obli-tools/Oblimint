@@ -230,10 +230,13 @@ test('server-app security fixes on PostgreSQL (PGlite)', { timeout: 300_000 }, a
         accountId: shop.id, name: 'Blank', slug: 'blank', base: 'nginx-static', publishMode: 'manual',
       }));
       await db('releases').insert({ site_id: siteId, number: 1, status: 'ready' });
-      const last = await db.migrate.currentVersion();
-      assert.ok(last.startsWith('026'), `026 is the latest migration (now ${last}): move this test`);
-      await db.migrate.down();
-      await db.migrate.up();
+      // Back to just before 026 (the later migrations first), then up again.
+      let rolledBack = 0;
+      while (!(await db.migrate.currentVersion()).startsWith('025')) {
+        assert.ok(rolledBack++ < 20, 'migration 025 not found');
+        await db.migrate.down();
+      }
+      await db.migrate.latest();
       const rows = await db('sites').whereIn('id', [siteId, blank.id]).select('id', 'leak_policy');
       const policy = new Map(rows.map((r: { id: number; leak_policy: string }) => [Number(r.id), r.leak_policy]));
       assert.deepEqual([policy.get(siteId), policy.get(blank.id)], ['warn', 'block']);
