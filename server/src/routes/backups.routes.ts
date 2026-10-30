@@ -16,7 +16,7 @@ import { backupService } from '../services/backups/backup.service';
 //   GET  /:id/backups                        → { runs, enabled, scheduled }      (read)
 //   POST /:id/backups/run                    → { runId }                         (sites.manage)
 //   PUT  /:id/backups/enabled { enabled }                                        (accounts.manage)
-//   POST /:id/backups/:runId/restore { items } → BackupRestoreResult            (per item: code sites + files.manage, data files.manage, db databases.manage)
+//   POST /:id/backups/:runId/restore { items } → BackupRestoreResult            (per item: code sites + files.manage, data files.manage, repo sites.manage, db databases.manage)
 
 const optStr = (max: number) => z.string().trim().max(max).optional();
 
@@ -51,6 +51,7 @@ const restoreSchema = z.object({
   items: z.array(z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('code'), siteId: z.number().int().positive() }).strict(),
     z.object({ kind: z.literal('data'), siteId: z.number().int().positive() }).strict(),
+    z.object({ kind: z.literal('repo'), siteId: z.number().int().positive() }).strict(),
     z.object({ kind: z.literal('db'), databaseId: z.number().int().positive() }).strict(),
   ])).min(1).max(200),
 }).strict();

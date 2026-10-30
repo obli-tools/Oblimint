@@ -22,6 +22,8 @@ import { hostdFiles, type HostdFileOwner, type HostdFileTarget } from '../hostd/
 import { fileError } from '../files/files.service';
 import { decryptStream, encryptStream } from './crypto';
 import { openStore, testStore, type BackupStore } from './stores';
+import { bundleRepo, restoreRepoFromBundle } from './repoBundle';
+import { localPaths } from '../hosting/paths';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // External backups (shared/src/backups.ts). A run of an account writes, under
@@ -29,6 +31,8 @@ import { openStore, testStore, type BackupStore } from './stores';
 // each gzip'ed (when useful) then encrypted (crypto.ts) on the fly:
 //   site-<slug>-code.tar.gz.obkp   staging/<slug> (hostd relative tar, links stored, never followed)
 //   site-<slug>-data.tar.gz.obkp   data/<slug> (uploads, persistent data paths)
+//   site-<slug>-repo.bundle.obkp   `git bundle --all` of sites/<id>/repo.git (release history,
+//                                  docs/P6-PLAN.md §6.5); none for a site never published
 //   db-<id>-<name>.sql.gz.obkp     dump of each database (snapshotIo, same tools as the snapshots)
 //   manifest.json.obkp             account, sites, domains, databases (what the run covered)
 // The panel run (panel/<stamp>/) holds the panel database (pg_dump custom
@@ -38,7 +42,8 @@ import { openStore, testStore, type BackupStore } from './stores';
 // Restoring writes back into the SAME objects (site still there, database
 // still there): code → staging/<slug> emptied then refilled (a release
 // follows, per the site publish mode), data → data/<slug> emptied then
-// refilled, database → emptied then replayed (snapshotIo). One run at a time
+// refilled, repo → repo.git refs reset to the bundle (under the site lock),
+// database → emptied then replayed (snapshotIo). One run at a time
 // on the platform (backups and restores share the queue).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -241,6 +246,20 @@ async function backupAccount(ctx: Ctx, accountId: number, trigger: 'schedule' | 
           errors.push(`site ${site.slug} (${part}): ${errText(err)}`);
         }
       }
+      // Release history: bundle of repo.git (already packed: no gzip). A site never published has none.
+      const bundle = path.join(work, `repo-${site.id}.bundle`);
+      try {
+        await fs.promises.mkdir(work, { recursive: true, mode: 0o700 });
+        if (await bundleRepo(localPaths.repo(account.id, site.id), bundle) === 'bundled') {
+          const key = `${prefix}/site-${site.slug}-repo.bundle.obkp`;
+          const bytes = await putEncrypted(ctx.store, key, fs.createReadStream(bundle), ctx.passphrase, false);
+          objects.push({ kind: 'repo', key, bytes, siteId: site.id, siteSlug: site.slug });
+        }
+      } catch (err) {
+        errors.push(`site ${site.slug} (release history): ${errText(err)}`);
+      } finally {
+        await fs.promises.rm(bundle, { force: true }).catch(() => {});
+      }
     }
     if (dbs.length) await fs.promises.mkdir(work, { recursive: true, mode: 0o700 });
     for (const d of dbs) {
@@ -392,6 +411,18 @@ async function restoreItems(run: RunRow, account: AccountRow, items: BackupResto
               .catch((err) => logger.warn({ err, siteId: site.id }, 'backup restore: publish notify failed'));
           }
           out.restored.push({ ...item, ok: true, files: r.files });
+        } else if (item.kind === 'repo') {
+          const obj = objects.find((o) => o.kind === 'repo' && o.siteId === item.siteId);
+          if (!obj) throw new AppError(404, 'This backup has no such object', 'notFound');
+          const site = await db('sites').where({ id: item.siteId, account_id: account.id }).first('id', 'slug') as { id: number; slug: string } | undefined;
+          if (!site || site.slug !== obj.siteSlug) throw new AppError(409, 'The site no longer exists', 'backupSiteGone');
+          await fs.promises.mkdir(work, { recursive: true, mode: 0o700 });
+          const file = path.join(work, `repo-${site.id}.bundle`);
+          await pipeline(await getDecrypted(store, obj.key, passphrase, false), fs.createWriteStream(file, { mode: 0o600 }));
+          // Under the site pipeline lock: no publication / rollback rewrites repo.git meanwhile (409 otherwise).
+          const { releaseService } = await import('../releases/release.service');
+          const r = await releaseService.withSiteLock(site.id, () => restoreRepoFromBundle(localPaths.repo(account.id, site.id), file));
+          out.restored.push({ ...item, ok: true, refs: r.refs });
         } else {
           const obj = objects.find((o) => o.kind === 'db' && o.databaseId === item.databaseId);
           if (!obj) throw new AppError(404, 'This backup has no such object', 'notFound');
@@ -592,7 +623,8 @@ export const backupService = {
     const run = await db('backup_runs').where({ id: runId, scope: 'account', account_id: visible.id }).first() as RunRow | undefined;
     if (!run) throw new AppError(404, 'Backup not found', 'notFound');
     // Code = the staging of the site, overwritten: the files right too, not only sites.manage (L2).
-    const needs = new Set(items.flatMap((i) => (i.kind === 'db' ? ['databases.manage'] : i.kind === 'code' ? ['sites.manage', 'files.manage'] : ['files.manage']) as
+    // Release history (repo.git): the publication pipeline's own state, sites.manage.
+    const needs = new Set(items.flatMap((i) => (i.kind === 'db' ? ['databases.manage'] : i.kind === 'code' ? ['sites.manage', 'files.manage'] : i.kind === 'repo' ? ['sites.manage'] : ['files.manage']) as
       Array<'databases.manage' | 'sites.manage' | 'files.manage'>));
     let account: AccountRow | null = null;
     for (const n of needs) account = await loadAccount(actor, accountId, n);

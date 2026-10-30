@@ -72,7 +72,8 @@ export interface BackupSettingsUpdate {
 
 export const BACKUP_PASSPHRASE_MIN = 12;
 
-export type BackupObjectKind = 'code' | 'data' | 'db' | 'manifest' | 'panel-db' | 'panel-config';
+/** 'repo': `git bundle --all` of the site's internal repository (every release commit, refs included). */
+export type BackupObjectKind = 'code' | 'data' | 'repo' | 'db' | 'manifest' | 'panel-db' | 'panel-config';
 
 export interface BackupObject {
   kind: BackupObjectKind;
@@ -107,6 +108,8 @@ export interface BackupRun {
 export type BackupRestoreItem =
   | { kind: 'code'; siteId: number }
   | { kind: 'data'; siteId: number }
+  /** The release history (repo.git) put back in place: refs reset to the backed-up state. */
+  | { kind: 'repo'; siteId: number }
   | { kind: 'db'; databaseId: number };
 
 export interface BackupRestoreRequest {
@@ -114,5 +117,6 @@ export interface BackupRestoreRequest {
 }
 
 export interface BackupRestoreResult {
-  restored: Array<BackupRestoreItem & { ok: boolean; error?: string; files?: number }>;
+  /** files: entries written (code / data); refs: references restored (repo). */
+  restored: Array<BackupRestoreItem & { ok: boolean; error?: string; files?: number; refs?: number }>;
 }
