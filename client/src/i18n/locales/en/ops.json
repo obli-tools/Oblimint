@@ -442,6 +442,13 @@
       "releaseRejected": "Release rejected",
       "domainVerified": "Domain ownership verified",
       "domainReclaimed": "Domain taken back by its owner",
+      "actionConfirmationRequired": "Confirmation requested",
+      "actionApprovalRequired": "Approval requested",
+      "actionApproved": "Action authorised",
+      "actionDenied": "Action denied",
+      "actionExpired": "Request expired",
+      "securityKeyRegimeChanged": "Access keys: security regime changed",
+      "securityKeyAbuse": "Repeated invalid access keys",
       "accountRecoveryCodeUsed": "Recovery code used",
       "accountPasswordReset": "Password reset",
       "accountEmailChanged": "E-mail address changed"

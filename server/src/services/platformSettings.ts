@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  APP_CAP_ADD_ALLOWED, DEFAULT_HOSTING_SETTINGS, type HostingSettings, type HostingSettingsSection, type HostingSettingsUpdate,
+  APP_CAP_ADD_ALLOWED, DEFAULT_HOSTING_SETTINGS, PROTECTED_SETTINGS_SECTIONS, type HostingSettings, type HostingSettingsSection, type HostingSettingsUpdate,
 } from '@oblimint/shared';
 import type { Knex } from 'knex';
 import { db } from '../db';
@@ -178,6 +178,21 @@ const sectionSchemas = {
   network: z.object({
     mode: z.enum(['enforce', 'monitor', 'off']),
   }).strict(),
+  // Sensitive actions (services/restrictions): written by PUT /api/restrictions/floor only.
+  restrictions: z.object({
+    floor: z.record(z.string().regex(/^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/).max(100), z.enum(['sensitive', 'restricted'])),
+    pendingTtlMinutes: z.number().int().min(5).max(1440),
+  }).strict(),
+  // IP security of the access keys / MCP: written by its own route only (action platform.key_security).
+  keySecurity: z.object({
+    requireIp: z.boolean(),
+    strictMode: z.enum(['auto', 'off', 'log', 'on']),
+    autoStrictAt: z.string().datetime().nullable(),
+    maxFailures: z.number().int().min(1).max(100),
+    failureWindowMinutes: z.number().int().min(1).max(1440),
+    trustedIps: z.array(ipOrCidr).max(256),
+    connectorSourceRanges: z.array(ipOrCidr).max(64),
+  }).strict(),
 } as const;
 
 /** Host ports a stream may never take (edge, panel, SSH, DNS, mail). */
@@ -185,9 +200,9 @@ export const RESERVED_STREAM_PORTS: ReadonlySet<number> = new Set([22, 25, 53, 8
 
 const SECTIONS = Object.keys(sectionSchemas) as HostingSettingsSection[];
 
-/** Body of PUT /api/system/hosting-settings: any subset of sections, each partial. */
+/** Body of PUT /api/system/hosting-settings: any subset of sections, each partial (never a protected one: their own gated routes). */
 export const hostingSettingsUpdateSchema = z.object(
-  Object.fromEntries(SECTIONS.map((s) => [s, (sectionSchemas[s] as z.AnyZodObject).partial().optional()])) as
+  Object.fromEntries(SECTIONS.filter((s) => !(PROTECTED_SETTINGS_SECTIONS as readonly string[]).includes(s)).map((s) => [s, (sectionSchemas[s] as z.AnyZodObject).partial().optional()])) as
     Record<HostingSettingsSection, z.ZodOptional<z.AnyZodObject>>,
 ).strict();
 

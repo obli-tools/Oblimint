@@ -117,6 +117,14 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'release.rejected': 'Release rejetée',
   'domain.verified': 'Propriété du domaine vérifiée',
   'domain.reclaimed': 'Domaine repris par son propriétaire',
+  // Sensitive actions
+  'action.confirmationRequired': 'Confirmation demandée',
+  'action.approvalRequired': 'Approbation demandée',
+  'action.approved': 'Action autorisée',
+  'action.denied': 'Action refusée',
+  'action.expired': 'Demande expirée',
+  'security.keyRegimeChanged': 'Sécurité des clés d’accès : régime changé',
+  'security.keyAbuse': 'Clés d’accès invalides répétées',
   test: 'Test',
 };
 

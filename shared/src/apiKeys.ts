@@ -89,6 +89,11 @@ export interface ApiKey {
   createdDomainIds: number[];
   /** Allowed source addresses / CIDR (empty: any). */
   allowedIps: string[];
+  /**
+   * Open key: no address list (a connector: open only when the platform declares no connector
+   * source range). An open key keeps the key surfaces out of strict mode (keySecurity.ts).
+   */
+  open: boolean;
   createdByName: string | null;
   createdAt: string;
   lastUsedAt: string | null;

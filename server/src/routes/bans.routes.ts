@@ -25,7 +25,7 @@ const router = Router();
 
 const optId = z.coerce.number().int().positive().optional();
 const bool = z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1').optional();
-const SOURCES = ['honeypot-path', 'honeypot-acl', 'manual', 'obliguard-sync', 'promotion'] as const;
+const SOURCES = ['honeypot-path', 'honeypot-acl', 'manual', 'obliguard-sync', 'promotion', 'key-intrusion', 'key-bruteforce'] as const;
 
 const listQuery = z.object({
   scope: z.enum(['account', 'platform']).optional(),

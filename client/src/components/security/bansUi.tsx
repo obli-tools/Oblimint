@@ -6,7 +6,7 @@ import { flagEmoji, splitMinutes } from '@/components/proxy/proxyFormat';
 
 // Small pieces of the bans UI. OWNED BY MODULE `ui-proxy`.
 
-export const BAN_SOURCES: readonly WebBanSource[] = ['honeypot-path', 'honeypot-acl', 'manual', 'obliguard-sync', 'promotion'];
+export const BAN_SOURCES: readonly WebBanSource[] = ['honeypot-path', 'honeypot-acl', 'manual', 'obliguard-sync', 'promotion', 'key-intrusion', 'key-bruteforce'];
 
 export function useBanSourceLabel(): (s: WebBanSource) => string {
   const { t } = useTranslation();
@@ -17,6 +17,8 @@ export function useBanSourceLabel(): (s: WebBanSource) => string {
       case 'manual': return t('bans.source.manual') || 'Manual';
       case 'obliguard-sync': return t('bans.source.obliguard') || 'Obliguard';
       case 'promotion': return t('bans.source.promotion') || 'Promotion';
+      case 'key-intrusion': return t('bans.source.keyIntrusion') || 'Access keys: intrusion';
+      case 'key-bruteforce': return t('bans.source.keyBruteforce') || 'Access keys: bad keys';
       default: return s;
     }
   };

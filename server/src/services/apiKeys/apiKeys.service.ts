@@ -60,6 +60,8 @@ export interface ApiKeyContext {
   domainIds: ReadonlySet<number>;
   /** Actor the services check (client-like, this account only). */
   actor: HostingActor;
+  /** key (obk_) or connector (oba_ access token of an authorization). */
+  kind?: ApiKeyKind;
 }
 
 declare module 'express-serve-static-core' {
@@ -190,6 +192,9 @@ async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
   const sites = await siteRows(rows.map((r) => r.id));
   const doms = await domainRows(rows.map((r) => r.id));
   const connections = await connectionRows(rows.filter((r) => r.kind === 'connector').map((r) => r.id));
+  // A connector is always reachable from the declared connector source ranges: open only without any.
+  let connectorRanges = 1;
+  try { connectorRanges = (await (await import('../platformSettings')).platformSettings.section('keySecurity')).connectorSourceRanges.length; } catch { /* defaults */ }
   const out: ApiKey[] = [];
   for (const r of rows) {
     const scopes = scopesOf(r.scopes);
@@ -210,7 +215,9 @@ async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
       domainScope: r.domain_scope ?? 'selected',
       domainIds: myDoms.filter((d) => !d.created_by_key).map((d) => d.domain_id).sort((a, b) => a - b),
       createdDomainIds: myDoms.filter((d) => d.created_by_key).map((d) => d.domain_id).sort((a, b) => a - b),
-      allowedIps: ipsOf(r.allowed_ips), createdByName: r.created_by_name ?? null, createdAt: iso(r.created_at) as string,
+      allowedIps: ipsOf(r.allowed_ips),
+      open: ipsOf(r.allowed_ips).length === 0 && ((r.kind ?? 'key') === 'key' || connectorRanges === 0),
+      createdByName: r.created_by_name ?? null, createdAt: iso(r.created_at) as string,
       lastUsedAt: iso(r.last_used_at), lastUsedIp: r.last_used_ip, expiresAt: iso(r.expires_at), inactiveScopes: inactive,
       oauthClientId: r.kind === 'connector' ? r.oauth_client_id : null,
       connections: connections.filter((c) => c.key_id === r.id).map(({ key_id: _k, ...c }) => c).sort((a, b) => a.connectedAt.localeCompare(b.connectedAt)),
@@ -578,7 +585,7 @@ async function contextFor(row: KeyWithAccount, userId: number, ip: string): Prom
       .catch((err: unknown) => logger.warn({ err, keyId: row.id }, 'API key: last use not recorded'));
   }
   return {
-    id: row.id, name: row.name, tenantId: row.tenant_id, accountId: row.account_id, creatorId: userId,
+    id: row.id, name: row.name, kind: row.kind ?? 'key', tenantId: row.tenant_id, accountId: row.account_id, creatorId: userId,
     scopes: new Set(scopes), siteScope: row.site_scope, siteIds: new Set(sites.map(Number)),
     domainScope: domainManager && row.domain_scope === 'all' ? 'all' : 'selected', domainIds: new Set(domainIds),
     actor: { kind: 'client', userId, tenantId: row.tenant_id, accounts: new Map([[row.account_id, caps]]) },

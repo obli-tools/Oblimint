@@ -29,6 +29,7 @@
       "monitoring": "Surveillance et tâches planifiées",
       "security": "Sécurité",
       "platform": "Plateforme",
+      "approvals": "Approbations",
       "account": "Mon compte"
     },
     "familyHint": {
@@ -41,6 +42,7 @@
       "monitoring": "Sondes en panne / rétablies, tâches planifiées et workflows en échec.",
       "security": "Adresses bannies, configurations de proxy refusées ou restaurées.",
       "platform": "Mises à jour de la plateforme.",
+      "approvals": "Actions sensibles en attente de votre code ou de votre approbation, décisions sur vos demandes. Toujours affichées dans la cloche.",
       "account": "Connexions avec un code de secours, mot de passe réinitialisé, adresse e-mail changée. Toujours affiché."
     }
   },

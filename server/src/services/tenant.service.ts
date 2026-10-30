@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import { z } from 'zod';
 import { db } from '../db';
-import { DEFAULT_TENANT_LIMITS, MASTER_TENANT_ID } from '@oblimint/shared';
+import { DEFAULT_TENANT_LIMITS, MASTER_TENANT_ID, defaultRestrictionsFor } from '@oblimint/shared';
 import type { Tenant, TenantLimits, TenantWithRole } from '@oblimint/shared';
 import { AppError } from '../middleware/errorHandler';
 import { clientIp } from '../utils/clientIp';
@@ -123,7 +123,8 @@ export const tenantService = {
     const limits = { ...DEFAULT_TENANT_LIMITS, ...(data.limits ?? {}) };
     try {
       const [row] = await db('tenants')
-        .insert({ name: data.name, slug: data.slug, limits: JSON.stringify(limits) })
+        // Recommended protections of the sensitive actions (never the platform ones: master only).
+        .insert({ name: data.name, slug: data.slug, limits: JSON.stringify(limits), action_restrictions: JSON.stringify(defaultRestrictionsFor(false)) })
         .returning('*');
       return rowToTenant(row as TenantRow);
     } catch (err) {

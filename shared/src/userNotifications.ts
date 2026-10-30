@@ -21,23 +21,29 @@ export type NotificationFamily =
   | 'monitoring'
   | 'security'
   | 'platform'
+  // Sensitive actions: confirmations / approvals to give, decisions on my requests (targeted delivery,
+  // in-app never switched off).
+  | 'approvals'
   // Personal notices about one's own account (recovery code used, password reset,
   // e-mail changed): written for that user only, always in the bell and e-mailed
   // when possible, never configurable (absent from the preferences).
   | 'account';
 
 export const NOTIFICATION_FAMILIES: readonly NotificationFamily[] = [
-  'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring', 'security', 'platform', 'account',
+  'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring', 'security', 'platform', 'approvals', 'account',
 ];
 
 /** Families whose delivery each user chooses (the preferences); 'account' is always delivered. */
 export const CONFIGURABLE_NOTIFICATION_FAMILIES: readonly NotificationFamily[] = [
-  'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring', 'security', 'platform',
+  'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring', 'security', 'platform', 'approvals',
 ];
+
+/** Families whose in-app delivery cannot be switched off (only the e-mail is a choice). */
+export const LOCKED_IN_APP_NOTIFICATION_FAMILIES: readonly NotificationFamily[] = ['approvals'];
 
 /** Families a client user (kind 'client') can receive: never security / platform. */
 export const CLIENT_NOTIFICATION_FAMILIES: readonly NotificationFamily[] = [
-  'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring', 'account',
+  'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring', 'approvals', 'account',
 ];
 
 /** Family of every notification event (preferences are set per family). */
@@ -80,6 +86,13 @@ export const NOTIFICATION_EVENT_FAMILY: Record<NotificationEvent, NotificationFa
   'platform.updateAvailable': 'platform',
   'platform.updated': 'platform',
   'platform.updateFailed': 'platform',
+  'action.confirmationRequired': 'approvals',
+  'action.approvalRequired': 'approvals',
+  'action.approved': 'approvals',
+  'action.denied': 'approvals',
+  'action.expired': 'approvals',
+  'security.keyRegimeChanged': 'security',
+  'security.keyAbuse': 'security',
 };
 
 export type UserNotificationSeverity = 'info' | 'warning' | 'critical';
@@ -127,6 +140,7 @@ export const DEFAULT_USER_NOTIFICATION_PREFS: UserNotificationPrefs = {
   monitoring: { inApp: true, email: false },
   security: { inApp: true, email: false },
   platform: { inApp: true, email: false },
+  approvals: { inApp: true, email: false },
   account: { inApp: true, email: true },
 };
 

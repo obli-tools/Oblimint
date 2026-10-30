@@ -4,7 +4,7 @@ import type {
   UserNotificationSettings, UserNotificationSeverity,
 } from '@oblimint/shared';
 import {
-  CLIENT_NOTIFICATION_FAMILIES, CONFIGURABLE_NOTIFICATION_FAMILIES, DEFAULT_USER_NOTIFICATION_PREFS, MASTER_TENANT_ID, NOTIFICATION_EVENT_FAMILY, NOTIFICATION_FAMILIES,
+  CLIENT_NOTIFICATION_FAMILIES, CONFIGURABLE_NOTIFICATION_FAMILIES, DEFAULT_USER_NOTIFICATION_PREFS, LOCKED_IN_APP_NOTIFICATION_FAMILIES, MASTER_TENANT_ID, NOTIFICATION_EVENT_FAMILY, NOTIFICATION_FAMILIES,
   USER_NOTIFICATION_DEDUP_HOURS, USER_NOTIFICATION_MAX_PER_USER, USER_NOTIFICATION_PAGE_MAX, USER_NOTIFICATION_RETENTION_DAYS,
   UserNotificationSocketEvents,
 } from '@oblimint/shared';
@@ -57,6 +57,9 @@ const FAMILY_AUDIENCE: Record<NotificationFamily, Audience> = {
   monitoring: { staff: 'monitoring.manage', client: 'monitoring.manage' },
   security: { staff: 'proxy.manage', client: null },
   platform: { staff: null, client: null },
+  // Targeted delivery only (deliverToRecipients: the approvers / the requester of a pending action):
+  // this audience is never used to broadcast (deliverToUsers skips the family).
+  approvals: { staff: 'read', client: 'read' },
   // Personal notices (deliverAccountNotice): never through notify(), never a recipient computed here.
   account: { staff: null, client: null },
 };
@@ -69,6 +72,9 @@ const EVENT_AUDIENCE: Partial<Record<NotificationEvent, Audience>> = {
   'cron.failed': { staff: 'sites.manage', client: 'sites.manage' },
   'mail.quotaWarning': { staff: 'mail.manage', client: 'read' },
   'mail.outboundSuspended': { staff: 'mail.manage', client: 'read' },
+  // IP security of the access keys: platform admins only.
+  'security.keyRegimeChanged': { staff: null, client: null },
+  'security.keyAbuse': { staff: null, client: null },
 };
 
 export function audienceOf(event: NotificationEvent): Audience {
@@ -159,7 +165,7 @@ export function normalizePrefs(raw: unknown): UserNotificationPrefs {
     const v = (obj as Record<string, unknown>)[f];
     if (!v || typeof v !== 'object') continue;
     const p = v as Record<string, unknown>;
-    if (typeof p.inApp === 'boolean') out[f].inApp = p.inApp;
+    if (typeof p.inApp === 'boolean' && !LOCKED_IN_APP_NOTIFICATION_FAMILIES.includes(f)) out[f].inApp = p.inApp;
     if (typeof p.email === 'boolean') out[f].email = p.email;
   }
   return out;
@@ -239,8 +245,28 @@ function emitToUser(userId: number, event: string, payload: Record<string, unkno
 export async function deliverToUsers(event: NotificationEvent, p: DeliverPayload, rendered?: RenderedNotification | null): Promise<number> {
   try {
     const family = NOTIFICATION_EVENT_FAMILY[event];
-    if (!family || family === 'account') return 0;
+    // 'approvals' are targeted (deliverToRecipients): never broadcast by notify().
+    if (!family || family === 'account' || family === 'approvals') return 0;
     const recipients = await recipientsFor(event, { tenantId: p.tenantId, accountId: p.accountId ?? null, platform: p.platform });
+    return await deliverToRecipients(event, p, recipients, rendered);
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, event }, 'user notifications: delivery failed');
+    return 0;
+  }
+}
+
+/**
+ * Targeted delivery: writes the notification for exactly these recipients
+ * (computed by the caller from the database — the approvers of a pending
+ * action, its requester), with the same rules as deliverToUsers: each one's
+ * preferences (the in-app of a locked family is always on), the 24 h
+ * deduplication on (event, key), the socket push and the e-mail queue.
+ * Never throws.
+ */
+export async function deliverToRecipients(event: NotificationEvent, p: DeliverPayload, recipients: Recipient[], rendered?: RenderedNotification | null): Promise<number> {
+  try {
+    const family = NOTIFICATION_EVENT_FAMILY[event];
+    if (!family || family === 'account') return 0;
     if (recipients.length === 0) return 0;
     const dedupKey = String(p.key ?? '').slice(0, 200);
     const since = new Date(Date.now() - USER_NOTIFICATION_DEDUP_HOURS * 3600_000);
@@ -262,7 +288,8 @@ export async function deliverToUsers(event: NotificationEvent, p: DeliverPayload
     for (const r of recipients) {
       if (already.has(`${r.userId}:${r.tenantId}`)) continue;
       if (r.kind === 'client' && !CLIENT_NOTIFICATION_FAMILIES.includes(family)) continue;
-      const pref = (prefs.get(r.userId) ?? DEFAULT_USER_NOTIFICATION_PREFS)[family];
+      const stored = (prefs.get(r.userId) ?? DEFAULT_USER_NOTIFICATION_PREFS)[family];
+      const pref = LOCKED_IN_APP_NOTIFICATION_FAMILIES.includes(family) ? { ...stored, inApp: true } : stored;
       const email = emailOn && pref.email;
       if (!pref.inApp && !email) continue;
       if (email) wantsEmail.add(r.userId);
@@ -569,6 +596,9 @@ export const userNotificationService = {
       if (!v || typeof v !== 'object') throw new AppError(400, `Invalid preference for ${k}`, 'validation', { field: `prefs.${k}` });
       for (const [ck, cv] of Object.entries(v)) {
         if ((ck !== 'inApp' && ck !== 'email') || typeof cv !== 'boolean') throw new AppError(400, `Invalid preference ${k}.${ck}`, 'validation', { field: `prefs.${k}.${ck}` });
+        if (ck === 'inApp' && cv === false && LOCKED_IN_APP_NOTIFICATION_FAMILIES.includes(k as NotificationFamily)) {
+          throw new AppError(400, `The in-app notifications of ${k} cannot be switched off`, 'notificationLocked', { field: `prefs.${k}.inApp` });
+        }
       }
     }
     const current = (await prefsOf([userId])).get(userId) ?? normalizePrefs(null);

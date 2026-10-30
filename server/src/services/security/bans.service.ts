@@ -931,7 +931,9 @@ export const webBanService = {
     const live = (qb: Knex.QueryBuilder) => qb.where('b.is_active', true).andWhere((w) => w.whereNull('b.banned_until').orWhere('b.banned_until', '>', now));
     const byScope = await live(scoped()).select('b.scope', 'b.source').count<{ scope: WebBanScope; source: WebBanSource; n: string | number }[]>({ n: '*' }).groupBy('b.scope', 'b.source');
     const [{ n: recent }] = await scoped().where('b.created_at', '>=', new Date(now.getTime() - DAY_MS)).count<{ n: string | number }[]>({ n: '*' });
-    const bySource: Record<WebBanSource, number> = { 'honeypot-path': 0, 'honeypot-acl': 0, manual: 0, 'obliguard-sync': 0, promotion: 0 };
+    const bySource: Record<WebBanSource, number> = {
+      'honeypot-path': 0, 'honeypot-acl': 0, manual: 0, 'obliguard-sync': 0, promotion: 0, 'key-intrusion': 0, 'key-bruteforce': 0,
+    };
     let platform = 0;
     let account = 0;
     for (const r of byScope) {

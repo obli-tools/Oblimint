@@ -589,7 +589,9 @@
       "honeypotPath": "Honeypot (chemin appât)",
       "manual": "Manuel",
       "obliguard": "Obliguard",
-      "promotion": "Promotion"
+      "promotion": "Promotion",
+      "keyIntrusion": "Clés d'accès : intrusion",
+      "keyBruteforce": "Clés d'accès : clés invalides"
     },
     "sourceLabel": "Source",
     "state": "État",

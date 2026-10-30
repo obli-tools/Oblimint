@@ -1,4 +1,6 @@
 import type { DmarcPolicy, MtaStsMode, WebmailKind } from './mail';
+import { DEFAULT_KEY_SECURITY_SETTINGS, type KeySecuritySettings } from './keySecurity';
+import { PENDING_ACTION_TTL_MINUTES, type RestrictionFloor } from './restrictions';
 
 // =============================================================================
 // Oblimint — P2 platform settings (docs/P2-PLAN.md §Réglages). Stored in
@@ -318,7 +320,21 @@ export interface HostingSettings {
   bans: BansSettings;
   monitoring: MonitoringSettings;
   network: NetworkSettings;
+  /** Sensitive actions: platform floor (master), lifetime of a pending request. Written by PUT /api/restrictions/floor only. */
+  restrictions: RestrictionPlatformSettings;
+  /** IP security of the access keys / MCP. Written by its own route only (action platform.key_security). */
+  keySecurity: KeySecuritySettings;
 }
+
+export interface RestrictionPlatformSettings {
+  /** Minimal level per action on every tenant (a reseller cannot lower it). */
+  floor: RestrictionFloor;
+  /** Lifetime of a pending confirmation / approval (minutes). */
+  pendingTtlMinutes: number;
+}
+
+/** Sections never written through PUT /api/system/hosting-settings (their own gated routes). */
+export const PROTECTED_SETTINGS_SECTIONS = ['restrictions', 'keySecurity'] as const;
 
 export type HostingSettingsSection = keyof HostingSettings;
 
@@ -451,4 +467,6 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     certExpiryWarningDays: 14,
   },
   network: { mode: 'enforce' },
+  restrictions: { floor: {}, pendingTtlMinutes: PENDING_ACTION_TTL_MINUTES },
+  keySecurity: { ...DEFAULT_KEY_SECURITY_SETTINGS, trustedIps: [], connectorSourceRanges: [...DEFAULT_KEY_SECURITY_SETTINGS.connectorSourceRanges] },
 };

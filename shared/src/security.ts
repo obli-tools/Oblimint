@@ -14,7 +14,10 @@
 // settings bans.neverBan, nor the node's own addresses.
 // =============================================================================
 
-export type WebBanSource = 'honeypot-path' | 'honeypot-acl' | 'manual' | 'obliguard-sync' | 'promotion';
+export type WebBanSource = 'honeypot-path' | 'honeypot-acl' | 'manual' | 'obliguard-sync' | 'promotion'
+  // IP security of the access keys / MCP: an address outside every key (strict mode, permanent),
+  // repeated bad keys from an allowed address (escalating).
+  | 'key-intrusion' | 'key-bruteforce';
 export type WebBanScope = 'account' | 'platform';
 export type ObliguardSyncStatus = 'disabled' | 'pending' | 'sent' | 'failed';
 

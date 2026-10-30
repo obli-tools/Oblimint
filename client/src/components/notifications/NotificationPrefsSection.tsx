@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { SlidersHorizontal } from 'lucide-react';
 import type { NotificationFamily, UserNotificationChannelPref, UserNotificationSettings } from '@oblimint/shared';
+import { LOCKED_IN_APP_NOTIFICATION_FAMILIES } from '@oblimint/shared';
 import { inboxApi } from '@/api/inbox.api';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
@@ -74,8 +75,8 @@ export function NotificationPrefsSection() {
                 <div className="flex w-24 justify-center max-sm:w-auto max-sm:justify-start">
                   <ToggleSwitch
                     size="sm"
-                    checked={settings.prefs[f].inApp}
-                    disabled={busy === `${f}:inApp`}
+                    checked={LOCKED_IN_APP_NOTIFICATION_FAMILIES.includes(f) || settings.prefs[f].inApp}
+                    disabled={LOCKED_IN_APP_NOTIFICATION_FAMILIES.includes(f) || busy === `${f}:inApp`}
                     onChange={(v) => { void set(f, { inApp: v }); }}
                     label={<span className="sm:hidden">{t('inbox.channelApp') || 'In the panel'}</span>}
                     ariaLabel={`${familyLabel(t, f)} — ${t('inbox.channelApp') || 'In the panel'}`}

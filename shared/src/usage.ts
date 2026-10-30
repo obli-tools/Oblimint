@@ -175,7 +175,16 @@ export type NotificationEvent =
   | 'release.approved'       // a release awaiting approval was approved (it goes live)
   | 'release.rejected'       // a release awaiting approval was rejected
   | 'domain.verified'        // the ownership of a domain is proven (it can go live)
-  | 'domain.reclaimed';      // a domain was taken back by the account that proved its ownership
+  | 'domain.reclaimed'       // a domain was taken back by the account that proved its ownership
+  // Sensitive actions (pending confirmations / approvals): delivered to their recipients only
+  | 'action.confirmationRequired' // an action of mine (or of my key) waits for my code
+  | 'action.approvalRequired'     // an action waits for the approval of a second authorised person
+  | 'action.approved'             // my request was confirmed / approved: send it again
+  | 'action.denied'               // my request was denied
+  | 'action.expired'              // my request expired before a decision / before being used
+  // IP security of the access keys
+  | 'security.keyRegimeChanged'   // the key surfaces switched between strict and watch
+  | 'security.keyAbuse';          // repeated bad keys from a never-banned range (connectors)
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'quota.warning', 'quota.exceeded', 'quota.action', 'certificate.failed', 'certificate.issued', 'dns.syncFailed', 'db.instanceFailed', 'cron.failed', 'security.banned',
@@ -185,6 +194,8 @@ export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'edge.unitQuarantined', 'edge.rollback', 'workflow.failed',
   'platform.updateAvailable', 'platform.updated', 'platform.updateFailed',
   'release.pendingApproval', 'release.approved', 'release.rejected', 'domain.verified', 'domain.reclaimed',
+  'action.confirmationRequired', 'action.approvalRequired', 'action.approved', 'action.denied', 'action.expired',
+  'security.keyRegimeChanged', 'security.keyAbuse',
 ];
 
 /**

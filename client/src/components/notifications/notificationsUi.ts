@@ -52,6 +52,14 @@ export function eventLabel(t: TFunction, e: NotificationEvent | AccountNotificat
     'release.rejected': 'Release rejected',
     'domain.verified': 'Domain ownership verified',
     'domain.reclaimed': 'Domain taken back by its owner',
+    // Sensitive actions (family approvals)
+    'action.confirmationRequired': 'Confirmation requested',
+    'action.approvalRequired': 'Approval requested',
+    'action.approved': 'Action authorised',
+    'action.denied': 'Action denied',
+    'action.expired': 'Request expired',
+    'security.keyRegimeChanged': 'Access keys: security regime changed',
+    'security.keyAbuse': 'Repeated invalid access keys',
     // Personal notices (family account)
     'account.recoveryCodeUsed': 'Recovery code used',
     'account.passwordReset': 'Password reset',
