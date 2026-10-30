@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import { pipeline, Transform, type Readable } from 'stream';
 import type {
   ApiV1Me, ApiV1ParentDomain, ApiV1ReleaseDetail, ApiV1ReleaseResult, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileEdit, FileEditResult, FileExtractResult, FileListing, FileOpResult, FileRange, FileSearchResult, FileText, FileWriteResult,
-  FileUploadChunkResult, FileUploadSession, LogQueryResult, Release, ReleaseDiff, ReleaseLogLine,
+  FileUploadChunkResult, FileUploadSession, LogQueryResult, Release, ReleaseDiff, ReleaseLogLine, SiteErrorGroupDetail, SiteErrorList,
   PreviewFetchResult, PreviewLink, PreviewStartResult, SitePreview,
   ReleaseFileContent, ReleaseFileList, SiteCreate, StagingRestoreResult, StagingRestoreRunning, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
 } from '@oblimint/shared';
@@ -24,6 +24,7 @@ import { publicPanelOrigin } from '../panelHosts';
 import { cronService } from '../cron/cron.service';
 import type { DataPathInputBody, DataPathUpdateBody } from '../../validators/hosting.schema';
 import { assertSource, logsService } from '../logs/logs.service';
+import { siteErrorsService, type ErrorListQuery } from '../siteErrors/siteErrors.service';
 import { releaseService } from '../releases/release.service';
 import { liveStates } from '../releases/liveState';
 import { loggedUserIds, maskStaffIds, publicReleaseText, releaseOutcome } from '../releases/outcome';
@@ -908,6 +909,19 @@ export const keyApi = {
     return logsService.query(ctx.actor, site.id, {
       source: assertSource(q.source), q: q.q ?? null, limit: q.limit ?? null, since: q.since ?? null, until: q.until ?? null, status: q.status ?? null,
     } as Parameters<typeof logsService.query>[2]);
+  },
+
+  // ── PHP errors grouped by release (same scope as the logs they come from) ──
+  async errors(ctx: ApiKeyContext, siteId: number, q: ErrorListQuery): Promise<SiteErrorList> {
+    requireScope(ctx, 'logs.read');
+    const site = await keySite(ctx, siteId);
+    return siteErrorsService.list(ctx.actor, site.id, q);
+  },
+
+  async error(ctx: ApiKeyContext, siteId: number, groupId: number): Promise<SiteErrorGroupDetail> {
+    requireScope(ctx, 'logs.read');
+    const site = await keySite(ctx, siteId);
+    return siteErrorsService.get(ctx.actor, site.id, groupId);
   },
 
   accountRow,

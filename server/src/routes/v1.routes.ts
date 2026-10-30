@@ -13,6 +13,7 @@ import {
 } from '@oblimint/shared';
 import { keyDatabases } from '../services/apiKeys/keyDatabases';
 import { keyEnv } from '../services/apiKeys/keyEnv';
+import { errorListQuery, errorListShape } from '../services/siteErrors/siteErrors.service';
 import type { SiteBaseId } from '@oblimint/shared';
 import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInputSchema, siteCreateSchema, siteUpdateSchema } from '../validators/hosting.schema';
 
@@ -64,6 +65,8 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   POST   /sites/:id/preview/link                      → PreviewLink (one-shot interstitial page)  previews.manage + files.read (creator: sites.manage)
 //   GET    /sites/:id/preview/fetch?path=&compare=1&host=&max_bytes=&method= → PreviewFetchResult previews.manage + files.read (compare: + sites.manage)
 //   GET    /sites/:id/logs?source=access|error|app&q=&limit=&since=&until=&status= → LogQueryResult  logs.read
+//   GET    /sites/:id/errors?release_id=&since_release_id=&new_only=1&level=&limit= → SiteErrorList (PHP errors grouped by release)  logs.read
+//   GET    /sites/:id/errors/:gid                       → SiteErrorGroupDetail (sample + stack, other releases)  logs.read
 //   GET    /sites/:id/env                               → SiteEnvVar[] (secrets: value null)        sites.manage
 //   PATCH  /sites/:id/env  {set?: [{name, value?, secret?}], remove?: [name]} → {vars, changed} (others kept; restarts the site) sites.manage
 //   GET    /sites/:id/data-paths                        → SiteDataPath[]
@@ -354,6 +357,12 @@ router.get('/sites/:id/logs', h(async (req, res) => {
     limit: q.limit ? Number(q.limit) : null, since: typeof q.since === 'string' ? q.since : null,
     until: typeof q.until === 'string' ? q.until : null, status: typeof q.status === 'string' ? q.status : null,
   }));
+}));
+router.get('/sites/:id/errors', h(async (req, res) => {
+  ok(res, await keyApi.errors(ctxOf(req), siteId(req), errorListQuery(parseBody(errorListShape, req.query))));
+}));
+router.get('/sites/:id/errors/:gid', h(async (req, res) => {
+  ok(res, await keyApi.error(ctxOf(req), siteId(req), Number(req.params.gid)));
 }));
 
 router.get('/domains', h(async (req, res) => ok(res, await keyApi.parentDomains(ctxOf(req)))));

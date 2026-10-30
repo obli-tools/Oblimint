@@ -94,7 +94,7 @@ Consequences:
 | \`databases.manage\` | Databases: the account's database servers (create one within the plan), databases and users, SQL import / export, SQL queries (read-only by default) |
 | \`routes.manage\` | Domain routes: choose which site (or runtime) serves a path, e.g. \`example.com/uploads/\`, towards the key's sites; on the domains given to it in the panel (even one serving nothing yet) or serving only its sites |
 | \`domains.subdomain\` | Attach to the sites **subdomains** of a domain **already in** the account (given to the key in the panel, or serving only its sites), remove the ones the key created |
-| \`logs.read\` | Read access, error (web server / PHP) and application logs |
+| \`logs.read\` | Read access, error (web server / PHP) and application logs, and the PHP errors grouped by release |
 
 **Databases**: a key valid for every site sees every database of the account; a key limited to some sites sees only the databases and users **it created**. A key deletes only what it created, and never stops nor deletes a database server.
 
@@ -159,6 +159,8 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`list_database_tables\` / \`describe_table\` | Tables and views of a database (estimated rows, size); columns, keys, indexes, foreign keys of one table | \`databases.manage\` |
 | \`query_database\` | **One** SQL statement (\`sql\`), **read-only by default** (rolled back); \`write: true\` to change data or structure; \`max_rows?\` (≤ 500), \`timeout_s?\` (≤ 60) — see §5 « Working on the data » | \`databases.manage\` |
 | \`read_logs\` | \`error\` (default), \`access\` or \`app\` logs; \`query\` filter, \`limit\` (≤ 2000), \`since?\` / \`until?\` (ISO 8601), \`status?\` (access only: \`404\`, \`5xx\`) | \`logs.read\` |
+| \`list_errors\` | PHP errors, warnings and fatals **grouped** (level + message + \`file:line\` relative to the release) and **attributed to the release** that served them: \`count\`, \`firstSeen\` / \`lastSeen\`, \`newInRelease\`, \`errorClass\` + \`hint\`; \`releases\` sums up per release. Filters \`release_id?\`, \`since_release_id?\`, \`new_only?\`, \`level?\` (\`fatal,parse\`…), \`limit?\` (≤ 200) | \`logs.read\` |
+| \`get_error\` | One group (\`error_id\`): last occurrence with its stack trace (arguments and secrets masked), its release, the same error in the other releases | \`logs.read\` |
 
 **Bases (\`base\`)**: \`apache-php5.6\` (legacy code being ported only: no security fix), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supported), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (plain HTML/JS/CSS).
 **Profiles (\`app_profile\`)**: \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (document root \`public\`), \`generic-php\`, \`static\`. A profile sets the document root and declares the data folders (e.g. \`wp-content/uploads\`).
@@ -188,7 +190,9 @@ The idea: the agent develops on the platform, puts things live **only once the w
    - \`scanBlocked\`: the security scan blocks the release (\`awaiting_approval\`); only a staff override publishes it. Show the findings to the human.
    - \`awaiting_approval\` without an error code: the site publishes with approval (or the content is suspicious): tell the human.
 2. \`diff_release\` (\`against: "live"\` before, \`"previous"\` after) shows exactly what changed.
-3. Check that the site answers (its URL) and \`read_logs\` (\`source: "error"\`, \`since\`).
+3. Check that the site answers (its URL), then \`list_errors\` with \`release_id\` (the new release) and \`new_only: true\` a minute or two later: the PHP errors this release brought (collected every minute). \`get_error\` for the stack; \`read_logs\` (\`source: "error"\`, \`since\`) for the raw lines.
+   - \`errorClass: "readOnlyWrite"\`: the code writes next to itself (cache, uploads): the live code is read-only. Declare that folder as a data path (\`add_data_path\`) and publish again.
+   - \`errorClass: "execRefused"\`: PHP refused a script outside the release (a data path, \`/tmp\`): PHP code must come from the staging, never be written at runtime.
 4. Broken: \`rollback\` to the previous release at once, then fix in the staging.
 5. A preview still running (\`get_preview\`): \`stop_preview\`.
 
@@ -242,7 +246,7 @@ A human may work on the same files over SFTP at the same time. Never overwrite w
 
 ### Fixing a production bug
 
-1. \`read_logs\` (\`source: "error"\`, \`limit: 200\`) to understand.
+1. \`list_errors\` (the live release: \`release_id\` = \`liveReleaseId\`) for the grouped errors, \`get_error\` for the stack of one, \`read_logs\` (\`source: "error"\`, \`limit: 200\`) for the context.
 2. \`search_files\` → \`read_file\` (lines around the error) → \`edit_file\` with \`expected_sha256\` in the staging.
 3. \`staging_changes\` → \`publish\` with a clear \`message\`.
 4. Test again; if it breaks: \`list_releases\` then \`rollback\`.
@@ -362,6 +366,8 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | POST | \`/sites/:id/preview/link\` | one-shot share link for a human | \`previews.manage\` + \`files.read\` |
 | GET | \`/sites/:id/preview/fetch\` | \`?path=&method=GET\\|HEAD&max_bytes=&compare=1&host=preview\\|live\` | \`previews.manage\` + \`files.read\` (compare: + \`sites.manage\`) |
 | GET | \`/sites/:id/logs\` | \`?source=error\\|access\\|app&q=&limit=&since=&until=&status=\` | \`logs.read\` |
+| GET | \`/sites/:id/errors\` | PHP errors grouped by release: \`?release_id=&since_release_id=&new_only=1&level=fatal,parse&limit=\` | \`logs.read\` |
+| GET | \`/sites/:id/errors/:gid\` | one group: last occurrence with its stack, the other releases | \`logs.read\` |
 | GET | \`/domains\` · \`/subdomains\` | possible parent domains · subdomains of the key | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.example.com" }\` | \`domains.subdomain\` |
 | DELETE | \`/subdomains/:name\` | | \`domains.subdomain\` |
@@ -542,7 +548,7 @@ Conséquences :
 | \`databases.manage\` | Bases de données : serveurs de bases du compte (en créer un dans les limites du plan), bases et utilisateurs, import / export SQL, requêtes SQL (lecture seule par défaut) |
 | \`routes.manage\` | Routes des domaines : choisir quel site (ou runtime) sert un chemin, ex. \`exemple.com/uploads/\`, vers les sites de la clé ; sur les domaines qui lui sont donnés dans le panel (même un domaine qui ne sert encore rien) ou qui ne servent que ses sites |
 | \`domains.subdomain\` | Rattacher aux sites des **sous-domaines** d'un domaine **déjà présent** sur le compte (donné à la clé dans le panel, ou qui ne sert que ses sites), retirer ceux créés par la clé |
-| \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs |
+| \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs, et les erreurs PHP regroupées par release |
 
 **Bases de données** : une clé valable pour tous les sites voit toutes les bases du compte ; une clé limitée à certains sites ne voit que les bases et utilisateurs **qu'elle a créés**. Une clé ne supprime que ce qu'elle a créé, et n'arrête ni ne supprime jamais un serveur de bases.
 
@@ -607,6 +613,8 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`list_database_tables\` / \`describe_table\` | Tables et vues d'une base (lignes estimées, taille) ; colonnes, clés, index, clés étrangères d'une table | \`databases.manage\` |
 | \`query_database\` | **Une** instruction SQL (\`sql\`), **en lecture seule par défaut** (annulée) ; \`write: true\` pour modifier données ou structure ; \`max_rows?\` (≤ 500), \`timeout_s?\` (≤ 60) — voir §5 « Travailler sur les données » | \`databases.manage\` |
 | \`read_logs\` | Journaux \`error\` (par défaut), \`access\` ou \`app\` ; filtre \`query\`, \`limit\` (≤ 2000), \`since?\` / \`until?\` (ISO 8601), \`status?\` (access seulement : \`404\`, \`5xx\`) | \`logs.read\` |
+| \`list_errors\` | Erreurs, avertissements et fatales PHP **regroupés** (niveau + message + \`fichier:ligne\` relatif à la release) et **rattachés à la release** qui les a servis : \`count\`, \`firstSeen\` / \`lastSeen\`, \`newInRelease\`, \`errorClass\` + \`hint\` ; \`releases\` résume par release. Filtres \`release_id?\`, \`since_release_id?\`, \`new_only?\`, \`level?\` (\`fatal,parse\`…), \`limit?\` (≤ 200) | \`logs.read\` |
+| \`get_error\` | Un groupe (\`error_id\`) : dernière occurrence avec sa pile d'appels (arguments et secrets masqués), sa release, la même erreur dans les autres releases | \`logs.read\` |
 
 **Bases (\`base\`)** : \`apache-php5.6\` (code ancien en cours de portage uniquement : aucun correctif de sécurité), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supporté), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (HTML/JS/CSS pur).
 **Profils (\`app_profile\`)** : \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (racine web \`public\`), \`generic-php\`, \`static\`. Un profil règle la racine web et déclare les dossiers de données (ex. \`wp-content/uploads\`).
@@ -636,7 +644,9 @@ L'idée : l'agent développe sur la plateforme, ne met en ligne **qu'une fois le
    - \`scanBlocked\` : l'analyse de sécurité bloque la release (\`awaiting_approval\`) ; seule une dérogation du staff la publie. Montre les détections à l'humain.
    - \`awaiting_approval\` sans code d'erreur : le site publie avec validation (ou le contenu est suspect) : préviens l'humain.
 2. \`diff_release\` (\`against: "live"\` avant, \`"previous"\` après) montre exactement ce qui a changé.
-3. Vérifie que le site répond (son URL) et \`read_logs\` (\`source: "error"\`, \`since\`).
+3. Vérifie que le site répond (son URL), puis \`list_errors\` avec \`release_id\` (la nouvelle release) et \`new_only: true\` une à deux minutes plus tard : les erreurs PHP apportées par cette release (collectées chaque minute). \`get_error\` pour la pile d'appels ; \`read_logs\` (\`source: "error"\`, \`since\`) pour les lignes brutes.
+   - \`errorClass: "readOnlyWrite"\` : le code écrit à côté de lui-même (cache, uploads) alors que le code en ligne est en lecture seule. Déclare ce dossier comme chemin de données (\`add_data_path\`) et republie.
+   - \`errorClass: "execRefused"\` : PHP a refusé un script hors de la release (chemin de données, \`/tmp\`) : le code PHP doit venir du staging, jamais être écrit pendant l'exécution.
 4. Cassé : \`rollback\` vers la release précédente tout de suite, puis corrige dans le staging.
 5. Un aperçu encore en marche (\`get_preview\`) : \`stop_preview\`.
 
@@ -690,7 +700,7 @@ Un humain peut travailler sur les mêmes fichiers en SFTP au même moment. N'éc
 
 ### Corriger un bug en production
 
-1. \`read_logs\` (\`source: "error"\`, \`limit: 200\`) pour comprendre.
+1. \`list_errors\` (la release en ligne : \`release_id\` = \`liveReleaseId\`) pour les erreurs regroupées, \`get_error\` pour la pile d'appels de l'une d'elles, \`read_logs\` (\`source: "error"\`, \`limit: 200\`) pour le contexte.
 2. \`search_files\` → \`read_file\` (les lignes autour de l'erreur) → \`edit_file\` avec \`expected_sha256\` dans le staging.
 3. \`staging_changes\` → \`publish\` avec un \`message\` clair.
 4. Re-tester ; si ça casse : \`list_releases\` puis \`rollback\`.
@@ -806,6 +816,8 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | POST | \`/sites/:id/preview/link\` | lien de partage à usage unique pour un humain | \`previews.manage\` + \`files.read\` |
 | GET | \`/sites/:id/preview/fetch\` | \`?path=&method=GET\\|HEAD&max_bytes=&compare=1&host=preview\\|live\` | \`previews.manage\` + \`files.read\` (compare : + \`sites.manage\`) |
 | GET | \`/sites/:id/logs\` | \`?source=error\\|access\\|app&q=&limit=&since=&until=&status=\` | \`logs.read\` |
+| GET | \`/sites/:id/errors\` | erreurs PHP regroupées par release : \`?release_id=&since_release_id=&new_only=1&level=fatal,parse&limit=\` | \`logs.read\` |
+| GET | \`/sites/:id/errors/:gid\` | un groupe : dernière occurrence avec sa pile d'appels, les autres releases | \`logs.read\` |
 | GET | \`/domains\` · \`/subdomains\` | domaines parents possibles · sous-domaines de la clé | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.exemple.com" }\` | \`domains.subdomain\` |
 | DELETE | \`/subdomains/:name\` | | \`domains.subdomain\` |
