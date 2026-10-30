@@ -56,6 +56,24 @@ export function redactBackendError(err: AppError): { error: string; details?: un
   }
 }
 
+/**
+ * The error kept on a consumed pending action (pending_actions.execution_error).
+ * That row is shown to the requester, to the decider and to the approvers —
+ * hosting clients among them — and to the key through its follow-up: never
+ * more than a non-staff caller may read (invariant A6). A backend failure
+ * gets its generic text, a server error (5xx, or anything that is not an
+ * AppError: Postgres text, internal paths) a generic text, any other refusal
+ * its own message (a 4xx message is written for the caller).
+ */
+export function executionErrorMessage(err: unknown): string {
+  if (err instanceof AppError) {
+    if (err.code && BACKEND_CODES.has(err.code)) return redactBackendError(err).error;
+    if (err.statusCode >= 500) return 'The operation failed on the server';
+    return err.message;
+  }
+  return 'Internal server error';
+}
+
 function sendAppError(res: Response, err: AppError, body: { error: string; details?: unknown }): void {
   if (res.headersSent) return;
   res.status(err.statusCode).json({
@@ -88,7 +106,7 @@ export function errorHandler(
   const viaPending = (req as Request & { viaPendingAction?: number }).viaPendingAction;
   if (viaPending && !(err instanceof ResponseError && err.statusCode < 400)) {
     void import('../services/restrictions/pendingActions.service')
-      .then((m) => m.recordExecutionError(viaPending, err.message))
+      .then((m) => m.recordExecutionError(viaPending, executionErrorMessage(err)))
       .catch(() => undefined);
   }
   if (err instanceof ResponseError) {

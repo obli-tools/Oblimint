@@ -5,9 +5,11 @@ import { deriveKey } from '../../utils/secretBox';
 // Frozen parameters of a pending action (spec §1.4, §3.3).
 //
 // An approved request is consumed by the SAME request sent again: the match
-// is the HMAC of (action, tenant, principal, canonical JSON of the
-// parameters ∪ the secret parameters ∪ the digests of the contents). Change
-// one parameter and the fingerprint differs: a new request. The secrets are
+// is the HMAC of (action, tenant, principal, TARGET object — account, site,
+// batch ids —, canonical JSON of the parameters ∪ the secret parameters ∪
+// the digests of the contents). Change one parameter, or aim the same body
+// at another site / account (its id is in the URL, not the body), and the
+// fingerprint differs: a new request. The secrets are
 // never stored — only this HMAC — and the parameters shown to the decider
 // are masked by name (ported from Obliance approvalSecrets.ts /
 // approvalDescribe.ts).
@@ -53,8 +55,14 @@ export interface HmacInput {
   tenantId: number;
   userId: number;
   apiKeyId: number | null;
+  /** The object the action is about (RestrictionTarget): bound, an approval never serves another one. */
+  target?: { accountId?: number | null; siteId?: number | null; accountIds?: number[] | null; siteIds?: number[] | null } | null;
   params: Record<string, unknown>;
   secretParams?: Record<string, unknown> | null;
+}
+
+function idSet(ids: number[] | null | undefined): number[] {
+  return [...new Set((ids ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0))].sort((a, b) => a - b);
 }
 
 let keyOverride: Buffer | null = null;
@@ -70,6 +78,10 @@ export function paramsHmac(i: HmacInput): string {
     t: i.tenantId,
     u: i.userId,
     k: i.apiKeyId ?? 0,
+    o: Number(i.target?.accountId ?? 0) || 0,
+    si: Number(i.target?.siteId ?? 0) || 0,
+    oa: idSet(i.target?.accountIds),
+    sa: idSet(i.target?.siteIds),
     p: i.params ?? {},
     s: i.secretParams ?? {},
   });

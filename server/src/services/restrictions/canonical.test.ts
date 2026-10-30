@@ -27,6 +27,18 @@ test('paramsHmac: same request same fingerprint, any change differs', () => {
   assert.notEqual(paramsHmac({ ...base, params: { file: Buffer.from('a') } }), paramsHmac({ ...base, params: { file: Buffer.from('b') } }), 'contents by digest');
 });
 
+test('paramsHmac: the target object is bound (its id is in the URL, not in the body)', () => {
+  const onSite = (siteId: number, accountId = 7) => paramsHmac({ ...base, params: {}, target: { accountId, siteId } });
+  assert.equal(onSite(7), onSite(7));
+  assert.notEqual(onSite(7), onSite(8), 'same body, another site');
+  assert.notEqual(onSite(7, 7), onSite(7, 9), 'same body, another account');
+  assert.notEqual(paramsHmac({ ...base, target: { accountId: 7 } }), paramsHmac(base), 'a target vs none');
+  assert.equal(
+    paramsHmac({ ...base, target: { accountIds: [3, 1, 3], siteIds: [5, 2] } }),
+    paramsHmac({ ...base, target: { accountIds: [1, 3], siteIds: [2, 5] } }), 'batch ids: a set (order, duplicates)');
+  assert.notEqual(paramsHmac({ ...base, target: { siteIds: [2, 5] } }), paramsHmac({ ...base, target: { siteIds: [2, 6] } }), 'another batch');
+});
+
 test('secrets never in the displayed parameters', () => {
   assert.equal(isSecretKey('password'), true);
   assert.equal(isSecretKey('newPassword'), true);
