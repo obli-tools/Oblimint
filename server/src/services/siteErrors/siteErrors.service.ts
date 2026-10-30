@@ -11,22 +11,26 @@ import { logger } from '../../utils/logger';
 import { engineFor } from '../docker/engine';
 import { loadSite, type HostingActor } from '../hosting/access';
 import { LABELS } from '../hosting/naming';
+import type { Readable } from 'stream';
 import { withTimeout } from '../setup/docker';
-import { containerRoleOf, demuxBuffer } from '../logs/dockerLogs';
+import { containerRoleOf } from '../logs/dockerLogs';
 import { fingerprintOf, hintOf, parseLines, sampleOf, tsKey, type ErrorEvent } from './parse';
+import { readStderrAfter, sinceParam, type ByteBudget, type StderrRead } from './readLogs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PHP errors grouped by release (migration 025, shared/siteErrors.ts).
 //
 // Collector (worker 'php-errors', every minute): for each LIVE site container
 // (primary, secondaries — never a preview, whose code is not live), an
-// incremental `docker logs --since <cursor>` of stderr (at most
-// FETCH_TAIL lines per pass and container: a burst beyond is lost, bounded),
-// parse (parse.ts), attribution to a release — the number in the
-// /srv/releases/<n>/ path, otherwise the release live at that time
-// (site_release_switches, kept by a trigger), otherwise 0 (unknown) — then an
-// additive upsert per (site, release number, fingerprint) and the cursors,
-// in ONE transaction per site (a failure re-reads the same lines next time).
+// incremental `docker logs --since <cursor>` of stderr, STREAMED (readLogs.ts)
+// under byte budgets — CONTAINER_BYTES per container, PASS_BYTES per pass —
+// and a timeout that aborts the request (at most FETCH_TAIL lines per pass
+// and container: a burst beyond is lost, bounded), parse (parse.ts),
+// attribution to a release — the number in the /srv/releases/<n>/ path,
+// otherwise the release live at that time (site_release_switches, kept by a
+// trigger), otherwise 0 (unknown) — then an additive upsert per (site,
+// release number, fingerprint) and the cursors, in ONE transaction per site
+// (batches in savepoints, a refused row skipped: the cursors always move).
 // Bounds: SITE_ERROR_MAX_GROUPS per site (least recently seen out),
 // SITE_ERROR_RETENTION_DAYS (hourly purge), one masked sample per group.
 //
@@ -43,6 +47,10 @@ export const FETCH_TAIL = 20_000;
 /** First read of a container: this far back at most. */
 const FIRST_LOOKBACK_MS = 60 * 60_000;
 const LOGS_TIMEOUT_MS = 20_000;
+/** Bytes of `docker logs` read per container and pass (the rest waits for the next pass). */
+export const CONTAINER_BYTES = 4 * 1024 * 1024;
+/** Bytes read per pass, all containers together (containers beyond wait for the next pass). */
+export const PASS_BYTES = 64 * 1024 * 1024;
 const CONCURRENCY = 4;
 const DAY_MS = 86_400_000;
 
@@ -151,24 +159,38 @@ async function liveContainers(docker: Docker, sites: Map<number, CollectSite>): 
   return out;
 }
 
-/** stderr lines of a container after the cursor (Docker timestamps, nano precision kept). */
-async function readAfter(docker: Docker, c: LiveContainer, cursor: string | null, now: number): Promise<{ lines: Array<{ at: string; text: string }>; last: string | null }> {
-  const sinceMs = cursor ? Date.parse(cursor) : now - FIRST_LOOKBACK_MS;
-  const res = await withTimeout(docker.getContainer(c.name).logs({
-    follow: false, stdout: false, stderr: true, timestamps: true, tail: FETCH_TAIL,
-    since: Math.max(0, Math.floor((Number.isNaN(sinceMs) ? now - FIRST_LOOKBACK_MS : sinceMs) / 1000)),
-  }) as unknown as Promise<Buffer | string>, LOGS_TIMEOUT_MS, `logs ${c.name}`);
-  const buf = Buffer.isBuffer(res) ? res : Buffer.from(String(res ?? ''), 'utf8');
-  const lines: Array<{ at: string; text: string }> = [];
-  let last = cursor;
-  for (const l of demuxBuffer(buf)) {
-    if (l.stream !== 'stderr') continue;
-    const k = tsKey(l.at);
-    if (!k || (cursor && k <= cursor)) continue;
-    if (!last || k > last) last = k;
-    lines.push({ at: l.at, text: l.text });
+/** `docker logs` (no follow) as a STREAM — dockerode only streams with follow, so the request is dialed directly. */
+function openLogStream(docker: Docker, name: string, opts: Record<string, unknown>, signal: AbortSignal): Promise<Readable> {
+  const c = docker.getContainer(name) as unknown as { id: string; modem: { dial(o: unknown, cb: (err: unknown, data: unknown) => void): void } };
+  return new Promise((resolve, reject) => {
+    c.modem.dial({
+      path: `/containers/${encodeURIComponent(c.id)}/logs?`,
+      method: 'GET',
+      abortSignal: signal,
+      isStream: true,
+      statusCodes: { 200: true, 404: 'no such container', 500: 'server error' },
+      options: opts,
+    }, (err, data) => (err ? reject(err) : resolve(data as Readable)));
+  });
+}
+
+/**
+ * stderr lines of a container after the cursor (Docker timestamps, nano
+ * precision kept), streamed under a byte budget (CONTAINER_BYTES, and what
+ * is left of the pass budget) and a timeout that really stops the request.
+ */
+async function readAfter(docker: Docker, c: LiveContainer, cursor: string | null, now: number, pass: ByteBudget): Promise<StderrRead> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), LOGS_TIMEOUT_MS);
+  try {
+    const stream = await openLogStream(docker, c.name, {
+      follow: false, stdout: false, stderr: true, timestamps: true, tail: FETCH_TAIL,
+      since: sinceParam(cursor, now - FIRST_LOOKBACK_MS),
+    }, ac.signal);
+    return await readStderrAfter(stream, cursor, { maxBytes: CONTAINER_BYTES, pass, signal: ac.signal });
+  } finally {
+    clearTimeout(timer);
   }
-  return { lines, last };
 }
 
 async function siteReleaseContext(trx: Knex | Knex.Transaction, siteId: number): Promise<{ numbers: Map<number, number>; switches: Switch[] }> {
@@ -181,10 +203,19 @@ async function siteReleaseContext(trx: Knex | Knex.Transaction, siteId: number):
   };
 }
 
-/** Writes the aggregates of one site and its cursors (one transaction), then keeps the newest SITE_ERROR_MAX_GROUPS groups. */
-async function storeSite(site: CollectSite, events: Array<{ e: ErrorEvent; container: string }>, cursors: Array<{ container: string; last: string }>, now: number): Promise<number> {
+/**
+ * Writes the aggregates of one site and its cursors (one transaction), then
+ * keeps the newest SITE_ERROR_MAX_GROUPS groups. Each batch runs in a
+ * savepoint; a batch PostgreSQL refuses is retried row by row and the
+ * refused row is skipped (logged): one poison line never blocks the cursors,
+ * so the same lines are not re-read and refused on every pass.
+ */
+async function storeSite(
+  site: CollectSite, events: Array<{ e: ErrorEvent; container: string }>, cursors: Array<{ container: string; last: string }>, now: number,
+): Promise<{ written: number; skipped: number }> {
   return db.transaction(async (trx) => {
     let written = 0;
+    let skipped = 0;
     if (events.length) {
       const ctx = await siteReleaseContext(trx, site.id);
       const aggs = aggregate(events, ctx.numbers, ctx.switches, now);
@@ -194,21 +225,35 @@ async function storeSite(site: CollectSite, events: Array<{ e: ErrorEvent; conta
         count: a.count, first_seen: new Date(a.first), last_seen: new Date(a.last), container: a.container.slice(0, 64),
         sample: sampleOf(a.event), sample_at: new Date(a.last),
       }));
+      const upsert = (t: Knex.Transaction, batch: typeof rows) => t('site_error_groups').insert(batch)
+        .onConflict(['site_id', 'release_number', 'fingerprint'])
+        .merge({
+          count: t.raw('site_error_groups.count + excluded.count'),
+          first_seen: t.raw('LEAST(site_error_groups.first_seen, excluded.first_seen)'),
+          last_seen: t.raw('GREATEST(site_error_groups.last_seen, excluded.last_seen)'),
+          release_id: t.raw('COALESCE(site_error_groups.release_id, excluded.release_id)'),
+          message: t.raw('CASE WHEN excluded.sample_at >= site_error_groups.sample_at THEN excluded.message ELSE site_error_groups.message END'),
+          container: t.raw('CASE WHEN excluded.sample_at >= site_error_groups.sample_at THEN excluded.container ELSE site_error_groups.container END'),
+          sample: t.raw('CASE WHEN excluded.sample_at >= site_error_groups.sample_at THEN excluded.sample ELSE site_error_groups.sample END'),
+          sample_at: t.raw('GREATEST(site_error_groups.sample_at, excluded.sample_at)'),
+        });
       for (let i = 0; i < rows.length; i += 200) {
-        await trx('site_error_groups').insert(rows.slice(i, i + 200))
-          .onConflict(['site_id', 'release_number', 'fingerprint'])
-          .merge({
-            count: trx.raw('site_error_groups.count + excluded.count'),
-            first_seen: trx.raw('LEAST(site_error_groups.first_seen, excluded.first_seen)'),
-            last_seen: trx.raw('GREATEST(site_error_groups.last_seen, excluded.last_seen)'),
-            release_id: trx.raw('COALESCE(site_error_groups.release_id, excluded.release_id)'),
-            message: trx.raw('CASE WHEN excluded.sample_at >= site_error_groups.sample_at THEN excluded.message ELSE site_error_groups.message END'),
-            container: trx.raw('CASE WHEN excluded.sample_at >= site_error_groups.sample_at THEN excluded.container ELSE site_error_groups.container END'),
-            sample: trx.raw('CASE WHEN excluded.sample_at >= site_error_groups.sample_at THEN excluded.sample ELSE site_error_groups.sample END'),
-            sample_at: trx.raw('GREATEST(site_error_groups.sample_at, excluded.sample_at)'),
-          });
+        const batch = rows.slice(i, i + 200);
+        try {
+          await trx.transaction(async (sp) => { await upsert(sp, batch); });
+          written += batch.length;
+        } catch {
+          for (const row of batch) {
+            try {
+              await trx.transaction(async (sp) => { await upsert(sp, [row]); });
+              written += 1;
+            } catch (err) {
+              skipped += 1;
+              logger.warn({ err: (err as Error)?.message, siteId: site.id, fingerprint: row.fingerprint }, 'PHP errors: group refused by the database, skipped');
+            }
+          }
+        }
       }
-      written = rows.length;
       await trx.raw(`DELETE FROM site_error_groups WHERE id IN (
         SELECT id FROM site_error_groups WHERE site_id = ? ORDER BY last_seen DESC, id DESC OFFSET ?)`, [site.id, SITE_ERROR_MAX_GROUPS]);
     }
@@ -216,19 +261,26 @@ async function storeSite(site: CollectSite, events: Array<{ e: ErrorEvent; conta
       await trx('site_error_cursors').insert({ site_id: site.id, container: c.container, last_ts: c.last, updated_at: new Date(now) })
         .onConflict(['site_id', 'container']).merge(['last_ts', 'updated_at']);
     }
-    return written;
+    return { written, skipped };
   });
 }
 
-export interface CollectResult { containers: number; events: number; groups: number; failed: number }
+export interface CollectResult {
+  containers: number; events: number; groups: number; failed: number;
+  /** Containers whose read was cut by the byte budget / left for the next pass (pass budget spent). */
+  truncated: number; deferred: number;
+  /** Groups not stored (a row PostgreSQL refused: skipped, the rest and the cursors still written). */
+  skipped: number;
+}
 
 let collecting = false;
 
 /** One pass over every live site container of every node. Never throws. */
 export async function collectOnce(now: Date = new Date()): Promise<CollectResult> {
-  const result: CollectResult = { containers: 0, events: 0, groups: 0, failed: 0 };
+  const result: CollectResult = { containers: 0, events: 0, groups: 0, failed: 0, truncated: 0, deferred: 0, skipped: 0 };
   if (collecting) return result;
   collecting = true;
+  const pass: ByteBudget = { left: PASS_BYTES };
   try {
     const rows = await db('sites as s').join('hosting_accounts as a', 'a.id', 's.account_id')
       .select('s.id', 's.tenant_id', 's.account_id', 'a.node_id') as CollectSite[];
@@ -261,12 +313,17 @@ export async function collectOnce(now: Date = new Date()): Promise<CollectResult
           const moved: Array<{ container: string; last: string }> = [];
           for (const c of list) {
             const cursor = cursors.get(`${site.id}:${c.name}`) ?? null;
+            // Pass budget spent: this container waits for the next pass (cursor unchanged).
+            if (pass.left <= 0) { result.deferred += 1; continue; }
             try {
-              const r = await readAfter(docker, c, cursor, now.getTime());
+              const r = await readAfter(docker, c, cursor, now.getTime(), pass);
               result.containers += 1;
+              if (r.truncated) result.truncated += 1;
               for (const e of parseLines(r.lines)) events.push({ e, container: c.role });
               // Always written: updated_at says the container was read (collectedAt, stale cursor purge).
-              moved.push({ container: c.name, last: r.last ?? tsKey(now.toISOString()) });
+              // Cut by the budget: up to the last complete line only, never "now".
+              const last = r.last ?? (r.truncated ? cursor : tsKey(now.toISOString()));
+              if (last) moved.push({ container: c.name, last });
             } catch (err) {
               if ((err as { statusCode?: number })?.statusCode !== 404) {
                 logger.debug({ err: (err as Error)?.message, container: c.name }, 'PHP errors: container logs not read');
@@ -276,7 +333,9 @@ export async function collectOnce(now: Date = new Date()): Promise<CollectResult
           }
           if (!events.length && !moved.length) continue;
           try {
-            result.groups += await storeSite(site, events, moved, now.getTime());
+            const s = await storeSite(site, events, moved, now.getTime());
+            result.groups += s.written;
+            result.skipped += s.skipped;
             result.events += events.length;
           } catch (err) {
             logger.warn({ err, siteId: site.id }, 'PHP errors: store failed (lines read again next pass)');

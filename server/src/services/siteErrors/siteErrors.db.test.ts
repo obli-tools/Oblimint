@@ -4,6 +4,7 @@ import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import path from 'path';
+import { Readable } from 'stream';
 import type { AddressInfo } from 'net';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,11 +161,23 @@ test('PHP errors grouped by release: collector, readers, keys, bounds', { timeou
   const fake = {
     async listContainers() { return containers; },
     getContainer(name: string) {
+      // The collector streams `docker logs` (modem.dial, isStream): the fake answers with a stream, one frame per chunk.
       return {
-        async logs(o: { stdout?: boolean; stderr?: boolean; since?: number; tail?: number }) {
-          let ls = (logs[name] ?? []).filter((l) => Date.parse(l.at) / 1000 >= Math.floor(o.since ?? 0) && (l.stream === 2 ? o.stderr : o.stdout));
-          if (o.tail) ls = ls.slice(-o.tail);
-          return Buffer.concat(ls.map(frame));
+        id: name,
+        modem: {
+          dial(d: { path: string; isStream?: boolean; options: { stdout?: boolean; stderr?: boolean; since?: string; tail?: number; follow?: boolean } }, cb: (err: unknown, data: unknown) => void) {
+            assert.equal(d.path, `/containers/${encodeURIComponent(name)}/logs?`);
+            assert.equal(d.isStream, true);
+            assert.equal(d.options.follow, false);
+            const o = d.options;
+            // Engine semantics: since = "seconds[.nanoseconds]", lines AT that time included.
+            const [sec, ns = ''] = String(o.since ?? '0').split('.');
+            const sinceKey = `${new Date(Number(sec) * 1000).toISOString().slice(0, 19)}.${ns.padEnd(9, '0')}Z`;
+            const key = (at: string) => at.replace(/\.(\d{1,9})Z$/, (_m, d: string) => `.${d.padEnd(9, '0')}Z`);
+            let ls = (logs[name] ?? []).filter((l) => key(l.at) >= sinceKey && (l.stream === 2 ? o.stderr : o.stdout));
+            if (o.tail) ls = ls.slice(-o.tail);
+            setImmediate(() => cb(null, Readable.from(ls.map(frame))));
+          },
         },
       };
     },
@@ -305,4 +318,42 @@ test('PHP errors grouped by release: collector, readers, keys, bounds', { timeou
   assert.equal((await db('site_release_switches').where({ site_id: other })).length, 0);
   assert.equal((await db('site_error_groups').where({ site_id: other })).length, 0);
   assert.equal((await db('site_error_cursors').where({ site_id: other })).length, 0);
+
+  // ── a row PostgreSQL refuses is skipped: the other groups and the cursor are written, nothing re-read ──
+  const cursorOf = async (name: string) => (await db('site_error_cursors').where({ site_id: big, container: name }).first('last_ts') as { last_ts: string } | undefined)?.last_ts;
+  await db.raw("ALTER TABLE site_error_groups ADD CONSTRAINT se_test_poison CHECK (message NOT LIKE '%POISON%')");
+  try {
+    logs['big-1'].push(
+      { at: ts(-1000), stream: 2, text: 'PHP Warning:  POISON in /srv/releases/current/p.php on line 1' },
+      { at: ts(-2000), stream: 2, text: 'PHP Warning:  fine in /srv/releases/current/ok.php on line 1' },
+    );
+    const p4 = await collectOnce(new Date(T0 + 3000));
+    assert.equal(p4.failed, 0);
+    assert.equal(p4.skipped, 1);
+    assert.equal((await db('site_error_groups').where({ site_id: big, file: 'p.php' })).length, 0);
+    assert.equal((await db('site_error_groups').where({ site_id: big, file: 'ok.php' })).length, 1, 'the rest of the batch is stored');
+    assert.equal(await cursorOf('big-1'), ts(-2000), 'the cursor moved past the refused line');
+    const p5 = await collectOnce(new Date(T0 + 4000));
+    assert.equal(p5.events, 0, 'the refused line is not read again');
+    assert.equal(p5.skipped, 0);
+  } finally {
+    await db.raw('ALTER TABLE site_error_groups DROP CONSTRAINT IF EXISTS se_test_poison');
+  }
+
+  // ── a flooded container: read under the byte budget, over several passes, nothing lost after the flood ──
+  const nano = (i: number) => `${new Date(T0 + 10_000).toISOString().slice(0, 19)}.${String(i + 1).padStart(9, '0')}Z`;
+  logs['big-flood'] = [
+    ...Array.from({ length: 300 }, (_, i) => ({ at: nano(i), stream: 2 as const, text: 'A'.repeat(16_000) })),
+    { at: nano(300), stream: 2, text: 'PHP Warning:  after flood in /srv/releases/current/fl.php on line 1' },
+  ];
+  containers.push({ Id: 'c7', Names: ['/big-flood'], State: 'running', Labels: labels(big, A.accountId, 'site-secondary', { 'oblimint.runtime': '9' }) });
+  const f1 = await collectOnce(new Date(T0 + 5000));
+  assert.equal(f1.truncated, 1, 'cut by the per-container budget');
+  const c1 = await cursorOf('big-flood');
+  assert.ok(c1 && c1 > nano(0) && c1 < nano(299), `the cursor is the last complete line read (${c1})`);
+  assert.equal((await db('site_error_groups').where({ site_id: big, file: 'fl.php' })).length, 0);
+  const f2 = await collectOnce(new Date(T0 + 6000));
+  assert.equal(f2.truncated, 0);
+  assert.equal(await cursorOf('big-flood'), nano(300));
+  assert.equal((await db('site_error_groups').where({ site_id: big, file: 'fl.php' })).length, 1, 'the error after the flood is collected on the next pass');
 });
