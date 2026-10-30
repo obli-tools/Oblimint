@@ -76,7 +76,7 @@ function recordInvalid(err: RecordValidationError): AppError {
 }
 
 /** One zone visible to the actor with `need` (404 invisible, 403 without the need). */
-async function loadZone(actor: HostingActor, zoneId: number, need: HostingNeed): Promise<ZoneRow> {
+export async function loadZone(actor: HostingActor, zoneId: number, need: HostingNeed): Promise<ZoneRow> {
   if (!Number.isInteger(zoneId) || zoneId <= 0) throw notFound();
   const row = await zoneById(zoneId);
   if (!row) throw notFound();

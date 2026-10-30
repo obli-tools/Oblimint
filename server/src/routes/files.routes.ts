@@ -4,9 +4,28 @@ import { auditService } from '../services/audit.service';
 import { idParam, loadAccount, resolveActor, type HostingNeed } from '../services/hosting/access';
 import type { AccountRow } from '../services/hosting/rows';
 import { parseBody } from '../services/docker/parseBody';
-import { MAX_BATCH, filesService } from '../services/files/files.service';
+import { MAX_BATCH, UPLOAD_CHUNK_SIZE, filesService } from '../services/files/files.service';
+import crypto from 'crypto';
+import { Readable } from 'stream';
 import { AppError } from '../middleware/errorHandler';
+import { db } from '../db';
+import { actionLevel, gateAction } from '../services/restrictions/gate';
+import { accountTarget } from '../services/restrictions/targets';
 import { filesLimiter } from '../middleware/rateLimiter';
+
+/** The whole body (exactly `size` bytes, else 400). */
+async function readAll(body: Readable, size: number): Promise<Buffer> {
+  const parts: Buffer[] = [];
+  let got = 0;
+  for await (const chunk of body) {
+    const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+    got += b.length;
+    if (got > size) throw new AppError(400, 'The body is longer than its Content-Length', 'invalidChunk');
+    parts.push(b);
+  }
+  if (got !== size) throw new AppError(400, 'The body is shorter than its Content-Length', 'invalidChunk');
+  return Buffer.concat(parts, got);
+}
 
 // /api/accounts/:id/files* — web file explorer (shared/src/files.ts), the
 // account's SFTP tree (/staging/<site>/…, /data/<site>/…). Every route needs
@@ -78,6 +97,18 @@ function audit(req: Request, row: AccountRow, action: string, details: Record<st
   });
 }
 
+/** Sites of the account whose area (/staging/<slug>/…, /data/<slug>/…) the paths touch: the scope of a site. */
+async function sitesOfPaths(row: AccountRow, paths: string[]): Promise<number[]> {
+  const slugs = [...new Set(paths.map((p) => /^\/?(?:staging|data)\/([^/]+)/.exec(String(p))?.[1]).filter((s): s is string => !!s))];
+  if (!slugs.length) return [];
+  return (await db('sites').where({ account_id: row.id }).whereIn('slug', slugs.slice(0, 1000)).pluck('id') as number[]).map(Number);
+}
+
+/** files.write / files.delete on the account, the sites of the paths in scope (a batch: one gate for all of it). */
+async function gateFiles(req: Request, row: AccountRow, action: 'files.write' | 'files.delete', paths: string[], params: Record<string, unknown>): Promise<void> {
+  await gateAction(req, { action, target: { ...accountTarget(row), siteIds: await sitesOfPaths(row, paths) }, params });
+}
+
 /** Paths in an audit entry: the first 50 of a batch. */
 const sample = (paths: string[]) => (paths.length > 50 ? [...paths.slice(0, 50), `… +${paths.length - 50}`] : paths);
 
@@ -126,6 +157,7 @@ router.post('/:id/files/mkdir', async (req, res, next) => {
   try {
     const { row } = await account(req);
     const { path } = parseBody(mkdirSchema, req.body);
+    await gateFiles(req, row, 'files.write', [path], { op: 'mkdir', path });
     const created = await filesService.mkdir(row, path);
     await audit(req, row, 'files.mkdir', { path: created });
     res.json({ success: true, data: { path: created } });
@@ -136,6 +168,7 @@ router.post('/:id/files/delete', async (req, res, next) => {
   try {
     const { row } = await account(req);
     const { paths } = parseBody(deleteSchema, req.body);
+    await gateFiles(req, row, 'files.delete', paths, { paths });
     const data = await filesService.remove(row, paths);
     const done = data.filter((r) => r.ok).map((r) => r.path);
     if (done.length) await audit(req, row, 'files.delete', { paths: sample(done) });
@@ -147,6 +180,7 @@ router.post('/:id/files/move', async (req, res, next) => {
   try {
     const { row } = await account(req);
     const { items, overwrite } = parseBody(moveSchema, req.body);
+    await gateFiles(req, row, 'files.write', items.flatMap((i) => [i.from, i.to]), { op: 'move', items, overwrite: overwrite === true });
     const data = await filesService.move(row, items, overwrite === true);
     const done = items.filter((_, i) => data[i]?.ok).map((i) => `${i.from} → ${i.to}`);
     if (done.length) await audit(req, row, 'files.move', { items: sample(done), overwrite: overwrite === true });
@@ -158,6 +192,7 @@ router.post('/:id/files/copy', async (req, res, next) => {
   try {
     const { row } = await account(req);
     const { items } = parseBody(moveSchema.omit({ overwrite: true }), req.body);
+    await gateFiles(req, row, 'files.write', items.flatMap((i) => [i.from, i.to]), { op: 'copy', items });
     const data = await filesService.copy(row, items);
     const done = items.filter((_, i) => data[i]?.ok).map((i) => `${i.from} → ${i.to}`);
     if (done.length) await audit(req, row, 'files.copy', { items: sample(done) });
@@ -169,6 +204,7 @@ router.post('/:id/files/extract', async (req, res, next) => {
   try {
     const { row } = await account(req);
     const { path, to, overwrite } = parseBody(extractSchema, req.body);
+    await gateFiles(req, row, 'files.write', [path, ...(to ? [to] : [])], { op: 'extract', path, to: to ?? null, overwrite: overwrite === true });
     const data = await filesService.extract(row, path, to, overwrite === true);
     await audit(req, row, 'files.extract', { path, to: to ?? null, overwrite: overwrite === true, files: data.files, bytes: data.bytes });
     res.json({ success: true, data });
@@ -197,6 +233,7 @@ router.post('/:id/files/uploads', async (req, res, next) => {
   try {
     const { row, userId } = await account(req);
     const body = parseBody(uploadSchema, req.body);
+    await gateFiles(req, row, 'files.write', [body.path], { op: 'upload', ...body });
     res.json({ success: true, data: await filesService.uploadStart(row, userId, body) });
   } catch (err) { next(err); }
 });
@@ -209,7 +246,20 @@ router.put('/:id/files/put', async (req, res, next) => {
     if (!Number.isSafeInteger(size) || size < 0) throw new AppError(411, 'Content-Length is required', 'invalidChunk');
     const expected = q.expectedMtime === undefined ? undefined : Number(q.expectedMtime);
     if (expected !== undefined && (!Number.isSafeInteger(expected) || expected < 0)) throw new AppError(400, 'Invalid expectedMtime', 'invalid');
-    const path = await filesService.putSmall(row, { path: String(q.path ?? ''), size, overwrite: q.overwrite === '1', ...(expected !== undefined ? { expectedMtime: expected } : {}) }, req);
+    const target = String(q.path ?? '');
+    let body: Readable = req;
+    // files.write protected: the content enters the fingerprint (sha256 + size), read first (≤ 8 MiB);
+    // a free write keeps streaming.
+    const sites = await sitesOfPaths(row, [target]);
+    if (await actionLevel(req, 'files.write', { ...accountTarget(row), siteIds: sites }) !== 'none') {
+      if (size > UPLOAD_CHUNK_SIZE) throw new AppError(413, 'File too large for a single request', 'fileTooLarge');
+      const buf = await readAll(req, size);
+      await gateFiles(req, row, 'files.write', [target], {
+        op: 'write', path: target, size, overwrite: q.overwrite === '1', expectedMtime: expected ?? null, contentSha256: crypto.createHash('sha256').update(buf).digest('hex'),
+      });
+      body = Readable.from([buf]);
+    }
+    const path = await filesService.putSmall(row, { path: target, size, overwrite: q.overwrite === '1', ...(expected !== undefined ? { expectedMtime: expected } : {}) }, body);
     await audit(req, row, 'files.upload', { path, size });
     res.json({ success: true, data: { path } });
   } catch (err) {

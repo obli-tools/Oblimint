@@ -4,6 +4,8 @@ import { ACCESS_MODES } from '@oblimint/shared';
 import { idParam, loadAccount, resolveActor } from '../services/hosting/access';
 import { parseBody } from '../services/docker/parseBody';
 import { firewallService } from '../services/firewall/firewall.service';
+import { gateAction } from '../services/restrictions/gate';
+import { accountTarget, gateAccount } from '../services/restrictions/targets';
 
 // OWNED BY MODULE `hostd-firewall` (docs/P2-PLAN.md §6.4).
 //
@@ -60,8 +62,13 @@ accountAccessRoutes.put('/:id/access', async (req, res, next) => {
     const actor = await actorOf(req);
     const id = idParam(req);
     // Access check BEFORE the body (an invisible account is a 404, a read-only one a 403, whatever the body).
-    await loadAccount(actor, id, 'files.manage');
+    const account = await loadAccount(actor, id, 'files.manage');
     const body = parseBody(accessUpdateSchema, req.body) as z.infer<typeof accessUpdateSchema> & { mode?: (typeof ACCESS_MODES)[number] };
+    // Switching to an allow-list (only the listed addresses reach the account): firewall.mode_change.
+    const current = (account as unknown as { access_mode?: string | null }).access_mode ?? 'open';
+    if (body.mode === 'allowlist' && current !== 'allowlist') {
+      await gateAction(req, { action: 'firewall.mode_change', target: accountTarget(account), params: { from: current, to: body.mode, grantTtlMinutes: body.grantTtlMinutes ?? null } });
+    }
     res.json({ success: true, data: await firewallService.updateAccess(req, actor, id, body) });
   } catch (err) { next(err); }
 });
@@ -70,14 +77,16 @@ accountAccessRoutes.post('/:id/access/rules', async (req, res, next) => {
   try {
     const actor = await actorOf(req);
     const id = idParam(req);
-    await loadAccount(actor, id, 'files.manage');
+    const account = await loadAccount(actor, id, 'files.manage');
     const input = parseBody(accessRuleSchema, req.body);
+    await gateAction(req, { action: 'firewall.rules_write', target: accountTarget(account), params: { op: 'add', ...input } });
     res.status(201).json({ success: true, data: await firewallService.addRule(req, actor, id, input) });
   } catch (err) { next(err); }
 });
 
 accountAccessRoutes.delete('/:id/access/rules/:ruleId', async (req, res, next) => {
   try {
+    await gateAccount(req, 'firewall.rules_write', idParam(req), 'files.manage', { op: 'removeRule', ruleId: idParam(req, 'ruleId') });
     await firewallService.deleteRule(req, await actorOf(req), idParam(req), idParam(req, 'ruleId'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
@@ -85,12 +94,14 @@ accountAccessRoutes.delete('/:id/access/rules/:ruleId', async (req, res, next) =
 
 accountAccessRoutes.post('/:id/access/allow-my-ips', async (req, res, next) => {
   try {
+    await gateAccount(req, 'firewall.rules_write', idParam(req), 'files.manage', { op: 'allowMyIps' });
     res.json({ success: true, data: await firewallService.allowMyIps(req, await actorOf(req), idParam(req)) });
   } catch (err) { next(err); }
 });
 
 accountAccessRoutes.delete('/:id/access/grants/:grantId', async (req, res, next) => {
   try {
+    await gateAccount(req, 'firewall.rules_write', idParam(req), 'files.manage', { op: 'removeGrant', grantId: idParam(req, 'grantId') });
     await firewallService.deleteGrant(req, await actorOf(req), idParam(req), idParam(req, 'grantId'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
@@ -98,6 +109,7 @@ accountAccessRoutes.delete('/:id/access/grants/:grantId', async (req, res, next)
 
 accountAccessRoutes.delete('/:id/access/bans/:banId', async (req, res, next) => {
   try {
+    await gateAccount(req, 'firewall.rules_write', idParam(req), 'files.manage', { op: 'unban', banId: idParam(req, 'banId') });
     await firewallService.unban(req, await actorOf(req), idParam(req), idParam(req, 'banId'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }

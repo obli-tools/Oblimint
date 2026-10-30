@@ -13,6 +13,7 @@ import { checkFactorManagement, sendStepUpFailure } from '../services/stepUp';
 import { forgetTwoFactorPolicy } from '../middleware/sessionUserGuard';
 import type { AppConfigData } from '@oblimint/shared';
 import { forgetPanelHosts } from '../services/panelHosts';
+import { gatePlatform } from '../services/restrictions/targets';
 
 /**
  * What a non-administrator may read: the UI flags, and what a customer needs
@@ -93,6 +94,7 @@ router.put('/platform', requirePlatformAdminOnMaster, async (req, res, next) => 
     if (v4 === null || (v4 && !net.isIPv4(v4))) throw new AppError(400, 'Invalid IPv4 address', 'invalidIpv4');
     if (v6 === null || (v6 && !net.isIPv6(v6))) throw new AppError(400, 'Invalid IPv6 address', 'invalidIpv6');
     if (email === null || !ACME_EMAIL_RE.test(email)) throw new AppError(400, 'Invalid e-mail address', 'invalidEmail');
+    await gatePlatform(req, 'platform.app_config', { key: 'platform', panelHostname: host, clientPanelHostname: clientHost ?? null, publicIpv4: v4, publicIpv6: v6, acmeEmail: email });
     const before = { panel_hostname: await appConfigService.get('panel_hostname'), client_panel_hostname: await appConfigService.get('client_panel_hostname') || null, public_ipv4: await appConfigService.get('public_ipv4'), public_ipv6: await appConfigService.get('public_ipv6'), acme_email: await appConfigService.get('acme_email') };
     await appConfigService.set('panel_hostname', host);
     if (clientHost !== undefined) await appConfigService.set('client_panel_hostname', clientHost);
@@ -119,6 +121,7 @@ router.put('/:key', requireRole('admin'), async (req, res, next) => {
     const raw = (req.body ?? {}).value;
     const value = typeof raw === 'boolean' ? String(raw) : typeof raw === 'string' ? raw.trim() : null;
     if (value === null || !check(value)) throw new AppError(400, `Invalid value for ${key}`);
+    await gatePlatform(req, 'platform.app_config', { key, value });
     const before = await appConfigService.get(key);
     await appConfigService.set(key, value);
     if (key === 'force_2fa') forgetTwoFactorPolicy();

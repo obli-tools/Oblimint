@@ -66,6 +66,9 @@ test('databases module on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: 
   const { DEFAULT_PLAN_LIMITS } = await import('@oblimint/shared');
 
   await db.migrate.latest();
+  // The protected actions (migration 027 seeds the defaults on the master tenant, read in god view)
+  // are tested in services/restrictions/: off here.
+  await db('tenants').update({ action_restrictions: '{}' });
   t.after(async () => { await db.destroy(); });
 
   // ── fakes ──────────────────────────────────────────────────────────────────

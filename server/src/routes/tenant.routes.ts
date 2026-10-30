@@ -7,6 +7,7 @@ import { requirePlatformAdminOnMaster } from '../middleware/rbac';
 import { tenantService, createTenantSchema, updateTenantSchema } from '../services/tenant.service';
 import { auditService } from '../services/audit.service';
 import { CLIENT_MEMBERSHIP_ROLE, membershipRoleRefusal } from '../services/permission.service';
+import { gatePlatform } from '../services/restrictions/targets';
 
 // Mounted (behind requireAuth) on BOTH /api/tenants and /api/tenant, like
 // Obliance: GET /api/tenants, POST /api/tenant/switch, CRUD /api/tenants.
@@ -104,6 +105,7 @@ router.delete('/:id', requirePlatformAdminOnMaster, async (req, res, next) => {
     if (id === MASTER_TENANT_ID) throw new AppError(400, 'Cannot delete the default tenant');
     const before = await tenantService.getById(id);
     if (!before) throw new AppError(404, 'Tenant not found');
+    await gatePlatform(req, 'platform.tenant_delete', { tenantId: id, name: before.name, slug: before.slug });
     const members = await db('user_tenants').where({ tenant_id: id }).pluck('user_id') as number[];
     await tenantService.delete(id);
     // Sessions sitting on the deleted tenant are repaired by /auth/me

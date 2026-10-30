@@ -4,6 +4,7 @@ import { validate } from '../middleware/validate';
 import { auditService } from '../services/audit.service';
 import { hostingSettingsUpdateSchema, platformSettings } from '../services/platformSettings';
 import { logger } from '../utils/logger';
+import { gatePlatform } from '../services/restrictions/targets';
 
 // /api/system/hosting-settings — P2 platform settings (docs/P2-PLAN.md §Réglages).
 // ARCHITECT FILE. Platform admin only (mounted behind requireAuth + requireRole('admin')).
@@ -23,6 +24,7 @@ router.get('/', async (_req, res, next) => {
 router.put('/', validate(hostingSettingsUpdateSchema), async (req, res, next) => {
   try {
     const patch = req.body as HostingSettingsUpdate;
+    await gatePlatform(req, 'platform.hosting_settings', { patch: patch as Record<string, unknown> });
     const data = await platformSettings.update(patch);
     await auditService.logReqAs(req, MASTER_TENANT_ID, 'settings.hosting', {
       resourceType: 'settings', resourcePath: 'hosting', details: { sections: Object.keys(patch) },

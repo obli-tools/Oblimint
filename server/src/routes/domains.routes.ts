@@ -3,6 +3,7 @@ import { validate } from '../middleware/validate';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { domainsService } from '../services/hosting/domains.service';
+import { gateDomain } from '../services/restrictions/targets';
 import {
   domainCreateSchema, domainUpdateSchema, routeInputSchema,
   type DomainCreateBody, type DomainUpdateBody, type RouteInputBody,
@@ -61,27 +62,33 @@ router.put('/:id', validate(domainUpdateSchema), async (req, res, next) => {
 
 router.delete('/:id', async (req, res, next) => {
   try {
-    await domainsService.remove(req, await resolveActor(req), idParam(req));
+    const domain = await gateDomain(req, 'domain.delete', idParam(req), 'domains.manage');
+    await domainsService.remove(req, await resolveActor(req), domain.id);
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
 });
 
 router.post('/:id/routes', heavyOpLimiter, validate(routeInputSchema), async (req, res, next) => {
   try {
-    const route = await domainsService.addRoute(req, await resolveActor(req), idParam(req), req.body as RouteInputBody);
+    const body = req.body as RouteInputBody;
+    await gateDomain(req, 'domain.route_change', idParam(req), 'domains.manage', { op: 'add', ...body });
+    const route = await domainsService.addRoute(req, await resolveActor(req), idParam(req), body);
     res.status(201).json({ success: true, data: route });
   } catch (err) { next(err); }
 });
 
 router.put('/:id/routes/:routeId', validate(routeInputSchema), async (req, res, next) => {
   try {
-    const route = await domainsService.updateRoute(req, await resolveActor(req), idParam(req), idParam(req, 'routeId'), req.body as RouteInputBody);
+    const body = req.body as RouteInputBody;
+    await gateDomain(req, 'domain.route_change', idParam(req), 'domains.manage', { op: 'update', routeId: idParam(req, 'routeId'), ...body });
+    const route = await domainsService.updateRoute(req, await resolveActor(req), idParam(req), idParam(req, 'routeId'), body);
     res.json({ success: true, data: route });
   } catch (err) { next(err); }
 });
 
 router.delete('/:id/routes/:routeId', async (req, res, next) => {
   try {
+    await gateDomain(req, 'domain.route_change', idParam(req), 'domains.manage', { op: 'remove', routeId: idParam(req, 'routeId') });
     await domainsService.deleteRoute(req, await resolveActor(req), idParam(req), idParam(req, 'routeId'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }

@@ -4,6 +4,7 @@ import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { validate } from '../middleware/validate';
 import { idParam } from '../services/hosting/access';
 import { migrationCutoverService } from '../services/migration/cutover/cutover.service';
+import { gatePlatform } from '../services/restrictions/targets';
 
 // /api/system/migration — cutover checklist. OWNED BY MODULE `executor-mail-dns` (docs/P5-PLAN.md §6.5).
 // Mounted behind requireAuth + requirePlatformAdminOnMaster on a SHARED prefix: no catch-all here.
@@ -54,7 +55,13 @@ router.put('/cutover/:id', validate(updateBody), handle((req) => migrationCutove
 router.post('/cutover/:id/check', heavyOpLimiter, handle((req) => migrationCutoverService.check(req, idParam(req))));
 router.post('/cutover/:id/zone-ttl', heavyOpLimiter, validate(zoneTtlBody), handle((req) => migrationCutoverService.setZoneTtl(req, idParam(req), req.body.ttl)));
 router.post('/cutover/:id/final-sync', handle((req) => migrationCutoverService.finalSync(req, idParam(req)), 202));
-router.post('/cutover/:id/switch', validate(switchBody), handle((req) => migrationCutoverService.switchOver(req, idParam(req), req.body)));
-router.post('/cutover/:id/rollback', handle((req) => migrationCutoverService.rollback(req, idParam(req))));
+router.post('/cutover/:id/switch', validate(switchBody), handle(async (req) => {
+  await gatePlatform(req, 'platform.migration_cutover', { op: 'switch', cutoverId: idParam(req), confirm: req.body.confirm });
+  return migrationCutoverService.switchOver(req, idParam(req), req.body);
+}));
+router.post('/cutover/:id/rollback', handle(async (req) => {
+  await gatePlatform(req, 'platform.migration_cutover', { op: 'rollback', cutoverId: idParam(req) });
+  return migrationCutoverService.rollback(req, idParam(req));
+}));
 
 export default router;

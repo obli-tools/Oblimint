@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { validate } from '../middleware/validate';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { snapshotService } from '../services/snapshots/snapshot.service';
+import { gateSite } from '../services/restrictions/targets';
 
 // /api/sites/:id/snapshots — OWNED BY MODULE `checksums-snapshots` (docs/P3-PLAN.md §6.3). NO catch-all.
 //   GET    /:id/snapshots?limit&offset           → { items: DbSnapshot[], total }   (read)
@@ -27,14 +28,16 @@ router.get('/:id/snapshots', validate(listQuery, 'query'), async (req, res, next
 router.post('/:id/snapshots/:snapshotId/restore', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
-    res.json({ success: true, data: await snapshotService.restoreOne(req, actor, idParam(req), idParam(req, 'snapshotId')) });
+    const site = await gateSite(req, 'snapshot.restore', idParam(req), 'databases.manage', { snapshotId: idParam(req, 'snapshotId') });
+    res.json({ success: true, data: await snapshotService.restoreOne(req, actor, site.id, idParam(req, 'snapshotId')) });
   } catch (err) { next(err); }
 });
 
 router.delete('/:id/snapshots/:snapshotId', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
-    await snapshotService.remove(req, actor, idParam(req), idParam(req, 'snapshotId'));
+    const site = await gateSite(req, 'snapshot.delete', idParam(req), 'databases.manage', { snapshotId: idParam(req, 'snapshotId') });
+    await snapshotService.remove(req, actor, site.id, idParam(req, 'snapshotId'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
 });

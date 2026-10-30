@@ -1,8 +1,13 @@
 import { Router } from 'express';
+import { loadMailbox, loadMailDomain } from '../services/mail/access';
+import { gateAction } from '../services/restrictions/gate';
 import { z } from 'zod';
 import { validate } from '../middleware/validate';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { mailService } from '../services/mail/mail.service';
+
+/** A mail object as a restriction target (its account). */
+const mailTarget = (r: { tenant_id: number; account_id: number }) => ({ tenantId: Number(r.tenant_id), accountId: Number(r.account_id), siteId: null });
 
 // /api/mail — OWNED BY MODULE `mail-core` (docs/P4-PLAN.md §6.1). NO catch-all
 // (mailDns / mailOutbound / webmail routers share the /mail prefix).
@@ -162,7 +167,13 @@ router.put('/domains/:id', validate(domainUpdate), async (req, res, next) => {
 
 router.delete('/domains/:id', validate(confirmBody), async (req, res, next) => {
   try {
-    await mailService.deleteDomain(req, await resolveActor(req), idParam(req), req.body.confirm, { force: req.query.force === '1' });
+    const actor = await resolveActor(req);
+    const md = await loadMailDomain(actor, idParam(req), 'mail.manage');
+    // A wrong confirmation is refused by the service, before anything is asked of a human.
+    if (String(req.body.confirm ?? '').trim().toLowerCase() === md.name) {
+      await gateAction(req, { action: 'mail.domain_delete', target: mailTarget(md), params: { domain: md.name, force: req.query.force === '1' } });
+    }
+    await mailService.deleteDomain(req, actor, md.id, req.body.confirm, { force: req.query.force === '1' });
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
 });
@@ -194,7 +205,15 @@ router.put('/mailboxes/:id', validate(mailboxUpdate), async (req, res, next) => 
 
 router.post('/mailboxes/:id/password', validate(passwordChange), async (req, res, next) => {
   try {
-    res.json({ success: true, data: await mailService.setPassword(req, await resolveActor(req), idParam(req), req.body) });
+    const actor = await resolveActor(req);
+    const mb = await loadMailbox(actor, idParam(req), 'mail.manage');
+    // The password (or its hash) is a secret: fingerprint only (panel: the user's code instead of an approval).
+    const { password, passwordHash } = req.body as { password?: string | null; passwordHash?: string | null };
+    await gateAction(req, {
+      action: 'mail.mailbox_password', target: mailTarget(mb), params: { mailbox: mb.address, generated: !password && !passwordHash },
+      secretParams: { ...(password ? { password } : {}), ...(passwordHash ? { passwordHash } : {}) },
+    });
+    res.json({ success: true, data: await mailService.setPassword(req, actor, mb.id, req.body) });
   } catch (err) { next(err); }
 });
 
@@ -212,7 +231,12 @@ router.put('/mailboxes/:id/autoresponder', validate(autoresponderInput), async (
 
 router.delete('/mailboxes/:id', validate(confirmBody), async (req, res, next) => {
   try {
-    await mailService.deleteMailbox(req, await resolveActor(req), idParam(req), req.body.confirm);
+    const actor = await resolveActor(req);
+    const mb = await loadMailbox(actor, idParam(req), 'mail.manage');
+    if (String(req.body.confirm ?? '').trim().toLowerCase() === mb.address) {
+      await gateAction(req, { action: 'mail.mailbox_delete', target: mailTarget(mb), params: { mailbox: mb.address } });
+    }
+    await mailService.deleteMailbox(req, actor, mb.id, req.body.confirm);
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
 });

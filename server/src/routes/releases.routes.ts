@@ -9,6 +9,8 @@ import { actorReadsCode, assertReadsCode, idParam, loadSite, resolveActor } from
 import { toSite, type SiteRow } from '../services/hosting/rows';
 import { forActor, releaseForActor } from '../services/hosting/statusMessage';
 import { releaseService } from '../services/releases/release.service';
+import { gateAction, gateStrictest } from '../services/restrictions/gate';
+import { siteTarget } from '../services/restrictions/targets';
 
 // /api/sites/:id/releases*, /api/sites/:id/staging* — OWNED BY MODULE `releases`
 // (docs/P1-PLAN.md §API). Mounted on /sites after sites.routes.ts (no catch-all here).
@@ -102,6 +104,11 @@ router.post('/:id/releases', validate(publishBody), async (req, res, next) => {
   try {
     const site = await siteFor(req, 'releases.publish');
     const body = req.body as z.infer<typeof publishBody>;
+    const override = body.overrideRollback === true;
+    await gateStrictest(req, [
+      { action: 'release.publish', target: siteTarget(site), params: { message: body.message ?? null, overrideRollback: override } },
+      ...(override ? [{ action: 'release.publish_override_rollback', target: siteTarget(site), params: { message: body.message ?? null, overrideRollback: true } }] : []),
+    ]);
     // After a rollback by a human the publication asks for a confirmation (decision A3): overrideRollback.
     const release = await releaseService.publish(site.id, {
       trigger: 'manual', userId: userIdOf(req), message: body.message ?? null, rollbackGuard: body.overrideRollback ? 'off' : 'refuse',
@@ -121,6 +128,7 @@ router.post('/:id/releases/:rid/restore-staging', heavyOpLimiter, validate(resto
     assertReadsCode(actor, site);
     const rid = idParam(req, 'rid');
     const discardPending = (req.body as z.infer<typeof restoreBody>).discardPending === true;
+    await gateAction(req, { action: 'release.restore_to_staging', target: siteTarget(site), params: { releaseId: rid, discardPending } });
     const r = await releaseService.restoreToStaging(site.id, rid, { userId: userIdOf(req), apiKeyId: null, discardPending });
     await auditService.logReqAs(req, site.tenant_id, 'release.restoreToStaging', {
       resourceType: 'release', resourcePath: String(rid),
@@ -157,6 +165,7 @@ router.post('/:id/releases/:rid/rollback', async (req, res, next) => {
   try {
     const site = await siteFor(req, 'releases.publish');
     const rid = idParam(req, 'rid');
+    await gateAction(req, { action: 'release.rollback', target: siteTarget(site), params: { releaseId: rid } });
     await releaseService.rollback(site.id, rid, userIdOf(req));
     await auditService.logReqAs(req, site.tenant_id, 'release.rollback', {
       resourceType: 'release', resourcePath: String(rid), details: { siteId: site.id },
@@ -175,6 +184,10 @@ router.post('/:id/releases/:rid/approve', validate(approveBody), async (req, res
       throw new AppError(403, 'Only staff can override a blocked scan', 'overrideForbidden');
     }
     const reason = body.reason?.trim() ? body.reason.trim().slice(0, 500) : null;
+    // Letting through a release the scan blocked: release.approve_override_scan.
+    if (body.override) {
+      await gateAction(req, { action: 'release.approve_override_scan', target: siteTarget(site), params: { releaseId: idParam(req, 'rid'), reason } });
+    }
     const release = await releaseService.approve(site.id, idParam(req, 'rid'), userIdOf(req), {
       override: body.override ? { reason } : null,
     });

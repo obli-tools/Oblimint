@@ -1,7 +1,9 @@
 import { Router, type Request } from 'express';
 import { validate } from '../middleware/validate';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
-import { idParam, resolveActor } from '../services/hosting/access';
+import { idParam, loadSite, resolveActor } from '../services/hosting/access';
+import { gateAction } from '../services/restrictions/gate';
+import { gateSite, siteTarget } from '../services/restrictions/targets';
 import { sitesService } from '../services/hosting/sites.service';
 import { sitesPhpRuntime } from '../services/docker/phpRuntime';
 import {
@@ -74,20 +76,33 @@ router.get('/:id', async (req, res, next) => {
 
 router.put('/:id', validate(siteUpdateSchema), async (req, res, next) => {
   try {
-    res.json({ success: true, data: await sitesService.update(req, await resolveActor(req), idParam(req), req.body as SiteUpdateBody) });
+    const actor = await resolveActor(req);
+    const body = req.body as SiteUpdateBody;
+    const site = await loadSite(actor, idParam(req), 'read');
+    // Leaving the approval mode removes the second person of every publication (spec §2).
+    if (body.publishMode && body.publishMode !== site.publish_mode && site.publish_mode === 'approval') {
+      await gateAction(req, { action: 'site.publish_mode_change', target: siteTarget(site), params: { ...body, from: site.publish_mode, to: body.publishMode } });
+    }
+    res.json({ success: true, data: await sitesService.update(req, actor, site.id, body) });
   } catch (err) { next(err); }
 });
 
 router.delete('/:id', async (req, res, next) => {
   try {
-    await sitesService.remove(req, await resolveActor(req), idParam(req), confirmOf(req));
+    const actor = await resolveActor(req);
+    const site = await loadSite(actor, idParam(req), 'sites.manage');
+    const confirm = confirmOf(req);
+    // A wrong confirmation is refused by the service, before anything is asked of a human.
+    if (confirm === site.slug) await gateAction(req, { action: 'site.delete', target: siteTarget(site), params: { name: site.name, slug: site.slug } });
+    await sitesService.remove(req, actor, site.id, confirm);
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
 });
 
 router.post('/:id/stop', async (req, res, next) => {
   try {
-    res.json({ success: true, data: await sitesService.setStopped(req, await resolveActor(req), idParam(req), true) });
+    const site = await gateSite(req, 'site.stop', idParam(req), 'sites.manage');
+    res.json({ success: true, data: await sitesService.setStopped(req, await resolveActor(req), site.id, true) });
   } catch (err) { next(err); }
 });
 
@@ -128,7 +143,8 @@ router.put('/:id/data-paths/:pid', validate(dataPathUpdateSchema), async (req, r
 
 router.delete('/:id/data-paths/:pid', async (req, res, next) => {
   try {
-    await sitesService.deleteDataPath(req, await resolveActor(req), idParam(req), idParam(req, 'pid'));
+    const site = await gateSite(req, 'site.data_path_remove', idParam(req), 'sites.manage', { pathId: idParam(req, 'pid') });
+    await sitesService.deleteDataPath(req, await resolveActor(req), site.id, idParam(req, 'pid'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
 });
@@ -150,7 +166,8 @@ router.post('/:id/runtimes', heavyOpLimiter, validate(runtimeInputSchema), async
 
 router.delete('/:id/runtimes/:rid', async (req, res, next) => {
   try {
-    await sitesService.deleteRuntime(req, await resolveActor(req), idParam(req), idParam(req, 'rid'));
+    const site = await gateSite(req, 'site.runtime_remove', idParam(req), 'sites.manage', { runtimeId: idParam(req, 'rid') });
+    await sitesService.deleteRuntime(req, await resolveActor(req), site.id, idParam(req, 'rid'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
 });

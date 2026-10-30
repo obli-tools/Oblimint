@@ -5,7 +5,9 @@ import type {
 } from '@oblimint/shared';
 import { validate } from '../middleware/validate';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
-import { idParam, resolveActor } from '../services/hosting/access';
+import { idParam, loadSite, resolveActor } from '../services/hosting/access';
+import { gateStrictest } from '../services/restrictions/gate';
+import { gateSite, siteTarget } from '../services/restrictions/targets';
 import { windowService } from '../services/windows/window.service';
 import { siteTokenService } from '../services/windows/siteTokens';
 
@@ -138,14 +140,32 @@ router.post('/:id/windows/:wid/close', async (req, res, next) => {
 router.post('/:id/windows/:wid/validate', validate(validateBody), async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
-    res.json({ success: true, data: await windowService.validate(req, actor, idParam(req), idParam(req, 'wid'), req.body as WindowValidateRequest) });
+    const body = req.body as WindowValidateRequest & { override?: boolean };
+    // Validating a window publishes its changes: release.publish (and the scan override, staff only).
+    // 'read' here: the service checks releases.publish, or releases.approve in publish mode approval.
+    const site = await loadSite(actor, idParam(req), 'read');
+    const params = { windowId: idParam(req, 'wid'), message: body.message ?? null, override: body.override === true };
+    await gateStrictest(req, [
+      { action: 'release.publish', target: siteTarget(site), params },
+      ...(body.override ? [{ action: 'release.approve_override_scan', target: siteTarget(site), params }] : []),
+    ]);
+    res.json({ success: true, data: await windowService.validate(req, actor, site.id, idParam(req, 'wid'), body) });
   } catch (err) { next(err); }
 });
 
 router.post('/:id/windows/:wid/reject', validate(rejectBody), async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
-    res.json({ success: true, data: await windowService.reject(req, actor, idParam(req), idParam(req, 'wid'), req.body as WindowRejectRequest) });
+    const body = req.body as WindowRejectRequest & { restoreDatabases?: boolean };
+    let siteId = idParam(req);
+    // Rejecting while restoring the databases to their snapshot: window.reject_db_restore.
+    if (body.restoreDatabases) {
+      const site = await gateSite(req, 'window.reject_db_restore', siteId, 'databases.manage', {
+        windowId: idParam(req, 'wid'), reason: body.reason ?? null, restoreDatabases: true,
+      });
+      siteId = site.id;
+    }
+    res.json({ success: true, data: await windowService.reject(req, actor, siteId, idParam(req, 'wid'), body) });
   } catch (err) { next(err); }
 });
 

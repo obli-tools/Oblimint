@@ -5,6 +5,15 @@ import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { dkimService } from '../services/mail/dns/dkim.service';
 import { mailDnsService } from '../services/mail/dns/mailDns.service';
+import { loadMailDomain } from '../services/mail/access';
+import { gateAction } from '../services/restrictions/gate';
+import type { Request } from 'express';
+
+/** Loads the mail domain with mail.manage and gates `action` on its account. */
+async function gateMailDomain(req: Request, action: string, params: Record<string, unknown>): Promise<void> {
+  const md = await loadMailDomain(await resolveActor(req), idParam(req), 'mail.manage');
+  await gateAction(req, { action, target: { tenantId: Number(md.tenant_id), accountId: Number(md.account_id), siteId: null }, params: { domain: md.name, ...params } });
+}
 
 // /api/mail (DNS part) — OWNED BY MODULE `mail-dns-tls` (docs/P4-PLAN.md §6.3). NO catch-all.
 //   GET  /domains/:id/dns                                   → MailDnsStatus   (read)
@@ -73,6 +82,8 @@ const fixRequest = z.object({
 
 router.post('/domains/:id/dns/fix', heavyOpLimiter, validate(fixRequest), async (req, res, next) => {
   try {
+    // A dry run only reads the plan; applying it writes the zone: mail.dns_fix.
+    if (req.body?.dryRun !== true) await gateMailDomain(req, 'mail.dns_fix', { items: req.body?.items ?? null });
     res.json({ success: true, data: await mailDnsService.fix(req, await resolveActor(req), idParam(req), req.body) });
   } catch (err) { next(err); }
 });
@@ -85,6 +96,7 @@ router.get('/domains/:id/dkim', async (req, res, next) => {
 
 router.post('/domains/:id/dkim/rotate', validate(z.object({ algorithm: z.enum(['rsa-2048', 'ed25519']).optional() }).strict()), async (req, res, next) => {
   try {
+    await gateMailDomain(req, 'mail.dkim_rotate', { algorithm: req.body?.algorithm ?? null });
     res.json({ success: true, data: await dkimService.rotate(req, await resolveActor(req), idParam(req), req.body) });
   } catch (err) { next(err); }
 });

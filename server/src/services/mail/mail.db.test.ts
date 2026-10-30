@@ -67,6 +67,9 @@ test('mail-core on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestCon
   type State = import('./driver').MailDesiredState;
 
   await db.migrate.latest();
+  // The protected actions (migration 027 seeds the defaults on the master tenant, read in god view)
+  // are tested in services/restrictions/: off here.
+  await db('tenants').update({ action_restrictions: '{}' });
   t.after(async () => { await db.destroy(); });
 
   // The tombstone triggers of 006 exist.

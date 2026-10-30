@@ -6,6 +6,8 @@ import { AppError } from '../middleware/errorHandler';
 import { assertNeedSomewhere, idParam, resolveActor } from '../services/hosting/access';
 import { webBanService } from '../services/security/bans.service';
 import { HONEYPOT_PRESETS } from '../services/security/honeypotRender';
+import { db } from '../db';
+import { gatePlatform } from '../services/restrictions/targets';
 
 // /api/bans — OWNED BY MODULE `honeypot-bans` (docs/P4b-PLAN.md §6.5). Tenant router.
 // Account bans: read = member / staff read, manage = proxy.manage on the account. Platform bans: platform admin
@@ -85,6 +87,9 @@ router.post('/', validate(createBody), async (req, res, next) => {
 
 router.delete('/:id', async (req, res, next) => {
   try {
+    // Lifting a PLATFORM ban (every web port of the edge): platform.ban_lift.
+    const ban = await db('web_bans').where({ id: idParam(req) }).first('scope', 'ip') as { scope: string; ip: string } | undefined;
+    if (ban?.scope === 'platform') await gatePlatform(req, 'platform.ban_lift', { banId: idParam(req), ip: ban.ip });
     res.json({ success: true, data: await webBanService.remove(req, await resolveActor(req), idParam(req)) });
   } catch (err) { next(err); }
 });

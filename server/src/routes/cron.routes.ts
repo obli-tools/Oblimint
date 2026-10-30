@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { CRON_MAX_TIMEOUT_SEC, type CronJobInput } from '@oblimint/shared';
 import { validate } from '../middleware/validate';
 import { idParam, resolveActor } from '../services/hosting/access';
+import { gateSite } from '../services/restrictions/targets';
 import { cronService } from '../services/cron/cron.service';
 
 // /api/sites/:id/cron — OWNED BY MODULE `cron-logs` (docs/P2-PLAN.md §6.6). Mounted on /api/sites
@@ -46,6 +47,7 @@ router.get('/:id/cron', async (req, res, next) => {
 router.post('/:id/cron', validate(createBody), async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
+    await gateSite(req, 'cron.write', idParam(req), 'sites.manage', { op: 'create', ...(req.body as CronJobInput) });
     const job = await cronService.create(req, actor, idParam(req), req.body as CronJobInput);
     res.status(201).json({ success: true, data: job });
   } catch (err) { next(err); }
@@ -62,6 +64,7 @@ router.get('/:id/cron/runs/:runId', async (req, res, next) => {
 router.put('/:id/cron/:jobId', validate(updateBody), async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
+    await gateSite(req, 'cron.write', idParam(req), 'sites.manage', { op: 'update', jobId: idParam(req, 'jobId'), ...(req.body as Partial<CronJobInput>) });
     const job = await cronService.update(req, actor, idParam(req), idParam(req, 'jobId'), req.body as Partial<CronJobInput>);
     res.json({ success: true, data: job });
   } catch (err) { next(err); }
@@ -70,6 +73,7 @@ router.put('/:id/cron/:jobId', validate(updateBody), async (req, res, next) => {
 router.delete('/:id/cron/:jobId', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
+    await gateSite(req, 'cron.delete', idParam(req), 'sites.manage', { jobId: idParam(req, 'jobId') });
     await cronService.remove(req, actor, idParam(req), idParam(req, 'jobId'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
@@ -78,6 +82,7 @@ router.delete('/:id/cron/:jobId', async (req, res, next) => {
 router.post('/:id/cron/:jobId/run', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
+    await gateSite(req, 'cron.run', idParam(req), 'sites.manage', { jobId: idParam(req, 'jobId') });
     const run = await cronService.runNow(req, actor, idParam(req), idParam(req, 'jobId'));
     res.status(202).json({ success: true, data: run });
   } catch (err) { next(err); }

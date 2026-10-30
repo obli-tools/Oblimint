@@ -3,6 +3,7 @@ import { MASTER_TENANT_ID, type PlatformUpdateRequest } from '@oblimint/shared';
 import { AppError } from '../middleware/errorHandler';
 import { auditService } from '../services/audit.service';
 import { platformUpdatesService } from '../services/platformUpdates/platformUpdates.service';
+import { gatePlatform } from '../services/restrictions/targets';
 
 // /api/system/updates — platform updates of a node (Nodes > Updates).
 // Platform administrator on the master tenant only (requirePlatformAdminOnMaster, routes/index.ts).
@@ -54,6 +55,7 @@ router.post('/apply', async (req, res, next) => {
     const body = (req.body ?? {}) as PlatformUpdateRequest & { nodeId?: unknown; force?: unknown };
     const nodeId = nodeParam(body.nodeId);
     const images = imageList(body.images);
+    await gatePlatform(req, 'platform.update_apply', { nodeId, images, redeploySites: body.redeploySites === true, force: body.force === true });
     const run = await platformUpdatesService.start(
       { nodeId, images, redeploySites: body.redeploySites === true },
       body.force === true ? 'forced' : 'manual',

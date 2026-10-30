@@ -5,6 +5,8 @@ import { AppError } from '../middleware/errorHandler';
 import { apiKeysService } from '../services/apiKeys/apiKeys.service';
 import { parseBody } from '../services/docker/parseBody';
 import { idParam, resolveActor } from '../services/hosting/access';
+import { gateAction } from '../services/restrictions/gate';
+import { accountTarget, gateAccount } from '../services/restrictions/targets';
 
 // /api/accounts/:id/api-keys — access keys of an account (shared/src/apiKeys.ts).
 // Mounted on /accounts (no catch-all). Every route: sites.manage on the account;
@@ -61,6 +63,7 @@ router.post('/:id/api-keys', async (req, res, next) => {
     const actor = await resolveActor(req);
     const accountId = idParam(req);
     const body = parseBody(createSchema, req.body);
+    await gateAccount(req, 'apikey.create', accountId, 'sites.manage', { ...body, kind: body.kind ?? 'key' });
     res.setHeader('Cache-Control', 'no-store');
     res.status(201).json({ success: true, data: await apiKeysService.create(req, actor, accountId, body) });
   } catch (err) { next(err); }
@@ -70,12 +73,16 @@ router.put('/:id/api-keys/:keyId', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
     const body = parseBody(updateSchema, req.body);
-    res.json({ success: true, data: await apiKeysService.update(req, actor, idParam(req), idParam(req, 'keyId'), body) });
+    // Giving the key more (scopes, sites, domains, open addresses, a later expiry): apikey.widen.
+    res.json({ success: true, data: await apiKeysService.update(req, actor, idParam(req), idParam(req, 'keyId'), body, async (w) => {
+      if (w.widens) await gateAction(req, { action: 'apikey.widen', target: accountTarget(w.account), params: { keyId: w.keyId, name: w.name, ...body } });
+    }) });
   } catch (err) { next(err); }
 });
 
 router.post('/:id/api-keys/:keyId/rotate-secret', async (req, res, next) => {
   try {
+    await gateAccount(req, 'connector.rotate', idParam(req), 'sites.manage', { keyId: idParam(req, 'keyId') });
     res.setHeader('Cache-Control', 'no-store');
     res.json({ success: true, data: await apiKeysService.rotateSecret(req, await resolveActor(req), idParam(req), idParam(req, 'keyId')) });
   } catch (err) { next(err); }
@@ -92,6 +99,7 @@ router.delete(['/:id/api-keys/:keyId/connections', '/:id/api-keys/:keyId/connect
 
 router.delete('/:id/api-keys/:keyId', async (req, res, next) => {
   try {
+    await gateAccount(req, 'apikey.revoke', idParam(req), 'sites.manage', { keyId: idParam(req, 'keyId') });
     await apiKeysService.remove(req, await resolveActor(req), idParam(req), idParam(req, 'keyId'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }

@@ -10,6 +10,11 @@ import { savedQueries } from '../services/databases/explorer/savedQueries';
 import type { DbDatabaseRow, DbInstanceRow } from '../services/databases/rows';
 import { parseBody } from '../services/docker/parseBody';
 import { idParam, resolveActor } from '../services/hosting/access';
+import { splitStatements } from '../services/databases/explorer/sqlStream';
+import { actionLevel, gateAction } from '../services/restrictions/gate';
+import { spoolHashed } from '../services/restrictions/content';
+import { canonicalJson } from '../services/restrictions/canonical';
+import crypto from 'crypto';
 
 // /api/databases/instances/:id/databases/:dbId/explorer* — integrated database
 // explorer (shared/src/dbExplorer.ts). Every route needs databases.manage on
@@ -152,6 +157,12 @@ const h = (fn: (req: Request, res: import('express').Response) => Promise<void>)
 
 const base = '/instances/:id/databases/:dbId/explorer';
 
+/** The database's account as a restriction target. */
+const dbTarget = (t: Target) => ({ tenantId: Number(t.instance.tenant_id), accountId: Number(t.instance.account_id), siteId: null });
+const dbParams = (t: Target) => ({ database: t.database.name, databaseId: t.database.id, instanceId: t.instance.id });
+/** Row data / statement bound to an approval by its digest: never shown to the decider nor kept in the audit. */
+const digest = (v: unknown) => crypto.createHash('sha256').update(canonicalJson(v)).digest('hex');
+
 router.get(base, h(async (req, res) => {
   const t = await target(req);
   res.json({ success: true, data: await explorerService.info(t.instance, t.database, t.userId) });
@@ -188,6 +199,7 @@ router.post(`${base}/rows`, h(async (req, res) => {
 router.post(`${base}/insert`, h(async (req, res) => {
   const t = await target(req);
   const { table, values } = parseBody(insertSchema, req.body);
+  await gateAction(req, { action: 'db.rows_write', target: dbTarget(t), params: { ...dbParams(t), op: 'insert', table, columns: Object.keys(values), dataSha256: digest({ values }) } });
   await explorerService.insert(t.instance, t.database, t.userId, table, values);
   await audit(req, t, 'db.explorer.insert', { table, columns: Object.keys(values) });
   res.json({ success: true, data: { inserted: true } });
@@ -196,6 +208,7 @@ router.post(`${base}/insert`, h(async (req, res) => {
 router.post(`${base}/update`, h(async (req, res) => {
   const t = await target(req);
   const { table, key, values } = parseBody(updateSchema, req.body);
+  await gateAction(req, { action: 'db.rows_write', target: dbTarget(t), params: { ...dbParams(t), op: 'update', table, columns: Object.keys(values), dataSha256: digest({ key, values }) } });
   const affected = await explorerService.update(t.instance, t.database, t.userId, table, key, values);
   // Never the key values (they identify the row's data): the edited columns and the count.
   await audit(req, t, 'db.explorer.update', { table, columns: Object.keys(values), affected });
@@ -205,6 +218,7 @@ router.post(`${base}/update`, h(async (req, res) => {
 router.post(`${base}/delete`, h(async (req, res) => {
   const t = await target(req);
   const { table, keys } = parseBody(deleteSchema, req.body);
+  await gateAction(req, { action: 'db.rows_write', target: dbTarget(t), params: { ...dbParams(t), op: 'delete', table, rows: keys.length, dataSha256: digest({ keys }) } });
   const affected = await explorerService.remove(t.instance, t.database, t.userId, table, keys);
   await audit(req, t, 'db.explorer.delete', { table, rows: keys.length, affected });
   res.json({ success: true, data: { affected } });
@@ -213,6 +227,13 @@ router.post(`${base}/delete`, h(async (req, res) => {
 router.post(`${base}/query`, h(async (req, res) => {
   const t = await target(req);
   const { sql, timeoutS: limit } = parseBody(querySchema, req.body);
+  // Free SQL that writes: db.query_write (default: keys only, the panel stays free). The decider reads
+  // the statements with their literals masked (as the audit); the exact text is bound by its digest.
+  const family = dbFamilyOf(t.instance.engine);
+  const typed = splitStatements(sql, family).map((s) => s.sql);
+  if (isWrite(family, typed)) {
+    await gateAction(req, { action: 'db.query_write', target: dbTarget(t), params: { ...dbParams(t), sql: auditStatements(typed, family), sqlSha256: digest(sql) } });
+  }
   const data = await explorerService.query(t.instance, t.database, t.userId, sql, limit);
   // The statements themselves (cut), never their results.
   const statements = [...new Set(data.results.map((r) => r.statement))];
@@ -238,6 +259,10 @@ router.post(`${base}/ddl/preview`, h(async (req, res) => {
 router.post(`${base}/ddl/apply`, h(async (req, res) => {
   const t = await target(req);
   const { request } = parseBody(ddlSchema, req.body);
+  // Dropping / emptying a table or an object: db.ddl.
+  if (request.op === 'dropTable' || request.op === 'truncateTable' || request.op === 'dropObject') {
+    await gateAction(req, { action: 'db.ddl', target: dbTarget(t), params: { ...dbParams(t), request } });
+  }
   const data = await explorerService.ddlApply(t.instance, t.database, t.userId, request as DbxDdlRequest);
   await audit(req, t, 'db.explorer.ddl', {
     op: request.op, table: 'table' in request ? request.table : 'name' in request ? request.name : null, failed: data.stopped, sql: auditStatements(data.statements),
@@ -294,7 +319,26 @@ router.post(`${base}/import`, h(async (req, res) => {
   }
   if (options.format === 'csv' && !options.table) throw new AppError(400, 'CSV: choose the table', 'validation', { field: 'table' });
   const length = Number(req.headers['content-length']);
-  const status = await explorerService.startImport(t.instance, t.database, t.userId, req, req.headers['content-type'], Number.isFinite(length) ? length : null, options);
+  // db.import: none → streamed; sensitive → the user's own code; restricted → the content enters the
+  // fingerprint of the approval (sha256 + size) and is imported from that copy.
+  const params = { ...dbParams(t), from: 'explorer upload', options };
+  const level = await actionLevel(req, 'db.import', dbTarget(t));
+  let status: Awaited<ReturnType<typeof explorerService.startImport>>;
+  if (level !== 'restricted') {
+    if (level === 'sensitive') {
+      // Refused (code asked): the upload is drained, the connection stays usable.
+      try { await gateAction(req, { action: 'db.import', target: dbTarget(t), params }); } catch (err) { req.resume(); throw err; }
+    }
+    status = await explorerService.startImport(t.instance, t.database, t.userId, req, req.headers['content-type'], Number.isFinite(length) ? length : null, options);
+  } else {
+    const copy = await spoolHashed(req);
+    try {
+      await gateAction(req, { action: 'db.import', target: dbTarget(t), params: { ...params, size: copy.size, contentSha256: copy.sha256 } });
+      status = await explorerService.startImport(t.instance, t.database, t.userId, copy.open(), req.headers['content-type'], copy.size, options);
+    } finally {
+      await copy.cleanup();
+    }
+  }
   await audit(req, t, 'db.explorer.import', {
     format: status.format, table: status.table, bytes: status.bytesRead, statements: status.statements, rows: status.rows, errors: status.errorCount, state: status.state,
   });

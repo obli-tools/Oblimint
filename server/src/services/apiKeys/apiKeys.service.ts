@@ -449,12 +449,21 @@ export const apiKeysService = {
     return n;
   },
 
-  /** Its creator, or a manager holding its scopes; a manager who widens it becomes its owner (M3). */
-  async update(req: Request, actor: HostingActor, accountId: number, keyId: number, body: ApiKeyUpdate): Promise<ApiKey> {
+  /**
+   * Its creator, or a manager holding its scopes; a manager who widens it becomes its owner (M3).
+   * `beforeWrite`: called once the change is checked and BEFORE anything is written, with whether it
+   * widens the key (the route gates apikey.widen there).
+   */
+  async update(
+    req: Request, actor: HostingActor, accountId: number, keyId: number, body: ApiKeyUpdate,
+    beforeWrite?: (w: { widens: boolean; account: { id: number; tenant_id: number }; keyId: number; name: string }) => Promise<void>,
+  ): Promise<ApiKey> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
     const { row, creator } = await managedKey(actor, account, keyId, { label: 'Key' });
     const n = await normalize(actor, account, body, false);
-    const newOwner = !creator && await widens(row, n) ? actor.userId : null;
+    const wider = await widens(row, n);
+    if (beforeWrite) await beforeWrite({ widens: wider, account, keyId: row.id, name: row.name });
+    const newOwner = !creator && wider ? actor.userId : null;
     // Feature B (B9): a key losing previews.manage, or expired now, stops its previews first.
     if ((n.scopes !== undefined && !n.scopes.includes('previews.manage'))
       || (n.expiresAt instanceof Date && n.expiresAt.getTime() <= Date.now())) {

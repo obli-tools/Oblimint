@@ -3,7 +3,13 @@ import { z } from 'zod';
 import { DB_ENGINE_VERSIONS } from '@oblimint/shared';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
-import { assertInstanceAccess, databaseService } from '../services/databases/databases.service';
+import { assertInstanceAccess, databaseService, loadDatabaseRow, loadInstance } from '../services/databases/databases.service';
+import type { DbInstanceRow } from '../services/databases/rows';
+import { actionLevel, gateAction } from '../services/restrictions/gate';
+import { spoolHashed } from '../services/restrictions/content';
+
+/** A database instance as a restriction target (its account). */
+const instanceTarget = (row: DbInstanceRow) => ({ tenantId: Number(row.tenant_id), accountId: Number(row.account_id), siteId: null });
 import { parseBody } from '../services/docker/parseBody';
 import { idParam, resolveActor } from '../services/hosting/access';
 
@@ -124,8 +130,10 @@ router.delete('/instances/:id', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
     const id = idParam(req);
-    await assertInstanceAccess(actor, id, 'databases.manage');
+    const row = await loadInstance(actor, id, 'databases.manage');
     const { confirm } = parseBody(confirmSchema, req.body);
+    // A wrong confirmation is refused by the service, before anything is asked of a human.
+    if (confirm === row.name) await gateAction(req, { action: 'db.instance_drop', target: instanceTarget(row), params: { name: row.name, instanceId: row.id, engine: row.engine } });
     await databaseService.deleteInstance(req, actor, id, confirm);
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
@@ -150,8 +158,11 @@ router.put('/instances/:id/external', heavyOpLimiter, async (req, res, next) => 
   try {
     const actor = await resolveActor(req);
     const id = idParam(req);
-    await assertInstanceAccess(actor, id, 'databases.manage');
-    const data = await databaseService.setExternalAccess(req, actor, id, parseBody(externalSchema, req.body));
+    const row = await loadInstance(actor, id, 'databases.manage');
+    const body = parseBody(externalSchema, req.body);
+    // Opening the instance to the outside (closing it stays free).
+    if (body.enabled) await gateAction(req, { action: 'db.external_access', target: instanceTarget(row), params: { name: row.name, instanceId: row.id, enabled: true } });
+    const data = await databaseService.setExternalAccess(req, actor, id, body);
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -171,8 +182,10 @@ router.delete('/instances/:id/databases/:dbId', async (req, res, next) => {
     const actor = await resolveActor(req);
     const id = idParam(req);
     const dbId = idParam(req, 'dbId');
-    await assertInstanceAccess(actor, id, 'databases.manage');
+    const row = await loadInstance(actor, id, 'databases.manage');
+    const target = await loadDatabaseRow(row, dbId);
     const { confirm } = parseBody(confirmSchema, req.body);
+    if (confirm === target.name) await gateAction(req, { action: 'db.drop', target: instanceTarget(row), params: { database: target.name, databaseId: target.id, instanceId: row.id } });
     await databaseService.deleteDatabase(req, actor, id, dbId, confirm);
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
@@ -188,8 +201,25 @@ router.get('/instances/:id/databases/:dbId/dump', heavyOpLimiter, async (req, re
 router.post('/instances/:id/databases/:dbId/restore', heavyOpLimiter, async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
-    const data = await databaseService.restore(req, actor, idParam(req), idParam(req, 'dbId'));
-    res.json({ success: true, data });
+    const row = await loadInstance(actor, idParam(req), 'databases.manage');
+    const target = await loadDatabaseRow(row, idParam(req, 'dbId'));
+    const params = { database: target.name, databaseId: target.id, instanceId: row.id, from: 'upload' };
+    const level = await actionLevel(req, 'db.import', instanceTarget(row));
+    if (level !== 'restricted') {
+      // none: streamed as before; sensitive: the user's own code (nothing parked, nothing to fingerprint).
+      if (level === 'sensitive') await gateAction(req, { action: 'db.import', target: instanceTarget(row), params });
+      res.json({ success: true, data: await databaseService.restore(req, actor, row.id, target.id) });
+      return;
+    }
+    // restricted: the dump enters the fingerprint (sha256 + size) of the approval, imported from that copy.
+    const contentType = String(req.headers['content-type'] ?? '');
+    const copy = await spoolHashed(req);
+    try {
+      await gateAction(req, { action: 'db.import', target: instanceTarget(row), params: { ...params, size: copy.size, contentSha256: copy.sha256 } });
+      res.json({ success: true, data: await databaseService.restore(req, actor, row.id, target.id, { stream: copy.open(), contentType }) });
+    } finally {
+      await copy.cleanup();
+    }
   } catch (err) {
     // Never leave an unread upload behind (the connection would stall).
     if (!req.readableEnded) req.resume();
@@ -212,8 +242,10 @@ router.put('/instances/:id/users/:userId', async (req, res, next) => {
     const actor = await resolveActor(req);
     const id = idParam(req);
     const userId = idParam(req, 'userId');
-    await assertInstanceAccess(actor, id, 'databases.manage');
-    const data = await databaseService.updateUser(req, actor, id, userId, parseBody(userUpdateSchema, req.body));
+    const row = await loadInstance(actor, id, 'databases.manage');
+    const body = parseBody(userUpdateSchema, req.body);
+    await gateAction(req, { action: 'db.user_grants', target: instanceTarget(row), params: { userId, instanceId: row.id, grants: body.grants } });
+    const data = await databaseService.updateUser(req, actor, id, userId, body);
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -223,8 +255,11 @@ router.post('/instances/:id/users/:userId/password', async (req, res, next) => {
     const actor = await resolveActor(req);
     const id = idParam(req);
     const userId = idParam(req, 'userId');
-    await assertInstanceAccess(actor, id, 'databases.manage');
+    const row = await loadInstance(actor, id, 'databases.manage');
     const { password } = parseBody(passwordSchema, req.body);
+    await gateAction(req, {
+      action: 'db.user_password_reset', target: instanceTarget(row), params: { userId, instanceId: row.id, generated: !password }, secretParams: password ? { password } : {},
+    });
     const data = await databaseService.resetPassword(req, actor, id, userId, password ?? null);
     res.json({ success: true, data });
   } catch (err) { next(err); }
@@ -233,6 +268,8 @@ router.post('/instances/:id/users/:userId/password', async (req, res, next) => {
 router.delete('/instances/:id/users/:userId', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
+    const row = await loadInstance(actor, idParam(req), 'databases.manage');
+    await gateAction(req, { action: 'db.user_delete', target: instanceTarget(row), params: { userId: idParam(req, 'userId'), instanceId: row.id } });
     await databaseService.deleteUser(req, actor, idParam(req), idParam(req, 'userId'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }

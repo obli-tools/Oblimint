@@ -15,6 +15,8 @@ import { accessListsService, customPagesService } from '../services/proxy/lists.
 import { CUSTOM_PAGE_MAX_BYTES, isCustomPageCode } from '../services/proxy/render/pages';
 import { deadHostsService, redirectionsService } from '../services/proxy/simpleHosts.service';
 import { streamsService } from '../services/proxy/streams.service';
+import { loadProxyHost } from '../services/proxy/access';
+import { gateAction } from '../services/restrictions/gate';
 import {
   ACCESS_USERNAME_RE, AUTH_EMAIL_RE, AUTH_GROUP_RE, AZURE_CLIENT_ID_RE, AZURE_TENANT_RE, CORS_ORIGIN_RE, HEADER_NAME_RE, ROUTE_PATH_RE,
   isAllowedResponseHeader, isAllowedUpstreamHeader, isSafeHeaderValue, isValidRewritePrefix, isValidRoutePath, isValidTargetPath,
@@ -292,7 +294,14 @@ router.post('/hosts/quick-setup', validate(quickSetup), handle((req, a) => proxy
 router.post('/hosts', validate(hostCreate), handle((req, a) => proxyHostsService.create(req, a, req.body), 201));
 router.get('/hosts/:id', handle((req, a) => proxyHostsService.get(a, idParam(req))));
 router.put('/hosts/:id', validate(hostUpdate), handle((req, a) => proxyHostsService.update(req, a, idParam(req), req.body)));
-router.delete('/hosts/:id', handle(async (req, a) => { await proxyHostsService.remove(req, a, idParam(req)); return { deleted: true }; }));
+router.delete('/hosts/:id', handle(async (req, a) => {
+  const host = await loadProxyHost(a, idParam(req), 'proxy.manage');
+  await gateAction(req, {
+    action: 'proxy.host_delete', target: { tenantId: Number(host.tenant_id), accountId: Number(host.account_id), siteId: null }, params: { name: host.name, hostId: host.id },
+  });
+  await proxyHostsService.remove(req, a, idParam(req));
+  return { deleted: true };
+}));
 router.post('/hosts/:id/retry', handle((req, a) => proxyHostsService.retry(req, a, idParam(req))));
 
 // ── redirections ──

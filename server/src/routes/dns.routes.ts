@@ -4,7 +4,19 @@ import { DNS_RECORD_TYPES, type DnsRecordInput, type DnsRecordType, type DnsTemp
 import { validate } from '../middleware/validate';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam, resolveActor } from '../services/hosting/access';
-import { dnsService } from '../services/dns/dns.service';
+import { dnsService, loadZone } from '../services/dns/dns.service';
+import { gateAction } from '../services/restrictions/gate';
+import { MASTER_TENANT_ID } from '@oblimint/shared';
+import type { Request } from 'express';
+
+/** Loads the zone with dns.manage and gates `action` on its account (a platform zone: the master tenant). */
+async function gateZone(req: Request, action: string, params: Record<string, unknown> = {}): Promise<void> {
+  const zone = await loadZone(await resolveActor(req), idParam(req), 'dns.manage');
+  await gateAction(req, {
+    action, target: { tenantId: Number(zone.tenant_id ?? MASTER_TENANT_ID), accountId: zone.account_id === null ? null : Number(zone.account_id), siteId: null },
+    params: { zone: zone.name, ...params },
+  });
+}
 
 // /api/dns — OWNED BY MODULE `dns` (docs/P2-PLAN.md §6.1).
 //   GET    /zones                    ?accountId=&search=&tenantId=&platform=1 → DnsZone[]           (read)
@@ -111,6 +123,7 @@ router.put('/zones/:id', validate(zoneUpdateSchema), async (req, res, next) => {
 
 router.delete('/zones/:id', async (req, res, next) => {
   try {
+    await gateZone(req, 'dns.zone_delete');
     await dnsService.deleteZone(req, await resolveActor(req), idParam(req));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
@@ -119,6 +132,7 @@ router.delete('/zones/:id', async (req, res, next) => {
 router.post('/zones/:id/reset', validate(resetSchema), async (req, res, next) => {
   try {
     const { keepManual } = req.body as z.infer<typeof resetSchema>;
+    await gateZone(req, 'dns.zone_reset', { keepManual });
     res.json({ success: true, data: await dnsService.resetZone(req, await resolveActor(req), idParam(req), { keepManual }) });
   } catch (err) { next(err); }
 });
@@ -126,6 +140,7 @@ router.post('/zones/:id/reset', validate(resetSchema), async (req, res, next) =>
 router.post('/zones/:id/apply-template', validate(applyTemplateSchema), async (req, res, next) => {
   try {
     const { templateId } = req.body as z.infer<typeof applyTemplateSchema>;
+    await gateZone(req, 'dns.template_apply', { templateId });
     res.json({ success: true, data: await dnsService.applyTemplate(req, await resolveActor(req), idParam(req), templateId) });
   } catch (err) { next(err); }
 });
@@ -145,6 +160,7 @@ router.get('/zones/:id/delegation', heavyOpLimiter, async (req, res, next) => {
 
 router.post('/zones/:id/records', validate(recordInputSchema), async (req, res, next) => {
   try {
+    await gateZone(req, 'dns.record_write', { op: 'create', record: req.body });
     const record = await dnsService.createRecord(req, await resolveActor(req), idParam(req), req.body as DnsRecordInput);
     res.status(201).json({ success: true, data: record });
   } catch (err) { next(err); }
@@ -152,6 +168,7 @@ router.post('/zones/:id/records', validate(recordInputSchema), async (req, res, 
 
 router.put('/zones/:id/records/:rid', validate(recordInputSchema), async (req, res, next) => {
   try {
+    await gateZone(req, 'dns.record_write', { op: 'update', recordId: idParam(req, 'rid'), record: req.body });
     const record = await dnsService.updateRecord(req, await resolveActor(req), idParam(req), idParam(req, 'rid'), req.body as DnsRecordInput);
     res.json({ success: true, data: record });
   } catch (err) { next(err); }
@@ -159,6 +176,7 @@ router.put('/zones/:id/records/:rid', validate(recordInputSchema), async (req, r
 
 router.delete('/zones/:id/records/:rid', async (req, res, next) => {
   try {
+    await gateZone(req, 'dns.record_write', { op: 'delete', recordId: idParam(req, 'rid') });
     await dnsService.deleteRecord(req, await resolveActor(req), idParam(req), idParam(req, 'rid'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }

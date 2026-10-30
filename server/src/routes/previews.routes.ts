@@ -5,6 +5,8 @@ import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam, loadSite, resolveActor } from '../services/hosting/access';
 import { parseBody } from '../services/docker/parseBody';
 import { previewService } from '../services/previews/previews.service';
+import { gateAction } from '../services/restrictions/gate';
+import { siteTarget } from '../services/restrictions/targets';
 
 // /api/sites/:id/preview* — feature B (release / staging previews).
 //   GET    /:id/preview                  → SitePreview | null              (read)
@@ -67,6 +69,10 @@ router.post('/:id/preview', heavyOpLimiter, async (req, res, next) => {
   try {
     const { actor, site } = await visibleSite(req);
     const body = parseBody(startSchema, req.body);
+    // A copy of production data in a preview: preview.db_clone.
+    if ((body.options as { database?: string } | null | undefined)?.database === 'clone') {
+      await gateAction(req, { action: 'preview.db_clone', target: siteTarget(site), params: { target: body.target, releaseId: body.releaseId ?? null, ttlMinutes: body.ttlMinutes ?? null, databaseIds: body.databaseIds ?? null } });
+    }
     const result = await previewService.start(req, actor, site.id, {
       target: body.target, releaseId: body.releaseId ?? null, ttlMinutes: body.ttlMinutes ?? null, options: body.options ?? null,
       databaseIds: body.databaseIds ?? null,
@@ -96,6 +102,9 @@ router.get('/:id/preview/open', async (req, res, next) => {
 router.post('/:id/preview/link', async (req, res, next) => {
   try {
     const { actor, site } = await visibleSite(req);
+    // A public link to a preview holding a copy of the database: preview.share_link_with_db.
+    const current = await previewService.get(actor, site.id);
+    if (current?.dbClone) await gateAction(req, { action: 'preview.share_link_with_db', target: siteTarget(site), params: { previewId: current.id } });
     res.setHeader('Cache-Control', 'no-store');
     res.json({ success: true, data: await previewService.shareLink(req, actor, site.id) });
   } catch (err) { next(err); }

@@ -5,6 +5,8 @@ import { AppError } from '../middleware/errorHandler';
 import { accountsService } from '../services/hosting/accounts.service';
 import { assertStaff, idParam, loadAccount, requireStaffActor, resolveActor } from '../services/hosting/access';
 import { clientUsersService } from '../services/hosting/clientUsers.service';
+import { gateAction } from '../services/restrictions/gate';
+import { accountTarget, gateAccount } from '../services/restrictions/targets';
 import { fileAccessService } from '../services/hosting/fileAccess.service';
 import {
   accountCreateSchema, accountUpdateSchema, clientUserAddSchema, clientUserCapabilitiesSchema, fileAccessUpdateSchema, sshKeyInputSchema,
@@ -85,7 +87,8 @@ router.put('/:id', validate(accountUpdateSchema), async (req, res, next) => {
 
 router.post('/:id/suspend', async (req, res, next) => {
   try {
-    res.json({ success: true, data: await accountsService.setSuspended(req, await resolveActor(req), idParam(req), true) });
+    const account = await gateAccount(req, 'account.suspend', idParam(req), 'accounts.manage');
+    res.json({ success: true, data: await accountsService.setSuspended(req, await resolveActor(req), account.id, true) });
   } catch (err) { next(err); }
 });
 
@@ -103,7 +106,12 @@ router.post('/:id/usage/refresh', heavyOpLimiter, async (req, res, next) => {
 
 router.delete('/:id', async (req, res, next) => {
   try {
-    await accountsService.remove(req, await resolveActor(req), idParam(req), confirmOf(req));
+    const actor = await resolveActor(req);
+    const account = await loadAccount(actor, idParam(req), 'accounts.manage');
+    const confirm = confirmOf(req);
+    // A wrong confirmation is refused by the service, before anything is asked of a human.
+    if (confirm === account.username) await gateAction(req, { action: 'account.delete', target: accountTarget(account), params: { username: account.username } });
+    await accountsService.remove(req, actor, account.id, confirm);
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }
 });
@@ -132,6 +140,11 @@ router.post('/:id/users', async (req, res, next) => {
       const issues = parsed.error.errors.map((e) => `${e.path.length ? e.path.join('.') : '<root>'}: ${e.message}`);
       throw new AppError(400, `Validation failed — ${issues.join('; ')}`, undefined, parsed.error.flatten().fieldErrors);
     }
+    // A new login may carry a password: a secret (fingerprint only; panel: code instead of an approval).
+    const { password, ...shown } = parsed.data as ClientUserAddBody & { password?: string | null };
+    await gateAction(req, {
+      action: 'account.client_users', target: accountTarget(account), params: { op: 'add', ...shown }, secretParams: password ? { password } : {},
+    });
     const user = await clientUsersService.add(req, account, parsed.data as ClientUserAddBody);
     res.status(201).json({ success: true, data: user });
   } catch (err) { next(err); }
@@ -140,6 +153,9 @@ router.post('/:id/users', async (req, res, next) => {
 router.put('/:id/users/:userId', validate(clientUserCapabilitiesSchema), async (req, res, next) => {
   try {
     const account = await staffAccount(req);
+    await gateAction(req, {
+      action: 'account.client_users', target: accountTarget(account), params: { op: 'capabilities', userId: idParam(req, 'userId'), capabilities: req.body.capabilities },
+    });
     const user = await clientUsersService.updateCapabilities(req, account, idParam(req, 'userId'), req.body.capabilities);
     res.json({ success: true, data: user });
   } catch (err) { next(err); }
@@ -149,6 +165,9 @@ router.delete('/:id/users/:userId', async (req, res, next) => {
   try {
     const account = await staffAccount(req);
     const deleteUser = req.query.deleteUser === 'true' || req.query.deleteUser === '1';
+    await gateAction(req, {
+      action: 'account.client_users', target: accountTarget(account), params: { op: 'remove', userId: idParam(req, 'userId'), deleteUser },
+    });
     const result = await clientUsersService.remove(req, account, idParam(req, 'userId'), deleteUser);
     res.json({ success: true, data: result });
   } catch (err) { next(err); }
@@ -173,7 +192,7 @@ router.put('/:id/file-access', validate(fileAccessUpdateSchema), async (req, res
 
 router.post('/:id/file-access/password', async (req, res, next) => {
   try {
-    const account = await loadAccount(await resolveActor(req), idParam(req), 'files.manage');
+    const account = await gateAccount(req, 'account.sftp_credentials', idParam(req), 'files.manage', { op: 'password' });
     // Never cached anywhere: the password is shown once.
     res.set('Cache-Control', 'no-store');
     res.json({ success: true, data: await fileAccessService.resetPassword(req, account) });
@@ -189,7 +208,7 @@ router.delete('/:id/file-access/password', async (req, res, next) => {
 
 router.post('/:id/file-access/keys', validate(sshKeyInputSchema), async (req, res, next) => {
   try {
-    const account = await loadAccount(await resolveActor(req), idParam(req), 'files.manage');
+    const account = await gateAccount(req, 'account.sftp_credentials', idParam(req), 'files.manage', { op: 'sshKey', ...req.body });
     const key = await fileAccessService.addKey(req, account, req.body);
     res.status(201).json({ success: true, data: key });
   } catch (err) { next(err); }

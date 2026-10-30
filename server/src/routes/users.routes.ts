@@ -8,6 +8,7 @@ import { userService } from '../services/user.service';
 import { userScope, actorFromReq, resetSecondFactors } from '../services/userScope.service';
 import { createUserAccount, updateUserAccount, deleteUserAccount, usernameTaken } from '../services/userAdmin.service';
 import { auditService } from '../services/audit.service';
+import { gateTenant } from '../services/restrictions/targets';
 import {
   createUserSchema, updateUserSchema, changePasswordSchema,
   type CreateUserInput, type UpdateUserInput, type ChangePasswordInput,
@@ -53,6 +54,8 @@ router.post('/', validate(createUserSchema), async (req, res, next) => {
       throw new AppError(403, 'Only a platform administrator can create an administrator account');
     }
     if (await usernameTaken(data.username)) throw new AppError(409, 'Username already exists');
+    const { password, ...shown } = data as CreateUserInput & { password?: string };
+    await gateTenant(req, 'user.create', { ...shown }, { secretParams: password ? { password } : {} });
     const user = await createUserAccount(actorFromReq(req), data, await hashPassword(data.password), req);
     res.status(201).json({ success: true, data: user });
   } catch (err) { next(err); }
@@ -60,6 +63,8 @@ router.post('/', validate(createUserSchema), async (req, res, next) => {
 
 router.put('/:id', validate(updateUserSchema), async (req, res, next) => {
   try {
+    const target = await userScope.assertManageableTarget(actorFromReq(req), idParam(req));
+    await gateTenant(req, 'user.update', { userId: idParam(req), username: target.username, ...(req.body as UpdateUserInput) });
     const user = await updateUserAccount(actorFromReq(req), idParam(req), req.body as UpdateUserInput, req);
     res.json({ success: true, data: user });
   } catch (err) { next(err); }
@@ -71,6 +76,7 @@ router.put('/:id/password', validate(changePasswordSchema), async (req, res, nex
     if (id === req.session.userId) throw new AppError(400, 'Use your profile to change your own password');
     const target = await userScope.assertManageableTarget(actorFromReq(req), id);
     if (target.foreign_source === 'obligate') throw new AppError(400, 'Cannot modify SSO user — manage from Obligate');
+    await gateTenant(req, 'user.password_reset', { userId: id, username: target.username }, { secretParams: { password: (req.body as ChangePasswordInput).password } });
     if (!(await userService.changePassword(id, (req.body as ChangePasswordInput).password))) throw new AppError(404, 'User not found');
     // The account's other sessions end with the old password.
     const { killSessionsForUser } = await import('../services/userSessions.service');
@@ -85,6 +91,7 @@ router.delete('/:id/2fa', async (req, res, next) => {
     const id = idParam(req);
     if (id === req.session.userId) throw new AppError(400, 'Use your profile to manage your own two-factor authentication');
     const target = await userScope.assertManageableTarget(actorFromReq(req), id);
+    await gateTenant(req, 'user.2fa_reset', { userId: id, username: target.username });
     if (!(await resetSecondFactors(id))) throw new AppError(404, 'User not found');
     // Sessions opened with the removed factor end (the account signs in again).
     const { killSessionsForUser } = await import('../services/userSessions.service');
@@ -96,6 +103,9 @@ router.delete('/:id/2fa', async (req, res, next) => {
 
 router.delete('/:id', async (req, res, next) => {
   try {
+    if (idParam(req) === req.session.userId) throw new AppError(400, 'Cannot delete your own account');
+    const target = await userScope.assertManageableTarget(actorFromReq(req), idParam(req));
+    await gateTenant(req, 'user.delete', { userId: idParam(req), username: target.username });
     await deleteUserAccount(actorFromReq(req), idParam(req), req);
     res.json({ success: true, message: 'User deleted' });
   } catch (err) { next(err); }
@@ -130,6 +140,7 @@ router.put('/:id/tenants', async (req, res, next) => {
       throw new AppError(400, 'Cannot modify SSO user tenant access — manage from Obligate');
     }
     const assignments = await userScope.resolveTenantAssignments(actorFromReq(req), id, (req.body as { assignments?: unknown })?.assignments);
+    await gateTenant(req, 'user.tenants_set', { userId: id, username: targetUser.username, assignments });
     await userService.setUserTenantAssignments(id, assignments);
     await auditService.logReq(req, 'user.tenants_changed', { resourceType: 'user', resourcePath: String(id), details: { username: targetUser.username, assignments } });
     res.json({ success: true, message: 'Tenant assignments updated' });

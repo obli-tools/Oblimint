@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import type { PendingActionRequiredDetails, PendingApprovalResponse, RestrictableActionKey } from '@oblimint/shared';
 import {
-  PENDING_ACTION_HEADER, PENDING_ACTION_USER_MESSAGE_EN, PENDING_ACTION_USER_MESSAGE_FR, restrictableAction,
+  PENDING_ACTION_HEADER, PENDING_ACTION_USER_MESSAGE_EN, PENDING_ACTION_USER_MESSAGE_FR, RESTRICTION_LEVEL_RANK, restrictableAction,
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError, ResponseError, executionErrorMessage } from '../../middleware/errorHandler';
@@ -49,6 +49,13 @@ declare global {
     interface Request {
       /** Id of the approved pending action this request consumed (audit details, execution error). */
       viaPendingAction?: number;
+      /**
+       * Approval named by the caller for THIS call (MCP approval_id, set on the
+       * per-call request of a tools/call): when defined — null included — it
+       * replaces the X-Oblimint-Approval header (one header for a whole batch
+       * would name the wrong request for the other calls).
+       */
+      pendingApprovalId?: number | null;
     }
   }
 }
@@ -78,6 +85,7 @@ function hasSecret(secretParams: Record<string, unknown> | undefined): boolean {
 
 function approvalIdOf(req: Request, spec: GateSpec): number | null {
   if (spec.approvalId !== undefined && spec.approvalId !== null) return Number(spec.approvalId);
+  if (req.pendingApprovalId !== undefined) return req.pendingApprovalId;
   const h = req.get?.(PENDING_ACTION_HEADER);
   if (!h) return null;
   const n = Number(String(h).trim());
@@ -203,6 +211,39 @@ export async function gateAction(req: Request, spec: GateSpec): Promise<GateResu
 }
 
 /**
+ * Level the gate would apply, without gating: lets a key surface read a
+ * streamed content (file write, SQL dump) into its fingerprint only when the
+ * action is protected — a free write keeps streaming.
+ */
+export async function actionLevel(req: Request, action: RestrictableActionKey, target: RestrictionTarget): Promise<'none' | 'sensitive' | 'restricted'> {
+  const def = restrictableAction(action);
+  if (!def) throw new Error(`gateAction: unknown action ${action}`);
+  return restrictionService.levelFor(req, def, target);
+}
+
+/**
+ * One operation that is several catalogue actions at once (publish with
+ * overrideRollback, a database password reset written into a site's
+ * environment…): ONE gate, on the strictest of them (first one on a tie), its
+ * parameters naming the others — never two requests in a row, where the
+ * first approval would be consumed while the second one is still asked.
+ * All of them 'none': free.
+ */
+export async function gateStrictest(req: Request, specs: GateSpec[]): Promise<GateResult> {
+  let best: GateSpec | null = null;
+  let bestRank = 0;
+  for (const s of specs) {
+    const def = restrictableAction(s.action);
+    if (!def) throw new Error(`gateAction: unknown action ${s.action}`);
+    const rank = RESTRICTION_LEVEL_RANK[await restrictionService.levelFor(req, def, s.target)];
+    if (rank > bestRank) { best = s; bestRank = rank; }
+  }
+  if (!best) return { via: 'free' };
+  const also = specs.filter((s) => s !== best).map((s) => s.action);
+  return gateAction(req, also.length ? { ...best, params: { ...(best.params ?? {}), alsoActions: also } } : best);
+}
+
+/**
  * 'restrictions.manage' restricted and nobody else can approve: a platform
  * admin of the panel lowers it with his own fresh code (never a trusted IP),
  * so the owner is never locked out of his own matrix or floor. Audited.
@@ -252,8 +293,8 @@ function targetDisplay(target: GateSpec['target']): Record<string, unknown> {
  * approval was consumed is kept on the request (spec §3.3, the request stays
  * consumed). For the key surfaces whose errors never reach the error handler.
  */
-export async function runGated<T>(req: Request, spec: GateSpec, fn: () => Promise<T>): Promise<T> {
-  const g = await gateAction(req, spec);
+export async function runGated<T>(req: Request, spec: GateSpec | GateSpec[], fn: () => Promise<T>): Promise<T> {
+  const g = Array.isArray(spec) ? await gateStrictest(req, spec) : await gateAction(req, spec);
   try {
     return await fn();
   } catch (err) {

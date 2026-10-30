@@ -2,8 +2,17 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { BACKUP_PASSPHRASE_MIN } from '@oblimint/shared';
 import { parseBody } from '../services/docker/parseBody';
-import { idParam, resolveActor } from '../services/hosting/access';
+import { idParam, loadAccount, resolveActor } from '../services/hosting/access';
 import { backupService } from '../services/backups/backup.service';
+import { gateAction } from '../services/restrictions/gate';
+import { accountTarget, gateAccount, gatePlatform } from '../services/restrictions/targets';
+
+/** A destination as the gate sees it: its credentials in the fingerprint only. */
+function destinationGate(body: { name: string; config: Record<string, unknown> }, id: number | null) {
+  const { password, privateKey, secretAccessKey, ...config } = body.config as Record<string, unknown>;
+  const secrets = Object.fromEntries(Object.entries({ password, privateKey, secretAccessKey }).filter(([, v]) => v !== undefined && v !== ''));
+  return { params: { id, name: body.name, config }, extra: { secretParams: secrets } };
+}
 
 // External backups (shared/src/backups.ts).
 //
@@ -65,7 +74,12 @@ systemBackupsRouter.get('/settings', async (_req, res, next) => {
 });
 
 systemBackupsRouter.put('/settings', async (req, res, next) => {
-  try { res.json({ success: true, data: await backupService.updateSettings(req, parseBody(settingsSchema, req.body)) }); } catch (err) { next(err); }
+  try {
+    const body = parseBody(settingsSchema, req.body);
+    const { passphrase, ...shown } = body;
+    await gatePlatform(req, 'platform.backup_destinations', { settings: shown }, { secretParams: passphrase ? { passphrase } : {} });
+    res.json({ success: true, data: await backupService.updateSettings(req, body) });
+  } catch (err) { next(err); }
 });
 
 systemBackupsRouter.get('/destinations', async (_req, res, next) => {
@@ -75,6 +89,8 @@ systemBackupsRouter.get('/destinations', async (_req, res, next) => {
 systemBackupsRouter.post('/destinations', async (req, res, next) => {
   try {
     const body = parseBody(destinationSchema, req.body);
+    const g = destinationGate(body, null);
+    await gatePlatform(req, 'platform.backup_destinations', { op: 'create', ...g.params }, g.extra);
     res.status(201).json({ success: true, data: await backupService.saveDestination(req, null, body as Parameters<typeof backupService.saveDestination>[2]) });
   } catch (err) { next(err); }
 });
@@ -82,12 +98,18 @@ systemBackupsRouter.post('/destinations', async (req, res, next) => {
 systemBackupsRouter.put('/destinations/:id', async (req, res, next) => {
   try {
     const body = parseBody(destinationSchema, req.body);
+    const g = destinationGate(body, idParam(req));
+    await gatePlatform(req, 'platform.backup_destinations', { op: 'update', ...g.params }, g.extra);
     res.json({ success: true, data: await backupService.saveDestination(req, idParam(req), body as Parameters<typeof backupService.saveDestination>[2]) });
   } catch (err) { next(err); }
 });
 
 systemBackupsRouter.delete('/destinations/:id', async (req, res, next) => {
-  try { await backupService.removeDestination(req, idParam(req)); res.json({ success: true }); } catch (err) { next(err); }
+  try {
+    await gatePlatform(req, 'platform.backup_destinations', { op: 'delete', id: idParam(req) });
+    await backupService.removeDestination(req, idParam(req));
+    res.json({ success: true });
+  } catch (err) { next(err); }
 });
 
 systemBackupsRouter.post('/destinations/:id/test', async (req, res, next) => {
@@ -119,6 +141,8 @@ accountBackupsRouter.post('/:id/backups/run', async (req, res, next) => {
 accountBackupsRouter.put('/:id/backups/enabled', async (req, res, next) => {
   try {
     const { enabled } = parseBody(z.object({ enabled: z.boolean() }).strict(), req.body);
+    // Turning the backups off: backup.disable (turning them on stays free).
+    if (!enabled) await gateAccount(req, 'backup.disable', idParam(req), 'accounts.manage', { enabled: false });
     await backupService.setAccountEnabled(req, await resolveActor(req), idParam(req), enabled);
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -127,6 +151,11 @@ accountBackupsRouter.put('/:id/backups/enabled', async (req, res, next) => {
 accountBackupsRouter.post('/:id/backups/:runId/restore', async (req, res, next) => {
   try {
     const { items } = parseBody(restoreSchema, req.body);
+    // backup.restore: the account, and the sites of the items (a batch: one gate for all of it). The
+    // service checks the right of each item after.
+    const account = await loadAccount(await resolveActor(req), idParam(req), 'read');
+    const siteIds = items.flatMap((i) => ('siteId' in i ? [i.siteId] : []));
+    await gateAction(req, { action: 'backup.restore', target: { ...accountTarget(account), siteIds }, params: { runId: idParam(req, 'runId'), items } });
     res.json({ success: true, data: await backupService.restore(req, await resolveActor(req), idParam(req), idParam(req, 'runId'), items) });
   } catch (err) { next(err); }
 });

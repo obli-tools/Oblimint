@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate';
 import { AppError } from '../middleware/errorHandler';
 import { permissionSetService } from '../services/permissionSet.service';
 import { auditService } from '../services/audit.service';
+import { gatePlatform } from '../services/restrictions/targets';
 
 // /api/permission-sets (tenant router). Read: any signed-in user; write:
 // platform admin. Permission sets are platform-wide (as in Obliance).
@@ -37,6 +38,7 @@ router.get('/capabilities', (_req, res) => {
 
 router.post('/', requireRole('admin'), validate(createSchema), async (req, res, next) => {
   try {
+    await gatePlatform(req, 'platform.permission_sets', { op: 'create', ...req.body });
     const created = await permissionSetService.create(req.body);
     await auditService.logReq(req, 'permission_set.created', {
       resourceType: 'permission_set', resourcePath: String(created.id), details: { slug: created.slug, capabilities: created.capabilities },
@@ -51,6 +53,7 @@ router.post('/', requireRole('admin'), validate(createSchema), async (req, res, 
 router.put('/:id', requireRole('admin'), validate(updateSchema), async (req, res, next) => {
   try {
     const id = idParam(req.params.id);
+    await gatePlatform(req, 'platform.permission_sets', { op: 'update', id, ...req.body });
     const updated = await permissionSetService.update(id, req.body);
     if (!updated) throw new AppError(404, 'Permission set not found');
     await auditService.logReq(req, 'permission_set.updated', {
@@ -63,6 +66,7 @@ router.put('/:id', requireRole('admin'), validate(updateSchema), async (req, res
 router.delete('/:id', requireRole('admin'), async (req, res, next) => {
   try {
     const id = idParam(req.params.id);
+    await gatePlatform(req, 'platform.permission_sets', { op: 'delete', id });
     const result = await permissionSetService.delete(id);
     if (!result.success) throw new AppError(400, result.error ?? 'Cannot delete');
     await auditService.logReq(req, 'permission_set.deleted', { resourceType: 'permission_set', resourcePath: String(id) });
