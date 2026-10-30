@@ -1,0 +1,49 @@
+{
+  "siteErrors": {
+    "title": "Erreurs PHP par release",
+    "subtitle": "Erreurs, avertissements et fatales des conteneurs en ligne, regroupés par message et fichier:ligne, rattachés à la release qui les a servis. Collecte chaque minute.",
+    "refresh": "Actualiser",
+    "allReleases": "Toutes les releases",
+    "live": "en ligne",
+    "unknownRelease": "release inconnue",
+    "groupCount_one": "{{count}} erreur",
+    "groupCount_other": "{{count}} erreurs",
+    "fatalCount_one": "{{count}} fatale",
+    "fatalCount_other": "{{count}} fatales",
+    "newCount_one": "{{count}} nouvelle",
+    "newCount_other": "{{count}} nouvelles",
+    "level": "Niveau",
+    "levels": {
+      "all": "Tous les niveaux",
+      "fatal": "Fatales et erreurs de syntaxe",
+      "warning": "Avertissements",
+      "notice": "Notices et dépréciations"
+    },
+    "levelName": {
+      "fatal": "Fatale",
+      "parse": "Syntaxe",
+      "warning": "Avertissement",
+      "notice": "Notice",
+      "deprecated": "Dépréciée"
+    },
+    "newOnly": "Nouvelles dans leur release seulement",
+    "collectedAt": "collecte {{at}}",
+    "empty": "Aucune erreur PHP enregistrée pour ce site.",
+    "emptyFiltered": "Aucune erreur PHP pour ces filtres.",
+    "more": "{{shown}} groupes sur {{total}} (les plus récents d'abord)",
+    "new": "nouvelle",
+    "class": {
+      "readOnlyWrite": "Écriture dans le code en lecture seule",
+      "execRefused": "Exécution refusée"
+    },
+    "explain": {
+      "readOnlyWrite": "Le code en ligne est en lecture seule : le site a tenté d'écrire à côté de son code. Déclarez ce dossier comme chemin de données (onglet Configuration), puis republiez.",
+      "execRefused": "PHP n'exécute que le code de la release : un script dans un chemin de données ou /tmp est refusé. Placez le fichier PHP dans le code (staging) et publiez."
+    },
+    "seen": "vue la première fois {{first}} · dernière fois {{last}}",
+    "otherReleases": "Vue aussi dans",
+    "onlyRelease": "Vue dans cette release seulement.",
+    "loadFailed": "Impossible de charger les erreurs PHP",
+    "detailFailed": "Impossible de charger cette erreur"
+  }
+}

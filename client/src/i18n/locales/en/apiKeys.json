@@ -79,7 +79,7 @@
       "logs": {
         "read": {
           "label": "Read logs",
-          "hint": "Access / error / application logs of its sites."
+          "hint": "Access / error / application logs of its sites, PHP errors grouped by release."
         }
       },
       "cron": {

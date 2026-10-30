@@ -32,6 +32,7 @@ import { SiteMonitorsCard } from '@/components/sites/tabs/SiteMonitorsCard';
 import { SiteSettingsCard, siteHasPhp } from '@/components/sites/SiteSettingsCard';
 import { SiteCronTab } from '@/components/cron/SiteCronTab';
 import { SiteLogsTab } from '@/components/logs/SiteLogsTab';
+import { SiteErrorGroupsCard } from '@/components/logs/SiteErrorGroupsCard';
 import { SiteMaintenanceTab } from '@/components/maintenance/SiteMaintenanceTab';
 import { SnapshotsCard } from '@/components/maintenance/SnapshotsCard';
 import { AccountBackupsTab } from '@/components/hosting/AccountBackupsTab';
@@ -333,6 +334,7 @@ export function SiteDetailPage() {
       {tab === 'logs' && (
         <div className="space-y-4">
           <SiteMonitorsCard site={site} />
+          <SiteErrorGroupsCard site={site} />
           <SiteLogsTab site={site} />
         </div>
       )}

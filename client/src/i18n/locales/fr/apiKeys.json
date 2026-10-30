@@ -79,7 +79,7 @@
       "logs": {
         "read": {
           "label": "Lire les journaux",
-          "hint": "Journaux d'accès, d'erreurs et applicatifs de ses sites."
+          "hint": "Journaux d'accès, d'erreurs et applicatifs de ses sites, erreurs PHP regroupées par release."
         }
       },
       "cron": {

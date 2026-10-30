@@ -31,7 +31,7 @@ export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'sites.manage': ['Site settings', 'Change the settings of its sites: name, docroot, publish mode, PHP, environment variables, data paths, secondary runtimes.'],
   'sites.create': ['Create sites', 'Create sites in the account: they join the key automatically.'],
   'domains.subdomain': ['Subdomains', 'Attach to its sites subdomains of a domain already in the account (never a new domain): only under the domains given to the key or, for a key limited to some sites, under domains serving its sites alone. Removes only the ones it created, and not one that also serves a site outside the key.'],
-  'logs.read': ['Read logs', 'Access / error / application logs of its sites.'],
+  'logs.read': ['Read logs', 'Access / error / application logs of its sites, PHP errors grouped by release.'],
   'cron.manage': ['Cron jobs', 'Schedule commands of its sites (create, change, run, read the output).'],
   'routes.manage': ['Routes', 'Choose which of its sites (or runtime of a site) serves a path of a domain, e.g. example.com/uploads/; only on the domains given to the key or, for a key limited to some sites, on domains serving its sites alone. A route towards a site outside the key is never changed or removed.'],
   'databases.manage': ['Databases', 'Database servers of the account, databases and users (all of them for a key on every site, only its own otherwise); deletes only what it created.'],

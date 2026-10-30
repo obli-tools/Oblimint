@@ -1,0 +1,49 @@
+{
+  "siteErrors": {
+    "title": "PHP errors by release",
+    "subtitle": "Errors, warnings and fatals of the live containers, grouped by message and file:line, attributed to the release that served them. Collected every minute.",
+    "refresh": "Refresh",
+    "allReleases": "All releases",
+    "live": "live",
+    "unknownRelease": "unknown release",
+    "groupCount_one": "{{count}} error",
+    "groupCount_other": "{{count}} errors",
+    "fatalCount_one": "{{count}} fatal",
+    "fatalCount_other": "{{count}} fatal",
+    "newCount_one": "{{count}} new",
+    "newCount_other": "{{count}} new",
+    "level": "Level",
+    "levels": {
+      "all": "All levels",
+      "fatal": "Fatal and parse",
+      "warning": "Warnings",
+      "notice": "Notices and deprecations"
+    },
+    "levelName": {
+      "fatal": "Fatal",
+      "parse": "Parse",
+      "warning": "Warning",
+      "notice": "Notice",
+      "deprecated": "Deprecated"
+    },
+    "newOnly": "New in their release only",
+    "collectedAt": "collected {{at}}",
+    "empty": "No PHP error recorded for this site.",
+    "emptyFiltered": "No PHP error for these filters.",
+    "more": "{{shown}} of {{total}} groups (most recent first)",
+    "new": "new",
+    "class": {
+      "readOnlyWrite": "Write to read-only code",
+      "execRefused": "Execution refused"
+    },
+    "explain": {
+      "readOnlyWrite": "The live code is read-only: the site tried to write next to its code. Declare that folder as a data path (Configuration tab), then publish again.",
+      "execRefused": "PHP only runs code from the release: a script under a data path or /tmp is refused. Put the PHP file in the code (staging) and publish."
+    },
+    "seen": "first seen {{first}} · last seen {{last}}",
+    "otherReleases": "Also seen in",
+    "onlyRelease": "Seen in this release only.",
+    "loadFailed": "Failed to load the PHP errors",
+    "detailFailed": "Failed to load this error"
+  }
+}

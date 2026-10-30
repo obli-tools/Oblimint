@@ -1,6 +1,6 @@
 import apiClient from './client';
 import type {
-  ApiResponse, CronJob, CronJobInput, CronRun, CronRunDetail, LogFileInfo, LogQueryResult, LogSource,
+  ApiResponse, CronJob, CronJobInput, CronRun, CronRunDetail, LogFileInfo, LogQueryResult, LogSource, SiteErrorGroupDetail, SiteErrorList,
 } from '@oblimint/shared';
 
 // /api/sites/:id/cron + /api/sites/:id/logs — docs/P2-PLAN.md §6.6–§6.7.
@@ -39,6 +39,22 @@ export const cronApi = {
 export const logsApi = {
   async query(siteId: number, params: { source: LogSource; since?: string; until?: string; q?: string; status?: string; limit?: number }): Promise<LogQueryResult> {
     const res = await apiClient.get<ApiResponse<LogQueryResult>>(`/sites/${siteId}/logs`, { params });
+    return res.data.data!;
+  },
+  /** PHP errors grouped by release (GET /api/sites/:id/errors). */
+  async errors(siteId: number, params: { releaseId?: number; newOnly?: boolean; level?: string; limit?: number } = {}): Promise<SiteErrorList> {
+    const res = await apiClient.get<ApiResponse<SiteErrorList>>(`/sites/${siteId}/errors`, {
+      params: {
+        ...(params.releaseId ? { release_id: params.releaseId } : {}),
+        ...(params.newOnly ? { new_only: '1' } : {}),
+        ...(params.level ? { level: params.level } : {}),
+        ...(params.limit ? { limit: params.limit } : {}),
+      },
+    });
+    return res.data.data!;
+  },
+  async error(siteId: number, groupId: number): Promise<SiteErrorGroupDetail> {
+    const res = await apiClient.get<ApiResponse<SiteErrorGroupDetail>>(`/sites/${siteId}/errors/${groupId}`);
     return res.data.data!;
   },
   async files(siteId: number): Promise<LogFileInfo[]> {
