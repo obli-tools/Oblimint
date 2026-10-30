@@ -62,6 +62,12 @@ test('restrictionErrorOf maps the gate refusals (code + status) with their fix',
   const ne = restrictionErrorOf(403, { success: false, error: 'x', code: 'twoFactorNotEnrolled', details: { enrollPath: '/profile' } });
   assert.equal(ne?.key, 'approvals.errors.twoFactorNotEnrolled');
   assert.equal(ne?.link?.path, '/profile');
+  // An Obligate (SSO) account: the message points to the Obligate account, the profile link stays.
+  const sso = restrictionErrorOf(403, { code: 'twoFactorNotEnrolled', details: { enrollPath: '/profile', sso: true } });
+  assert.equal(sso?.key, 'approvals.errors.twoFactorNotEnrolledSso');
+  assert.match(sso?.fallback ?? '', /Obligate/);
+  assert.equal(sso?.link?.path, '/profile');
+  assert.equal(restrictionErrorOf(403, { code: 'twoFactorNotEnrolled', details: { sso: 'yes' } })?.key, 'approvals.errors.twoFactorNotEnrolled', 'only a real true');
   // Never an external link.
   assert.equal(restrictionErrorOf(403, { code: 'twoFactorNotEnrolled', details: { enrollPath: '//evil.example.com' } })?.link?.path, '/profile');
   assert.equal(restrictionErrorOf(409, { code: 'noEligibleApprover' })?.key, 'approvals.errors.noEligibleApprover');

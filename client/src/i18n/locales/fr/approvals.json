@@ -86,6 +86,7 @@
     },
     "errors": {
       "twoFactorNotEnrolled": "Cette action demande la double authentification. Activez-la dans votre profil (application d'authentification), puis réessayez.",
+      "twoFactorNotEnrolledSso": "Cette action demande la double authentification. Activez-la sur votre compte Obligate (ou une application d'authentification dans votre profil ici), puis réessayez.",
       "enable2fa": "Activer la 2FA",
       "noEligibleApprover": "Cette action demande l'approbation d'une seconde personne habilitée avec la double authentification, et il n'y en a aucune. Demandez à un administrateur d'en ajouter une.",
       "approvalMismatch": "Cette approbation a été donnée pour d'autres paramètres : l'action n'a pas été exécutée. Renvoyez-la pour déposer une nouvelle demande.",

@@ -86,6 +86,7 @@
     },
     "errors": {
       "twoFactorNotEnrolled": "This action needs two-factor authentication. Enable it in your profile (authenticator app), then try again.",
+      "twoFactorNotEnrolledSso": "This action needs two-factor authentication. Enable it on your Obligate account (or an authenticator app in your profile here), then try again.",
       "enable2fa": "Enable 2FA",
       "noEligibleApprover": "This action needs the approval of a second authorised person with two-factor authentication, and there is none. Ask an administrator to add one.",
       "approvalMismatch": "This approval was given for other parameters: the action was not run. Send it again to file a new request.",

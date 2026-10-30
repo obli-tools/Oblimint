@@ -73,7 +73,12 @@ export function restrictionErrorOf(status: number | undefined, body: unknown): R
   if (!m || status === undefined || !m.status.includes(status)) return null;
   const out: RestrictionErrorMessage = { code, key: m.key, fallback: m.fallback };
   if (code === 'twoFactorNotEnrolled') {
-    const details = (body as { details?: { enrollPath?: unknown } }).details;
+    const details = (body as { details?: { enrollPath?: unknown; sso?: unknown } }).details;
+    // An Obligate (SSO) account: its second factor lives on the Obligate account first.
+    if (details?.sso === true) {
+      out.key = 'approvals.errors.twoFactorNotEnrolledSso';
+      out.fallback = 'This action needs two-factor authentication. Enable it on your Obligate account (or an authenticator app in your profile here), then try again.';
+    }
     const path = typeof details?.enrollPath === 'string' && details.enrollPath.startsWith('/') && !details.enrollPath.startsWith('//') ? details.enrollPath : '/profile';
     out.link = { path, key: 'approvals.errors.enable2fa', fallback: 'Enable 2FA' };
   }

@@ -497,6 +497,7 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
     assert.equal(r.status, 403);
     assert.equal(r.body.code, 'twoFactorNotEnrolled');
     assert.match(String(r.body.error), /enable it in your profile/);
+    assert.equal(r.body.details?.sso, undefined, 'a local account: no Obligate hint');
     r = await gate(asSA, 'site.delete', { name: 'shop' });
     assert.equal(r.status, 401);
     assert.equal(r.body.twoFactorRequired, true);
@@ -767,9 +768,11 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
     const o = await checkActionStepUp(fake, 'site.delete');
     assert.equal((o as { status: number }).status, 403);
     assert.equal((o as { body: { code?: unknown } }).body.code, 'twoFactorNotEnrolled');
+    assert.equal((o as { body: { details?: { sso?: unknown } } }).body.details?.sso, true, 'the client points to the Obligate account');
     assert.equal((await db('users').where({ id: SSO2 }).first('sso_totp_enabled')).sso_totp_enabled, false);
     const o2 = await checkActionStepUp({ ...fake, stepUpProof: undefined } as unknown as Request, 'site.delete');
     assert.equal((o2 as { status: number }).status, 403, 'then refused at once, never "Invalid 2FA code" forever');
+    assert.equal((o2 as { body: { details?: { sso?: unknown } } }).body.details?.sso, true);
     // Platform admins are approvers everywhere: without them, nobody → 409, no parked request.
     await db('users').where({ id: PA }).update({ is_active: false });
     await setMap(T, { 'db.drop': 'restricted' });

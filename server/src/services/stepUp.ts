@@ -153,7 +153,8 @@ function notEnrolledOutcome(actionKey: string, sso: boolean): ActionStepUpOutcom
     ok: false, status: 403,
     body: {
       success: false, error: sso ? SSO_TWO_FACTOR_NOT_ENROLLED_MESSAGE : TWO_FACTOR_NOT_ENROLLED_MESSAGE, code: 'twoFactorNotEnrolled',
-      action: actionKey, details: { action: actionKey, enrollPath: '/profile' },
+      // `sso`: an Obligate account — the client points to the Obligate account first.
+      action: actionKey, details: { action: actionKey, enrollPath: '/profile', ...(sso ? { sso: true } : {}) },
     },
   };
 }
