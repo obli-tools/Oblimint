@@ -13,13 +13,14 @@ import { DbInstanceCreateModal } from '@/components/databases/DbInstanceCreateMo
 import { RelaysCard } from '@/components/mail/MailOutboundPanel';
 import { accountHref } from '@/utils/links';
 import { SiteSettingsCard } from '../SiteSettingsCard';
+import { LeakGuardCard } from '../LeakGuard';
 import { sectionLabelCls } from '../styles';
 import { SiteDataPathsTab } from './SiteDataPathsTab';
 import { SiteEnvTab } from './SiteEnvTab';
 import type { SiteTabProps } from './types';
 
 /** Sections of the Configuration tab reachable with `&section=` (aliases `data` / `env`). */
-type Section = 'general' | 'data' | 'env' | 'db' | 'mail';
+type Section = 'general' | 'leaks' | 'data' | 'env' | 'db' | 'mail';
 
 /**
  * Configuration of a site (coherence plan 1.3): general settings and
@@ -45,6 +46,9 @@ export function SiteConfigTab(props: SiteTabProps) {
     <div className="space-y-6">
       <section id="site-config-general" className="scroll-mt-4">
         <SiteSettingsCard site={site} onSiteChange={props.onSiteChange} part="general" />
+      </section>
+      <section id="site-config-leaks" className="scroll-mt-4">
+        <LeakGuardCard site={site} onSiteChange={props.onSiteChange} />
       </section>
       <section id="site-config-data" className="scroll-mt-4">
         <div className={sectionLabelCls}>{t('sites.tabs.data') || 'Data paths'}</div>

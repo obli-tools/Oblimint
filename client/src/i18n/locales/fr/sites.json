@@ -381,7 +381,8 @@
       "previewDbCloneTooLarge": "Les bases sont trop volumineuses pour être copiées dans un aperçu.",
       "previewDbCloneDisabled": "Les copies de base sont désactivées sur cette plateforme.",
       "previewDbInstanceNotRunning": "Le serveur de base de données n'est pas démarré.",
-      "previewDbExposed": "Un serveur de base du compte a l'accès externe activé (ou un serveur de la machine alors que le filtre de sortie est coupé) : aucun aperçu ne peut tourner, il pourrait joindre la base en ligne. Coupez d'abord l'accès externe."
+      "previewDbExposed": "Un serveur de base du compte a l'accès externe activé (ou un serveur de la machine alors que le filtre de sortie est coupé) : aucun aperçu ne peut tourner, il pourrait joindre la base en ligne. Coupez d'abord l'accès externe.",
+      "approvalRequired": "Ce changement demande le droit d'approuver les releases."
     },
     "fields": {
       "account": "Compte d'hébergement",
@@ -506,6 +507,48 @@
       "adminHint": "Les images corrigées s'appliquent depuis Nœuds > Mises à jour (images des sites, avec le redéploiement des sites).",
       "openUpdates": "Ouvrir les mises à jour",
       "clientHint": "L'hébergeur applique les images corrigées : les conteneurs sont recréés lors de la prochaine mise à jour de la plateforme."
+    }
+  },
+  "leakGuard": {
+    "title": "Garde anti-fuite",
+    "intro": "Chaque publication est vérifiée : secrets commités (clés de ce panel, clés privées, identifiants cloud, valeurs de .env) et fichiers à ne jamais servir (dumps SQL, copies de fichiers de configuration, sauvegardes, pages phpinfo, Adminer, .svn, journaux). Les détections indiquent le fichier et la ligne, jamais le secret.",
+    "policyLabel": "En cas de détection critique",
+    "policyBlock": "Bloquer la publication (recommandé)",
+    "policyWarn": "Publier et avertir",
+    "policyHint": "Critique : le serveur web distribuerait le fichier tel quel. Un avertissement (secret dans du code PHP, fichier hors de la racine web) ne bloque jamais.",
+    "allowlistLabel": "Chemins autorisés (un par ligne)",
+    "allowlistHint": "Un nom (« dump.sql ») vaut à toute profondeur, « dossier/ » pour tout ce qu'il contient ; * reste dans un dossier, ** traverse les dossiers.",
+    "relaxNeedsApprove": "Passer en avertissement ou ajouter un chemin autorisé demande le droit d'approuver les releases.",
+    "tooMany": "{{max}} entrées au plus.",
+    "invalidEntry": "Entrée invalide : {{entry}} (un chemin ou un motif relatif à la racine du code, sans « .. », pas « ** » seul).",
+    "policy": {
+      "block": "politique : bloquer",
+      "warn": "politique : avertir"
+    },
+    "verdict": {
+      "blocked": "bloquée",
+      "findings": "{{count}} détection(s)",
+      "clean": "rien trouvé"
+    },
+    "blockedText": "Cette release n'a pas été publiée : retirez du staging les fichiers ci-dessous (les secrets vont dans les variables du site), ou autorisez leur chemin dans l'onglet Configuration, puis publiez à nouveau.",
+    "allowlisted": "{{count}} détection(s) ignorée(s) (chemins autorisés).",
+    "skipped": "{{count}} fichier(s) non lu(s) (trop gros ou au-delà du budget).",
+    "served": "servi tel quel",
+    "revokeKey": "Clé d'accès n° {{id}} : révoquez-la dans Clés d'accès.",
+    "more": "… et {{count}} autre(s)",
+    "rules": {
+      "secret.panel-token": "Une clé d'accès ou un jeton de ce panel est écrit dans ce fichier.",
+      "secret.private-key": "Une clé privée est commitée dans ce fichier.",
+      "secret.cloud": "Un identifiant cloud / SaaS (AWS, Stripe, GitHub, Slack, Google…) est commité dans ce fichier : changez-le et lisez-le depuis une variable du site.",
+      "secret.env-file": "Un fichier .env avec des valeurs secrètes : utilisez plutôt les variables du site.",
+      "secret.key-file": "Un magasin de clés ou un fichier d'identifiants (id_rsa, .p12, .htpasswd, jeton .npmrc…).",
+      "expose.dump": "Un dump de base de données avec des données.",
+      "expose.config-backup": "Une copie d'un fichier source / de configuration, servie en texte brut.",
+      "expose.backup-archive": "Une archive nommée comme une sauvegarde de site ou de base.",
+      "expose.diagnostic": "Une page phpinfo() : elle affiche le serveur et les variables d'environnement.",
+      "expose.db-tool": "Un gestionnaire de bases (Adminer, phpMyAdmin) déposé dans le code.",
+      "expose.vcs": "Des métadonnées de gestion de versions (historique, dépôts distants).",
+      "expose.log": "Un fichier de journal servi par le site."
     }
   }
 }

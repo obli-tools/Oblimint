@@ -12,6 +12,7 @@ import { RiskBadge, useEngineLabel } from '@/components/maintenance/MaintenanceB
 import { toastMaintenanceError } from '@/components/maintenance/maintenanceErrors';
 import { cn } from '@/utils/cn';
 import { ReleaseDiffPanel } from './DiffViewer';
+import { LeakReportPanel } from './LeakGuard';
 import { Pill, ReleaseStatusBadge, ScanVerdictChip } from './SiteBadges';
 import { formatDateTime } from './siteForm';
 import { siteErrorMessage } from './siteErrors';
@@ -231,6 +232,8 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
               )}
             </section>
           )}
+
+          {release.scan?.leaks && <LeakReportPanel report={release.scan.leaks} />}
 
           {/* Feature B: the live preview of this release (between the scan and the log). */}
           {renderPreview?.(release)}

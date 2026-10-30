@@ -381,7 +381,8 @@
       "previewDbCloneTooLarge": "The databases are too large to be copied for a preview.",
       "previewDbCloneDisabled": "Database copies are disabled on this platform.",
       "previewDbInstanceNotRunning": "The database server is not running.",
-      "previewDbExposed": "A database server of the account has external access (or one of the server while the egress filter is off): no preview can run, it could reach the live database. Turn external access off first."
+      "previewDbExposed": "A database server of the account has external access (or one of the server while the egress filter is off): no preview can run, it could reach the live database. Turn external access off first.",
+      "approvalRequired": "This change needs the right to approve releases."
     },
     "fields": {
       "account": "Hosting account",
@@ -506,6 +507,48 @@
       "adminHint": "The patched images are applied from Nodes > Updates (site images, with the redeployment of the sites).",
       "openUpdates": "Open the updates",
       "clientHint": "The host applies the patched images: the containers are recreated during the next platform update."
+    }
+  },
+  "leakGuard": {
+    "title": "Leak guard",
+    "intro": "Every publication is checked for committed secrets (keys of this panel, private keys, cloud credentials, .env values) and files that must never be served (SQL dumps, copies of configuration files, backups, phpinfo pages, Adminer, .svn, logs). Findings show the file and the line, never the secret.",
+    "policyLabel": "When a critical finding is found",
+    "policyBlock": "Block the publication (recommended)",
+    "policyWarn": "Publish and warn",
+    "policyHint": "Critical: the web server would hand the file out as is. A warning (secret inside PHP code, file outside the document root) never blocks.",
+    "allowlistLabel": "Allowed paths (one per line)",
+    "allowlistHint": "A name (\"dump.sql\") matches at any depth, \"folder/\" everything below it; * stays within a folder, ** crosses folders.",
+    "relaxNeedsApprove": "Switching to warn or adding an allowed path takes the right to approve releases.",
+    "tooMany": "At most {{max}} entries.",
+    "invalidEntry": "Invalid entry: {{entry}} (a path or glob relative to the code root, no \"..\", not \"**\" alone).",
+    "policy": {
+      "block": "policy: block",
+      "warn": "policy: warn"
+    },
+    "verdict": {
+      "blocked": "blocked",
+      "findings": "{{count}} finding(s)",
+      "clean": "nothing found"
+    },
+    "blockedText": "This release was not published: remove the files below from the staging (secrets go into the site variables), or allowlist their path in the Configuration tab, then publish again.",
+    "allowlisted": "{{count}} finding(s) ignored (allowlist).",
+    "skipped": "{{count}} file(s) not read (too large or over the budget).",
+    "served": "served as is",
+    "revokeKey": "Access key #{{id}}: revoke it in Access keys.",
+    "more": "… and {{count}} more",
+    "rules": {
+      "secret.panel-token": "An access key or token of this panel is written in this file.",
+      "secret.private-key": "A private key is committed in this file.",
+      "secret.cloud": "A cloud / SaaS credential (AWS, Stripe, GitHub, Slack, Google…) is committed in this file: rotate it and read it from a site variable.",
+      "secret.env-file": "A .env file with secret values: use the site variables instead.",
+      "secret.key-file": "A key store or credentials file (id_rsa, .p12, .htpasswd, .npmrc token…).",
+      "expose.dump": "A database dump with data.",
+      "expose.config-backup": "A copy of a source / configuration file, served as plain text.",
+      "expose.backup-archive": "An archive named like a site or database backup.",
+      "expose.diagnostic": "A phpinfo() page: it shows the server and the environment variables.",
+      "expose.db-tool": "A database manager (Adminer, phpMyAdmin) dropped in the code.",
+      "expose.vcs": "Version control metadata (history, remotes).",
+      "expose.log": "A log file served by the site."
     }
   }
 }
