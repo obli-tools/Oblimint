@@ -53,6 +53,18 @@ function keyFor(purpose: SecretPurpose): Buffer {
     Buffer.from(`oblimint:${purpose}`, 'utf8'), 32));
 }
 
+/**
+ * A 32-byte key of the panel's master secret for a non-sealing use (HMAC of
+ * the frozen parameters of a pending action: label 'pending-actions'). Same
+ * derivation as the sealing keys, distinct info: never equal to one of them.
+ */
+export function deriveKey(label: 'pending-actions'): Buffer {
+  if (!config.sessionSecret && !config.isDev) throw new SecretBoxError('SESSION_SECRET is not set');
+  const secret = config.sessionSecret || 'oblimint-dev';
+  return Buffer.from(crypto.hkdfSync('sha256', Buffer.from(secret, 'utf8'), Buffer.from('oblimint-derive-v1', 'utf8'),
+    Buffer.from(`oblimint:${label}`, 'utf8'), 32));
+}
+
 /** Seals a UTF-8 string for `purpose` (a value sealed for one purpose never opens for another). */
 export function seal(purpose: SecretPurpose, plaintext: string): string {
   const iv = crypto.randomBytes(12);

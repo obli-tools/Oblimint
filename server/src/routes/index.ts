@@ -84,6 +84,9 @@ import migrationDiscoveryRoutes from './migrationDiscovery.routes'; // discovery
 import migrationPlansRoutes from './migrationPlans.routes';         // planner (targets, plans, choices, dry-run)
 import migrationRunsRoutes from './migrationRuns.routes';           // executor-web-db (runs, events, reports)
 import migrationCutoverRoutes from './migrationCutover.routes';     // executor-mail-dns (cutover checklist)
+// Sensitive actions: matrix of restrictions, pending confirmations / approvals (session only).
+import restrictionsRoutes from './restrictions.routes';
+import pendingActionsRoutes from './pendingActions.routes';
 
 // Case-sensitive (H1, app.ts): /api/SITES is not /api/sites.
 const router = Router({ caseSensitive: true });
@@ -181,6 +184,9 @@ tenantRouter.use('/bans', bansRoutes);
 tenantRouter.use('/monitoring', monitoringRoutes);
 tenantRouter.use('/uptime', uptimeRoutes);
 tenantRouter.use('/automation', automationRoutes);
+// Sensitive actions (an access key never reaches these: session only, refused explicitly too).
+tenantRouter.use('/restrictions', restrictionsRoutes);
+tenantRouter.use('/pending-actions', pendingActionsRoutes);
 
 router.use('/', tenantRouter);
 

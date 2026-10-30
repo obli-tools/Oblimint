@@ -440,7 +440,54 @@ export const obligateService = {
       return [];
     }
   },
+
+  /**
+   * The TOTP code of an SSO account (no local TOTP), checked by Obligate:
+   * POST /api/oauth/verify-totp (ported from Obliance, historical body, no
+   * `consume`). 'valid' only passes; 'invalid' = rejected code; 'unavailable'
+   * = Obligate not configured, unreachable, non-2xx, 429 (its lock of this
+   * user's checks) or unreadable answer — fail closed, never counted as the
+   * user's fault. Anti-replay is applied by the caller (stepUp.ts).
+   */
+  async verifyTotpDetailed(obligateUserId: number, code: string): Promise<'valid' | 'invalid' | 'unavailable'> {
+    if (totpVerifierOverride) return totpVerifierOverride(obligateUserId, code);
+    const raw = await appConfigService.getObligateRaw();
+    if (!raw.url || !raw.apiKey) {
+      logger.warn('[Obligate verifyTotp] not configured');
+      return 'unavailable';
+    }
+    const url = `${raw.url}/api/oauth/verify-totp`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${raw.apiKey}` },
+        body: JSON.stringify({ userId: obligateUserId, code }),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (res.status === 429) {
+        logger.warn({ obligateUserId }, '[Obligate verifyTotp] 429 — Obligate locked this user\'s code checks');
+        return 'unavailable';
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        logger.warn({ url, status: res.status, body: text.slice(0, 200) }, '[Obligate verifyTotp] non-2xx');
+        return 'unavailable';
+      }
+      const data = await res.json() as { success?: boolean; data?: { valid?: boolean } };
+      if (!data?.success) return 'unavailable';
+      return data.data?.valid === true ? 'valid' : 'invalid';
+    } catch (err) {
+      logger.warn({ err: (err as Error).message }, '[Obligate verifyTotp] exception');
+      return 'unavailable';
+    }
+  },
 };
+
+let totpVerifierOverride: ((obligateUserId: number, code: string) => Promise<'valid' | 'invalid' | 'unavailable'>) | null = null;
+/** Tests: replaces Obligate's TOTP check (null restores the HTTP call). */
+export function setObligateTotpVerifierForTests(fn: typeof totpVerifierOverride): void {
+  totpVerifierOverride = fn;
+}
 
 /** Writes Obligate's common preferences (language, avatar, UI prefs) on a local account. */
 export async function applyObligatePreferences(localUserId: number, p: NonNullable<ObligateUserAssertion['preferences']>): Promise<void> {

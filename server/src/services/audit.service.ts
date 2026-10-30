@@ -74,8 +74,14 @@ function requestUserId(req: Request): number | undefined {
 
 function withApiKey(req: Request, details: AuditLogEntry['details']): AuditLogEntry['details'] {
   const k = apiKeyOf(req);
-  if (!k) return details;
-  return { ...(details ?? {}), apiKey: { id: k.id, name: k.name } };
+  // An operation executed with an approved pending action (services/restrictions/gate.ts) says so.
+  const viaPending = (req as Request & { viaPendingAction?: number }).viaPendingAction;
+  if (!k && !viaPending) return details;
+  return {
+    ...(details ?? {}),
+    ...(k ? { apiKey: { id: k.id, name: k.name } } : {}),
+    ...(viaPending && (details as { viaPendingAction?: unknown } | undefined)?.viaPendingAction === undefined ? { viaPendingAction: viaPending } : {}),
+  };
 }
 
 export const auditService = {

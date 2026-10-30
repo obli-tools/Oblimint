@@ -70,7 +70,7 @@ interface Worker { start(): void; stop(): void }
 
 /** P2 workers, in start order. */
 async function p2Workers(): Promise<Array<[string, Worker]>> {
-  const [dns, ownership, databases, firewall, usage, cron, logs, phpErrors, inbox] = await Promise.all([
+  const [dns, ownership, databases, firewall, usage, cron, logs, phpErrors, inbox, pendingActions] = await Promise.all([
     import('../services/dns/dns.service').then((m) => m.dnsService),
     import('../services/ownership/ownership.service').then((m) => m.ownershipService),
     import('../services/databases/databases.service').then((m) => m.databaseService),
@@ -80,6 +80,7 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
     import('../services/logs/logs.service').then((m) => m.logsService),
     import('../services/siteErrors/siteErrors.service').then((m) => m.siteErrorsService),
     import('../services/usage/userNotifications.service').then((m) => m.userNotificationsWorker),
+    import('../services/restrictions/pendingActions.service').then((m) => m.pendingActionsWorker),
   ]);
   const list: Array<[string, Worker]> = [
     ['dns', dns],
@@ -93,6 +94,8 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
     ['usage-enforcement', usage.enforcementService],
     // Notification center: 90-day / 500-per-user retention, transactional mail journal.
     ['user-notifications', inbox],
+    // Sensitive actions: pending confirmations / approvals expired every minute (audited, requester notified), 90-day purge.
+    ['pending-actions', pendingActions],
   ];
   if (config.hosting.usageCollector) list.push(['usage-collector', usage.usageCollector]);
   return list;

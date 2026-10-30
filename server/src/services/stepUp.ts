@@ -2,7 +2,9 @@ import type { Request, Response } from 'express';
 import { RECOVERY_LOGIN_GRACE_MINUTES } from '@oblimint/shared';
 import { db } from '../db';
 import { comparePassword } from '../utils/crypto';
-import { acceptTotpStep, hashSessionId, twoFactorService } from './twoFactor.service';
+import { clientAddress } from '../utils/clientIp';
+import { tfaTrustService } from './tfaTrust.service';
+import { acceptTotpStep, hashSessionId, TOTP_PERIOD_S, twoFactorService } from './twoFactor.service';
 import { isLocalAccount } from './userRow';
 
 // Step-up for adding / replacing / removing a second factor (Obliance P2,
@@ -72,6 +74,91 @@ export async function checkFactorManagement(req: Request, actionKey: string): Pr
     return { ok: false, status: 401, body: { success: false, error: 'Invalid password', passwordInvalid: true } };
   }
   return { ok: true, via: 'password' };
+}
+
+// ── Sensitive actions (services/restrictions/gate.ts) ────────────────────────
+//
+// A FRESH second factor of the user of the session, never a password:
+//   - local TOTP: a code never seen before (acceptTotpStep, strict);
+//   - Obligate SSO staff without local TOTP: the code is checked by Obligate
+//     (owner decision 3); a code accepted this way marks the next step as used
+//     locally, so the same code cannot serve twice here;
+//   - no factor at all: 403 twoFactorNotEnrolled, inviting to enable it (never
+//     a silent block; recovery codes are never a proof here);
+//   - trusted IP (24 h, owner decision 6): only when the caller allows it
+//     (a 'sensitive' panel action), never for a confirmation, an approval, an
+//     access key, nor a 'restricted' action carrying a secret.
+
+export type ActionStepUpOutcome =
+  | { ok: true; via: 'totp' | 'obligate_totp' | 'trusted_ip' }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
+export interface ActionStepUpOptions {
+  allowTrustedIp?: boolean;
+}
+
+export const TWO_FACTOR_NOT_ENROLLED_MESSAGE =
+  'This action needs two-factor authentication: enable it in your profile (Profile > Security), then try again.';
+
+export async function checkActionStepUp(req: Request, actionKey: string, opts: ActionStepUpOptions = {}): Promise<ActionStepUpOutcome> {
+  const userId = req.session?.userId;
+  if (!userId || req.apiKey) return { ok: false, status: 401, body: { success: false, error: 'Authentication required' } };
+  const user = await db('users').where({ id: userId })
+    .first('is_active', 'kind', 'totp_enabled', 'totp_secret', 'foreign_source', 'foreign_id') as {
+      is_active: boolean; kind: string; totp_enabled: boolean; totp_secret: string | null; foreign_source: string | null; foreign_id: number | null;
+    } | undefined;
+  if (!user || !user.is_active) return { ok: false, status: 401, body: { success: false, error: 'Authentication required' } };
+  const hasLocalTotp = !!(user.totp_enabled && user.totp_secret);
+  const obligateId = user.kind !== 'client' && user.foreign_source === 'obligate' && Number(user.foreign_id) > 0 ? Number(user.foreign_id) : null;
+  if (!hasLocalTotp && obligateId === null) {
+    return {
+      ok: false, status: 403,
+      body: { success: false, error: TWO_FACTOR_NOT_ENROLLED_MESSAGE, code: 'twoFactorNotEnrolled', action: actionKey, details: { action: actionKey, enrollPath: '/profile' } },
+    };
+  }
+
+  // A relay address (our proxy, Docker plumbing) is shared by everyone behind it: never trusted.
+  const { ip, relay } = clientAddress(req);
+  const allowTrust = opts.allowTrustedIp === true && !!ip && !relay;
+  if (allowTrust && await tfaTrustService.isTrusted(userId, ip)) return { ok: true, via: 'trusted_ip' };
+
+  const proof = req.stepUpProof ?? {};
+  const code = typeof proof.twoFactorCode === 'string' ? proof.twoFactorCode.trim() : '';
+  if (!code) {
+    return {
+      ok: false, status: 401,
+      body: {
+        success: false, error: 'twoFactorCode required', twoFactorRequired: true, action: actionKey,
+        currentIp: ip || undefined, trustIpAllowed: allowTrust, codeMustBeNew: true,
+      },
+    };
+  }
+
+  let via: 'totp' | 'obligate_totp';
+  if (hasLocalTotp) {
+    const step = twoFactorService.verifyTotpStep(user.totp_secret as string, code);
+    if (step === null) return { ok: false, status: 401, body: { success: false, error: 'Invalid 2FA code' } };
+    if (!(await acceptTotpStep(userId, step, hashSessionId(req.sessionID)))) {
+      return { ok: false, status: 401, body: { success: false, error: 'This code was already used', codeUsed: true } };
+    }
+    via = 'totp';
+  } else {
+    if (!/^\d{6}$/.test(code)) return { ok: false, status: 401, body: { success: false, error: 'Invalid 2FA code' } };
+    const { obligateService } = await import('./obligate.service');
+    const r = await obligateService.verifyTotpDetailed(obligateId as number, code);
+    if (r === 'unavailable') {
+      return { ok: false, status: 503, body: { success: false, error: 'Two-factor verification is temporarily unavailable', verifierUnavailable: true } };
+    }
+    if (r !== 'valid') return { ok: false, status: 401, body: { success: false, error: 'Invalid 2FA code' } };
+    // Local anti-replay of the Obligate code: the step after the current one is
+    // marked used (the code's ±1-step validity), so it never serves twice here.
+    if (!(await acceptTotpStep(userId, Math.floor(Date.now() / 1000 / TOTP_PERIOD_S) + 1, hashSessionId(req.sessionID)))) {
+      return { ok: false, status: 401, body: { success: false, error: 'This code was already used', codeUsed: true } };
+    }
+    via = 'obligate_totp';
+  }
+  if (allowTrust && proof.trustIp === true) await tfaTrustService.grant(userId, ip);
+  return { ok: true, via };
 }
 
 export function sendStepUpFailure(res: Response, outcome: { status: number; body: Record<string, unknown> }): void {

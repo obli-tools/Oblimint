@@ -16,6 +16,20 @@ export class AppError extends Error {
 }
 
 /**
+ * An answer whose JSON body is given whole (the step-up 401 / 403 bodies the
+ * client interceptor reads at the top level, the 202 pendingApproval of a
+ * restricted action). Still an AppError (code, message), so the MCP layer and
+ * every catch that knows AppError keep working.
+ */
+export class ResponseError extends AppError {
+  constructor(statusCode: number, public body: Record<string, unknown>) {
+    super(statusCode, typeof body.error === 'string' ? body.error : (statusCode === 202 ? 'Pending approval' : 'Request refused'),
+      typeof body.code === 'string' ? body.code : undefined, body.details ?? (statusCode === 202 ? body.data : undefined));
+    this.name = 'ResponseError';
+  }
+}
+
+/**
  * Invariant A6 (docs/P1-PLAN.md §14): the message of these backend failures
  * embeds raw Docker / hostd text (socket paths, /srv/oblimint paths, daemon
  * messages). Staff sees it; any other caller (hosting client, unresolvable
@@ -70,6 +84,17 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ): void {
+  // A request executing an approved pending action failed: kept on the request (never throws).
+  const viaPending = (req as Request & { viaPendingAction?: number }).viaPendingAction;
+  if (viaPending && !(err instanceof ResponseError && err.statusCode < 400)) {
+    void import('../services/restrictions/pendingActions.service')
+      .then((m) => m.recordExecutionError(viaPending, err.message))
+      .catch(() => undefined);
+  }
+  if (err instanceof ResponseError) {
+    if (!res.headersSent) res.status(err.statusCode).json(err.body);
+    return;
+  }
   if (err instanceof AppError) {
     if (err.code && BACKEND_CODES.has(err.code)) {
       void isStaffCaller(req).then((staff) => {

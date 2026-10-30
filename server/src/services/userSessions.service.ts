@@ -14,6 +14,8 @@ import { stampCredentialVersion } from '../utils/session';
  * sessions (M4). The client has to be approved again.
  */
 async function revokeConnectorTokens(userId: number): Promise<number> {
+  // The "trusted IPs" of the sensitive actions go with the sessions (tfaTrust.service.ts).
+  try { await db('tfa_trusted_sessions').where({ user_id: userId }).del(); } catch { /* best effort */ }
   try {
     return Number(await db('api_key_oauth_tokens').where({ user_id: userId }).del());
   } catch (err) {

@@ -8,6 +8,8 @@ import type { Request, Response, NextFunction } from 'express';
 export interface StepUpProof {
   twoFactorCode?: string;
   stepUpPassword?: string;
+  /** "Trust this IP for 24 h" ticked in the prompt (honoured for sensitive panel actions only). */
+  trustIp?: boolean;
 }
 
 declare global {
@@ -26,6 +28,7 @@ export function captureStepUpProof(req: Request, _res: Response, next: NextFunct
     if (typeof code === 'string' || typeof code === 'number') proof.twoFactorCode = String(code).trim().slice(0, 16);
     const pw = body.stepUpPassword;
     if (typeof pw === 'string' && pw.length > 0) proof.stepUpPassword = pw.slice(0, 1024);
+    if (body.trustIp === true && proof.twoFactorCode !== undefined) proof.trustIp = true;
     delete body.twoFactorCode;
     delete body.stepUpPassword;
     delete body.trustIp;
