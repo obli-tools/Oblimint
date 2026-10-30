@@ -51,7 +51,7 @@
         },
         "write": {
           "label": "Écrire les fichiers",
-          "hint": "Créer, remplacer, modifier par remplacements exacts, déplacer, supprimer, extraire des archives dans ses sites. Une écriture avec empreinte attendue n'écrase jamais un fichier changé entre-temps (SFTP compris)."
+          "hint": "Créer, remplacer, modifier par remplacements exacts (avec Lire les fichiers), déplacer, supprimer, extraire des archives dans ses sites. Une écriture avec empreinte attendue n'écrase jamais un fichier changé entre-temps (SFTP compris)."
         }
       },
       "releases": {

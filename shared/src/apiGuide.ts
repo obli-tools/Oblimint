@@ -120,7 +120,7 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`list_files\` | List a folder (\`path\`, \`area\`); \`with_sha256: true\` adds the hash of each file | \`files.read\` |
 | \`search_files\` | Search the text files under a folder (\`query\`, \`regex?\`, \`case_sensitive?\`, \`include?\` / \`exclude?\` globs, \`include_vendor?\`, \`max_results?\`): \`path\`, \`line\`, \`column\`, \`text\` of each match; vendor / node_modules, binaries, files > 1 MB and links skipped; bounded (\`truncated\`, \`stoppedBy\`) | \`files.read\` |
 | \`read_file\` | Read a file by lines (\`start_line\` / \`end_line\`, ≤ 2000 lines per call) or by bytes (\`offset\` / \`length\`, \`encoding\`); always returns \`sha256\` (of the whole file), \`size\`, \`totalLines\`, \`nextLine\` when cut | \`files.read\` |
-| \`edit_file\` | Exact replacements in a text file (\`edits: [{ old_string, new_string, replace_all? }]\`, all or nothing), \`expected_sha256\`; returns the new \`sha256\` | \`files.write\` |
+| \`edit_file\` | Exact replacements in a text file (\`edits: [{ old_string, new_string, replace_all? }]\`, all or nothing), \`expected_sha256\`; returns the new \`sha256\` | \`files.read\` + \`files.write\` |
 | \`write_file\` | Write a whole file (≤ 8 MB): \`content\` (text) or \`content_base64\`; creates the parent folders; \`expected_sha256\` (replace only that content) or \`if_absent\` (create only); returns \`sha256\` | \`files.write\` |
 | \`make_directory\` | Create a folder (and its parents) | \`files.write\` |
 | \`move_path\` / \`copy_path\` | Move, rename, copy (within the same site and area) | \`files.write\` |
@@ -337,7 +337,7 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/sites/:id/files/text?path=/f\` | text content (≤ 2 MB) | \`files.read\` |
 | GET | \`/sites/:id/files/read?path=/f\` | \`&startLine=&endLine=\` (lines) or \`&offset=&length=&encoding=utf8\\|base64\` (bytes, ≤ 256 KB): the range + \`sha256\` of the whole file, \`totalLines\` | \`files.read\` |
 | POST | \`/sites/:id/files/search\` | \`{ query, path?, regex?, caseSensitive?, include?, exclude?, includeVendor?, maxResults?, maxPerFile? }\` → matches (bounded) | \`files.read\` |
-| POST | \`/sites/:id/files/edit\` | \`{ path, edits: [{ oldString, newString, replaceAll? }], expectedSha256? }\` → \`{ path, size, sha256, previousSha256, replacements }\` | \`files.write\` |
+| POST | \`/sites/:id/files/edit\` | \`{ path, edits: [{ oldString, newString, replaceAll? }], expectedSha256? }\` → \`{ path, size, sha256, previousSha256, replacements }\` | \`files.read\` + \`files.write\` |
 | GET | \`/sites/:id/files/content?path=/f\` | raw file (Range supported) | \`files.read\` |
 | PUT | \`/sites/:id/files/content?path=/f&overwrite=1\` | **raw body**, \`Content-Type: application/octet-stream\`, ≤ 8 MB → \`{ path, size, sha256 }\`; \`&expectedSha256=\` or \`If-Match: "<sha256>"\` (replace only that content), \`If-None-Match: *\` (create only) | \`files.write\` |
 | POST | \`/sites/:id/uploads\` | \`{ path, size, overwrite?, expectedSha256? }\` → session \`{ id, chunkSize, count }\` (files > 8 MB) | \`files.write\` |
@@ -392,8 +392,8 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 |---|---|
 | \`write_file\` / PUT content | 8 MB per file (above: upload sessions) |
 | \`read_file\` | 2000 lines / ~150,000 characters per call by lines (64 MB files at most), 96 KB by bytes (REST: 256 KB) |
-| \`edit_file\` | UTF-8 text files ≤ 8 MB, 50 edits per call |
-| \`search_files\` | 500 matches, 10,000 files, 128 MB read, 15 s; files > 1 MB skipped; 2 searches at once per account |
+| \`edit_file\` | UTF-8 text files ≤ 8 MB, 50 edits and 100,000 replacements per call |
+| \`search_files\` | 500 matches, 10,000 files, 128 MB read, 15 s; files > 1 MB skipped; 2 searches at once per account, a few regular expression searches at once on the server |
 | \`list_files\` with hashes | 200 files, 64 MB per listing (the others: \`sha256: null\`) |
 | Requests | 1,200 / min per key |
 | MCP batch | 20 messages at most |
@@ -418,10 +418,11 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`notFound\` (404) | Site outside the key's scope, or missing path | Check with \`list_sites\` / \`list_files\` |
 | \`fileForbidden\` (403) | Folder that cannot be changed (area root, the site's own \`data\` folder) | Write in a subfolder |
 | \`fileExists\` (409) | The file already exists | \`overwrite: true\` if intended |
-| \`fileChanged\` (409) | The file changed since you read it (\`details.currentSha256\`; \`null\`: it no longer exists). Nothing was written | Read it again, redo the change on the current content |
+| \`fileChanged\` (409) | The file changed since you read it (\`details.currentSha256\`; \`null\`: it no longer exists; absent for a key without \`files.read\`), also when it changes during the upload. Nothing was written | Read it again, redo the change on the current content |
 | \`editNotFound\` · \`editNotUnique\` (409) | An \`old_string\` is not in the file · occurs several times (\`details.index\`, \`occurrences\`). Nothing was written | Read the lines again, copy them exactly; add surrounding lines, or \`replace_all\` |
 | \`binaryFile\` · \`notUtf8\` (400) | \`edit_file\` works on UTF-8 text only | \`write_file\` the whole file |
-| \`regexTooSlow\` · \`invalidRegex\` (400) · \`searchBusy\` (429) | The regular expression is too slow (catastrophic backtracking) · invalid · two searches already running | Simplify it or search a literal text · retry in a few seconds |
+| \`tooManyReplacements\` (400) · \`fileTooLarge\` (413) | \`edit_file\`: more than 100,000 replacements · the result would pass 8 MB (\`details.index\`). Nothing was written | Narrower edits, or \`write_file\` the whole file |
+| \`regexTooSlow\` · \`invalidRegex\` (400) · \`searchBusy\` (429) | The regular expression is too slow (catastrophic backtracking) · invalid · searches already running (two per account, a few regular expression ones on the server) | Simplify it or search a literal text · retry in a few seconds |
 | \`quotaExceeded\` / \`uploadsBlocked\` (507) | Disk quota exceeded | Free some space, tell the human |
 | \`notASubdomain\` (400) | The name is not under a domain of the account | \`list_parent_domains\`; a new domain is added in the panel |
 | \`slugTaken\` (409) | Slug already used | Pick another one |
@@ -567,7 +568,7 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`list_files\` | Lister un dossier (\`path\`, \`area\`) ; \`with_sha256: true\` ajoute l'empreinte de chaque fichier | \`files.read\` |
 | \`search_files\` | Chercher dans les fichiers texte d'un dossier (\`query\`, \`regex?\`, \`case_sensitive?\`, globs \`include?\` / \`exclude?\`, \`include_vendor?\`, \`max_results?\`) : \`path\`, \`line\`, \`column\`, \`text\` de chaque résultat ; vendor / node_modules, binaires, fichiers > 1 Mo et liens ignorés ; borné (\`truncated\`, \`stoppedBy\`) | \`files.read\` |
 | \`read_file\` | Lire un fichier par lignes (\`start_line\` / \`end_line\`, ≤ 2000 lignes par appel) ou par octets (\`offset\` / \`length\`, \`encoding\`) ; renvoie toujours \`sha256\` (du fichier entier), \`size\`, \`totalLines\`, \`nextLine\` si coupé | \`files.read\` |
-| \`edit_file\` | Remplacements exacts dans un fichier texte (\`edits: [{ old_string, new_string, replace_all? }]\`, tout ou rien), \`expected_sha256\` ; renvoie le nouveau \`sha256\` | \`files.write\` |
+| \`edit_file\` | Remplacements exacts dans un fichier texte (\`edits: [{ old_string, new_string, replace_all? }]\`, tout ou rien), \`expected_sha256\` ; renvoie le nouveau \`sha256\` | \`files.read\` + \`files.write\` |
 | \`write_file\` | Écrire un fichier entier (≤ 8 Mo) : \`content\` (texte) ou \`content_base64\` ; crée les dossiers parents ; \`expected_sha256\` (ne remplace que ce contenu) ou \`if_absent\` (création seulement) ; renvoie \`sha256\` | \`files.write\` |
 | \`make_directory\` | Créer un dossier (et ses parents) | \`files.write\` |
 | \`move_path\` / \`copy_path\` | Déplacer, renommer, copier (dans le même site et la même zone) | \`files.write\` |
@@ -780,7 +781,7 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET | \`/sites/:id/files/text?path=/f\` | contenu texte (≤ 2 Mo) | \`files.read\` |
 | GET | \`/sites/:id/files/read?path=/f\` | \`&startLine=&endLine=\` (lignes) ou \`&offset=&length=&encoding=utf8\\|base64\` (octets, ≤ 256 Ko) : la plage + \`sha256\` du fichier entier, \`totalLines\` | \`files.read\` |
 | POST | \`/sites/:id/files/search\` | \`{ query, path?, regex?, caseSensitive?, include?, exclude?, includeVendor?, maxResults?, maxPerFile? }\` → résultats (bornés) | \`files.read\` |
-| POST | \`/sites/:id/files/edit\` | \`{ path, edits: [{ oldString, newString, replaceAll? }], expectedSha256? }\` → \`{ path, size, sha256, previousSha256, replacements }\` | \`files.write\` |
+| POST | \`/sites/:id/files/edit\` | \`{ path, edits: [{ oldString, newString, replaceAll? }], expectedSha256? }\` → \`{ path, size, sha256, previousSha256, replacements }\` | \`files.read\` + \`files.write\` |
 | GET | \`/sites/:id/files/content?path=/f\` | fichier brut (Range supporté) | \`files.read\` |
 | PUT | \`/sites/:id/files/content?path=/f&overwrite=1\` | **corps brut**, \`Content-Type: application/octet-stream\`, ≤ 8 Mo → \`{ path, size, sha256 }\` ; \`&expectedSha256=\` ou \`If-Match: "<sha256>"\` (ne remplace que ce contenu), \`If-None-Match: *\` (création seulement) | \`files.write\` |
 | POST | \`/sites/:id/uploads\` | \`{ path, size, overwrite?, expectedSha256? }\` → session \`{ id, chunkSize, count }\` (fichiers > 8 Mo) | \`files.write\` |
@@ -835,8 +836,8 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 |---|---|
 | \`write_file\` / PUT content | 8 Mo par fichier (au-delà : sessions d'upload) |
 | \`read_file\` | 2000 lignes / ~150 000 caractères par appel en lignes (fichiers de 64 Mo au plus), 96 Ko en octets (REST : 256 Ko) |
-| \`edit_file\` | fichiers texte UTF-8 ≤ 8 Mo, 50 modifications par appel |
-| \`search_files\` | 500 résultats, 10 000 fichiers, 128 Mo lus, 15 s ; fichiers > 1 Mo ignorés ; 2 recherches à la fois par compte |
+| \`edit_file\` | fichiers texte UTF-8 ≤ 8 Mo, 50 modifications et 100 000 remplacements par appel |
+| \`search_files\` | 500 résultats, 10 000 fichiers, 128 Mo lus, 15 s ; fichiers > 1 Mo ignorés ; 2 recherches à la fois par compte, quelques recherches par expression régulière à la fois sur le serveur |
 | \`list_files\` avec empreintes | 200 fichiers, 64 Mo par liste (les autres : \`sha256: null\`) |
 | Requêtes | 1 200 / min par clé |
 | Lot MCP | 20 messages au plus |
@@ -861,10 +862,11 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`notFound\` (404) | Site hors du périmètre, ou chemin inexistant | Vérifier avec \`list_sites\` / \`list_files\` |
 | \`fileForbidden\` (403) | Dossier non modifiable (racine de la zone, dossier \`data\` du site lui-même) | Écrire dans un sous-dossier |
 | \`fileExists\` (409) | Le fichier existe déjà | \`overwrite: true\` si c'est voulu |
-| \`fileChanged\` (409) | Le fichier a changé depuis ta lecture (\`details.currentSha256\` ; \`null\` : il n'existe plus). Rien n'a été écrit | Relis-le, refais la modification sur le contenu actuel |
+| \`fileChanged\` (409) | Le fichier a changé depuis ta lecture (\`details.currentSha256\` ; \`null\` : il n'existe plus ; absent pour une clé sans \`files.read\`), y compris s'il change pendant l'envoi. Rien n'a été écrit | Relis-le, refais la modification sur le contenu actuel |
 | \`editNotFound\` · \`editNotUnique\` (409) | Un \`old_string\` est absent du fichier · y figure plusieurs fois (\`details.index\`, \`occurrences\`). Rien n'a été écrit | Relis les lignes, recopie-les à l'identique ; ajoute des lignes voisines, ou \`replace_all\` |
 | \`binaryFile\` · \`notUtf8\` (400) | \`edit_file\` ne traite que du texte UTF-8 | \`write_file\` du fichier entier |
-| \`regexTooSlow\` · \`invalidRegex\` (400) · \`searchBusy\` (429) | Expression régulière trop lente (retour arrière catastrophique) · invalide · deux recherches déjà en cours | Simplifie-la ou cherche un texte littéral · réessaie dans quelques secondes |
+| \`tooManyReplacements\` (400) · \`fileTooLarge\` (413) | \`edit_file\` : plus de 100 000 remplacements · le résultat dépasserait 8 Mo (\`details.index\`). Rien n'a été écrit | Des modifications plus ciblées, ou \`write_file\` du fichier entier |
+| \`regexTooSlow\` · \`invalidRegex\` (400) · \`searchBusy\` (429) | Expression régulière trop lente (retour arrière catastrophique) · invalide · recherches déjà en cours (deux par compte, quelques-unes par expression régulière sur le serveur) | Simplifie-la ou cherche un texte littéral · réessaie dans quelques secondes |
 | \`quotaExceeded\` / \`uploadsBlocked\` (507) | Quota disque dépassé | Faire de la place, prévenir l'humain |
 | \`notASubdomain\` (400) | Le nom n'est pas sous un domaine du compte | \`list_parent_domains\` ; un nouveau domaine se crée dans le panel |
 | \`slugTaken\` (409) | Slug déjà utilisé | En choisir un autre |

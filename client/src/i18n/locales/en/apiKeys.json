@@ -51,7 +51,7 @@
         },
         "write": {
           "label": "Write files",
-          "hint": "Create, replace, edit by exact replacements, move, delete, extract archives in its sites. A write with an expected hash never overwrites a file changed meanwhile (SFTP included)."
+          "hint": "Create, replace, edit by exact replacements (with Read files), move, delete, extract archives in its sites. A write with an expected hash never overwrites a file changed meanwhile (SFTP included)."
         }
       },
       "releases": {

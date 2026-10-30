@@ -25,7 +25,7 @@ import { Pill, inputCls, labelCls, toastHostingError } from './hostingUi';
 
 export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'files.read': ['Read files', 'List, search and read (whole or by range) the files of its sites (code and data).'],
-  'files.write': ['Write files', 'Create, replace, edit by exact replacements, move, delete, extract archives in its sites. A write with an expected hash never overwrites a file changed meanwhile (SFTP included).'],
+  'files.write': ['Write files', 'Create, replace, edit by exact replacements (with Read files), move, delete, extract archives in its sites. A write with an expected hash never overwrites a file changed meanwhile (SFTP included).'],
   'releases.publish': ['Publish', 'Publish the code as a new release (live) and roll back.'],
   'previews.manage': ['Live previews', 'Start, fetch and stop a preview of a release or of the staging; needs files.read too (staging: releases.publish).'],
   'sites.manage': ['Site settings', 'Change the settings of its sites: name, docroot, publish mode, PHP, environment variables, data paths, secondary runtimes.'],
