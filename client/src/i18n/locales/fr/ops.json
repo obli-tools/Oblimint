@@ -441,7 +441,10 @@
       "releaseApproved": "Release approuvée",
       "releaseRejected": "Release rejetée",
       "domainVerified": "Propriété du domaine vérifiée",
-      "domainReclaimed": "Domaine repris par son propriétaire"
+      "domainReclaimed": "Domaine repris par son propriétaire",
+      "accountRecoveryCodeUsed": "Code de secours utilisé",
+      "accountPasswordReset": "Mot de passe réinitialisé",
+      "accountEmailChanged": "Adresse e-mail changée"
     },
     "form": {
       "botToken": "Jeton du bot",

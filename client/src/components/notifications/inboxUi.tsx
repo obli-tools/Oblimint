@@ -35,6 +35,7 @@ export function familyLabel(t: TFunction, f: NotificationFamily): string {
     monitoring: 'Monitoring and cron jobs',
     security: 'Security',
     platform: 'Platform',
+    account: 'My account',
   };
   return t(`inbox.family.${f}`) || fallback[f];
 }
@@ -50,6 +51,7 @@ export function familyHint(t: TFunction, f: NotificationFamily): string {
     monitoring: 'Monitors down / recovered, failing cron jobs and workflows.',
     security: 'Banned addresses, refused or rolled back proxy configurations.',
     platform: 'Platform updates.',
+    account: 'Sign-ins with a recovery code, password reset, e-mail address changed. Always shown.',
   };
   return t(`inbox.familyHint.${f}`) || fallback[f];
 }

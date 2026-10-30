@@ -28,7 +28,8 @@
       "apps": "Applications et bases de données",
       "monitoring": "Surveillance et tâches planifiées",
       "security": "Sécurité",
-      "platform": "Plateforme"
+      "platform": "Plateforme",
+      "account": "Mon compte"
     },
     "familyHint": {
       "releases": "Releases en attente d’approbation, approuvées ou rejetées, fenêtres à valider, détections de l’analyse, mises à jour de CMS.",
@@ -39,12 +40,13 @@
       "apps": "Déploiements et mises à jour d’applications, instances de bases de données.",
       "monitoring": "Sondes en panne / rétablies, tâches planifiées et workflows en échec.",
       "security": "Adresses bannies, configurations de proxy refusées ou restaurées.",
-      "platform": "Mises à jour de la plateforme."
+      "platform": "Mises à jour de la plateforme.",
+      "account": "Connexions avec un code de secours, mot de passe réinitialisé, adresse e-mail changée. Toujours affiché."
     }
   },
   "transactionalMail": {
     "title": "Expéditeur des e-mails",
-    "description": "L’adresse que le panel utilise pour écrire aux personnes : les notifications choisies par chaque utilisateur, et bientôt les réinitialisations de mot de passe. Soit une boîte hébergée sur cette plateforme (le moteur mail doit être actif), soit un serveur SMTP externe.",
+    "description": "L’adresse que le panel utilise pour écrire aux personnes : les notifications choisies par chaque utilisateur, les liens de réinitialisation du mot de passe et de confirmation d’adresse e-mail. Soit une boîte hébergée sur cette plateforme (le moteur mail doit être actif), soit un serveur SMTP externe.",
     "ready": "prêt",
     "incomplete": "incomplet",
     "mode": {

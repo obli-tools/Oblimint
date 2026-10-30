@@ -28,7 +28,8 @@
       "apps": "Applications and databases",
       "monitoring": "Monitoring and cron jobs",
       "security": "Security",
-      "platform": "Platform"
+      "platform": "Platform",
+      "account": "My account"
     },
     "familyHint": {
       "releases": "Releases awaiting approval, approved or rejected, windows to review, scanner findings, CMS updates.",
@@ -39,12 +40,13 @@
       "apps": "Application deployments and updates, database instances.",
       "monitoring": "Monitors down / recovered, failing cron jobs and workflows.",
       "security": "Banned addresses, refused or rolled back proxy configurations.",
-      "platform": "Platform updates."
+      "platform": "Platform updates.",
+      "account": "Sign-ins with a recovery code, password reset, e-mail address changed. Always shown."
     }
   },
   "transactionalMail": {
     "title": "E-mail sender",
-    "description": "The address the panel uses to e-mail people: notifications chosen by each user, and soon password resets. Either a mailbox hosted on this platform (the mail engine must be active) or an external SMTP server.",
+    "description": "The address the panel uses to e-mail people: notifications chosen by each user, password reset links and e-mail address confirmations. Either a mailbox hosted on this platform (the mail engine must be active) or an external SMTP server.",
     "ready": "ready",
     "incomplete": "incomplete",
     "mode": {

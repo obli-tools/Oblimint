@@ -1,5 +1,5 @@
 import { useState, useEffect, type FormEvent } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/store/authStore';
 import { twoFactorApi } from '@/api/twoFactor.api';
@@ -45,6 +45,8 @@ export function LoginPage() {
   const [panelRole, setPanelRole] = useState<'admin' | 'client' | null>(null);
   const [clientPanelUrl, setClientPanelUrl] = useState<string | null>(null);
   const [wrongHost, setWrongHost] = useState<{ url: string | null; expected: 'admin' | 'client' | null } | null>(null);
+  // The platform can e-mail a reset link (local accounts): "Forgot your password?" is offered.
+  const [passwordResetAvailable, setPasswordResetAvailable] = useState(false);
   const isClientSpace = panelRole === 'client';
 
   // If we arrived here with ?error=…, don't auto-redirect to Obligate again.
@@ -57,6 +59,8 @@ export function LoginPage() {
   const [step, setStep] = useState<Step>('credentials');
   const [mfaCode, setMfaCode] = useState('');
   const [mfaLoading, setMfaLoading] = useState(false);
+  // Lost authenticator: one of the one-time recovery codes instead of a TOTP code.
+  const [useRecovery, setUseRecovery] = useState(false);
 
   // SSO state: 'checking' = initial check, 'redirecting' = going to Obligate,
   // 'unavailable' = Obligate down (show local login + warning), 'local' = no Obligate configured
@@ -89,7 +93,7 @@ export function LoginPage() {
 
   useEffect(() => {
     authApi.ssoConfig()
-      .then((cfg) => { setPanelRole(cfg.panelRole ?? null); setClientPanelUrl(cfg.clientPanelUrl ?? null); })
+      .then((cfg) => { setPanelRole(cfg.panelRole ?? null); setClientPanelUrl(cfg.clientPanelUrl ?? null); setPasswordResetAvailable(cfg.passwordResetAvailable === true); })
       .catch(() => {});
     fetch('/health')
       .then((r) => r.json())
@@ -161,9 +165,10 @@ export function LoginPage() {
     setError('');
     setMfaLoading(true);
     try {
-      await twoFactorApi.verify(mfaCode);
+      const r = await twoFactorApi.verify(mfaCode, useRecovery ? 'recovery' : 'totp');
       await checkSession();
-      navigate('/', { replace: true });
+      // Signed in with a recovery code: straight to the profile, where the authenticator can be replaced.
+      navigate(r.recoveryCodesRemaining !== undefined ? '/profile?recovery=1' : '/', { replace: true });
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status?: number; data?: { error?: string; code?: string } } };
       const status = axiosErr?.response?.status;
@@ -177,7 +182,9 @@ export function LoginPage() {
         setPassword('');
         setStep('credentials');
       } else {
-        setError(t('login.twoFactor.invalidCode', 'Invalid code. Please try again.'));
+        setError(useRecovery
+          ? (t('identity.recovery.invalidCode') || 'Invalid or already used recovery code.')
+          : t('login.twoFactor.invalidCode', 'Invalid code. Please try again.'));
       }
     } finally {
       setMfaLoading(false);
@@ -276,6 +283,13 @@ export function LoginPage() {
             <Button type="submit" className="w-full" loading={isLoading}>
               {t('login.signIn', 'Sign in')}
             </Button>
+            {passwordResetAvailable && (
+              <p className="text-center">
+                <Link to="/forgot-password" className="text-xs text-text-muted hover:text-text-primary transition-colors coarse:inline-flex coarse:min-h-10 coarse:items-center coarse:px-2">
+                  {t('identity.forgot.link') || 'Forgot your password?'}
+                </Link>
+              </p>
+            )}
             {panelRole === 'admin' && clientPanelUrl && (
               <p className="text-center text-xs text-text-muted">
                 <a href={`${clientPanelUrl}/login`} className="hover:text-text-primary underline-offset-2 hover:underline">
@@ -288,21 +302,45 @@ export function LoginPage() {
           <form onSubmit={handleMfaSubmit} className="space-y-5 rounded-lg bg-bg-secondary p-6">
             <div>
               <p className="text-sm font-medium text-text-primary mb-1">{t('login.twoFactor.title', 'Two-factor authentication')}</p>
-              <p className="text-xs text-text-muted">{t('login.twoFactor.description', 'Enter the 6-digit code from your authenticator app.')}</p>
+              <p className="text-xs text-text-muted">
+                {useRecovery
+                  ? (t('identity.recovery.loginDescription') || 'Enter one of the recovery codes you saved when you set up two-factor authentication. Each code works once.')
+                  : t('login.twoFactor.description', 'Enter the 6-digit code from your authenticator app.')}
+              </p>
             </div>
 
-            <Input
-              label={t('login.twoFactor.totpLabel', 'Authenticator code')}
-              type="text"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              enterKeyHint="go"
-              value={mfaCode}
-              onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder={t('login.twoFactor.codePlaceholder', '000000')}
-              autoFocus
-              required
-            />
+            {useRecovery ? (
+              <Input
+                key="recovery"
+                label={t('identity.recovery.codeLabel') || 'Recovery code'}
+                type="text"
+                autoComplete="off"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="go"
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value.replace(/[^A-Za-z0-9-\s]/g, '').slice(0, 13))}
+                placeholder="xxxxx-xxxxx"
+                className="font-mono"
+                autoFocus
+                required
+              />
+            ) : (
+              <Input
+                key="totp"
+                label={t('login.twoFactor.totpLabel', 'Authenticator code')}
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                enterKeyHint="go"
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder={t('login.twoFactor.codePlaceholder', '000000')}
+                autoFocus
+                required
+              />
+            )}
 
             {error && (
               <div className="rounded-md bg-status-down-bg border border-status-down/30 p-3">
@@ -312,7 +350,12 @@ export function LoginPage() {
 
             <div className="flex flex-col gap-2">
               <Button type="submit" className="w-full" loading={mfaLoading}>{t('login.twoFactor.verify', 'Verify')}</Button>
-              <button type="button" onClick={() => { setStep('credentials'); setError(''); }} className="text-xs text-text-muted hover:text-text-primary text-center coarse:min-h-10">
+              <button type="button" onClick={() => { setUseRecovery((v) => !v); setMfaCode(''); setError(''); }} className="text-xs text-text-muted hover:text-text-primary text-center coarse:min-h-10">
+                {useRecovery
+                  ? (t('identity.recovery.useAuthenticator') || 'Use the authenticator app instead')
+                  : (t('identity.recovery.useCode') || 'Lost your authenticator? Use a recovery code')}
+              </button>
+              <button type="button" onClick={() => { setStep('credentials'); setError(''); setUseRecovery(false); }} className="text-xs text-text-muted hover:text-text-primary text-center coarse:min-h-10">
                 {t('login.twoFactor.backToLogin', 'Back to login')}
               </button>
             </div>
