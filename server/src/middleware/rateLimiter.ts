@@ -210,3 +210,47 @@ export const stepUpLimiter = rateLimit({
     error: 'Too many verification attempts, please try again later',
   },
 });
+
+// ── Self-service identity (public routes, auth.routes.ts) ───────────────────
+
+const resetEmail = (req: Request): string => {
+  const e = (req.body as { email?: unknown } | undefined)?.email;
+  return typeof e === 'string' ? e.trim().toLowerCase().slice(0, 254) : '';
+};
+
+/**
+ * Forgotten password requests: per address (IPv6 /64) 10 / 15 min, and per
+ * requested e-mail 5 / hour whoever asks (mail bombing of one person). The
+ * service adds its own per-account limit. Every answer, 429 included, says
+ * nothing about the address.
+ */
+export const passwordResetRequestLimiter = [
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `pwreset-ip:${reqIpKey(req)}`,
+    message: { success: false, error: 'Too many requests, please try again later', code: 'rateLimited' },
+  }),
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => resetEmail(req) === '',
+    keyGenerator: (req) => `pwreset-email:${resetEmail(req)}`,
+    message: { success: false, error: 'Too many requests, please try again later', code: 'rateLimited' },
+  }),
+];
+
+/** E-mailed links (reset / confirmation): checks and uses per address, failures only (token guessing). */
+export const identityLinkLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `idlink-ip:${reqIpKey(req)}`,
+  message: { success: false, error: 'Too many attempts, please try again later', code: 'rateLimited' },
+});

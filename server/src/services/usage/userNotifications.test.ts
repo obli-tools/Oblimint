@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CLIENT_NOTIFICATION_FAMILIES, DEFAULT_USER_NOTIFICATION_PREFS, NOTIFICATION_EVENT_FAMILY, NOTIFICATION_EVENTS, NOTIFICATION_FAMILIES,
+  ACCOUNT_NOTIFICATION_EVENTS, CLIENT_NOTIFICATION_FAMILIES, CONFIGURABLE_NOTIFICATION_FAMILIES, DEFAULT_USER_NOTIFICATION_PREFS, NOTIFICATION_EVENT_FAMILY,
+  NOTIFICATION_EVENTS, NOTIFICATION_FAMILIES,
 } from '@oblimint/shared';
 import { audienceOf, normalizePrefs, parseIds, safeLink } from './userNotifications.service';
 import { formatFrom } from '../mail/transactional';
@@ -27,6 +28,14 @@ test('audience: decisions go to approvers, platform / security never to clients'
   assert.equal(audienceOf('security.banned').client, null);
   assert.ok(!CLIENT_NOTIFICATION_FAMILIES.includes('platform'));
   assert.ok(!CLIENT_NOTIFICATION_FAMILIES.includes('security'));
+});
+
+test('family account: personal notices only, never configurable, never fed by notify()', () => {
+  assert.ok(NOTIFICATION_FAMILIES.includes('account'));
+  assert.ok(CLIENT_NOTIFICATION_FAMILIES.includes('account'), 'a client gets its own notices');
+  assert.ok(!CONFIGURABLE_NOTIFICATION_FAMILIES.includes('account'), 'absent from the preferences');
+  for (const e of NOTIFICATION_EVENTS) assert.notEqual(NOTIFICATION_EVENT_FAMILY[e], 'account', e);
+  assert.ok(ACCOUNT_NOTIFICATION_EVENTS.every((e) => e.startsWith('account.')));
 });
 
 test('preferences: defaults filled, junk ignored', () => {

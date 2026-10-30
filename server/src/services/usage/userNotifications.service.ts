@@ -1,10 +1,10 @@
 import type { Request } from 'express';
 import type {
-  NotificationEvent, NotificationFamily, UserNotification, UserNotificationPage, UserNotificationPrefs, UserNotificationPrefsInput,
+  AccountNotificationEvent, NotificationEvent, NotificationFamily, UserNotification, UserNotificationPage, UserNotificationPrefs, UserNotificationPrefsInput,
   UserNotificationSettings, UserNotificationSeverity,
 } from '@oblimint/shared';
 import {
-  CLIENT_NOTIFICATION_FAMILIES, DEFAULT_USER_NOTIFICATION_PREFS, MASTER_TENANT_ID, NOTIFICATION_EVENT_FAMILY, NOTIFICATION_FAMILIES,
+  CLIENT_NOTIFICATION_FAMILIES, CONFIGURABLE_NOTIFICATION_FAMILIES, DEFAULT_USER_NOTIFICATION_PREFS, MASTER_TENANT_ID, NOTIFICATION_EVENT_FAMILY, NOTIFICATION_FAMILIES,
   USER_NOTIFICATION_DEDUP_HOURS, USER_NOTIFICATION_MAX_PER_USER, USER_NOTIFICATION_PAGE_MAX, USER_NOTIFICATION_RETENTION_DAYS,
   UserNotificationSocketEvents,
 } from '@oblimint/shared';
@@ -57,6 +57,8 @@ const FAMILY_AUDIENCE: Record<NotificationFamily, Audience> = {
   monitoring: { staff: 'monitoring.manage', client: 'monitoring.manage' },
   security: { staff: 'proxy.manage', client: null },
   platform: { staff: null, client: null },
+  // Personal notices (deliverAccountNotice): never through notify(), never a recipient computed here.
+  account: { staff: null, client: null },
 };
 
 const EVENT_AUDIENCE: Partial<Record<NotificationEvent, Audience>> = {
@@ -193,7 +195,7 @@ function toNotification(r: Row): UserNotification {
     id: Number(r.id),
     tenantId: r.tenant_id,
     accountId: r.account_id ?? null,
-    event: r.event as NotificationEvent,
+    event: r.event as NotificationEvent | AccountNotificationEvent,
     family: r.family as NotificationFamily,
     severity: r.severity,
     title: r.title,
@@ -237,7 +239,7 @@ function emitToUser(userId: number, event: string, payload: Record<string, unkno
 export async function deliverToUsers(event: NotificationEvent, p: DeliverPayload, rendered?: RenderedNotification | null): Promise<number> {
   try {
     const family = NOTIFICATION_EVENT_FAMILY[event];
-    if (!family) return 0;
+    if (!family || family === 'account') return 0;
     const recipients = await recipientsFor(event, { tenantId: p.tenantId, accountId: p.accountId ?? null, platform: p.platform });
     if (recipients.length === 0) return 0;
     const dedupKey = String(p.key ?? '').slice(0, 200);
@@ -282,6 +284,48 @@ export async function deliverToUsers(event: NotificationEvent, p: DeliverPayload
   } catch (err) {
     logger.warn({ err: (err as Error).message, event }, 'user notifications: delivery failed');
     return 0;
+  }
+}
+
+// ── personal notices (family 'account') ──────────────────────────────────────
+
+export interface AccountNotice {
+  title: string;
+  message: string;
+  severity: UserNotificationSeverity;
+  link?: string | null;
+  /** Tenant the row is stored in (the session's); null = the user's first tenant, else the master tenant. */
+  tenantId?: number | null;
+  /** Deduplication key (default: none, every notice is kept). */
+  key?: string;
+}
+
+/**
+ * A notice about the user's OWN account (recovery code used, password reset,
+ * e-mail changed): one row for that user only, always in the bell (never
+ * filtered by the preferences), pushed live. The e-mail form, when any, is
+ * sent by the caller (it knows the language and the address). Never throws.
+ */
+export async function deliverAccountNotice(userId: number, event: AccountNotificationEvent, n: AccountNotice): Promise<UserNotification | null> {
+  try {
+    if (!Number.isInteger(userId) || userId <= 0) return null;
+    let tenantId = Number.isInteger(n.tenantId) && Number(n.tenantId) > 0 ? Number(n.tenantId) : null;
+    if (tenantId === null) {
+      const first = await db('user_tenants').where({ user_id: userId }).orderBy('tenant_id').first('tenant_id') as { tenant_id: number } | undefined;
+      tenantId = first ? Number(first.tenant_id) : MASTER_TENANT_ID;
+    }
+    const severity: UserNotificationSeverity = n.severity === 'critical' || n.severity === 'warning' ? n.severity : 'info';
+    const [row] = await db('user_notifications').insert({
+      user_id: userId, tenant_id: tenantId, account_id: null, event, family: 'account', severity,
+      title: String(n.title ?? '').slice(0, 200) || event, message: String(n.message ?? '').slice(0, 4000), link: safeLink(n.link),
+      dedup_key: String(n.key ?? '').slice(0, 200), in_app: true,
+    }).returning('*') as Row[];
+    const notification = toNotification(row);
+    emitToUser(userId, UserNotificationSocketEvents.NEW, { tenantId, notification });
+    return notification;
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, event, userId }, 'account notice: delivery failed');
+    return null;
   }
 }
 
@@ -393,6 +437,11 @@ export async function purgeUserNotifications(now = Date.now()): Promise<{ expire
   const overflow = Number(res?.rowCount) || 0;
   let mailLog = 0;
   try { mailLog = await purgeTransactionalLog(now); } catch { /* next pass */ }
+  try {
+    // Expired / used e-mailed links of the identity flows (password reset, e-mail confirmation).
+    const { purgeActionTokens } = await import('../identity/identity.service');
+    await purgeActionTokens(now);
+  } catch { /* next pass */ }
   return { expired, overflow, mailLog };
 }
 
@@ -506,7 +555,7 @@ export const userNotificationService = {
     const prefs = (await prefsOf([userId])).get(userId) ?? normalizePrefs(null);
     return {
       prefs,
-      families: [...(user.kind === 'client' ? CLIENT_NOTIFICATION_FAMILIES : NOTIFICATION_FAMILIES)],
+      families: (user.kind === 'client' ? CLIENT_NOTIFICATION_FAMILIES : NOTIFICATION_FAMILIES).filter((f) => CONFIGURABLE_NOTIFICATION_FAMILIES.includes(f)),
       emailAddress: user.email || null,
       emailAvailable: await transactionalMailReady(),
     };
@@ -516,7 +565,7 @@ export const userNotificationService = {
     const raw = input?.prefs;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new AppError(400, 'prefs must be an object', 'validation');
     for (const [k, v] of Object.entries(raw)) {
-      if (!NOTIFICATION_FAMILIES.includes(k as NotificationFamily)) throw new AppError(400, `Unknown notification family: ${k}`, 'validation', { field: `prefs.${k}` });
+      if (!CONFIGURABLE_NOTIFICATION_FAMILIES.includes(k as NotificationFamily)) throw new AppError(400, `Unknown notification family: ${k}`, 'validation', { field: `prefs.${k}` });
       if (!v || typeof v !== 'object') throw new AppError(400, `Invalid preference for ${k}`, 'validation', { field: `prefs.${k}` });
       for (const [ck, cv] of Object.entries(v)) {
         if ((ck !== 'inApp' && ck !== 'email') || typeof cv !== 'boolean') throw new AppError(400, `Invalid preference ${k}.${ck}`, 'validation', { field: `prefs.${k}.${ck}` });

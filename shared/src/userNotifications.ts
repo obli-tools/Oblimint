@@ -1,4 +1,5 @@
 import type { NotificationEvent } from './usage';
+import type { AccountNotificationEvent } from './identity';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-user notification center (the bell, /notifications). Every platform
@@ -19,15 +20,24 @@ export type NotificationFamily =
   | 'apps'
   | 'monitoring'
   | 'security'
-  | 'platform';
+  | 'platform'
+  // Personal notices about one's own account (recovery code used, password reset,
+  // e-mail changed): written for that user only, always in the bell and e-mailed
+  // when possible, never configurable (absent from the preferences).
+  | 'account';
 
 export const NOTIFICATION_FAMILIES: readonly NotificationFamily[] = [
+  'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring', 'security', 'platform', 'account',
+];
+
+/** Families whose delivery each user chooses (the preferences); 'account' is always delivered. */
+export const CONFIGURABLE_NOTIFICATION_FAMILIES: readonly NotificationFamily[] = [
   'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring', 'security', 'platform',
 ];
 
 /** Families a client user (kind 'client') can receive: never security / platform. */
 export const CLIENT_NOTIFICATION_FAMILIES: readonly NotificationFamily[] = [
-  'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring',
+  'releases', 'certificates', 'domains', 'quota', 'mail', 'apps', 'monitoring', 'account',
 ];
 
 /** Family of every notification event (preferences are set per family). */
@@ -79,7 +89,7 @@ export interface UserNotification {
   id: number;
   tenantId: number;
   accountId: number | null;
-  event: NotificationEvent;
+  event: NotificationEvent | AccountNotificationEvent;
   family: NotificationFamily;
   severity: UserNotificationSeverity;
   /** French (server-rendered, like the channel messages). */
@@ -117,6 +127,7 @@ export const DEFAULT_USER_NOTIFICATION_PREFS: UserNotificationPrefs = {
   monitoring: { inApp: true, email: false },
   security: { inApp: true, email: false },
   platform: { inApp: true, email: false },
+  account: { inApp: true, email: true },
 };
 
 /** GET /api/notifications/preferences */
@@ -183,6 +194,7 @@ export interface TransactionalMailSettingsInput {
   smtp?: { host?: string | null; port?: number; secure?: boolean; username?: string | null; from?: string | null; password?: string | null };
 }
 
+/** account: password reset, e-mail confirmation and the personal notices of the account. */
 export type TransactionalMailKind = 'notification' | 'test' | 'account';
 
 /** GET /api/system/transactional-mail/log */
