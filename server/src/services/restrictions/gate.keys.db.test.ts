@@ -507,8 +507,12 @@ test('protected actions on the key surfaces (MCP, REST v1)', { timeout: 600_000 
       const r = await mcp(K1, name, args as Record<string, unknown>);
       assert.equal(r.isError, false, `${name}: ${r.text}`);
     }
-    // …and the protected ones by default are protected (db.drop sensitive, query write via keys).
-    const r = await mcp(K1, 'query_database', { instance_id: instId, database_id: dbOther, sql: 'UPDATE items SET n = 2', write: true });
+    // Writing to a database stays open by default (destructive actions only)…
+    const w = await mcp(K1, 'query_database', { instance_id: instId, database_id: dbOther, sql: 'UPDATE items SET n = 2', write: true });
+    assert.equal(w.isError, false, w.text);
+    assert.equal(await pendingCount(), before);
+    // …and a deletion is protected (db.drop sensitive).
+    const r = await mcp(K1, 'delete_database', { instance_id: instId, database_id: dbOther, confirm_name: 'wp_other' });
     assert.match(r.text, /\(twoFactorRequired\)/);
     assert.equal(await pendingCount(), before + 1);
   });

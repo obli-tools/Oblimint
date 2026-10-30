@@ -21,7 +21,10 @@ test('catalogue: unique valid keys, defaults only on catalogue actions, platform
     if (a.platform) assert.equal(a.scopable, 'none', a.key);
   }
   for (const k of Object.keys(DEFAULT_RESTRICTIONS)) assert.ok(restrictableAction(k), k);
-  assert.equal(DEFAULT_RESTRICTIONS['db.query_write'].via, 'keys');
+  // Destructive actions only: writing to a database stays open.
+  assert.equal(DEFAULT_RESTRICTIONS['db.query_write'], undefined);
+  assert.equal(DEFAULT_RESTRICTIONS['db.ddl'], undefined);
+  assert.equal(DEFAULT_RESTRICTIONS['apikey.create'], undefined);
   assert.equal(DEFAULT_RESTRICTIONS['db.drop'].level, 'sensitive');
   assert.ok(defaultRestrictionsFor(true)['platform.tenant_delete']);
   assert.equal(defaultRestrictionsFor(false)['platform.tenant_delete'], undefined);

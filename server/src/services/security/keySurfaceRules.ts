@@ -32,10 +32,16 @@ export interface ActiveKeyRow {
   owner: string | null;
 }
 
-/** Addresses a key is reachable from: its list (a connector: + the connectors' ranges); null = open. */
+/**
+ * Addresses a key is reachable from: its list (a connector with a list: + the
+ * connectors' ranges, where its calls come from); null = open. No address =
+ * every address, for a connector as for a key (owner rule: each account
+ * secures its own keys).
+ */
 export function effectiveKeyList(kind: 'key' | 'connector', allowedIps: readonly string[], connectorRanges: readonly string[]): string[] | null {
+  if (!allowedIps.length) return null;
   const list = kind === 'connector' ? [...allowedIps, ...connectorRanges] : [...allowedIps];
-  return list.length ? [...new Set(list)] : null;
+  return [...new Set(list)];
 }
 
 export type OpenKeyRow = ActiveKeyRow & { why: 'noIp' | 'tooWide' };

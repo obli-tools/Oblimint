@@ -178,7 +178,7 @@ export const oauthService = {
     if (ip !== undefined) {
       const ips = Array.isArray(connector.allowed_ips) ? connector.allowed_ips.filter((x): x is string => typeof x === 'string') : [];
       const ranges = (await platformSettings.section('keySecurity').catch(() => null))?.connectorSourceRanges ?? [];
-      // Its addresses ∪ the ranges, whenever that union is non-empty (an IP-less connector: the ranges).
+      // Its addresses ∪ the ranges; an IP-less connector is open.
       const allowed = effectiveKeyList('connector', ips, ranges);
       if (allowed && !ipMatcher(allowed)(ip)) return fail(401, 'invalid_client', 'This client is not allowed from this address');
     }

@@ -195,40 +195,23 @@ export function isActionKey(key: string): boolean {
 }
 
 /**
- * Recommended defaults (spec §2), seeded into every tenant whose map is empty
- * (migration 027) and into every new tenant. 'none' is never stored.
+ * Defaults seeded into every tenant whose map is empty (migration 027) and
+ * into every new tenant: 2FA on the destructive actions only (deletions);
+ * everything else, writing to a database included, stays open until the
+ * tenant's admin sets it in the matrix. 'none' is never stored.
  */
 export const DEFAULT_RESTRICTIONS: Readonly<RestrictionMap> = {
   'site.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'site.publish_mode_change': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'account.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'release.publish_override_rollback': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'release.approve_override_scan': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'window.reject_db_restore': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'backup.restore': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'backup.disable': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'snapshot.restore': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
+  'snapshot.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'db.instance_drop': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'db.external_access': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'db.drop': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'db.import': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  // Free SQL in write mode: only in the hands of an agent (the panel's explorer stays free).
-  'db.query_write': { level: 'sensitive', scope: { mode: 'all' }, via: 'keys' },
-  'db.ddl': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'domain.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'dns.zone_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'dns.zone_reset': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'firewall.mode_change': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'mail.domain_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'mail.mailbox_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'preview.share_link_with_db': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'apikey.create': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'apikey.widen': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'connector.authorize': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'user.2fa_reset': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
+  'user.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'platform.tenant_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'platform.key_security': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
-  'platform.migration_cutover': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
 };
 
 /** Defaults a tenant map is seeded with: the master keeps the platform entries, the others never get them. */

@@ -315,10 +315,10 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
         {ipRequired && (
           <p className="flex items-start gap-2 rounded-lg bg-amber-400/10 p-3 text-xs text-amber-400">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            {t('keySecurity.key.requiredHint') || 'An allowed address is mandatory on the access keys of this workspace: list the addresses or networks the key will be used from (e.g. 203.0.113.0/24). A Claude connector needs none: Anthropic\'s ranges are added automatically.'}
+            {t('keySecurity.key.requiredHint') || 'An allowed address is mandatory on the access keys of this workspace: list the addresses or networks the key will be used from (e.g. 203.0.113.0/24). For a Claude connector, any address you list also brings Anthropic\'s ranges.'}
           </p>
         )}
-        {kind !== 'connector' && !ipRequired && !ips.trim() && (
+        {!ipRequired && !ips.trim() && (
           <p className="flex items-start gap-2 rounded-lg bg-amber-400/10 p-3 text-xs text-amber-400">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             {t('keySecurity.key.openBanner') || 'Without an allowed address, this key can be used from anywhere, and an open key keeps the strict IP mode of the access keys off for the whole platform. An IP may also be mandatory in this workspace.'}
@@ -326,7 +326,7 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
         )}
         {kind === 'connector' && (
           <p className="text-[11px] text-text-muted">
-            {t('keySecurity.key.connectorBanner') || 'Claude calls this connector from Anthropic\'s published outbound addresses: they are allowed automatically and never banned. Any other address must be listed here: a connector used from Claude Code or Claude Desktop calls from your own machine.'}
+            {t('keySecurity.key.connectorBanner') || 'Without an address, this connector is reachable from anywhere. Once you list addresses, Anthropic\'s published outbound addresses are added automatically (claude.ai calls from there; Claude Code or Claude Desktop call from your own machine, which must then be listed).'}
             {(initial?.connectorRanges?.length ?? 0) > 0 && <span className="ml-1 font-mono">{initial!.connectorRanges!.join(', ')}</span>}
           </p>
         )}

@@ -318,7 +318,7 @@ export const keyDatabases = {
       }
     };
     if (!write) return run();
-    // db.query_write (default: sensitive, keys only), and what the statement amounts to (DROP /
+    // db.query_write (open by default, protectable for the keys only), and what the statement amounts to (DROP /
     // TRUNCATE: db.ddl, rows changed: db.rows_write…), gated once on the strictest. The decider
     // reads the statement with its literals masked (as the audit); the exact one is bound by its digest.
     const params = {

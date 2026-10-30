@@ -60,7 +60,7 @@
     "trustedIps": "IP de confiance",
     "trustedIpsHint": "Jamais bannies par les surfaces des clés (leurs clés fausses sont refusées, pas comptées). Votre bureau, vos runners CI.",
     "connectorRanges": "Plages des connecteurs",
-    "connectorRangesHint": "D’où appellent les connecteurs Claude (adresses sortantes publiées par Anthropic). Toujours autorisées pour un connecteur et jamais bannies. Vide : chaque connecteur compte comme une clé ouverte.",
+    "connectorRangesHint": "D’où appellent les connecteurs Claude (adresses sortantes publiées par Anthropic). Jamais bannies, et ajoutées à la liste de chaque connecteur qui a des adresses. Un connecteur sans adresse est ouvert, comme une clé.",
     "anthropicRanges": "Plages Anthropic",
     "cliHint": "Bloqué dehors ? Depuis le serveur : docker exec <conteneur du panel> node dist/src/cli/keySecurity.js unban <ip> (ou trust <ip>, status, help).",
     "key": {
@@ -71,8 +71,8 @@
       "connectorRanges": "+ connecteurs",
       "connectorRangesHint": "Ajoutées automatiquement : les adresses sortantes des connecteurs (Anthropic).",
       "openBanner": "Sans adresse autorisée, cette clé est utilisable de partout, et une clé ouverte désactive le mode strict des clés d’accès pour toute la plateforme. Une IP peut aussi être obligatoire dans cet espace.",
-      "requiredHint": "Une adresse autorisée est obligatoire sur les clés d’accès de cet espace : indiquez les adresses ou réseaux depuis lesquels la clé sera utilisée (ex. 203.0.113.0/24). Un connecteur Claude n’en a pas besoin : les plages d’Anthropic sont ajoutées automatiquement.",
-      "connectorBanner": "Claude appelle ce connecteur depuis les adresses sortantes publiées par Anthropic : elles sont autorisées automatiquement et jamais bannies. Toute autre adresse doit figurer ici : un connecteur utilisé depuis Claude Code ou Claude Desktop appelle depuis votre propre machine."
+      "requiredHint": "Une adresse autorisée est obligatoire sur les clés d’accès de cet espace : indiquez les adresses ou réseaux depuis lesquels la clé sera utilisée (ex. 203.0.113.0/24). Pour un connecteur Claude, les adresses indiquées s’accompagnent des plages d’Anthropic.",
+      "connectorBanner": "Sans adresse, ce connecteur est joignable de partout. Dès que vous indiquez des adresses, celles publiées par Anthropic sont ajoutées automatiquement (claude.ai appelle depuis celles-ci ; Claude Code ou Claude Desktop appellent depuis votre propre machine, qu’il faut alors indiquer)."
     },
     "trust": {
       "title": "Ajouter aux IP de confiance",

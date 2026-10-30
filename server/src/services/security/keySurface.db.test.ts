@@ -121,8 +121,13 @@ test('IP security of the key surfaces', { timeout: 600_000 }, async (t: TestCont
   const owner = await actorForUser(OWNER, A);
   const K1 = await apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'ci', scopes: ['files.read'], siteScope: 'all', allowedIps: ['198.51.100.0/24'] });
   assert.equal(K1.open, false);
-  // A connector with a live authorization: closed by the connectors' ranges (Anthropic by default).
-  const CONN = await apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'claude', kind: 'connector', scopes: ['files.read'], siteScope: 'all' });
+  // An IP-less connector is open, like an IP-less key (owner rule: each account secures its own keys).
+  const OPEN_CONN = await apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'claude-open', kind: 'connector', scopes: ['files.read'], siteScope: 'all' });
+  assert.equal(OPEN_CONN.open, true);
+  assert.deepEqual(OPEN_CONN.connectorRanges, []);
+  await apiKeysService.remove(fakeReq(OWNER), owner, acct, OPEN_CONN.id);
+  // A connector with an address and a live authorization: its list ∪ the connectors' ranges (Anthropic by default).
+  const CONN = await apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'claude', kind: 'connector', scopes: ['files.read'], siteScope: 'all', allowedIps: ['198.51.100.0/24'] });
   assert.equal(CONN.open, false);
   assert.deepEqual(CONN.connectorRanges, ['160.79.104.0/21']);
   const family = crypto.randomUUID();
@@ -317,8 +322,8 @@ test('IP security of the key surfaces', { timeout: 600_000 }, async (t: TestCont
   assert.deepEqual(await apiKeysService.verifyDetailed(OPEN.key!, '203.0.113.99'), { ok: false, reason: 'ipRequired' });
   assert.equal((await apiKeysService.list(owner, acct)).find((k) => k.id === OPEN.id)?.ipMissing, true);
   await assert.rejects(apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'open2', scopes: ['files.read'], siteScope: 'all' }), (e: { code?: string }) => e.code === 'ipRequired');
-  // The connector needs no address of its own (the ranges cover it).
-  await apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'claude-2', kind: 'connector', scopes: ['files.read'], siteScope: 'all' });
+  // A connector follows the same rule as a key: an address is required too.
+  await assert.rejects(apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'claude-2', kind: 'connector', scopes: ['files.read'], siteScope: 'all' }), (e: { code?: string }) => e.code === 'ipRequired');
   await db('tenants').where({ id: A }).update({ key_require_ip: false });
   await platformSettings.update({ keySecurity: { requireIp: true } });
   platformSettings.invalidate();
@@ -337,19 +342,20 @@ test('IP security of the key surfaces', { timeout: 600_000 }, async (t: TestCont
   assert.equal((await mcp('203.0.113.80')).status, 401);
   assert.equal(await activeBan('203.0.113.80'), undefined);
 
-  // An IP-less connector is limited to the connectors' ranges — enforced even in watch mode
-  // (the regime and the key list count it as closed by them).
-  await db('api_keys').where({ id: CONN.id }).update({ allowed_ips: JSON.stringify([]) });
-  assert.deepEqual(await apiKeysService.verifyAccessTokenDetailed(accessToken, '203.0.113.99'), { ok: false, reason: 'ipNotAllowed' });
-  assert.equal((await apiKeysService.verifyAccessTokenDetailed(accessToken, '160.79.104.10')).ok, true);
-  assert.equal((await mcp('203.0.113.81', `Bearer ${accessToken}`)).status, 401, 'a leaked access token from elsewhere');
+  // A connector with a list refuses the client secret from elsewhere at /oauth/token too.
   const connForm = (rt: string) => new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rt, client_id: CONN.oauthClientId!, client_secret: CONN.clientSecret! }).toString();
   const tokElsewhere = await call('POST', '/oauth/token', '203.0.113.82', { form: connForm('obr_nope') });
   assert.equal(tokElsewhere.status, 401);
-  assert.equal(tokElsewhere.body.error, 'invalid_client', 'client secret used from outside the ranges');
+  assert.equal(tokElsewhere.body.error, 'invalid_client', 'client secret used from outside the list and the ranges');
   const tokRange = await call('POST', '/oauth/token', '160.79.104.30', { form: connForm('obr_nope') });
   assert.equal(tokRange.status, 400);
   assert.equal(tokRange.body.error, 'invalid_grant', 'from the ranges: authenticated, then the grant is checked');
+  // An IP-less connector is open, like an IP-less key (each account secures its own keys).
+  await db('api_keys').where({ id: CONN.id }).update({ allowed_ips: JSON.stringify([]) });
+  assert.equal((await apiKeysService.verifyAccessTokenDetailed(accessToken, '203.0.113.99')).ok, true);
+  assert.equal((await apiKeysService.verifyAccessTokenDetailed(accessToken, '160.79.104.10')).ok, true);
+  const tokOpen = await call('POST', '/oauth/token', '203.0.113.83', { form: connForm('obr_nope') });
+  assert.equal(tokOpen.body.error, 'invalid_grant', 'open connector: authenticated from anywhere, then the grant is checked');
 
   // Editing an IP-less key where an IP is mandatory: 400 ipRequired (a narrowing edit is never blocked).
   await db('tenants').where({ id: A }).update({ key_require_ip: true });
@@ -367,7 +373,7 @@ test('IP security of the key surfaces', { timeout: 600_000 }, async (t: TestCont
   const WIDE = await apiKeysService.create(fakeReq(OWNER), owner, acct, { name: 'wide', scopes: ['files.read'], siteScope: 'all', allowedIps: ['11.0.0.0/8'] });
   refresh();
   st = await call('GET', '/api/system/key-security/status', '198.51.100.5');
-  assert.deepEqual(st.body.data.openKeys.map((k: { id: number; why: string }) => [k.id, k.why]).sort(), [[OPEN.id, 'noIp'], [WIDE.id, 'tooWide']].sort());
+  assert.deepEqual(st.body.data.openKeys.map((k: { id: number; why: string }) => [k.id, k.why]).sort(), [[CONN.id, 'noIp'], [OPEN.id, 'noIp'], [WIDE.id, 'tooWide']].sort(), 'the IP-less connector counts as open');
   await apiKeysService.remove(fakeReq(OWNER), owner, acct, WIDE.id);
   refresh();
 

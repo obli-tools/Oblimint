@@ -26,12 +26,12 @@ test('regime: no key, an open key, every key closed, connectors with and without
   const closed = computeRegime([key(1, 'key', ['203.0.113.4']), key(2, 'key', ['198.51.100.0/24'])], [ANTHROPIC]);
   assert.equal(closed.regime, 'strict');
   assert.deepEqual(closed.allowList.sort(), ['198.51.100.0/24', '203.0.113.4']);
-  // A connector without addresses is closed by the connectors' ranges…
-  const conn = computeRegime([key(1, 'key', ['203.0.113.4']), key(3, 'connector', [])], [ANTHROPIC]);
+  // A connector without addresses is open (like a key), whatever the ranges…
+  assert.equal(computeRegime([key(1, 'key', ['203.0.113.4']), key(3, 'connector', [])], [ANTHROPIC]).regime, 'watch');
+  // … a connector with addresses is closed, its list widened by the connectors' ranges.
+  const conn = computeRegime([key(1, 'key', ['203.0.113.4']), key(3, 'connector', ['198.51.100.7'])], [ANTHROPIC]);
   assert.equal(conn.regime, 'strict');
   assert.ok(conn.allowList.includes(ANTHROPIC));
-  // … and open without any range (prudent fallback).
-  assert.equal(computeRegime([key(3, 'connector', [])], []).regime, 'watch');
   assert.deepEqual(effectiveKeyList('connector', ['203.0.113.9'], [ANTHROPIC]), ['203.0.113.9', ANTHROPIC]);
   assert.equal(effectiveKeyList('key', [], [ANTHROPIC]), null);
   assert.equal(computeRegime([key(1, 'key', ['203.0.113.4'])], []).activeKeys, 1);
@@ -94,7 +94,8 @@ interface Harness {
 function harness(over: Partial<KeySecuritySettings> = {}): Harness {
   const h: Harness = {
     settings: { ...DEFAULT_KEY_SECURITY_SETTINGS, strictMode: 'on', autoStrictAt: null, ...over },
-    keys: [key(1, 'key', ['203.0.113.4']), key(2, 'connector', [])],
+    // The connector has an address: closed, its list widened by the connectors' ranges.
+    keys: [key(1, 'key', ['203.0.113.4']), key(2, 'connector', ['203.0.113.250'])],
     sessions: [],
     bans: new Map(),
     banned: [],
@@ -241,13 +242,14 @@ test('regime: a key entry wider than an IPv4 /16 or an IPv6 /48 counts as open (
     key(4, 'key', ['2001:db8:1::/48', '198.51.0.0/16']), key(5, 'connector', []), key(6, 'key', []),
   ], [ANTHROPIC]);
   assert.equal(r.regime, 'watch');
-  assert.deepEqual(r.openKeys.map((k) => [k.id, k.why]), [[2, 'tooWide'], [3, 'tooWide'], [6, 'noIp']]);
+  assert.deepEqual(r.openKeys.map((k) => [k.id, k.why]), [[2, 'tooWide'], [3, 'tooWide'], [5, 'noIp'], [6, 'noIp']]);
   assert.ok(!r.allowList.includes('11.0.0.0/8'), 'a wide entry never joins the allow-list');
-  assert.ok(r.allowList.includes('2001:db8:1::/48') && r.allowList.includes(ANTHROPIC));
+  assert.ok(r.allowList.includes('2001:db8:1::/48'));
   // The connectors' ranges (platform setting) never make a connector "wide".
-  assert.equal(computeRegime([key(5, 'connector', [])], ['160.0.0.0/8']).regime, 'strict');
-  // An IP-less connector's list is the ranges (what contextFor and /oauth/token enforce).
-  assert.deepEqual(effectiveKeyList('connector', [], [ANTHROPIC]), [ANTHROPIC]);
+  assert.equal(computeRegime([key(5, 'connector', ['203.0.113.5'])], ['160.0.0.0/8']).regime, 'strict');
+  // An IP-less connector is open, like an IP-less key (each account secures its own keys).
+  assert.equal(computeRegime([key(5, 'connector', [])], [ANTHROPIC]).regime, 'watch');
+  assert.equal(effectiveKeyList('connector', [], [ANTHROPIC]), null);
   assert.equal(effectiveKeyList('connector', [], []), null);
 });
 

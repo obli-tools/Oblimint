@@ -333,7 +333,7 @@ The longest route wins: \`/uploads/\` comes before \`/\`. Removing the route giv
 
 ### Protected actions
 
-The humans of the account may protect some operations (dropping a database, an SQL write, a deletion, publishing, a cron job…; the defaults protect the destructive ones, and \`query_database\` with \`write: true\` for the agents). A protected call runs nothing and answers **428** with a request waiting for a human:
+The humans of the account may protect some operations (dropping a database, an SQL write, a deletion, publishing, a cron job…; by default only the deletions — a site, a database, a domain, a DNS zone, a mailbox…; writing to a database stays free unless the humans protect it). A protected call runs nothing and answers **428** with a request waiting for a human:
 
 - \`twoFactorRequired\`: the key's owner confirms it in the panel with his 2FA code (phone app or code);
 - \`approvalRequired\`: a **second** authorised person approves it in the panel (with his own code).
@@ -349,7 +349,7 @@ Other answers: \`twoFactorNotEnrolled\` (403, the key's owner has no 2FA: he ena
 
 What counts as the protected action, whatever the path taken:
 
-- **Publication**: a site created without \`publish_mode\` gets \`auto\` when the key may publish; that is a change of publication mode (protected by default), exactly as an explicit \`publish_mode: "auto"\`. When publishing is protected on a site, nothing publishes it on its own: mode \`auto\` no longer publishes the staging, a maintenance window is never validated automatically — call \`publish\` (a protected call) once your changes are in the staging.
+- **Publication**: a site created without \`publish_mode\` gets \`auto\` when the key may publish; that is a change of publication mode (protectable), exactly as an explicit \`publish_mode: "auto"\`. When publishing is protected on a site, nothing publishes it on its own: mode \`auto\` no longer publishes the staging, a maintenance window is never validated automatically — call \`publish\` (a protected call) once your changes are in the staging.
 - **Chunked upload** while writing files is protected: give \`contentSha256\` (the sha256 of the whole file) when opening it; it enters the request the human approves. Send the chunks in order, one at a time (\`parallel: 1\`; \`chunkOutOfOrder\` 409 otherwise); the file is written only if its content has that hash (\`contentMismatch\` 409, nothing written). Without it: \`contentSha256Required\` (400).
 - **SQL**: \`query_database\` with \`write: true\` is also a structure deletion when it drops or empties an object (DROP, TRUNCATE, ALTER … DROP), a row change when it inserts, updates or deletes rows, and an import when it loads data in bulk: the strictest protection of those applies, in one request.
 - **Protected import** (\`import_sql\`, the import route): counted with the heavy operations; at most one at a time per key while it is checked (\`tooManyProtectedImports\` 429).
@@ -849,7 +849,7 @@ La route la plus longue gagne : \`/uploads/\` passe avant \`/\`. Supprimer la ro
 
 ### Actions protégées
 
-Les humains du compte peuvent protéger certaines opérations (supprimer une base, une requête SQL en écriture, une suppression, une publication, une tâche planifiée… ; par défaut les opérations destructrices, et \`query_database\` avec \`write: true\` pour les agents). Un appel protégé n'exécute rien et répond **428** avec une demande qui attend un humain :
+Les humains du compte peuvent protéger certaines opérations (supprimer une base, une requête SQL en écriture, une suppression, une publication, une tâche planifiée… ; par défaut seulement les suppressions — un site, une base, un domaine, une zone DNS, une boîte mail… ; écrire dans une base reste libre sauf si les humains la protègent). Un appel protégé n'exécute rien et répond **428** avec une demande qui attend un humain :
 
 - \`twoFactorRequired\` : le propriétaire de la clé la confirme dans le panel avec son code 2FA (application du téléphone ou code) ;
 - \`approvalRequired\` : une **seconde** personne habilitée l'approuve dans le panel (avec son propre code).
@@ -865,7 +865,7 @@ Autres réponses : \`twoFactorNotEnrolled\` (403, le propriétaire de la clé n'
 
 Ce qui compte comme l'action protégée, quel que soit le chemin :
 
-- **Publication** : un site créé sans \`publish_mode\` passe en \`auto\` quand la clé peut publier ; c'est un changement de mode de publication (protégé par défaut), exactement comme un \`publish_mode: "auto"\` explicite. Quand la publication est protégée sur un site, rien ne le publie tout seul : le mode \`auto\` ne publie plus le staging, une fenêtre de maintenance n'est jamais validée automatiquement — appelle \`publish\` (un appel protégé) une fois tes changements dans le staging.
+- **Publication** : un site créé sans \`publish_mode\` passe en \`auto\` quand la clé peut publier ; c'est un changement de mode de publication (protégeable), exactement comme un \`publish_mode: "auto"\` explicite. Quand la publication est protégée sur un site, rien ne le publie tout seul : le mode \`auto\` ne publie plus le staging, une fenêtre de maintenance n'est jamais validée automatiquement — appelle \`publish\` (un appel protégé) une fois tes changements dans le staging.
 - **Téléversement par morceaux** quand l'écriture de fichiers est protégée : donne \`contentSha256\` (le sha256 du fichier entier) à l'ouverture ; il entre dans la demande que l'humain approuve. Envoie les morceaux dans l'ordre, un à la fois (\`parallel: 1\` ; sinon \`chunkOutOfOrder\` 409) ; le fichier n'est écrit que si son contenu a ce hachage (\`contentMismatch\` 409, rien d'écrit). Sans lui : \`contentSha256Required\` (400).
 - **SQL** : \`query_database\` avec \`write: true\` est aussi une suppression de structure quand il supprime ou vide un objet (DROP, TRUNCATE, ALTER … DROP), une modification de lignes quand il insère, modifie ou supprime des lignes, et un import quand il charge des données en masse : la protection la plus stricte de celles-ci s'applique, en une seule demande.
 - **Import protégé** (\`import_sql\`, la route d'import) : compté avec les opérations lourdes ; au plus un à la fois par clé pendant son contrôle (\`tooManyProtectedImports\` 429).

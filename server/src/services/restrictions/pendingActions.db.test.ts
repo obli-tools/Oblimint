@@ -69,7 +69,7 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
   const masterMap = await restrictionService.getMap(1);
   assert.equal(masterMap['db.drop']?.level, 'sensitive');
   assert.equal(masterMap['platform.tenant_delete']?.level, 'sensitive');
-  assert.equal(masterMap['db.query_write']?.via, 'keys');
+  assert.equal(masterMap['db.query_write'], undefined, 'writing to a database stays open by default');
   const constraint = await db.raw(`SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = 'web_bans_source_check'`) as { rows: Array<{ d: string }> };
   assert.match(constraint.rows[0].d, /key-intrusion/);
   assert.match(constraint.rows[0].d, /key-bruteforce/);

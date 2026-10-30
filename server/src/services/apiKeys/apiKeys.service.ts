@@ -197,9 +197,8 @@ async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
   const sites = await siteRows(rows.map((r) => r.id));
   const doms = await domainRows(rows.map((r) => r.id));
   const connections = await connectionRows(rows.filter((r) => r.kind === 'connector').map((r) => r.id));
-  // A connector is always reachable from the declared connector source ranges: open only without any.
+  // No address = open, for a connector as for a key; a connector with a list also gets the connectors' ranges.
   const ks = await keySecurity();
-  const connectorRanges = ks.connectorSourceRanges.length;
   const requiredByTenant = new Map<number, boolean>();
   for (const tid of new Set(rows.map((r) => r.tenant_id))) requiredByTenant.set(tid, await keyIpRequired(tid));
   const out: ApiKey[] = [];
@@ -223,9 +222,9 @@ async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
       domainIds: myDoms.filter((d) => !d.created_by_key).map((d) => d.domain_id).sort((a, b) => a - b),
       createdDomainIds: myDoms.filter((d) => d.created_by_key).map((d) => d.domain_id).sort((a, b) => a - b),
       allowedIps: ipsOf(r.allowed_ips),
-      open: ipsOf(r.allowed_ips).length === 0 && ((r.kind ?? 'key') === 'key' || connectorRanges === 0),
-      ipMissing: !!requiredByTenant.get(r.tenant_id) && ipsOf(r.allowed_ips).length === 0 && ((r.kind ?? 'key') === 'key' || connectorRanges === 0),
-      connectorRanges: r.kind === 'connector' ? [...ks.connectorSourceRanges] : [],
+      open: ipsOf(r.allowed_ips).length === 0,
+      ipMissing: !!requiredByTenant.get(r.tenant_id) && ipsOf(r.allowed_ips).length === 0,
+      connectorRanges: r.kind === 'connector' && ipsOf(r.allowed_ips).length > 0 ? [...ks.connectorSourceRanges] : [],
       createdByName: r.created_by_name ?? null, createdAt: iso(r.created_at) as string,
       lastUsedAt: iso(r.last_used_at), lastUsedIp: r.last_used_ip, expiresAt: iso(r.expires_at), inactiveScopes: inactive,
       oauthClientId: r.kind === 'connector' ? r.oauth_client_id : null,
@@ -314,10 +313,9 @@ export function invalidateKeySurfaces(): void {
   void import('../security/keySurfaceGuard').then((m) => m.keySurfaceGuard.invalidate()).catch(() => undefined);
 }
 
-/** 400 ipRequired: a key (never a connector, covered by the connectors' ranges) without address where one is mandatory. */
-async function assertIpWhenRequired(tenantId: number, kind: ApiKeyKind, ips: readonly string[]): Promise<void> {
+/** 400 ipRequired: a key or connector without address where one is mandatory. */
+async function assertIpWhenRequired(tenantId: number, _kind: ApiKeyKind, ips: readonly string[]): Promise<void> {
   if (ips.length > 0 || !(await keyIpRequired(tenantId))) return;
-  if (kind === 'connector' && (await keySecurity()).connectorSourceRanges.length > 0) return;
   throw new AppError(400, 'An allowed IP address is mandatory on the access keys of this workspace', 'ipRequired');
 }
 
@@ -648,9 +646,9 @@ async function contextFor(row: KeyWithAccount, userId: number, ip: string): Prom
   const ks = await keySecurity();
   const ips = ipsOf(row.allowed_ips);
   const connector = (row.kind ?? 'key') === 'connector';
-  if (requireIpFor(row.tenant_key_require_ip, ks.requireIp) && ips.length === 0 && (!connector || ks.connectorSourceRanges.length === 0)) return fail('ipRequired');
-  // Same list as the regime / the key list show (spec §5.3): a connector = its addresses ∪ the
-  // connectors' ranges — an IP-less connector is limited to the ranges, not open.
+  if (requireIpFor(row.tenant_key_require_ip, ks.requireIp) && ips.length === 0) return fail('ipRequired');
+  // Same list as the regime / the key list show: a connector with addresses = them ∪ the
+  // connectors' ranges; without any address, a key or a connector is open.
   const allowed = effectiveKeyList(connector ? 'connector' : 'key', ips, ks.connectorSourceRanges) ?? [];
   if (allowed.length && !ipMatcher(allowed)(ip)) return fail('ipNotAllowed');
   let user: HostingActor;
