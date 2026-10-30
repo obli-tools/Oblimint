@@ -34,6 +34,8 @@ export const userService = {
         password_hash: data.passwordHash,
         display_name: data.displayName || null,
         email: data.email || null,
+        // Written by an operator: trusted as verified (a reset link may go to it).
+        email_verified_for: data.email ? data.email.trim().toLowerCase() : null,
         // A client is never a platform administrator (also a DB CHECK).
         role: kind === 'client' ? 'user' : (data.role || 'user'),
         kind,
@@ -52,7 +54,11 @@ export const userService = {
     const updateData: Record<string, unknown> = { updated_at: new Date() };
     if (data.username !== undefined) updateData.username = data.username;
     if (data.displayName !== undefined) updateData.display_name = data.displayName;
-    if (data.email !== undefined) updateData.email = data.email || null;
+    if (data.email !== undefined) {
+      updateData.email = data.email || null;
+      // Written by an operator: trusted as verified (a reset link may go to it).
+      updateData.email_verified_for = data.email ? data.email.trim().toLowerCase() : null;
+    }
     if (data.role !== undefined) updateData.role = data.role;
     if (data.isActive !== undefined) updateData.is_active = data.isActive;
     const [row] = await db<UserRow>('users').where({ id }).update(updateData as any).returning('*');

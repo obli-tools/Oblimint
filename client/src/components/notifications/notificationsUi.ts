@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next';
-import type { NotificationChannelType, NotificationEvent } from '@oblimint/shared';
+import type { AccountNotificationEvent, NotificationChannelType, NotificationEvent } from '@oblimint/shared';
 
 export function channelTypeLabel(t: TFunction, type: NotificationChannelType): string {
   const fallback: Record<NotificationChannelType, string> = { smtp: 'E-mail (SMTP)', webhook: 'Webhook', discord: 'Discord', telegram: 'Telegram' };
@@ -7,12 +7,12 @@ export function channelTypeLabel(t: TFunction, type: NotificationChannelType): s
 }
 
 /** i18n key of an event ('quota.warning' → 'quotaWarning'). */
-function eventKey(e: NotificationEvent): string {
+function eventKey(e: NotificationEvent | AccountNotificationEvent): string {
   return e.replace(/\.(\w)/, (_, c: string) => c.toUpperCase());
 }
 
-export function eventLabel(t: TFunction, e: NotificationEvent): string {
-  const fallback: Record<NotificationEvent, string> = {
+export function eventLabel(t: TFunction, e: NotificationEvent | AccountNotificationEvent): string {
+  const fallback: Record<NotificationEvent | AccountNotificationEvent, string> = {
     'quota.warning': 'Quota threshold reached (80 %)',
     'quota.exceeded': 'Quota exceeded (100 %)',
     'quota.action': 'Uploads blocked / account suspended',
@@ -47,6 +47,15 @@ export function eventLabel(t: TFunction, e: NotificationEvent): string {
     'platform.updateAvailable': 'Platform update available',
     'platform.updated': 'Platform updated',
     'platform.updateFailed': 'Platform update failed',
+    'release.pendingApproval': 'Release waiting for approval',
+    'release.approved': 'Release approved',
+    'release.rejected': 'Release rejected',
+    'domain.verified': 'Domain ownership verified',
+    'domain.reclaimed': 'Domain taken back by its owner',
+    // Personal notices (family account)
+    'account.recoveryCodeUsed': 'Recovery code used',
+    'account.passwordReset': 'Password reset',
+    'account.emailChanged': 'E-mail address changed',
   };
   return t(`notifications.event.${eventKey(e)}`) || fallback[e];
 }

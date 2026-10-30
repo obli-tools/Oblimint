@@ -436,7 +436,15 @@
       "workflowFailed": "Workflow failed",
       "platformUpdateAvailable": "Platform update available",
       "platformUpdated": "Platform updated",
-      "platformUpdateFailed": "Platform update failed"
+      "platformUpdateFailed": "Platform update failed",
+      "releasePendingApproval": "Release waiting for approval",
+      "releaseApproved": "Release approved",
+      "releaseRejected": "Release rejected",
+      "domainVerified": "Domain ownership verified",
+      "domainReclaimed": "Domain taken back by its owner",
+      "accountRecoveryCodeUsed": "Recovery code used",
+      "accountPasswordReset": "Password reset",
+      "accountEmailChanged": "E-mail address changed"
     },
     "form": {
       "botToken": "Bot token",

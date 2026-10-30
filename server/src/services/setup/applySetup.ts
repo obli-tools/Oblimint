@@ -318,7 +318,7 @@ export async function runPostDeploySteps(req: SetupApplyRequest): Promise<void> 
       if (existing) {
         userId = existing.id;
         await trx('users').where({ id: userId }).update({
-          password_hash: hash, role: 'admin', kind: 'staff', is_active: true, email: req.admin.email, updated_at: new Date(),
+          password_hash: hash, role: 'admin', kind: 'staff', is_active: true, email: req.admin.email, email_verified_for: req.admin.email ? req.admin.email.toLowerCase() : null, updated_at: new Date(),
         });
         log('admin', `Administrator "${req.admin.username}" already existed: password and role reset`);
       } else {
@@ -330,6 +330,7 @@ export async function runPostDeploySteps(req: SetupApplyRequest): Promise<void> 
           kind: 'staff',
           is_active: true,
           email: req.admin.email,
+          email_verified_for: req.admin.email ? req.admin.email.toLowerCase() : null,
         }).returning('id');
         userId = row?.id ?? row;
         log('admin', `Administrator "${req.admin.username}" created (break-glass local account)`);

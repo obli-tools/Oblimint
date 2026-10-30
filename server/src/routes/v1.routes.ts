@@ -10,7 +10,9 @@ import type { ApiKeyContext } from '../services/apiKeys/apiKeys.service';
 import {
   CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_PATH_MAX, SITE_ENV_MAX_VALUE, SITE_ENV_MAX_VARS,
   DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S, FILE_EDIT_MAX_EDITS, FILE_READ_MAX_RANGE, FILE_SEARCH_MAX_PER_FILE, FILE_SEARCH_MAX_RESULTS,
+  NOTIFICATION_FAMILIES,
 } from '@oblimint/shared';
+import type { NotificationFamily } from '@oblimint/shared';
 import { keyDatabases } from '../services/apiKeys/keyDatabases';
 import { keyEnv } from '../services/apiKeys/keyEnv';
 import { errorListQuery, errorListShape } from '../services/siteErrors/siteErrors.service';
@@ -23,6 +25,7 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 // as releases) or ?area=data (the files the site writes).
 //   GET    /me                                          → ApiV1Me
 //   GET    /guide?lang=en|fr                            → this API's guide (text/markdown)
+//   GET    /notifications?unread=1&family=&before=&limit= → UserNotificationPage (the creator's, this account only; read-only)
 //   GET    /sites                                       → ApiV1Site[]
 //   POST   /sites                SiteCreate − accountId → ApiV1Site (201)              sites.create
 //   GET    /sites/:id                                   → ApiV1Site
@@ -184,6 +187,13 @@ const previewFetchQuery = z.object({
   method: z.enum(['GET', 'HEAD']).optional(),
 }).strict();
 
+const notificationsQuery = z.object({
+  unread: z.enum(['0', '1', 'true', 'false']).optional(),
+  family: z.enum(NOTIFICATION_FAMILIES as unknown as [NotificationFamily, ...NotificationFamily[]]).optional(),
+  before: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+}).strict();
+
 type Handler = (req: Request, res: Response) => Promise<void>;
 const h = (fn: Handler) => (req: Request, res: Response, next: (err?: unknown) => void) => { fn(req, res).catch(next); };
 const ok = (res: Response, data: unknown, status = 200) => { res.status(status).json({ success: true, data }); };
@@ -192,6 +202,11 @@ router.get('/me', h(async (req, res) => ok(res, await keyApi.me(ctxOf(req)))));
 router.get('/guide', h(async (req, res) => {
   ctxOf(req);
   res.type('text/markdown; charset=utf-8').send(await keyApi.guide(req, req.query.lang === 'fr' ? 'fr' : 'en'));
+}));
+router.get('/notifications', h(async (req, res) => {
+  const ctx = ctxOf(req);
+  const q = parseBody(notificationsQuery, req.query);
+  ok(res, await keyApi.notifications(ctx, { unread: q.unread === '1' || q.unread === 'true', family: q.family ?? null, before: q.before ?? null, limit: q.limit }));
 }));
 router.get('/sites', h(async (req, res) => ok(res, await keyApi.listSites(ctxOf(req)))));
 router.post('/sites', h(async (req, res) => ok(res, await keyApi.createSite(ctxOf(req), req, parseBody(createSchema, req.body)), 201)));

@@ -3,11 +3,12 @@ import { Readable } from 'stream';
 import { z, type ZodTypeAny } from 'zod';
 import {
   APP_PROFILES, CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, DBX_KEY_DEFAULT_TIMEOUT_S, DBX_KEY_MAX_BYTES, DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S, DBX_TEXT_PREVIEW, SITE_BASE_IDS,
-  SITE_ENV_MAX_VALUE, type ReleaseDiff,
+  SITE_ENV_MAX_VALUE, type ReleaseDiff, NOTIFICATION_FAMILIES,
   FILE_EDIT_MAX_BYTES, FILE_EDIT_MAX_EDITS, FILE_HASH_MAX_BYTES, FILE_LIST_HASH_MAX_BYTES, FILE_LIST_HASH_MAX_FILES, FILE_READ_MAX_LINES,
   FILE_SEARCH_DEFAULT_RESULTS, FILE_SEARCH_MAX_FILE_BYTES, FILE_SEARCH_MAX_FILES, FILE_SEARCH_MAX_MS, FILE_SEARCH_MAX_PER_FILE, FILE_SEARCH_MAX_RESULTS,
   SITE_ERROR_LIST_MAX, SITE_ERROR_RETENTION_DAYS,
 } from '@oblimint/shared';
+import type { NotificationFamily } from '@oblimint/shared';
 import { serverVersion } from '../../utils/version';
 import { AppError } from '../../middleware/errorHandler';
 import { countHeavyOp } from '../../middleware/rateLimiter';
@@ -149,6 +150,23 @@ const TOOLS: ToolDef[] = [
     inputSchema: obj({ lang: { type: 'string', enum: ['en', 'fr'], description: 'Language (default en).' } }, []),
     args: z.object({ lang: z.enum(['en', 'fr']).optional() }),
     run: (_ctx, req, a) => keyApi.guide(req, a.lang ?? 'en'),
+  },
+  {
+    name: 'list_notifications', title: 'Notifications', readOnly: true,
+    description: 'Notifications of the key\'s user about this account, newest first: releases awaiting approval / approved / rejected, certificates issued or failing, domain ownership verified, quota, cron. Only for a key on every site, and only the families its scopes cover (releases: releases.publish; domains / certificates: every domain too; monitoring: cron.manage); otherwise empty. Read-only (they stay unread for the human). unreadCount counts the unread ones; hasMore: call again with before = the last id.',
+    inputSchema: obj({
+      unread: { type: 'boolean', description: 'Only the unread ones.' },
+      family: { type: 'string', enum: [...NOTIFICATION_FAMILIES], description: 'Only one family of events.' },
+      before: { type: 'integer', description: 'Older than this notification id (paging).' },
+      limit: { type: 'integer', minimum: 1, maximum: 50, description: 'Default 30.' },
+    }, []),
+    args: z.object({
+      unread: z.boolean().optional(),
+      family: z.enum(NOTIFICATION_FAMILIES as unknown as [NotificationFamily, ...NotificationFamily[]]).optional(),
+      before: zId.optional(),
+      limit: z.number().int().min(1).max(50).optional(),
+    }),
+    run: (ctx, _r, a) => keyApi.notifications(ctx, { unread: a.unread === true, family: a.family ?? null, before: a.before ?? null, limit: a.limit }),
   },
   {
     name: 'list_sites', title: 'List sites', readOnly: true,

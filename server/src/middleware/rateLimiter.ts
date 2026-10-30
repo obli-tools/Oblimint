@@ -224,3 +224,73 @@ export const stepUpLimiter = rateLimit({
     error: 'Too many verification attempts, please try again later',
   },
 });
+
+/**
+ * Signed-in requests that make the platform send an e-mail to an address the
+ * caller chooses (POST /api/profile/email, /email/verify): EVERY request
+ * counts (a correct password each time is no excuse), per account and per
+ * address (IPv6 /64). The step-up prompt doubles a request: 20 / hour. The
+ * service caps the links themselves (EMAIL_LINK_MAX_PER_HOUR).
+ */
+export const identityMailLimiter = [
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `idmail-user:${req.session?.userId ?? reqIpKey(req)}`,
+    message: { success: false, error: 'Too many requests, please try again later', code: 'rateLimited' },
+  }),
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 40,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `idmail-ip:${reqIpKey(req)}`,
+    message: { success: false, error: 'Too many requests, please try again later', code: 'rateLimited' },
+  }),
+];
+
+// ── Self-service identity (public routes, auth.routes.ts) ───────────────────
+
+const resetEmail = (req: Request): string => {
+  const e = (req.body as { email?: unknown } | undefined)?.email;
+  return typeof e === 'string' ? e.trim().toLowerCase().slice(0, 254) : '';
+};
+
+/**
+ * Forgotten password requests: per address (IPv6 /64) 10 / 15 min, and per
+ * requested e-mail 5 / hour whoever asks (mail bombing of one person). The
+ * service adds its own per-account limit. Every answer, 429 included, says
+ * nothing about the address.
+ */
+export const passwordResetRequestLimiter = [
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `pwreset-ip:${reqIpKey(req)}`,
+    message: { success: false, error: 'Too many requests, please try again later', code: 'rateLimited' },
+  }),
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => resetEmail(req) === '',
+    keyGenerator: (req) => `pwreset-email:${resetEmail(req)}`,
+    message: { success: false, error: 'Too many requests, please try again later', code: 'rateLimited' },
+  }),
+];
+
+/** E-mailed links (reset / confirmation): checks and uses per address, failures only (token guessing). */
+export const identityLinkLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `idlink-ip:${reqIpKey(req)}`,
+  message: { success: false, error: 'Too many attempts, please try again later', code: 'rateLimited' },
+});

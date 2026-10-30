@@ -1,9 +1,12 @@
 import apiClient from './client';
-import type { ApiResponse, User } from '@oblimint/shared';
+import type { ApiResponse, RecoveryCodesGenerated, User } from '@oblimint/shared';
 
 /** TOTP only in P0 (no e-mail codes). */
 export interface TwoFactorStatus {
   totpEnabled: boolean;
+  /** Unused recovery codes of the current batch (0 = none). */
+  recoveryCodesRemaining?: number;
+  recoveryCodesTotal?: number;
 }
 
 export interface TotpSetupData {
@@ -23,8 +26,10 @@ export const twoFactorApi = {
     return res.data.data!;
   },
 
-  async totpEnable(code: string): Promise<void> {
-    await apiClient.post('/profile/2fa/totp/enable', { code });
+  /** Enables the authenticator; the answer carries its first batch of recovery codes (shown once). */
+  async totpEnable(code: string): Promise<{ recoveryCodes?: RecoveryCodesGenerated }> {
+    const res = await apiClient.post<ApiResponse<{ recoveryCodes?: RecoveryCodesGenerated }>>('/profile/2fa/totp/enable', { code });
+    return res.data.data ?? {};
   },
 
   /** P0 contract: POST `totp/disable` (Obliance used DELETE /profile/2fa/totp). */
@@ -33,8 +38,8 @@ export const twoFactorApi = {
   },
 
   /** Second step of the login when the account has TOTP. */
-  async verify(code: string): Promise<{ user: User }> {
-    const res = await apiClient.post<ApiResponse<{ user: User }>>('/profile/2fa/verify', { code, method: 'totp' });
+  async verify(code: string, method: 'totp' | 'recovery' = 'totp'): Promise<{ user: User; recoveryCodesRemaining?: number }> {
+    const res = await apiClient.post<ApiResponse<{ user: User; recoveryCodesRemaining?: number }>>('/profile/2fa/verify', { code, method });
     return res.data.data!;
   },
 };

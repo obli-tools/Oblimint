@@ -62,6 +62,15 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
     tenant_id: 1, account_id: acct.id, name: 'example.com', include_www: true, tls_mode: 'letsencrypt', force_https: true, ...verified,
   }).returning('id');
   const [goneDom] = await db('domains').insert({ tenant_id: 1, account_id: gone.id, name: 'gone.example', ...verified }).returning('id');
+  // The domain's holder: a client member of the account (notification center).
+  const [holder] = await db('users').insert({ username: 'cert-holder', role: 'user', kind: 'client', is_active: true, password_hash: 'x' }).returning('id');
+  await db('account_users').insert({ user_id: holder.id, account_id: acct.id, capabilities: JSON.stringify([]) });
+  const { notificationQueueIdle } = await import('../usage/notifications.service');
+  const holderNotes = async (event: string) => {
+    await notificationQueueIdle();
+    return db('user_notifications').where({ user_id: holder.id, event }).select('tenant_id', 'account_id', 'link', 'message', 'severity') as
+      Promise<Array<{ tenant_id: number; account_id: number | null; link: string | null; message: string; severity: string }>>;
+  };
   await db('site_routes').insert([
     { account_id: acct.id, domain_id: dom.id, path_prefix: '/', site_id: site.id },
     { account_id: gone.id, domain_id: goneDom.id, path_prefix: '/', site_id: goneSite.id },
@@ -122,6 +131,12 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
   assert.ok(detail.notAfter && new Date(detail.notAfter).getTime() > Date.now() + 80 * 24 * 3600_000);
   assert.ok(detail.log.some((l) => l.message.includes('Certificate installed')));
   assert.ok(fs.existsSync(path.join(localPaths.edgeCerts(), 'example.com', 'privkey.pem')));
+  // The holder hears the first certificate of a tenant domain (not only the platform's own names).
+  const issuedNotes = await holderNotes('certificate.issued');
+  assert.equal(issuedNotes.length, 1, 'certificate.issued reaches the account member');
+  assert.equal(issuedNotes[0].tenant_id, 1);
+  assert.equal(Number(issuedNotes[0].account_id), Number(acct.id));
+  assert.equal(issuedNotes[0].link, '/domains');
 
   const withTls = (await edgeService.buildVhosts()).find((v) => v.id === `d-${dom.id}`)!;
   assert.ok(withTls.tls, 'valid cert + files → tls');
@@ -147,6 +162,13 @@ test('edge DB integration (buildVhosts, certificate issuance + renewal pass)', {
   const alert = await db('audit_logs').where({ action: 'certificate.renewal_failed', tenant_id: 1 }).first();
   assert.ok(alert, 'renewal_failed audited in the tenant of the domain');
   assert.equal(alert.resource_path, String(dom.id));
+  // First failure of the streak: the holder is told, with the client-safe sentence only (A6).
+  const failedNotes = await holderNotes('certificate.failed');
+  assert.equal(failedNotes.length, 1, 'certificate.failed reaches the account member');
+  assert.equal(failedNotes[0].severity, 'warning');
+  assert.match(failedNotes[0].message, /Let's Encrypt rate limit reached/);
+  assert.ok(!failedNotes[0].message.includes('rate limited'), 'never the raw ACME text');
+  assert.match(failedNotes[0].message, /Le certificat actuel reste servi/);
 
   // Backoff: the next pass does not retry.
   const attemptsBefore = row.last_attempt_at;

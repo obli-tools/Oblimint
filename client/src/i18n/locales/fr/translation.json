@@ -275,7 +275,14 @@
   },
   "notificationCenter": {
     "empty": "Aucune notification",
-    "title": "Centre de notifications"
+    "title": "Centre de notifications",
+    "markAllRead": "Tout marquer comme lu",
+    "markRead": "Marquer comme lu",
+    "dismiss": "Retirer",
+    "agoSeconds": "il y a {{count}} s",
+    "agoMinutes": "il y a {{count}} min",
+    "agoHours": "il y a {{count}} h",
+    "agoDays": "il y a {{count}} j"
   },
   "notifications": {
     "title": "Notifications"
@@ -448,6 +455,7 @@
       "backups": "Sauvegardes",
       "health": "Surveillance de santé",
       "notifications": "Notifications",
+      "emailSender": "Expéditeur des e-mails",
       "obligate": "SSO Obligate"
     }
   },
@@ -806,7 +814,8 @@
     "openClientAccount": "Ouvrir le compte d'hébergement",
     "clientNoAccount": "Ce client n'est rattaché à aucun compte d'hébergement visible dans cet espace de travail.",
     "clientSeveralAccounts": "Membre de {{count}} comptes : {{username}} est ouvert.",
-    "clientAccountFailed": "Impossible de trouver le compte de ce client"
+    "clientAccountFailed": "Impossible de trouver le compte de ce client",
+    "ownEmailHint": "Votre propre adresse se change depuis votre profil : la nouvelle adresse est confirmée par un lien."
   },
   "objectPage": {
     "account": {

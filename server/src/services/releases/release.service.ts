@@ -563,6 +563,15 @@ async function scanGate(run: Run, scan: ScanSummary, opts: { approvedBy: number 
   if (!opts.approvedBy && (scan.verdict === 'suspicious' || ctx.site.publish_mode === 'approval')) {
     const why = scan.verdict === 'suspicious' ? 'contenu suspect' : 'mode approbation';
     await run.step('info', `en attente d’approbation (${why})`, { status: 'awaiting_approval' });
+    // A window's release is decided through its window (window.pendingReview tells the reviewers).
+    if (!release.window_id) {
+      notify('release.pendingApproval', {
+        tenantId: ctx.site.tenant_id, accountId: ctx.account.id, key: `release:${release.id}`, severity: scan.verdict === 'suspicious' ? 'warning' : 'info',
+        title: `Release à approuver : ${ctx.site.name}`,
+        message: `La release #${release.number} du site ${ctx.site.name} attend une approbation (${why}).`,
+        link: `/sites/${ctx.site.id}?tab=releases&release=${release.id}`,
+      });
+    }
     return false;
   }
   return true;
@@ -1313,6 +1322,12 @@ export const releaseService = {
       if (!n) throw new AppError(409, 'This release is not awaiting approval', 'releaseNotAwaitingApproval');
       started = true;
       void runInBackground(siteId, releaseId, 'deploy');
+      notify('release.approved', {
+        tenantId: ctx.site.tenant_id, accountId: ctx.account.id, key: `release:${releaseId}`, severity: 'info',
+        title: `Release approuvée : ${ctx.site.name}`,
+        message: `La release #${row.number} du site ${ctx.site.name} a été approuvée par ${await userName(userId)} ; sa mise en ligne a commencé.`,
+        link: `/sites/${siteId}?tab=releases&release=${releaseId}`,
+      });
       return toRelease(await fetchRelease(siteId, releaseId));
     } finally {
       if (!started) locks.delete(siteId);
@@ -1330,6 +1345,12 @@ export const releaseService = {
       .update({ status: 'rejected', error: why, updated_at: db.fn.now() });
     if (!n) throw new AppError(409, 'This release is not awaiting approval', 'releaseNotAwaitingApproval');
     await run.save({ status: 'rejected' });
+    notify('release.rejected', {
+      tenantId: ctx.site.tenant_id, accountId: ctx.account.id, key: `release:${releaseId}`, severity: 'warning',
+      title: `Release rejetée : ${ctx.site.name}`,
+      message: `La release #${row.number} du site ${ctx.site.name} a été rejetée par ${await userName(userId)}${why ? ` : ${why}` : '.'}`,
+      link: `/sites/${siteId}?tab=releases&release=${releaseId}`,
+    });
     return toRelease(await fetchRelease(siteId, releaseId));
   },
 

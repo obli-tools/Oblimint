@@ -17,6 +17,8 @@ import { useIsCoarsePointer } from '@/hooks/useMediaQuery';
 // instead of the raw key.
 const BUILTIN_ACTIONS: Record<string, [key: string, fallback: string]> = {
   'profile.totp_manage': ['twoFactorPrompt.actions.totpManage', 'Change your authenticator app'],
+  'profile.recovery_codes': ['identity.prompt.recoveryCodes', 'Generate new recovery codes'],
+  'profile.email_change': ['identity.prompt.emailChange', 'Change your e-mail address'],
 };
 
 export function TwoFactorPromptModal({

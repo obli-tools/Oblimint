@@ -13,6 +13,9 @@ router.post('/totp/setup', requireAuth, stepUpLimiter, twoFactorController.totpS
 router.post('/totp/enable', requireAuth, stepUpLimiter, twoFactorController.totpEnable);
 router.delete('/totp', requireAuth, stepUpLimiter, twoFactorController.totpDisable);       // Obliance path
 router.post('/totp/disable', requireAuth, stepUpLimiter, twoFactorController.totpDisable); // P0-PLAN alias
+// One-time recovery codes (lost authenticator): count, new batch (step-up).
+router.get('/recovery-codes', requireAuth, twoFactorController.recoveryStatus);
+router.post('/recovery-codes', requireAuth, stepUpLimiter, twoFactorController.recoveryGenerate);
 // E-mail codes are not offered by Oblimint (P0).
 router.post('/email/setup', requireAuth, twoFactorController.emailUnavailable);
 router.post('/email/enable', requireAuth, twoFactorController.emailUnavailable);

@@ -26,6 +26,12 @@ declare module 'express-session' {
      * grants (services/firewall). Absent = no 2FA on this session.
      */
     mfaVerifiedAt?: number;
+    /**
+     * Epoch ms of a sign-in completed with a 2FA RECOVERY code (lost
+     * authenticator): for RECOVERY_LOGIN_GRACE_MINUTES the session may remove /
+     * replace its authenticator without a TOTP code (services/stepUp.ts).
+     */
+    recoveryLoginAt?: number;
   }
 }
 

@@ -115,6 +115,8 @@ export const clientUsersService = {
         password_hash: passwordHash,
         display_name: input.displayName ?? null,
         email: input.email ?? null,
+        // Written by the staff creating the login: trusted as verified.
+        email_verified_for: input.email ? input.email.trim().toLowerCase() : null,
         role: 'user',
         kind: 'client',
         is_active: true,

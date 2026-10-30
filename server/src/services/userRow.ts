@@ -21,6 +21,14 @@ export interface UserRow {
   avatar?: string | null;
 }
 
+/**
+ * A LOCAL account (managed here): no foreign_source at all. The one
+ * definition used by the step-up and the self-service identity (recovery
+ * codes, e-mail, password reset): an SSO account is never local, whatever
+ * its password column holds.
+ */
+export const isLocalAccount = (u: { foreign_source?: string | null }): boolean => !u.foreign_source;
+
 const iso = (d: unknown): string => (d instanceof Date ? d.toISOString() : String(d));
 
 export function rowToUser(row: UserRow): User {

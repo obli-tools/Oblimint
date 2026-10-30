@@ -366,10 +366,12 @@ router.get('/dashboard-stats', async (req, res) => {
  * client space address, if any.
  */
 router.get('/sso-config', async (req, res) => {
-  let host: { panelRole: PanelHostRole | null; clientPanelUrl: string | null } = { panelRole: null, clientPanelUrl: null };
+  let host: { panelRole: PanelHostRole | null; clientPanelUrl: string | null; passwordResetAvailable: boolean } = { panelRole: null, clientPanelUrl: null, passwordResetAvailable: false };
   try {
     const { role, hosts } = await requestPanelRole(req);
-    host = { panelRole: role, clientPanelUrl: hosts.client ? `https://${hosts.client}` : null };
+    // "Forgot your password?" is offered when the platform can e-mail a link (local accounts only).
+    const { transactionalMailReady } = await import('../services/mail/transactional');
+    host = { panelRole: role, clientPanelUrl: hosts.client ? `https://${hosts.client}` : null, passwordResetAvailable: !!(hosts.admin || hosts.client) && await transactionalMailReady() };
   } catch { /* host names unreadable: plain panel */ }
   if (host.panelRole === 'client') {
     res.json({ success: true, data: { obligateUrl: null, obligateReachable: false, obligateEnabled: false, ...host } });

@@ -20,6 +20,8 @@ export interface User {
   kind: UserKind;
   isActive: boolean;
   email: string | null;
+  /** GET /api/profile only: the address is proven (a password reset link can go to it). */
+  emailVerified?: boolean;
   preferredLanguage: string;
   preferences: UserPreferences;
   totpEnabled: boolean;

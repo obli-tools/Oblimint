@@ -1,7 +1,9 @@
 import type { Request, Response } from 'express';
+import { RECOVERY_LOGIN_GRACE_MINUTES } from '@oblimint/shared';
 import { db } from '../db';
 import { comparePassword } from '../utils/crypto';
 import { acceptTotpStep, hashSessionId, twoFactorService } from './twoFactor.service';
+import { isLocalAccount } from './userRow';
 
 // Step-up for adding / replacing / removing a second factor (Obliance P2,
 // simplified: no trusted IPs, no device keys, no Obligate TOTP in P0):
@@ -14,8 +16,17 @@ import { acceptTotpStep, hashSessionId, twoFactorService } from './twoFactor.ser
 // (twoFactorRequired / passwordRequired → prompt → same request + proof).
 
 export type StepUpOutcome =
-  | { ok: true; via: 'totp' | 'password' }
+  | { ok: true; via: 'totp' | 'password' | 'recovery' }
   | { ok: false; status: number; body: Record<string, unknown> };
+
+/** Step-ups a recent recovery sign-in satisfies: the second factor itself only (never the e-mail, never a password). */
+const RECOVERY_GRACE_ACTIONS = new Set(['profile.totp_manage', 'profile.recovery_codes']);
+
+/** The session signed in with a 2FA recovery code less than RECOVERY_LOGIN_GRACE_MINUTES ago. */
+export function recoveryGraceActive(req: Request, now: number = Date.now()): boolean {
+  const at = Number(req.session?.recoveryLoginAt);
+  return Number.isFinite(at) && at > 0 && now - at >= 0 && now - at < RECOVERY_LOGIN_GRACE_MINUTES * 60_000;
+}
 
 export async function checkFactorManagement(req: Request, actionKey: string): Promise<StepUpOutcome> {
   const userId = req.session?.userId;
@@ -28,6 +39,12 @@ export async function checkFactorManagement(req: Request, actionKey: string): Pr
   const proof = req.stepUpProof ?? {};
 
   if (row.totp_enabled && row.totp_secret) {
+    // Lost authenticator: a session signed in with a recovery code a few
+    // minutes ago may remove / replace it (and regenerate its codes) without
+    // a TOTP code it no longer has. Never for an SSO account (no local codes).
+    if (!proof.twoFactorCode && RECOVERY_GRACE_ACTIONS.has(actionKey) && recoveryGraceActive(req) && isLocalAccount(row)) {
+      return { ok: true, via: 'recovery' };
+    }
     if (!proof.twoFactorCode) {
       return {
         ok: false, status: 401,
@@ -42,7 +59,7 @@ export async function checkFactorManagement(req: Request, actionKey: string): Pr
     return { ok: true, via: 'totp' };
   }
 
-  if (row.foreign_source === 'obligate' || !row.password_hash) {
+  if (!isLocalAccount(row) || !row.password_hash) {
     return {
       ok: false, status: 403,
       body: { success: false, error: 'The two-factor authentication of an SSO account is managed in Obligate.', code: 'ssoTwoFactorManaged' },

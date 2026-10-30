@@ -111,6 +111,12 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'platform.updateAvailable': 'Mise à jour de la plateforme disponible',
   'platform.updated': 'Plateforme mise à jour',
   'platform.updateFailed': 'Échec de la mise à jour de la plateforme',
+  // Notification center
+  'release.pendingApproval': 'Release en attente d’approbation',
+  'release.approved': 'Release approuvée',
+  'release.rejected': 'Release rejetée',
+  'domain.verified': 'Propriété du domaine vérifiée',
+  'domain.reclaimed': 'Domaine repris par son propriétaire',
   test: 'Test',
 };
 
@@ -153,7 +159,7 @@ export function plainText(n: RenderedNotification): string {
   ].join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function htmlBody(n: RenderedNotification): string {
+export function htmlBody(n: RenderedNotification): string {
   const lines = n.message.split('\n').map(escapeHtml).join('<br>');
   return [
     `<h2 style="margin:0 0 12px">${escapeHtml(SEVERITY_ICON[n.severity])} ${escapeHtml(n.title)}</h2>`,

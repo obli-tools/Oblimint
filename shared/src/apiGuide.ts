@@ -114,6 +114,7 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 |---|---|---|
 | \`whoami\` | The key, its rights, the account | — |
 | \`get_guide\` | This guide (\`lang\`: \`en\` or \`fr\`) | — |
+| \`list_notifications\` | Notifications of the key's human about this account (release awaiting approval / approved / rejected, certificate issued or failing, domain verified, quota, cron…): \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Only for a key on every site, and only the families its scopes cover (releases: \`releases.publish\`; domains and certificates: every domain too; cron: \`cron.manage\`). Read-only: they stay unread for the human | — |
 | \`list_sites\` / \`get_site\` | Sites of the key (id, slug, domains, status, document root, publish mode); \`liveRelease\` (since when, how: \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, by whom), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
 | \`create_site\` | Create a site: \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (URL prefix it expects, e.g. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Change a site: \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
@@ -190,7 +191,7 @@ The idea: the agent develops on the platform, puts things live **only once the w
    - \`healthcheckFailed\`: the site did not answer its health check on the new code; the previous release is live again. \`get_release\` for the log, \`read_logs\` (\`source: "error"\`, \`since\`: the release's \`createdAt\`), fix, publish again.
    - \`reloadFailed\`: a container could not be reloaded; the previous release is live again. Retry later; tell the human if it happens again.
    - \`scanBlocked\`: the security scan blocks the release (\`awaiting_approval\`); only a staff override publishes it. Show the findings to the human.
-   - \`awaiting_approval\` without an error code: the site publishes with approval (or the content is suspicious): tell the human.
+   - \`awaiting_approval\` without an error code: the site publishes with approval (or the content is suspicious): tell the human. The approvers get a notification, and \`list_notifications\` shows you \`release.approved\` / \`release.rejected\` once they decide.
 2. \`diff_release\` (\`against: "live"\` before, \`"previous"\` after) shows exactly what changed.
 3. Check that the site answers (its URL), then \`list_errors\` with \`release_id\` (the new release) and \`new_only: true\` a minute or two later: the PHP errors this release brought (collected every minute). \`get_error\` for the stack; \`read_logs\` (\`source: "error"\`, \`since\`) for the raw lines.
    - \`errorClass: "readOnlyWrite"\`: the code writes next to itself (cache, uploads): the live code is read-only. Declare that folder as a data path (\`add_data_path\`) and publish again.
@@ -334,6 +335,7 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 |---|---|---|---|
 | GET | \`/me\` | | — |
 | GET | \`/guide\` | \`?lang=en\` or \`fr\`: this guide as Markdown | — |
+| GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50): \`{ items, unreadCount, hasMore }\`, this account only, within the key's reach (see \`list_notifications\`), read-only | — |
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
 | PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |
@@ -593,6 +595,7 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 |---|---|---|
 | \`whoami\` | La clé, ses droits, le compte | — |
 | \`get_guide\` | Ce guide (\`lang\`: \`fr\` ou \`en\`) | — |
+| \`list_notifications\` | Notifications de l'humain de la clé sur ce compte (release en attente d'approbation / approuvée / rejetée, certificat délivré ou en échec, domaine vérifié, quota, cron…) : \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Seulement pour une clé sur tous les sites, et seulement les familles que couvrent ses portées (releases : \`releases.publish\` ; domaines et certificats : tous les domaines aussi ; cron : \`cron.manage\`). Lecture seule : elles restent non lues pour l'humain | — |
 | \`list_sites\` / \`get_site\` | Sites de la clé (id, slug, domaines, statut, racine web, mode de publication) ; \`liveRelease\` (depuis quand, comment : \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, par qui), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
 | \`create_site\` | Créer un site : \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (préfixe d'URL attendu, ex. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Modifier un site : \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
@@ -669,7 +672,7 @@ L'idée : l'agent développe sur la plateforme, ne met en ligne **qu'une fois le
    - \`healthcheckFailed\` : le site n'a pas répondu à son contrôle de santé sur le nouveau code ; la release précédente est de nouveau en ligne. \`get_release\` pour le journal, \`read_logs\` (\`source: "error"\`, \`since\` : le \`createdAt\` de la release), corrige, republie.
    - \`reloadFailed\` : un conteneur n'a pas pu être rechargé ; la release précédente est de nouveau en ligne. Réessaie plus tard ; préviens l'humain si ça recommence.
    - \`scanBlocked\` : l'analyse de sécurité bloque la release (\`awaiting_approval\`) ; seule une dérogation du staff la publie. Montre les détections à l'humain.
-   - \`awaiting_approval\` sans code d'erreur : le site publie avec validation (ou le contenu est suspect) : préviens l'humain.
+   - \`awaiting_approval\` sans code d'erreur : le site publie avec validation (ou le contenu est suspect) : préviens l'humain. Les approbateurs reçoivent une notification, et \`list_notifications\` te montre \`release.approved\` / \`release.rejected\` une fois la décision prise.
 2. \`diff_release\` (\`against: "live"\` avant, \`"previous"\` après) montre exactement ce qui a changé.
 3. Vérifie que le site répond (son URL), puis \`list_errors\` avec \`release_id\` (la nouvelle release) et \`new_only: true\` une à deux minutes plus tard : les erreurs PHP apportées par cette release (collectées chaque minute). \`get_error\` pour la pile d'appels ; \`read_logs\` (\`source: "error"\`, \`since\`) pour les lignes brutes.
    - \`errorClass: "readOnlyWrite"\` : le code écrit à côté de lui-même (cache, uploads) alors que le code en ligne est en lecture seule. Déclare ce dossier comme chemin de données (\`add_data_path\`) et republie.
@@ -813,6 +816,7 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 |---|---|---|---|
 | GET | \`/me\` | | — |
 | GET | \`/guide\` | \`?lang=fr\` ou \`en\` : ce guide en Markdown | — |
+| GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50) : \`{ items, unreadCount, hasMore }\`, ce compte seulement, dans la portée de la clé (voir \`list_notifications\`), lecture seule | — |
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
 | PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |

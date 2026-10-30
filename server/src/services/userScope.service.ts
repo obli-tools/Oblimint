@@ -230,5 +230,7 @@ export async function resetSecondFactors(userId: number): Promise<boolean> {
     totp_enabled: false,
     updated_at: new Date(),
   });
+  // Its recovery codes went with the authenticator (a new batch comes with the next one).
+  await db('user_recovery_codes').where({ user_id: userId }).delete();
   return count > 0;
 }

@@ -11,6 +11,7 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { LoginPage } from '@/pages/LoginPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { ProfilePage } from '@/pages/ProfilePage';
+import { NotificationsPage } from '@/pages/NotificationsPage';
 import { AdminUsersPage } from '@/pages/AdminUsersPage';
 import { TenantsPage } from '@/pages/TenantsPage';
 import { NodesPage } from '@/pages/NodesPage';
@@ -62,6 +63,9 @@ import { MigrationPlanPage } from '@/pages/migration/MigrationPlanPage';        
 import { MigrationRunPage } from '@/pages/migration/MigrationRunPage';             // ui-migration
 import { TwoFactorGate } from '@/components/common/TwoFactorGate';
 import { OAuthAuthorizePage } from '@/pages/OAuthAuthorizePage';
+import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage';
+import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
+import { ConfirmEmailPage } from '@/pages/ConfirmEmailPage';
 import { ConfirmProvider } from '@/components/common/ConfirmDialog';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import '@/i18n';
@@ -82,6 +86,10 @@ function NormalRoutes() {
       <Route path="/client" element={<Navigate to="/login?local=1" replace />} />
       {/* Consent page of the Claude connectors (OAuth): handles the signed-out case itself. */}
       <Route path="/oauth/authorize" element={<OAuthAuthorizePage />} />
+      {/* Self-service identity (local accounts): forgotten password, links e-mailed by the panel. */}
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/confirm-email" element={<ConfirmEmailPage />} />
       {/* P4b: public status pages (no session) */}
       <Route path="/status/:slug" element={<StatusPublicPage />} />
       {/* The wizard is gone once the server runs in normal mode. */}
@@ -135,6 +143,7 @@ function NormalRoutes() {
 
           {/* User */}
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
 
           {/* Admin-only */}
           <Route element={<ProtectedRoute requiredRole="admin" />}>

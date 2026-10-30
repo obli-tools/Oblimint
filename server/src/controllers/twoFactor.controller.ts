@@ -9,9 +9,13 @@ import { auditService } from '../services/audit.service';
 import { tenantService, refuseSignInWithoutTenant } from '../services/tenant.service';
 import { AppError } from '../middleware/errorHandler';
 import { revokeOtherSessions } from '../services/userSessions.service';
+import { identityService } from '../services/identity/identity.service';
+import { isLocalAccount } from '../services/userRow';
 
 // TOTP only in P0 (no e-mail codes, no device keys). Same routes and shapes
 // as Obliance (/api/profile/2fa/*); the e-mail routes answer 400.
+// Recovery codes (services/identity): 10 one-time codes, a new batch each time
+// an authenticator is enabled / replaced, usable at sign-in (method 'recovery').
 
 async function auditSelf(req: Request, action: string, details?: Record<string, unknown>): Promise<void> {
   const userId = req.session.userId;
@@ -33,7 +37,8 @@ export const twoFactorController = {
     try {
       const user = await authService.getUserById(req.session.userId!);
       if (!user) throw new AppError(401, 'User not found');
-      res.json({ success: true, data: { totpEnabled: user.totpEnabled, emailOtpEnabled: false, email: user.email ?? null } });
+      const recovery = await identityService.recoveryStatus(user.id);
+      res.json({ success: true, data: { totpEnabled: user.totpEnabled, emailOtpEnabled: false, email: user.email ?? null, recoveryCodesRemaining: recovery.remaining, recoveryCodesTotal: recovery.total } });
     } catch (err) { next(err); }
   },
 
@@ -82,10 +87,22 @@ export const twoFactorController = {
       const replaced = !!req.session.pendingTotpReplaces;
       clearPendingTotp(req);
       if (!updated) throw new AppError(409, 'Two-factor authentication was enabled in the meantime. Start the setup again.');
+      delete req.session.recoveryLoginAt;
       // A new factor: every OTHER session ends (one opened with a phished password included).
       await revokeOtherSessions(req, replaced ? 'totp_replaced' : 'totp_enabled');
       await auditSelf(req, replaced ? 'user.totp_replaced' : 'user.totp_enabled');
-      res.json({ success: true });
+      // A new authenticator, a new batch of recovery codes (shown once, here) —
+      // local accounts only (isLocalAccount, as the step-up): an SSO account
+      // that kept a local TOTP gets none, its old ones (if any) are dropped.
+      const sso = await db('users').where({ id: req.session.userId }).first('foreign_source') as { foreign_source: string | null } | undefined;
+      if (!sso || !isLocalAccount(sso)) {
+        await identityService.clearRecoveryCodes(req.session.userId!);
+        res.json({ success: true, data: {} });
+        return;
+      }
+      const recovery = await identityService.generateRecoveryCodes(req.session.userId!);
+      await auditSelf(req, 'user.recovery_codes_generated', { count: recovery.codes.length, reason: replaced ? 'totp_replaced' : 'totp_enabled' });
+      res.json({ success: true, data: { recoveryCodes: recovery } });
     } catch (err) { next(err); }
   },
 
@@ -98,9 +115,34 @@ export const twoFactorController = {
       const step = await checkFactorManagement(req, 'profile.totp_manage');
       if (!step.ok) { sendStepUpFailure(res, step); return; }
       await db('users').where({ id: req.session.userId }).update({ totp_secret: null, totp_enabled: false, updated_at: new Date() });
+      await identityService.clearRecoveryCodes(req.session.userId!);
+      delete req.session.recoveryLoginAt;
       await revokeOtherSessions(req, 'totp_disabled');
       await auditSelf(req, 'user.totp_disabled');
       res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  /** GET /recovery-codes — how many are left (never the codes). */
+  async recoveryStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json({ success: true, data: await identityService.recoveryStatus(req.session.userId!) });
+    } catch (err) { next(err); }
+  },
+
+  /** POST /recovery-codes — a new batch (step-up: a current TOTP code); the previous codes stop working. */
+  async recoveryGenerate(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const status = await identityService.recoveryStatus(req.session.userId!);
+      if (!status.totpEnabled) throw new AppError(400, 'Recovery codes need an authenticator app: enable it first', 'totpRequired');
+      // Refused BEFORE the step-up (its TOTP code is not spent for nothing).
+      const sso = await db('users').where({ id: req.session.userId }).first('foreign_source') as { foreign_source: string | null } | undefined;
+      if (!sso || !isLocalAccount(sso)) throw new AppError(403, 'The two-factor authentication of an SSO account is managed in Obligate.', 'ssoTwoFactorManaged');
+      const step = await checkFactorManagement(req, 'profile.recovery_codes');
+      if (!step.ok) { sendStepUpFailure(res, step); return; }
+      const generated = await identityService.generateRecoveryCodes(req.session.userId!);
+      await auditSelf(req, 'user.recovery_codes_generated', { count: generated.codes.length, reason: 'regenerated', via: step.via });
+      res.json({ success: true, data: generated });
     } catch (err) { next(err); }
   },
 
@@ -108,13 +150,13 @@ export const twoFactorController = {
     next(new AppError(400, 'E-mail codes are not available on this server'));
   },
 
-  /** POST /verify {code, method:'totp'} — completes a pending sign-in. */
+  /** POST /verify {code, method:'totp'|'recovery'} — completes a pending sign-in. */
   async verify(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { code, method } = (req.body ?? {}) as { code?: unknown; method?: unknown };
       const userId = req.session.pendingMfaUserId;
       if (!userId) throw new AppError(400, 'No pending 2FA session');
-      if (method !== undefined && method !== 'totp') throw new AppError(401, 'Invalid code');
+      if (method !== undefined && method !== 'totp' && method !== 'recovery') throw new AppError(401, 'Invalid code');
       const row = await db('users').where({ id: userId, is_active: true })
         .first('id', 'username', 'role', 'totp_secret', 'totp_enabled') as
         { id: number; username: string; role: string; totp_secret: string | null; totp_enabled: boolean } | undefined;
@@ -122,9 +164,17 @@ export const twoFactorController = {
       if (!row.totp_enabled || !row.totp_secret) throw new AppError(401, 'Invalid code');
 
       const preLoginHash = hashSessionId(req.sessionID);
-      const step = twoFactorService.verifyTotpStep(row.totp_secret, String(code ?? ''));
-      const valid = step !== null && await acceptTotpStep(row.id, step, preLoginHash);
-      if (!valid) throw new AppError(401, 'Invalid code');
+      let step: number | null = null;
+      let recoveryLeft: number | null = null;
+      if (method === 'recovery') {
+        // One-time code (atomic consumption): the lost-authenticator path.
+        recoveryLeft = await identityService.consumeRecoveryCode(row.id, code);
+        if (recoveryLeft === null) throw new AppError(401, 'Invalid code');
+      } else {
+        step = twoFactorService.verifyTotpStep(row.totp_secret, String(code ?? ''));
+        const valid = step !== null && await acceptTotpStep(row.id, step, preLoginHash);
+        if (!valid) throw new AppError(401, 'Invalid code');
+      }
 
       const sessionTenantId = await tenantService.sessionTenantFor(row.id, row.role);
       if (sessionTenantId === null) {
@@ -139,12 +189,16 @@ export const twoFactorController = {
       req.session.currentTenantId = sessionTenantId;
       // P2: this session passed 2FA (auto-2fa allow-list grants, services/firewall).
       req.session.mfaVerifiedAt = Date.now();
+      if (recoveryLeft !== null) req.session.recoveryLoginAt = Date.now();
       await stampCredentialVersion(req);
-      await db('users').where({ id: row.id, totp_last_step: step, totp_last_session: preLoginHash })
-        .update({ totp_last_session: hashSessionId(req.sessionID) });
-      await auditSelf(req, 'auth.login', { username: row.username, via: 'password+totp' });
+      if (step !== null) {
+        await db('users').where({ id: row.id, totp_last_step: step, totp_last_session: preLoginHash })
+          .update({ totp_last_session: hashSessionId(req.sessionID) });
+      }
+      await auditSelf(req, 'auth.login', { username: row.username, via: recoveryLeft !== null ? 'password+recovery_code' : 'password+totp' });
+      if (recoveryLeft !== null) await identityService.recoveryCodeUsed(row.id, recoveryLeft, sessionTenantId, clientIp(req) || null);
       const user = await authService.getUserById(row.id);
-      res.json({ success: true, data: { user } });
+      res.json({ success: true, data: { user, ...(recoveryLeft !== null ? { recoveryCodesRemaining: recoveryLeft } : {}) } });
     } catch (err) { next(err); }
   },
 };

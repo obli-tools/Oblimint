@@ -28,6 +28,8 @@ export interface SsoConfig {
   panelRole?: 'admin' | 'client' | null;
   /** https://<client space host>, when one is configured. */
   clientPanelUrl?: string | null;
+  /** The platform can e-mail a password reset link ("Forgot your password?" shown). */
+  passwordResetAvailable?: boolean;
 }
 
 /** GET /api/auth/connected-apps — Obli* apps registered on Obligate. */

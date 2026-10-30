@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { User, Save, KeyRound, CheckCircle2, AlertTriangle, QrCode, Palette, ExternalLink } from 'lucide-react';
+import { User, Save, KeyRound, CheckCircle2, AlertTriangle, QrCode, Palette, ExternalLink, LifeBuoy } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { profileApi } from '@/api/profile.api';
 import { authApi } from '@/api/auth.api';
@@ -14,6 +15,9 @@ import { PageContainer } from '@/components/common/PageContainer';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { applyTheme, loadSavedTheme, type AppTheme } from '@/utils/theme';
 import { SUPPORTED_LANGUAGES, setLanguage } from '@/i18n';
+import { identityApi } from '@/api/identity.api';
+import { EmailAddressSection } from '@/components/profile/EmailAddressSection';
+import { RecoveryCodesModal } from '@/components/profile/RecoveryCodesModal';
 
 // A cancelled 2FA / password prompt, or a failure the api client already
 // reported, needs no extra toast.
@@ -36,7 +40,6 @@ export function ProfilePage() {
   }, [isSso, sessionUser?.foreignSourceUrl]);
 
   const [displayName, setDisplayName] = useState('');
-  const [email, setEmail] = useState('');
   const [preferredLanguage, setPreferredLanguage] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
 
@@ -53,11 +56,17 @@ export function ProfilePage() {
   const [totpSetupData, setTotpSetupData] = useState<{ secret: string; qrDataUrl: string } | null>(null);
   const [totpCode, setTotpCode] = useState('');
   const [totpSaving, setTotpSaving] = useState(false);
+  // Recovery codes shown once (after enabling the authenticator, or a new batch).
+  const [shownCodes, setShownCodes] = useState<string[] | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+  // Signed in with a recovery code (LoginPage): replace the authenticator now.
+  const [searchParams] = useSearchParams();
+  const recoveryLogin = searchParams.get('recovery') === '1';
+  const refreshTfa = () => twoFactorApi.getStatus().then(setTfaStatus).catch(() => {});
 
   useEffect(() => {
     profileApi.get().then((profile) => {
       setDisplayName(profile.displayName || '');
-      setEmail(profile.email || '');
       setPreferredLanguage(profile.preferredLanguage || '');
       if (profile.preferences?.preferredTheme) {
         setPreferredTheme(profile.preferences.preferredTheme);
@@ -73,7 +82,6 @@ export function ProfilePage() {
     try {
       await profileApi.update({
         displayName: displayName || null,
-        ...(isSso ? {} : { email: email || null }),
         preferredLanguage: preferredLanguage || undefined,
       });
       toast.success(t('profile.profileUpdated') || 'Profile updated');
@@ -188,16 +196,7 @@ export function ProfilePage() {
             placeholder={t('profile.displayNamePlaceholder') || 'Your name'}
           />
 
-          <div>
-            <Input
-              label={t('profile.emailLabel') || 'E-mail'}
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder={t('profile.emailPlaceholder') || 'you@example.com'}
-            />
-            <p className="mt-1 text-xs text-text-muted">{t('profile.emailHint') || 'Used for notifications and password recovery.'}</p>
-          </div>
+          <EmailAddressSection />
 
           <div className="space-y-1">
             <label className="block text-sm font-medium text-text-secondary">{t('profile.preferredLanguage') || 'Language'}</label>
@@ -282,6 +281,15 @@ export function ProfilePage() {
       <div>
         <h2 className="text-lg font-semibold text-text-primary mb-4">{t('profile.security.title') || 'Two-factor authentication'}</h2>
 
+        {recoveryLogin && (
+          <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
+            <LifeBuoy size={16} className="text-amber-400 mt-0.5 shrink-0" />
+            <p className="text-sm text-amber-300">
+              {t('identity.recovery.loginBanner') || 'You signed in with a recovery code. If you lost your authenticator, disable it and set up a new one now: for 15 minutes no authenticator code is asked for this.'}
+            </p>
+          </div>
+        )}
+
         {requires2faSetup && (
           <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
             <AlertTriangle size={16} className="text-amber-400 mt-0.5 shrink-0" />
@@ -306,7 +314,7 @@ export function ProfilePage() {
                   onClick={async () => {
                     try {
                       await twoFactorApi.totpDisable();
-                      setTfaStatus((s) => s ? { ...s, totpEnabled: false } : s);
+                      setTfaStatus((s) => s ? { ...s, totpEnabled: false, recoveryCodesRemaining: 0, recoveryCodesTotal: 0 } : s);
                       toast.success(t('profile.security.totpDisabled') || 'Authenticator app disabled');
                     } catch (err) { if (!isQuietStepUpError(err)) toast.error(t('profile.security.failedDisableTotp') || 'Failed to disable the authenticator app'); }
                   }}
@@ -352,10 +360,12 @@ export function ProfilePage() {
                     onClick={async () => {
                       setTotpSaving(true);
                       try {
-                        await twoFactorApi.totpEnable(totpCode);
+                        const enabled = await twoFactorApi.totpEnable(totpCode);
                         setTfaStatus((s) => ({ ...(s ?? { totpEnabled: false }), totpEnabled: true }));
                         setTotpSetupData(null);
                         setTotpCode('');
+                        if (enabled.recoveryCodes?.codes?.length) setShownCodes(enabled.recoveryCodes.codes);
+                        void refreshTfa();
                         toast.success(t('profile.security.totpEnabled') || 'Authenticator app enabled');
                       } catch (err) {
                         if ((err as { response?: { status?: number } } | null)?.response?.status === 409) {
@@ -376,8 +386,45 @@ export function ProfilePage() {
               </div>
             )}
           </div>
+
+          {/* Recovery codes: one-time sign-in codes for a lost authenticator. */}
+          {tfaStatus?.totpEnabled && (
+            <div className="border-t border-border p-5 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <LifeBuoy size={16} className="text-text-muted" />
+                  <p className="text-sm font-medium text-text-primary">{t('identity.recovery.title') || 'Recovery codes'}</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={regenerating}
+                  onClick={async () => {
+                    setRegenerating(true);
+                    try {
+                      const r = await identityApi.regenerateRecoveryCodes();
+                      setShownCodes(r.codes);
+                      void refreshTfa();
+                    } catch (err) {
+                      if (!isQuietStepUpError(err)) toast.error(t('identity.recovery.failed') || 'Failed to generate the recovery codes');
+                    } finally { setRegenerating(false); }
+                  }}
+                >
+                  {(tfaStatus.recoveryCodesTotal ?? 0) > 0 ? (t('identity.recovery.regenerate') || 'Generate new codes') : (t('identity.recovery.generate') || 'Generate codes')}
+                </Button>
+              </div>
+              <p className={(tfaStatus.recoveryCodesRemaining ?? 0) <= 2 ? 'text-xs text-amber-400' : 'text-xs text-text-muted'}>
+                {(tfaStatus.recoveryCodesTotal ?? 0) > 0
+                  ? (t('identity.recovery.remaining', { remaining: tfaStatus.recoveryCodesRemaining ?? 0, total: tfaStatus.recoveryCodesTotal ?? 0 })
+                    || `${tfaStatus.recoveryCodesRemaining ?? 0} of ${tfaStatus.recoveryCodesTotal ?? 0} codes left.`)
+                  : (t('identity.recovery.none') || 'No recovery codes yet: generate them and keep them safe, they sign you in if you lose your authenticator.')}
+              </p>
+              <p className="text-xs text-text-muted">{t('identity.recovery.hint') || 'Each code signs you in once instead of an authenticator code. Generating new codes cancels the previous ones.'}</p>
+            </div>
+          )}
         </div>
       </div>
+      {shownCodes && <RecoveryCodesModal codes={shownCodes} onClose={() => setShownCodes(null)} />}
     </PageContainer>
   );
 }
