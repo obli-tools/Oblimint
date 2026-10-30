@@ -191,7 +191,39 @@ export const restrictionService = {
       ? await this.getMap(requestTenant) : null;
     return computeLevel({ def, target, viaKeys, targetMap, requestMap, floor });
   },
+
+  /**
+   * Strictest level of `def` on `target` whatever the surface (panel or keys),
+   * for the work no request carries: the automatic publication of a site in
+   * mode 'auto', the auto-validation of a maintenance window — protected on any
+   * surface means a human publishes it by hand.
+   */
+  async levelAnySurface(def: RestrictableActionDef, target: RestrictionTarget): Promise<RestrictionLevel> {
+    const floor = await this.floor();
+    const targetMap = await this.getMap(def.platform ? MASTER_TENANT_ID : target.tenantId);
+    return maxRestrictionLevel(
+      computeLevel({ def, target, viaKeys: false, targetMap, floor }),
+      computeLevel({ def, target, viaKeys: true, targetMap, floor }),
+    );
+  },
 };
+
+/**
+ * Is the publication of `site` protected (release.publish above none on any
+ * surface)? Then no automatic path publishes it: the scheduler of mode 'auto'
+ * holds, a window waits for a human. Fails closed (an unreadable map holds).
+ */
+export async function publicationProtected(site: { tenant_id: number; account_id: number; id: number }): Promise<boolean> {
+  try {
+    const def = restrictableAction('release.publish');
+    if (!def) return false;
+    return await restrictionService.levelAnySurface(def, {
+      tenantId: Number(site.tenant_id), accountId: Number(site.account_id), siteId: Number(site.id),
+    }) !== 'none';
+  } catch {
+    return true;
+  }
+}
 
 /** Is `a` at least as strict as `b`? */
 export function atLeast(a: RestrictionLevel, b: RestrictionLevel): boolean {

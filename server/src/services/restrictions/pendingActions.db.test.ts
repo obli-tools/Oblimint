@@ -58,6 +58,7 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
   const { twoFactorService } = await import('../twoFactor.service');
   const restrictionsRoutes = (await import('../../routes/restrictions.routes')).default;
   const pendingRoutes = (await import('../../routes/pendingActions.routes')).default;
+  const tenantRoutes = (await import('../../routes/tenant.routes')).default;
 
   await db.raw('DROP SCHEMA IF EXISTS public CASCADE');
   await db.raw('CREATE SCHEMA public');
@@ -165,6 +166,7 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
   });
   app.use('/restrictions', restrictionsRoutes);
   app.use('/pending-actions', pendingRoutes);
+  app.use('/tenants', tenantRoutes);
   app.post('/t/gate', async (req, res, next) => {
     try {
       const b = req.body as { action: string; accountId?: number; siteId?: number; tenantId?: number; params?: Record<string, unknown>; secret?: Record<string, unknown>; approvalId?: number; fail?: 'backend' | 'pg' | 'forbidden'; viaHandler?: boolean };
@@ -410,19 +412,83 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
     assert.equal(r.body.data.viaPendingAction, id);
   });
 
-  await t.test('panel restricted carrying a secret: a fresh code instead of an approval', async () => {
-    await setMap(A, { 'db.user_password_reset': 'restricted' });
-    let r = await gate(asC1, 'db.user_password_reset', { username: 'wp' }, { secret: { password: 'hunter2-secret' } });
+  await t.test('panel restricted, mandatory secret that is the whole action: a fresh code instead of an approval', async () => {
+    await setMap(A, { 'user.password_reset': 'restricted' });
+    let r = await gate(asC1, 'user.password_reset', { username: 'wp' }, { secret: { password: 'hunter2-secret' } });
     assert.equal(r.status, 401);
     assert.equal(r.body.trustIpAllowed, false);
-    r = await gate(asC1, 'db.user_password_reset', { username: 'wp', twoFactorCode: await codeOf(C1) }, { secret: { password: 'hunter2-secret' } });
+    r = await gate(asC1, 'user.password_reset', { username: 'wp', twoFactorCode: await codeOf(C1) }, { secret: { password: 'hunter2-secret' } });
     // twoFactorCode sits inside params here: moved out by captureStepUpProof only at the top level.
     assert.equal(r.status, 401);
     const res = await fetch(`${base}/t/gate`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-user': String(C1), 'x-tenant': String(A) },
-      body: JSON.stringify({ action: 'db.user_password_reset', params: { username: 'wp' }, secret: { password: 'hunter2-secret' }, twoFactorCode: await codeOf(C1) }),
+      body: JSON.stringify({ action: 'user.password_reset', params: { username: 'wp' }, secret: { password: 'hunter2-secret' }, twoFactorCode: await codeOf(C1) }),
     });
     assert.equal(res.status, 200);
+  });
+
+  await t.test('publication protected on any surface: no automatic path publishes (scheduler of mode auto, window auto-validation)', async () => {
+    const { publicationProtected } = await import('./restriction.service');
+    const site = { tenant_id: A, account_id: a1, id: 4242 };
+    await setMap(A, {});
+    assert.equal(await publicationProtected(site), false, 'free: auto mode publishes as before');
+    for (const via of ['all', 'keys', 'panel']) {
+      await setMap(A, { 'release.publish': { level: 'sensitive', scope: { mode: 'all' }, via } });
+      assert.equal(await publicationProtected(site), true, `via ${via}: a human publishes`);
+    }
+    await setMap(A, { 'release.publish': { level: 'restricted', scope: { mode: 'include', siteIds: [1] }, via: 'all' } });
+    assert.equal(await publicationProtected(site), false, 'another site in scope only');
+    // The scheduler's own publish answers publicationProtected (never a release).
+    await setMap(A, { 'release.publish': 'sensitive' });
+    const sid = Number((await db('sites').insert({
+      tenant_id: A, account_id: a1, name: 'auto', slug: 'auto-pub', base: 'nginx-static', docroot: '', base_path: '/', publish_mode: 'auto',
+      publish_debounce_sec: 5, healthcheck_path: '/', status: 'active', php_settings: JSON.stringify({}),
+    }).returning('id'))[0].id);
+    const { schedulerDefaultPublishForTests } = await import('../releases/publishScheduler');
+    await assert.rejects(schedulerDefaultPublishForTests(sid), (e: InstanceType<typeof AppError>) => e.code === 'publicationProtected');
+    await db('sites').where({ id: sid }).delete();
+    await setMap(A, {});
+  });
+
+  await t.test('tenant members routes are user.tenants_set too (never a way around PUT /users/:id/tenants)', async () => {
+    const saved = await restrictionService.getMap(1);
+    // Restricted: whatever the approvers (a request 202, or nobody 409), never done at once.
+    await setMap(1, { ...saved, 'user.tenants_set': 'restricted' });
+    try {
+      const member = async (tenantId: number, userId: number) => db('user_tenants').where({ tenant_id: tenantId, user_id: userId }).first('role') as Promise<{ role: string } | undefined>;
+      let r = await call('POST', `/tenants/${B}/members`, asPA, { userId: SA, role: 'admin' });
+      assert.ok(r.status === 202 || r.status === 409, JSON.stringify(r.body));
+      if (r.status === 409) assert.equal(r.body.code, 'noEligibleApprover');
+      assert.equal(await member(B, SA), undefined, 'nothing added');
+      const before = (await member(A, SA))?.role;
+      assert.ok(before, 'SA is a member of A');
+      r = await call('PUT', `/tenants/${A}/members/${SA}`, asPA, { role: 'admin' });
+      assert.ok(r.status === 202 || r.status === 409, `role change gated: ${JSON.stringify(r.body)}`);
+      r = await call('DELETE', `/tenants/${A}/members/${SA}`, asPA);
+      assert.ok(r.status === 202 || r.status === 409, `removal gated: ${JSON.stringify(r.body)}`);
+      assert.equal((await member(A, SA))?.role, before, 'unchanged');
+    } finally {
+      await setMap(1, saved);
+    }
+  });
+
+  await t.test('panel restricted, OPTIONAL secret added by the caller: still the second person (never a bypass)', async () => {
+    await setMap(A, { 'db.user_password_reset': 'restricted', 'site.env_write': 'restricted' });
+    // A chosen password instead of a generated one, a bogus secret variable in an env batch: a request, never just a code.
+    let r = await gate(asC1, 'db.user_password_reset', { username: 'wp', generated: false }, { secret: { password: 'hunter2-secret' } });
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    const id = r.body.data.pendingActionId as number;
+    r = await gate(asC1, 'site.env_write', { vars: ['DB_HOST', 'X'] }, { secret: { X: 'a' } });
+    assert.equal(r.status, 202, 'a bogus secret never skips the approval');
+    r = await call('POST', `/pending-actions/${id}/approve`, asSA, { twoFactorCode: await codeOf(SA) });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    // Another secret is another request; the very same one (secret included) passes.
+    r = await gate(asC1, 'db.user_password_reset', { username: 'wp', generated: false }, { secret: { password: 'other-secret' } });
+    assert.equal(r.status, 202);
+    assert.notEqual(r.body.data.pendingActionId, id);
+    r = await gate(asC1, 'db.user_password_reset', { username: 'wp', generated: false }, { secret: { password: 'hunter2-secret' } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.data.viaPendingAction, id);
   });
 
   await t.test('panel sensitive: no factor → twoFactorNotEnrolled, code accepted once', async () => {

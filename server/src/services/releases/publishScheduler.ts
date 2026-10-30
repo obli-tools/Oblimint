@@ -42,6 +42,16 @@ const defaultDeps: SchedulerDeps = {
     return row ? { mode: row.publish_mode, debounceSec: Number(row.publish_debounce_sec) } : null;
   },
   async publish(siteId) {
+    // release.publish protected (actions sensibles): no automatic publication — a human publishes
+    // through the gated route. Mode 'approval' stops at awaiting_approval (a human decides) anyway.
+    const site = await db('sites').where({ id: siteId }).first('tenant_id', 'account_id', 'publish_mode') as
+      { tenant_id: number; account_id: number; publish_mode: string } | undefined;
+    if (site?.publish_mode === 'auto') {
+      const { publicationProtected } = await import('../restrictions/restriction.service');
+      if (await publicationProtected({ ...site, id: siteId })) {
+        throw new AppError(409, 'The publication of this site is a protected action: publish it by hand', 'publicationProtected');
+      }
+    }
     const { releaseService } = await import('./release.service');
     // A rollback by a human is never undone by an automatic publication (409 liveRolledBack: held).
     return releaseService.publish(siteId, { trigger: 'auto', userId: null, rollbackGuard: 'refuse' });
@@ -102,6 +112,10 @@ async function fire(siteId: number): Promise<void> {
       const d = (err.details ?? {}) as { rolledBackFrom?: number; count?: number };
       held.set(siteId, { at: new Date(deps.now()).toISOString(), releaseNumber: Number(d.rolledBackFrom ?? 0), count: Number(d.count ?? 0) });
       logger.warn({ siteId, rolledBackFrom: d.rolledBackFrom, count: d.count }, 'Auto-publish held: the staging would undo a rollback');
+      return;
+    }
+    if (err instanceof AppError && err.code === 'publicationProtected') {
+      logger.info({ siteId }, 'Auto-publish skipped: release.publish is protected, a human publishes');
       return;
     }
     if (err instanceof AppError && (err.code === 'stagingEmpty' || err.code === 'noChanges' || err.code === 'accountSuspended' || err.statusCode === 404)) return;
@@ -215,6 +229,11 @@ export const publishScheduler = {
     await Promise.all([...chains.values()]);
   },
 };
+
+/** Tests only: the real publish step of the scheduler (its protection check first). */
+export function schedulerDefaultPublishForTests(siteId: number): Promise<unknown> {
+  return defaultDeps.publish(siteId);
+}
 
 /** Tests only: replaces the collaborators (null restores the defaults) and clears the state. */
 export function setSchedulerDeps(over: Partial<SchedulerDeps> | null): void {

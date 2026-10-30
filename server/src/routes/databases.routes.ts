@@ -213,7 +213,7 @@ router.post('/instances/:id/databases/:dbId/restore', heavyOpLimiter, async (req
     }
     // restricted: the dump enters the fingerprint (sha256 + size) of the approval, imported from that copy.
     const contentType = String(req.headers['content-type'] ?? '');
-    const copy = await spoolHashed(req);
+    const copy = await spoolHashed(req, `user:${actor.userId}`);
     try {
       await gateAction(req, { action: 'db.import', target: instanceTarget(row), params: { ...params, size: copy.size, contentSha256: copy.sha256 } });
       res.json({ success: true, data: await databaseService.restore(req, actor, row.id, target.id, { stream: copy.open(), contentType }) });

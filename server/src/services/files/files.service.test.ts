@@ -5,7 +5,8 @@ import { AppError } from '../../middleware/errorHandler';
 import { HostdError } from '../hostd/client';
 import type { hostdFiles } from '../hostd/files';
 import type { AccountRow } from '../hosting/rows';
-import { UPLOAD_CHUNK_SIZE, fileError, filesService, joinVirtual, setFilesDeps, splitVirtual, sweep, validName } from './files.service';
+import crypto from 'crypto';
+import { UPLOAD_CHUNK_SIZE, fileError, filesService, joinVirtual, setFilesDeps, slugsOfPaths, splitVirtual, sweep, validName } from './files.service';
 
 // Web file explorer service: virtual paths, chunked uploads (auto-commit on the
 // last chunk), quota block, publish notifications (fake hostd).
@@ -111,6 +112,45 @@ test('upload: chunks in any order, the last one commits and notifies the site', 
   // Replayed after done: nothing written again.
   assert.equal((await filesService.uploadChunk(account, 5, s.id, 1, UPLOAD_CHUNK_SIZE, bytes(UPLOAD_CHUNK_SIZE))).done, true);
   assert.equal(calls.filter((c) => c[0] === 'commit').length, 1);
+});
+
+test('site slugs of paths: normalized like the operations (doubled slashes), malformed refused, never "no site"', () => {
+  assert.deepEqual(slugsOfPaths(['//staging/boutique', '/staging//boutique/x', 'staging/blog/a', '/data/blog', '/', '/staging']), ['boutique', 'blog']);
+  assert.throws(() => slugsOfPaths(['/staging/../boutique']), (e: AppError) => e.code === 'invalidPath');
+  assert.throws(() => slugsOfPaths(['/etc/passwd']), (e: AppError) => e.code === 'invalidPath');
+});
+
+test('upload with a declared content (protected files.write): in order, one at a time, committed only when the sha256 matches', async () => {
+  const sha = (b: Buffer) => crypto.createHash('sha256').update(b).digest('hex');
+  const size = UPLOAD_CHUNK_SIZE + 5;
+  const good = Buffer.concat([Buffer.alloc(UPLOAD_CHUNK_SIZE, 1), Buffer.from('hello')]);
+  await assert.rejects(filesService.uploadStart(account, 5, { path: '/staging/site/a.bin', size, contentSha256: 'nope' }), (e: AppError) => e.code === 'invalid');
+
+  const s = await filesService.uploadStart(account, 5, { path: '/staging/site/a.bin', size, contentSha256: sha(good) });
+  assert.equal(s.parallel, 1, 'hashed in order');
+  await assert.rejects(filesService.uploadChunk(account, 5, s.id, 1, 5, Readable.from([Buffer.from('hello')])),
+    (e: AppError) => e.code === 'chunkOutOfOrder' && (e.details as { expected: number }).expected === 0);
+  await filesService.uploadChunk(account, 5, s.id, 0, UPLOAD_CHUNK_SIZE, Readable.from([good.subarray(0, UPLOAD_CHUNK_SIZE)]));
+  // A replayed chunk is skipped (never hashed twice).
+  await filesService.uploadChunk(account, 5, s.id, 0, UPLOAD_CHUNK_SIZE, Readable.from([good.subarray(0, UPLOAD_CHUNK_SIZE)]));
+  assert.equal((await filesService.uploadChunk(account, 5, s.id, 1, 5, Readable.from([Buffer.from('hello')]))).done, true);
+  assert.equal(calls.filter((c) => c[0] === 'commit').length, 1);
+
+  // Another content than the approved one: nothing committed, the session is over.
+  calls = [];
+  const bad = await filesService.uploadStart(account, 5, { path: '/staging/site/a.bin', size, overwrite: true, contentSha256: sha(good) });
+  await filesService.uploadChunk(account, 5, bad.id, 0, UPLOAD_CHUNK_SIZE, Readable.from([good.subarray(0, UPLOAD_CHUNK_SIZE)]));
+  await assert.rejects(filesService.uploadChunk(account, 5, bad.id, 1, 5, Readable.from([Buffer.from('evil!')])), (e: AppError) => e.code === 'contentMismatch');
+  assert.equal(calls.filter((c) => c[0] === 'commit').length, 0, 'never committed');
+  assert.ok(calls.some((c) => c[0] === 'abort'), 'temporary file dropped');
+  assert.throws(() => filesService.uploadStatus(account, 5, bad.id), (e: AppError) => e.code === 'uploadNotFound');
+
+  // A failed commit is retried by the same chunk (the hash is kept, never recomputed).
+  const r = await filesService.uploadStart(account, 5, { path: '/staging/site/b.bin', size: 5, contentSha256: sha(Buffer.from('hello')) });
+  failCommit = new HostdError(503, 'hostd busy', 'busy');
+  await assert.rejects(filesService.uploadChunk(account, 5, r.id, 0, 5, Readable.from([Buffer.from('hello')])));
+  failCommit = null;
+  assert.equal((await filesService.uploadChunk(account, 5, r.id, 0, 5, Readable.from([Buffer.from('hello')]))).done, true);
 });
 
 test('upload: empty file = one empty chunk; a failed commit is retried by the next chunk', async () => {

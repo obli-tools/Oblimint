@@ -41,7 +41,7 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   GET    /sites/:id/files/content?path=&area=         → the file (Range)             files.read
 //   PUT    /sites/:id/files/content?path=&area=&overwrite=1&expectedSha256= (or If-Match / If-None-Match: *)
 //                                                        raw body ≤ 8 MiB → FileWriteResult {path, size, sha256} files.write
-//   POST   /sites/:id/uploads   {path, size, area?, overwrite?, expectedSha256?} → FileUploadSession files.write (bigger files)
+//   POST   /sites/:id/uploads   {path, size, area?, overwrite?, expectedSha256?, contentSha256?} → FileUploadSession files.write (bigger files; contentSha256 required when files.write is protected)
 //   PUT    /uploads/:uid/:index raw chunk               → FileUploadChunkResult         files.write
 //   POST   /sites/:id/files/mkdir   {path, area?}       → {path}                       files.write
 //   POST   /sites/:id/files/delete  {paths, area?}      → FileOpResult[]               files.write
@@ -144,7 +144,10 @@ const itemsBody = z.object({
 }).strict();
 const extractBody = z.object({ path: relPath.min(1), to: relPath.optional(), overwrite: z.boolean().optional(), area: area.optional() }).strict();
 const sha256Field = z.string().max(80);
-const uploadBody = z.object({ path: relPath.min(1), size: z.number().int().min(0), overwrite: z.boolean().optional(), expectedSha256: sha256Field.optional(), area: area.optional() }).strict();
+const uploadBody = z.object({
+  path: relPath.min(1), size: z.number().int().min(0), overwrite: z.boolean().optional(), expectedSha256: sha256Field.optional(),
+  contentSha256: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(), area: area.optional(),
+}).strict();
 const readQuery = z.object({
   path: relPath.min(1), area: area.optional(),
   startLine: z.coerce.number().int().min(1).optional(), endLine: z.coerce.number().int().min(1).optional(),
@@ -272,7 +275,7 @@ router.put('/sites/:id/files/content', (req, res, next) => {
 
 router.post('/sites/:id/uploads', h(async (req, res) => {
   const b = parseBody(uploadBody, req.body);
-  ok(res, await keyApi.uploadStart(ctxOf(req), req, siteId(req), areaOf(b.area), b.path, b.size, b.overwrite === true, b.expectedSha256 ?? null));
+  ok(res, await keyApi.uploadStart(ctxOf(req), req, siteId(req), areaOf(b.area), b.path, b.size, b.overwrite === true, b.expectedSha256 ?? null, b.contentSha256 ?? null));
 }));
 
 router.put('/uploads/:uid/:index', (req, res, next) => {
@@ -501,7 +504,7 @@ router.delete('/databases/:iid/databases/:dbId', h(async (req, res) => {
 router.get('/databases/:iid/databases/:dbId/dump', h(async (req, res) => {
   await keyDatabases.dump(ctxOf(req), req, res, iid(req), Number(req.params.dbId));
 }));
-router.post('/databases/:iid/databases/:dbId/import', h(async (req, res) => {
+router.post('/databases/:iid/databases/:dbId/import', heavyOpLimiter, h(async (req, res) => {
   const ctx = ctxOf(req);
   const dbId = Number(req.params.dbId);
   if (req.is('application/json')) {

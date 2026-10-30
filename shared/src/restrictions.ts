@@ -127,8 +127,9 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'db.user_delete', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'db.user_grants', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'db.query_write', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
-  { key: 'db.ddl', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: P },
-  { key: 'db.rows_write', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: P },
+  // Keys too: query_database write:true running a DROP / an UPDATE is that action (sqlClass.ts).
+  { key: 'db.ddl', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
+  { key: 'db.rows_write', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'db.dump', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: K },
   // ── Domains, DNS, proxy, firewall ──
   { key: 'domain.delete', category: 'domains', need: 'domains.manage', scopable: 'account', surfaces: P },

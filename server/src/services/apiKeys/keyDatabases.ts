@@ -17,6 +17,8 @@ import { keyApi, keySite, type SiteArea } from './keyApi';
 import { keyEnv } from './keyEnv';
 import { actionLevel, type GateSpec } from '../restrictions/gate';
 import { spoolHashed } from '../restrictions/content';
+import { classifySql } from '../restrictions/sqlClass';
+import { splitStatements } from '../databases/explorer/sqlStream';
 import { asKeyRequest, keyGated, siteTarget } from '../restrictions/targets';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -156,7 +158,8 @@ async function gatedImport(
     return databaseService.restore(req, ctx.actor, row.id, target.id, source);
   }
   const contentType = source ? source.contentType : String(req.headers['content-type'] ?? '');
-  const copy = await spoolHashed(source?.stream ?? req);
+  // One copy at a time per key (and a few in all): parallel dumps never fill the panel's disk.
+  const copy = await spoolHashed(source?.stream ?? req, `key:${ctx.id}`);
   try {
     return await keyGated(ctx, req, {
       action: 'db.import', target: instanceTarget(row),
@@ -315,15 +318,16 @@ export const keyDatabases = {
       }
     };
     if (!write) return run();
-    // db.query_write (default: sensitive, keys only). The decider reads the statement with its
-    // literals masked (as the audit); the exact statement is bound by its digest.
-    return keyGated(ctx, req, {
-      action: 'db.query_write', target: instanceTarget(t.instance),
-      params: {
-        database: t.database.name, databaseId: t.database.id, instanceId: t.instance.id, sql: cut, write: true,
-        sqlSha256: crypto.createHash('sha256').update(body.sql).digest('hex'),
-      },
-    }, run);
+    // db.query_write (default: sensitive, keys only), and what the statement amounts to (DROP /
+    // TRUNCATE: db.ddl, rows changed: db.rows_write…), gated once on the strictest. The decider
+    // reads the statement with its literals masked (as the audit); the exact one is bound by its digest.
+    const params = {
+      database: t.database.name, databaseId: t.database.id, instanceId: t.instance.id, sql: cut, write: true,
+      sqlSha256: crypto.createHash('sha256').update(body.sql).digest('hex'),
+    };
+    const family = dbFamilyOf(t.instance.engine);
+    const actions = classifySql(splitStatements(body.sql, family).map((s) => s.sql), family).actions;
+    return keyGated(ctx, req, (actions.length ? actions : ['db.query_write' as const]).map((action) => ({ action, target: instanceTarget(t.instance), params })), run);
   },
 
   /** gzip SQL dump streamed to `res`. */

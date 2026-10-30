@@ -5,13 +5,14 @@ import { DBX_FK_ACTIONS, DBX_MAX_PAGE, DBX_MAX_TIMEOUT_S, DBX_MIN_TIMEOUT_S, dbF
 import { AppError } from '../middleware/errorHandler';
 import { auditService } from '../services/audit.service';
 import { loadDatabaseRow, loadInstance } from '../services/databases/databases.service';
-import { auditSql, explorerService, firstKeyword } from '../services/databases/explorer/explorer.service';
+import { auditSql, explorerService } from '../services/databases/explorer/explorer.service';
 import { savedQueries } from '../services/databases/explorer/savedQueries';
 import type { DbDatabaseRow, DbInstanceRow } from '../services/databases/rows';
 import { parseBody } from '../services/docker/parseBody';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { splitStatements } from '../services/databases/explorer/sqlStream';
-import { actionLevel, gateAction } from '../services/restrictions/gate';
+import { actionLevel, gateAction, gateStrictest } from '../services/restrictions/gate';
+import { classifySql } from '../services/restrictions/sqlClass';
 import { spoolHashed } from '../services/restrictions/content';
 import { canonicalJson } from '../services/restrictions/canonical';
 import crypto from 'crypto';
@@ -149,8 +150,8 @@ export function auditStatements(statements: string[], family?: DbFamily, max = 2
   return statements.slice(0, max).map((s) => (family ? auditSql(family, s, each) : s.length > each ? `${s.slice(0, each)}…` : s));
 }
 
-const READS = new Set(['select', 'with', 'show', 'describe', 'desc', 'explain', 'table', 'values']);
-const isWrite = (family: DbFamily, statements: string[]) => statements.some((s) => !READS.has(firstKeyword(s, family)) || (family === 'postgresql' && /^explain\s+analy[sz]e/i.test(s)));
+/** Does the batch write (any doubt = a write: data-modifying CTE, EXPLAIN ANALYZE, SELECT … INTO…)? */
+const isWrite = (family: DbFamily, statements: string[]) => classifySql(statements, family).write;
 
 const h = (fn: (req: Request, res: import('express').Response) => Promise<void>) =>
   (req: Request, res: import('express').Response, next: import('express').NextFunction) => { fn(req, res).catch(next); };
@@ -227,12 +228,17 @@ router.post(`${base}/delete`, h(async (req, res) => {
 router.post(`${base}/query`, h(async (req, res) => {
   const t = await target(req);
   const { sql, timeoutS: limit } = parseBody(querySchema, req.body);
-  // Free SQL that writes: db.query_write (default: keys only, the panel stays free). The decider reads
-  // the statements with their literals masked (as the audit); the exact text is bound by its digest.
+  // Free SQL that writes: db.query_write (default: keys only), and what it amounts to — a DROP /
+  // TRUNCATE is db.ddl, an INSERT / UPDATE / DELETE db.rows_write, a pasted dump db.import — gated
+  // ONCE on the strictest: the console never does for free what the explorer's buttons protect.
+  // The decider reads the statements with their literals masked (as the audit); the exact text is
+  // bound by its digest.
   const family = dbFamilyOf(t.instance.engine);
   const typed = splitStatements(sql, family).map((s) => s.sql);
-  if (isWrite(family, typed)) {
-    await gateAction(req, { action: 'db.query_write', target: dbTarget(t), params: { ...dbParams(t), sql: auditStatements(typed, family), sqlSha256: digest(sql) } });
+  const cls = classifySql(typed, family);
+  if (cls.write) {
+    const params = { ...dbParams(t), sql: auditStatements(typed, family), sqlSha256: digest(sql) };
+    await gateStrictest(req, cls.actions.map((action) => ({ action, target: dbTarget(t), params })));
   }
   const data = await explorerService.query(t.instance, t.database, t.userId, sql, limit);
   // The statements themselves (cut), never their results.
@@ -331,7 +337,7 @@ router.post(`${base}/import`, h(async (req, res) => {
     }
     status = await explorerService.startImport(t.instance, t.database, t.userId, req, req.headers['content-type'], Number.isFinite(length) ? length : null, options);
   } else {
-    const copy = await spoolHashed(req);
+    const copy = await spoolHashed(req, `user:${t.userId}`);
     try {
       await gateAction(req, { action: 'db.import', target: dbTarget(t), params: { ...params, size: copy.size, contentSha256: copy.sha256 } });
       status = await explorerService.startImport(t.instance, t.database, t.userId, copy.open(), req.headers['content-type'], copy.size, options);

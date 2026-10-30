@@ -4,7 +4,7 @@ import { auditService } from '../services/audit.service';
 import { idParam, loadAccount, resolveActor, type HostingNeed } from '../services/hosting/access';
 import type { AccountRow } from '../services/hosting/rows';
 import { parseBody } from '../services/docker/parseBody';
-import { MAX_BATCH, UPLOAD_CHUNK_SIZE, filesService } from '../services/files/files.service';
+import { MAX_BATCH, UPLOAD_CHUNK_SIZE, filesService, slugsOfPaths } from '../services/files/files.service';
 import crypto from 'crypto';
 import { Readable } from 'stream';
 import { AppError } from '../middleware/errorHandler';
@@ -63,6 +63,7 @@ const uploadSchema = z.object({
   size: z.number().int().min(0),
   overwrite: z.boolean().optional(),
   expectedMtime: z.number().int().min(0).optional(),
+  contentSha256: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
 }).strict();
 
 async function account(req: Request): Promise<{ row: AccountRow; userId: number }> {
@@ -97,9 +98,9 @@ function audit(req: Request, row: AccountRow, action: string, details: Record<st
   });
 }
 
-/** Sites of the account whose area (/staging/<slug>/…, /data/<slug>/…) the paths touch: the scope of a site. */
+/** Sites of the account whose area the paths touch (slugs normalized like the service: slugsOfPaths). */
 async function sitesOfPaths(row: AccountRow, paths: string[]): Promise<number[]> {
-  const slugs = [...new Set(paths.map((p) => /^\/?(?:staging|data)\/([^/]+)/.exec(String(p))?.[1]).filter((s): s is string => !!s))];
+  const slugs = slugsOfPaths(paths);
   if (!slugs.length) return [];
   return (await db('sites').where({ account_id: row.id }).whereIn('slug', slugs.slice(0, 1000)).pluck('id') as number[]).map(Number);
 }
@@ -233,6 +234,11 @@ router.post('/:id/files/uploads', async (req, res, next) => {
   try {
     const { row, userId } = await account(req);
     const body = parseBody(uploadSchema, req.body);
+    // files.write restricted: an approval names the content (sha256, spec §1.4) — the chunks are
+    // hashed and the file committed only when it matches. Sensitive: the user's own code, no need.
+    if (!body.contentSha256 && await actionLevel(req, 'files.write', { ...accountTarget(row), siteIds: await sitesOfPaths(row, [body.path]) }) === 'restricted') {
+      throw new AppError(400, 'Writing files needs an approval here: declare the sha256 of the whole file (contentSha256), or write it in one request', 'contentSha256Required');
+    }
     await gateFiles(req, row, 'files.write', [body.path], { op: 'upload', ...body });
     res.json({ success: true, data: await filesService.uploadStart(row, userId, body) });
   } catch (err) { next(err); }

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { Readable } from 'stream';
+import { Readable } from 'stream';
 import type {
   FileExtractResult, FileEntry, FileListing, FileOpResult, FileText, FileUploadChunkResult, FileUploadRequest, FileUploadSession, FileUploadStatus,
 } from '@oblimint/shared';
@@ -87,6 +87,16 @@ export function splitVirtual(p: unknown): string[] {
   }
   if (segs.length && segs[0] !== 'staging' && segs[0] !== 'data') throw invalidPath();
   return segs;
+}
+
+/**
+ * Site slugs of virtual paths (/staging/<slug>/…, /data/<slug>/…) with the same
+ * normalization as every operation (`//staging/x`, `/staging//x` are /staging/x):
+ * a restriction scoped to some sites sees them. A malformed path: 400, as the
+ * operation would answer — never read as "no site".
+ */
+export function slugsOfPaths(paths: unknown[]): string[] {
+  return [...new Set(paths.map((p) => splitVirtual(p)[1]).filter((s): s is string => !!s))];
 }
 
 export function joinVirtual(segs: string[]): string {
@@ -320,6 +330,16 @@ interface UploadSession {
   /** Editor save / key precondition: checked again right before the commit. */
   expectedMtime?: number;
   mustExist: boolean;
+  /**
+   * Content declared when the upload opened (a protected files.write: it is in
+   * the approval's fingerprint). The chunks then come in order, one at a time,
+   * hashed as they are written; the completing chunk commits only when the
+   * assembled file has exactly this sha256 (409 contentMismatch otherwise).
+   */
+  contentSha256?: string;
+  hash?: crypto.Hash;
+  /** The hash once every chunk is in (a commit retried after a backend error reuses it). */
+  digest?: string;
   received: Set<number>;
   inflight: number;
   touchedAt: number;
@@ -370,6 +390,22 @@ function session(a: AccountRow, userId: number, id: string): UploadSession {
  */
 export type FileWriteRequest = FileUploadRequest & { mustExist?: boolean };
 
+const SHA256_RE = /^[0-9a-f]{64}$/;
+
+/** The whole chunk (exactly `length` bytes, else 400): a declared-content upload hashes what it wrote. */
+async function readChunk(body: Readable, length: number): Promise<Buffer> {
+  const parts: Buffer[] = [];
+  let got = 0;
+  for await (const c of body) {
+    const b = Buffer.isBuffer(c) ? c : Buffer.from(c as string);
+    got += b.length;
+    if (got > length) throw new AppError(400, 'The body is longer than its Content-Length', 'invalidChunk');
+    parts.push(b);
+  }
+  if (got !== length) throw new AppError(400, 'The body is shorter than its Content-Length', 'invalidChunk');
+  return Buffer.concat(parts, got);
+}
+
 const fileChanged = () => new AppError(409, 'The file was changed since it was opened', 'fileChanged');
 
 /** Editor save / key precondition: the file must not have changed since it was read (409 fileChanged). */
@@ -390,6 +426,8 @@ async function uploadStart(a: AccountRow, userId: number, req: FileWriteRequest)
   const segs = splitVirtual(req.path);
   if (segs.length < 3 || !validName(segs[segs.length - 1])) throw invalidPath();
   if (!Number.isSafeInteger(req.size) || req.size < 0 || req.size > MAX_UPLOAD_BYTES) throw new AppError(400, 'Invalid size', 'invalid');
+  const contentSha256 = req.contentSha256 === undefined || req.contentSha256 === null ? undefined : String(req.contentSha256).toLowerCase();
+  if (contentSha256 !== undefined && !SHA256_RE.test(contentSha256)) throw new AppError(400, 'contentSha256 must be 64 hex characters', 'invalid');
   await assertWritable(a);
   if ([...sessions.values()].filter((s) => s.accountId === a.id && !s.done).length >= UPLOAD_MAX_SESSIONS_PER_ACCOUNT) {
     throw new AppError(429, 'Too many uploads in progress for this account', 'tooManyUploads');
@@ -405,10 +443,12 @@ async function uploadStart(a: AccountRow, userId: number, req: FileWriteRequest)
   sessions.set(id, {
     id, accountId: a.id, userId, account: a, segs, size: req.size, count, overwrite,
     ...(req.expectedMtime !== undefined ? { expectedMtime: req.expectedMtime } : {}), mustExist,
+    ...(contentSha256 !== undefined ? { contentSha256, hash: crypto.createHash('sha256') } : {}),
     received: new Set(), inflight: 0, touchedAt: deps.now(), committing: false, done: false,
   });
   startSweeper();
-  return { id, chunkSize: UPLOAD_CHUNK_SIZE, count, parallel: UPLOAD_PARALLEL };
+  // A declared content is hashed in order: one chunk at a time.
+  return { id, chunkSize: UPLOAD_CHUNK_SIZE, count, parallel: contentSha256 !== undefined ? 1 : UPLOAD_PARALLEL };
 }
 
 function uploadStatus(a: AccountRow, userId: number, id: string): FileUploadStatus {
@@ -426,11 +466,22 @@ async function uploadChunk(a: AccountRow, userId: number, id: string, index: num
   if (!Number.isInteger(index) || index < 0 || index >= s.count) throw new AppError(400, 'Invalid chunk index', 'invalid');
   const length = chunkLength(s, index);
   if (contentLength !== length) throw new AppError(400, `Chunk ${index} must be ${length} bytes`, 'invalidChunk');
-  if (s.inflight >= UPLOAD_MAX_INFLIGHT) throw new AppError(429, 'Too many chunks in flight', 'tooManyChunks');
+  const declared = s.hash !== undefined;
+  if (s.inflight >= (declared ? 1 : UPLOAD_MAX_INFLIGHT)) throw new AppError(429, 'Too many chunks in flight', 'tooManyChunks');
+  // Declared content: in order (the hash follows the file), a replayed chunk is skipped.
+  if (declared && !s.received.has(index) && index !== s.received.size) {
+    throw new AppError(409, `This upload declared its content: send chunk ${s.received.size} next (in order, one at a time)`, 'chunkOutOfOrder', { expected: s.received.size });
+  }
   s.inflight++;
   s.touchedAt = deps.now();
   try {
-    if (!s.received.has(index)) {
+    if (!s.received.has(index) && declared) {
+      // Buffered (≤ one chunk): hashed only once hostd has written it — a failed chunk is resent whole.
+      const buf = await readChunk(body, length);
+      await deps.hostd.uploadChunk(target(a), owner(a), rel(s.segs), id, index * UPLOAD_CHUNK_SIZE, length, Readable.from([buf]));
+      s.hash!.update(buf);
+      s.received.add(index);
+    } else if (!s.received.has(index)) {
       await deps.hostd.uploadChunk(target(a), owner(a), rel(s.segs), id, index * UPLOAD_CHUNK_SIZE, length, body);
       s.received.add(index);
     } else {
@@ -445,6 +496,15 @@ async function uploadChunk(a: AccountRow, userId: number, id: string, index: num
   if (s.received.size === s.count && !s.committing && !s.done) {
     s.committing = true;
     try {
+      // Declared content: the assembled file is exactly what was approved, or nothing is committed.
+      if (s.hash && s.contentSha256 !== undefined) {
+        const got = (s.digest ??= s.hash.digest('hex'));
+        if (got !== s.contentSha256) {
+          sessions.delete(id);
+          await deps.hostd.uploadAbort(target(a), owner(a), rel(s.segs), id).catch(() => undefined);
+          throw new AppError(409, 'The uploaded content does not match the declared contentSha256: nothing was written', 'contentMismatch', { expected: s.contentSha256, got });
+        }
+      }
       // The precondition again, right before the rename: the upload may have
       // lasted minutes, a change meanwhile is never overwritten. The session ends.
       if (s.expectedMtime !== undefined) {

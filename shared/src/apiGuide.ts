@@ -347,6 +347,13 @@ The humans of the account may protect some operations (dropping a database, an S
 
 Other answers: \`twoFactorNotEnrolled\` (403, the key's owner has no 2FA: he enables it in his profile first), \`noEligibleApprover\` (409, a second authorised person is needed), \`approvalMismatch\` (409, \`approval_id\` names another request), \`tooManyPendingActions\` (429). A key never confirms nor approves anything; the requests of another key, even of the same human, are invisible to it.
 
+What counts as the protected action, whatever the path taken:
+
+- **Publication**: a site created without \`publish_mode\` gets \`auto\` when the key may publish; that is a change of publication mode (protected by default), exactly as an explicit \`publish_mode: "auto"\`. When publishing is protected on a site, nothing publishes it on its own: mode \`auto\` no longer publishes the staging, a maintenance window is never validated automatically — call \`publish\` (a protected call) once your changes are in the staging.
+- **Chunked upload** while writing files is protected: give \`contentSha256\` (the sha256 of the whole file) when opening it; it enters the request the human approves. Send the chunks in order, one at a time (\`parallel: 1\`; \`chunkOutOfOrder\` 409 otherwise); the file is written only if its content has that hash (\`contentMismatch\` 409, nothing written). Without it: \`contentSha256Required\` (400).
+- **SQL**: \`query_database\` with \`write: true\` is also a structure deletion when it drops or empties an object (DROP, TRUNCATE, ALTER … DROP), a row change when it inserts, updates or deletes rows, and an import when it loads data in bulk: the strictest protection of those applies, in one request.
+- **Protected import** (\`import_sql\`, the import route): counted with the heavy operations; at most one at a time per key while it is checked (\`tooManyProtectedImports\` 429).
+
 ---
 
 ## 6. REST API — reference
@@ -391,7 +398,7 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | POST | \`/sites/:id/files/edit\` | \`{ path, edits: [{ oldString, newString, replaceAll? }], expectedSha256? }\` → \`{ path, size, sha256, previousSha256, replacements }\` | \`files.read\` + \`files.write\` |
 | GET | \`/sites/:id/files/content?path=/f\` | raw file (Range supported) | \`files.read\` |
 | PUT | \`/sites/:id/files/content?path=/f&overwrite=1\` | **raw body**, \`Content-Type: application/octet-stream\`, ≤ 8 MB → \`{ path, size, sha256 }\`; \`&expectedSha256=\` or \`If-Match: "<sha256>"\` (replace only that content), \`If-None-Match: *\` (create only) | \`files.write\` |
-| POST | \`/sites/:id/uploads\` | \`{ path, size, overwrite?, expectedSha256? }\` → session \`{ id, chunkSize, count }\` (files > 8 MB) | \`files.write\` |
+| POST | \`/sites/:id/uploads\` | \`{ path, size, overwrite?, expectedSha256?, contentSha256? }\` → session \`{ id, chunkSize, count, parallel }\` (files > 8 MB; \`contentSha256\` required when writing files is protected) | \`files.write\` |
 | PUT | \`/uploads/:uploadId/:index\` | raw chunk number \`index\` (exactly \`chunkSize\` bytes, the last one shorter) | \`files.write\` |
 | POST | \`/sites/:id/files/mkdir\` | \`{ path }\` | \`files.write\` |
 | POST | \`/sites/:id/files/delete\` | \`{ paths: [] }\` (≤ 1000) | \`files.write\` |
@@ -856,6 +863,13 @@ Les humains du compte peuvent protéger certaines opérations (supprimer une bas
 
 Autres réponses : \`twoFactorNotEnrolled\` (403, le propriétaire de la clé n'a pas de 2FA : il l'active d'abord dans son profil), \`noEligibleApprover\` (409, il faut une seconde personne habilitée), \`approvalMismatch\` (409, \`approval_id\` désigne une autre demande), \`tooManyPendingActions\` (429). Une clé ne confirme ni n'approuve jamais rien ; les demandes d'une autre clé, même du même humain, lui sont invisibles.
 
+Ce qui compte comme l'action protégée, quel que soit le chemin :
+
+- **Publication** : un site créé sans \`publish_mode\` passe en \`auto\` quand la clé peut publier ; c'est un changement de mode de publication (protégé par défaut), exactement comme un \`publish_mode: "auto"\` explicite. Quand la publication est protégée sur un site, rien ne le publie tout seul : le mode \`auto\` ne publie plus le staging, une fenêtre de maintenance n'est jamais validée automatiquement — appelle \`publish\` (un appel protégé) une fois tes changements dans le staging.
+- **Téléversement par morceaux** quand l'écriture de fichiers est protégée : donne \`contentSha256\` (le sha256 du fichier entier) à l'ouverture ; il entre dans la demande que l'humain approuve. Envoie les morceaux dans l'ordre, un à la fois (\`parallel: 1\` ; sinon \`chunkOutOfOrder\` 409) ; le fichier n'est écrit que si son contenu a ce hachage (\`contentMismatch\` 409, rien d'écrit). Sans lui : \`contentSha256Required\` (400).
+- **SQL** : \`query_database\` avec \`write: true\` est aussi une suppression de structure quand il supprime ou vide un objet (DROP, TRUNCATE, ALTER … DROP), une modification de lignes quand il insère, modifie ou supprime des lignes, et un import quand il charge des données en masse : la protection la plus stricte de celles-ci s'applique, en une seule demande.
+- **Import protégé** (\`import_sql\`, la route d'import) : compté avec les opérations lourdes ; au plus un à la fois par clé pendant son contrôle (\`tooManyProtectedImports\` 429).
+
 ---
 
 ## 6. API REST — référence
@@ -900,7 +914,7 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | POST | \`/sites/:id/files/edit\` | \`{ path, edits: [{ oldString, newString, replaceAll? }], expectedSha256? }\` → \`{ path, size, sha256, previousSha256, replacements }\` | \`files.read\` + \`files.write\` |
 | GET | \`/sites/:id/files/content?path=/f\` | fichier brut (Range supporté) | \`files.read\` |
 | PUT | \`/sites/:id/files/content?path=/f&overwrite=1\` | **corps brut**, \`Content-Type: application/octet-stream\`, ≤ 8 Mo → \`{ path, size, sha256 }\` ; \`&expectedSha256=\` ou \`If-Match: "<sha256>"\` (ne remplace que ce contenu), \`If-None-Match: *\` (création seulement) | \`files.write\` |
-| POST | \`/sites/:id/uploads\` | \`{ path, size, overwrite?, expectedSha256? }\` → session \`{ id, chunkSize, count }\` (fichiers > 8 Mo) | \`files.write\` |
+| POST | \`/sites/:id/uploads\` | \`{ path, size, overwrite?, expectedSha256?, contentSha256? }\` → session \`{ id, chunkSize, count, parallel }\` (fichiers > 8 Mo ; \`contentSha256\` obligatoire quand l'écriture de fichiers est protégée) | \`files.write\` |
 | PUT | \`/uploads/:uploadId/:index\` | morceau brut n° \`index\` (taille exacte \`chunkSize\`, le dernier plus court) | \`files.write\` |
 | POST | \`/sites/:id/files/mkdir\` | \`{ path }\` | \`files.write\` |
 | POST | \`/sites/:id/files/delete\` | \`{ paths: [] }\` (≤ 1000) | \`files.write\` |

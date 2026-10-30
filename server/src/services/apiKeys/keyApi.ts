@@ -16,7 +16,7 @@ import { auditService } from '../audit.service';
 import { filesService, joinVirtual, splitVirtual, UPLOAD_CHUNK_SIZE } from '../files/files.service';
 import { fileTools, type ReadRangeOptions, type SearchOptions } from '../files/fileTools';
 import type { HostdFileStream } from '../hostd/files';
-import { assertReadsCode, loadAccount, loadSite } from '../hosting/access';
+import { actorCan, assertReadsCode, loadAccount, loadSite } from '../hosting/access';
 import type { AccountRow, SiteRow } from '../hosting/rows';
 import { domainsService } from '../hosting/domains.service';
 import { sitesService } from '../hosting/sites.service';
@@ -434,12 +434,17 @@ export const keyApi = {
   async createSite(ctx: ApiKeyContext, req: Request, body: Omit<SiteCreate, 'accountId'>): Promise<ApiV1Site> {
     requireScope(ctx, 'sites.create');
     if (body.publishMode === 'auto') requireScope(ctx, 'releases.publish');
-    const create = () => sitesService.create(req, ctx.actor, { ...body, accountId: ctx.accountId } as SiteCreate & { accountId: number });
+    const account = await accountRow(ctx);
+    // The mode the site will REALLY get: sitesService defaults an omitted mode to 'auto' when the
+    // actor may publish. Passed down explicitly, so the gate and the service never disagree.
+    const publishMode = body.publishMode
+      ?? (actorCan(ctx.actor, 'releases.publish', { tenantId: Number(account.tenant_id), accountId: Number(account.id) }) ? 'auto' : 'manual');
+    const create = () => sitesService.create(req, ctx.actor, { ...body, publishMode, accountId: ctx.accountId } as SiteCreate & { accountId: number });
     // A new site in 'auto' publishes every write unreviewed: site.publish_mode_change (spec §2).
-    const site = body.publishMode === 'auto'
+    const site = publishMode === 'auto'
       ? await keyGated(ctx, req, {
-        action: 'site.publish_mode_change', target: accountTarget(await accountRow(ctx)),
-        params: { ...body, from: null, to: 'auto', newSite: true },
+        action: 'site.publish_mode_change', target: accountTarget(account),
+        params: { ...body, publishMode, from: null, to: 'auto', newSite: true },
       }, create)
       : await create();
     await apiKeysService.recordCreatedSite(ctx, site.id);
@@ -590,13 +595,21 @@ export const keyApi = {
 
   /**
    * Opens a chunked upload. files.write protected: the upload is gated when it
-   * opens (path, size, overwrite, expectedSha256 frozen); its chunks are its
-   * continuation (the session belongs to the key's user, 24 h at most).
+   * opens (path, size, overwrite, expectedSha256 and the declared contentSha256
+   * frozen); its chunks are its continuation (the session belongs to the key's
+   * user) and the file is committed only when its content has that hash — an
+   * approval never serves another content (spec §1.4), as for a one-request write.
    */
-  async uploadStart(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, size: number, overwrite: boolean, expectedSha256: string | null = null): Promise<FileUploadSession> {
+  async uploadStart(
+    ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, size: number, overwrite: boolean,
+    expectedSha256: string | null = null, contentSha256: string | null = null,
+  ): Promise<FileUploadSession> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     const virtual = areaPath(site, area, path);
+    if (contentSha256 === null && await actionLevel(asKeyRequest(req, ctx), 'files.write', siteTarget(site)) !== 'none') {
+      throw new AppError(400, 'Writing files is a protected action here: declare the sha256 of the whole file (contentSha256) when opening the upload', 'contentSha256Required');
+    }
     let expectedMtime: number | undefined;
     try {
       expectedMtime = expectedSha256 !== null ? await fileTools.assertSha256(a, virtual, expectedSha256) : undefined;
@@ -604,11 +617,15 @@ export const keyApi = {
       throw await preconditionError(ctx, a, virtual, err, path);
     }
     return keyGated(ctx, req, {
-      action: 'files.write', target: siteTarget(site), params: { op: 'upload', area, path: relOf(site, area, virtual), size, overwrite, expectedSha256 },
+      action: 'files.write', target: siteTarget(site),
+      params: { op: 'upload', area, path: relOf(site, area, virtual), size, overwrite, expectedSha256, ...(contentSha256 !== null ? { contentSha256: contentSha256.toLowerCase() } : {}) },
     }, async () => {
       try {
         // expectedMtime: checked again by the chunk that completes the file, right before its commit.
-        return await filesService.uploadStart(a, ctx.creatorId, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime, mustExist: true } : { overwrite }) });
+        return await filesService.uploadStart(a, ctx.creatorId, {
+          path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime, mustExist: true } : { overwrite }),
+          ...(contentSha256 !== null ? { contentSha256 } : {}),
+        });
       } catch (err) {
         throw await preconditionError(ctx, a, virtual, err, path);
       }

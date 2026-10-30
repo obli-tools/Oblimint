@@ -91,7 +91,13 @@ test('protected actions on the key surfaces (MCP, REST v1)', { timeout: 600_000 
     return w.path;
   }) as typeof filesService.putSmall;
   filesService.mkdir = (async (_a: unknown, p: string) => p) as typeof filesService.mkdir;
-  t.after(() => { databaseService.deleteDatabase = origDelete; filesService.putSmall = origPut; filesService.mkdir = origMkdir; });
+  const uploadsOpened: Array<{ path: string; contentSha256?: string }> = [];
+  const origUploadStart = filesService.uploadStart;
+  filesService.uploadStart = (async (_a: unknown, _u: number, w: { path: string; contentSha256?: string }) => {
+    uploadsOpened.push({ path: w.path, ...(w.contentSha256 ? { contentSha256: w.contentSha256 } : {}) });
+    return { id: 'a'.repeat(32), chunkSize: 8 * 1024 * 1024, count: 1, parallel: w.contentSha256 ? 1 : 4 };
+  }) as typeof filesService.uploadStart;
+  t.after(() => { databaseService.deleteDatabase = origDelete; filesService.putSmall = origPut; filesService.mkdir = origMkdir; filesService.uploadStart = origUploadStart; });
   const ran: string[] = [];
   const fakeDriver = {
     family: 'mysql', connectionId: () => 1, version: async () => '11', close: async () => undefined, setTimeout: async () => undefined,
@@ -146,9 +152,9 @@ test('protected actions on the key surfaces (MCP, REST v1)', { timeout: 600_000 
   const dbRest = await mkDb('wp_rest');
 
   const fakeReq = (userId: number) => ({ headers: {}, session: { userId }, socket: { remoteAddress: '203.0.113.7' } }) as never;
-  const mkKey = async (creator: number, name: string) => {
+  const mkKey = async (creator: number, name: string, scopes: string[] = ['databases.manage', 'files.read', 'files.write', 'sites.manage']) => {
     const k = await apiKeysService.create(fakeReq(creator), await actorForUser(creator, A), acct, {
-      name, scopes: ['databases.manage', 'files.read', 'files.write', 'sites.manage'], siteScope: 'all',
+      name, scopes: scopes as never, siteScope: 'all',
     });
     for (const d of [dbProd, dbOther, dbRest]) {
       await db('api_key_db_objects').insert({ key_id: k.id, kind: 'database', object_id: d, account_id: acct }).onConflict(['key_id', 'kind', 'object_id']).ignore();
@@ -158,6 +164,8 @@ test('protected actions on the key surfaces (MCP, REST v1)', { timeout: 600_000 
   const K1 = await mkKey(OWNER, 'claude');
   const K2 = await mkKey(OWNER, 'claude-two');
   const KN = await mkKey(NOFACTOR, 'nofactor');
+  const KPUB = await mkKey(OWNER, 'publisher', ['sites.create', 'sites.manage', 'releases.publish', 'files.read', 'files.write']);
+  const KCREATE = await mkKey(OWNER, 'creator', ['sites.create', 'sites.manage']);
 
   const codeOf = async (userId: number) => {
     await db('users').where({ id: userId }).update({ totp_last_step: null });
@@ -416,6 +424,74 @@ test('protected actions on the key surfaces (MCP, REST v1)', { timeout: 600_000 
     r = await asUser(NOFACTOR, 'DELETE', url, { confirm: 'wp_other' });
     assert.equal(r.status, 403);
     assert.equal(r.body.code, 'twoFactorNotEnrolled', 'never a silent block: the user is invited to enable 2FA');
+  });
+
+  await t.test('create_site without publish_mode: the mode it REALLY gets (auto when the key may publish) is gated', async () => {
+    await setMap({ 'site.publish_mode_change': 'sensitive' });
+    const before = await db('sites').count<{ n: string }[]>({ n: '*' }).first();
+    let r = await mcp(KPUB, 'create_site', { name: 'Two', slug: 'two', base: 'nginx-static' });
+    assert.match(r.text, /\(twoFactorRequired\)/, r.text);
+    const d = detailsOf(r.text);
+    assert.equal(d.action, 'site.publish_mode_change');
+    const shown = (await row(Number(d.pendingActionId))).params_display;
+    assert.equal((typeof shown === 'string' ? JSON.parse(shown) : shown).to, 'auto');
+    assert.deepEqual(await db('sites').count<{ n: string }[]>({ n: '*' }).first(), before, 'nothing created');
+    // REST: the same (an omitted publishMode is no way around it).
+    const rr = await rest(KPUB, 'POST', '/api/v1/sites', { name: 'Two', slug: 'two', base: 'nginx-static' });
+    assert.equal(rr.status, 428, JSON.stringify(rr.body));
+    assert.equal(rr.body.details.pendingActionId, d.pendingActionId, 'the same request');
+    // A key that may not publish: the site starts in manual — nothing to gate.
+    r = await mcp(KCREATE, 'create_site', { name: 'Three', slug: 'three', base: 'nginx-static' });
+    assert.equal(r.isError, false, r.text);
+    assert.equal(JSON.parse(r.text).publishMode, 'manual');
+  });
+
+  await t.test('chunked upload while files.write is protected: contentSha256 required, then in the fingerprint', async () => {
+    await setMap({ 'files.write': 'sensitive' });
+    const sha = 'b'.repeat(64);
+    let r = await rest(K1, 'POST', `/api/v1/sites/${siteId}/uploads`, { path: '/index.php', size: 5120 });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.code, 'contentSha256Required');
+    r = await rest(K1, 'POST', `/api/v1/sites/${siteId}/uploads`, { path: '/index.php', size: 5120, contentSha256: sha });
+    assert.equal(r.status, 428);
+    const id = Number(r.body.details.pendingActionId);
+    const shown = (await row(id)).params_display;
+    assert.equal((typeof shown === 'string' ? JSON.parse(shown) : shown).contentSha256, sha, 'the decider sees the content it approves');
+    assert.equal((await asUser(OWNER, 'POST', `/pending-actions/${id}/confirm`, { twoFactorCode: await codeOf(OWNER) })).status, 200);
+    r = await rest(K1, 'POST', `/api/v1/sites/${siteId}/uploads`, { path: '/index.php', size: 5120, contentSha256: 'c'.repeat(64) });
+    assert.equal(r.status, 428, 'another declared content: a new request');
+    r = await rest(K1, 'POST', `/api/v1/sites/${siteId}/uploads`, { path: '/index.php', size: 5120, contentSha256: sha });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.data.parallel, 1);
+    assert.deepEqual(uploadsOpened.at(-1), { path: '/staging/one/index.php', contentSha256: sha }, 'the session checks the content it was approved for');
+    // Free: no hash needed.
+    await setMap({});
+    r = await rest(K1, 'POST', `/api/v1/sites/${siteId}/uploads`, { path: '/big.zip', size: 5120 });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  });
+
+  await t.test('free SQL is what it does: a DROP is db.ddl, a hidden write is a write (keys and panel console)', async () => {
+    await setMap({ 'db.ddl': 'restricted', 'db.query_write': { level: 'sensitive', scope: { mode: 'all' }, via: 'keys' } });
+    let r = await mcp(K1, 'query_database', { instance_id: instId, database_id: dbOther, sql: 'DROP TABLE items', write: true });
+    assert.match(r.text, /\(approvalRequired\)/, 'the strictest of query_write (sensitive) and ddl (restricted)');
+    assert.equal(detailsOf(r.text).action, 'db.ddl');
+    assert.ok(!ran.some((x) => x.includes('DROP')), 'nothing ran');
+    // Panel console: db.query_write is via keys, but a typed DROP TABLE is db.ddl like the button.
+    await setMap({ 'db.ddl': 'sensitive', 'db.query_write': { level: 'sensitive', scope: { mode: 'all' }, via: 'keys' } });
+    const url = `/databases/instances/${instId}/databases/${dbOther}/explorer/query`;
+    let p = await asUser(OWNER, 'POST', url, { sql: 'DROP TABLE wp_users' });
+    assert.equal(p.status, 401, JSON.stringify(p.body));
+    assert.equal(p.body.twoFactorRequired, true);
+    assert.equal(p.body.action, 'db.ddl');
+    assert.ok(!ran.includes('panel:DROP TABLE wp_users'));
+    // A data-modifying CTE / EXPLAIN (ANALYZE) are writes, never reads.
+    await setMap({ 'db.query_write': 'sensitive' });
+    for (const sql of ['WITH d AS (DELETE FROM items RETURNING 1) SELECT 1', 'EXPLAIN (ANALYZE) DELETE FROM items']) {
+      p = await asUser(OWNER, 'POST', url, { sql });
+      assert.equal(p.status, 401, `${sql}: ${JSON.stringify(p.body)}`);
+    }
+    p = await asUser(OWNER, 'POST', url, { sql: 'SELECT 1' });
+    assert.equal(p.status, 200, 'a read stays free');
   });
 
   await t.test('the default matrix: the ungated operations stay free', async () => {

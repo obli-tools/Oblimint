@@ -78,6 +78,13 @@ export interface FileUploadRequest {
   overwrite?: boolean;
   /** Integrated editor: refuse the save if the file changed since it was opened (409 fileChanged). */
   expectedMtime?: number;
+  /**
+   * sha256 (hex) of the whole file. Required when files.write is a protected
+   * action and the upload is approved (it enters the approval's fingerprint);
+   * the chunks then go in order, one at a time (parallel: 1), and the file is
+   * committed only when its content has this hash (409 contentMismatch).
+   */
+  contentSha256?: string;
 }
 
 export interface FileUploadSession {

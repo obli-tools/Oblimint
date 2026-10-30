@@ -30,8 +30,9 @@ import { restrictionService, type RestrictionTarget } from './restriction.servic
 //   panel sensitive   → fresh code of the user (401 twoFactorRequired, the
 //                       client interceptor prompts and resends), trusted IP
 //                       24 h honoured; no factor → 403 twoFactorNotEnrolled;
-//   panel restricted  → carrying a secret: as sensitive without the trusted
-//                       IP; otherwise an approval matching this very request
+//   panel restricted  → an action whose mandatory secret is the whole action
+//                       (SECRET_IS_THE_ACTION): as sensitive without the
+//                       trusted IP; otherwise an approval matching this very request
 //                       is consumed, or a request is filed: 202 pendingApproval;
 //   key sensitive     → the key owner's confirmation in the panel: consumed
 //                       when given, else 428 twoFactorRequired (owner without
@@ -77,6 +78,17 @@ export interface GateResult {
   via: 'free' | 'totp' | 'approval';
   pendingActionId?: number;
 }
+
+/**
+ * Actions whose secret is MANDATORY and is the whole action (nothing else is
+ * changed beside it): only these trade a panel 'restricted' approval for the
+ * user's own fresh code. Everywhere else a secret is optional, chosen by the
+ * caller: adding one (a bogus secret variable, a password instead of a
+ * generated one…) must never skip the second person — the request is filed,
+ * its secret in the fingerprint only, and the same request (secret included)
+ * is sent again once approved.
+ */
+export const SECRET_IS_THE_ACTION: ReadonlySet<RestrictableActionKey> = new Set<RestrictableActionKey>(['user.password_reset']);
 
 function hasSecret(secretParams: Record<string, unknown> | undefined): boolean {
   if (!secretParams) return false;
@@ -153,9 +165,9 @@ export async function gateAction(req: Request, spec: GateSpec): Promise<GateResu
 
   const principal = principalOf(req);
   const approvalId = approvalIdOf(req, spec);
-  const secret = hasSecret(spec.secretParams);
+  const secret = SECRET_IS_THE_ACTION.has(def.key) && hasSecret(spec.secretParams);
 
-  // Panel, 'sensitive' (or 'restricted' carrying a secret: never parked in a request).
+  // Panel, 'sensitive' (or 'restricted' whose mandatory secret is the whole action).
   if (!req.apiKey && (level === 'sensitive' || secret)) {
     const outcome = await checkActionStepUp(req, def.key, { allowTrustedIp: level === 'sensitive' });
     if (!outcome.ok) throw new ResponseError(outcome.status, outcome.body);

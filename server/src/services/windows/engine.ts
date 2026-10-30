@@ -20,6 +20,7 @@ import {
 } from '../maintenance/contracts';
 import { classifyChanges } from '../releases/candidate';
 import { releaseService } from '../releases/release.service';
+import { publicationProtected } from '../restrictions/restriction.service';
 import { windowDeps } from './deps';
 import { mergeSettings } from './settings';
 import { json, manifestChanges, readManifest, toWindow, windowQuery, withDetail, type WindowRow } from './rows';
@@ -990,6 +991,13 @@ async function analyzeAndDecide(run: WinRun, opts: AnalyzeOpts): Promise<void> {
       reasons: [...auto.reasons.filter((r) => r.code !== 'ok'), {
         code: 'disabled', detail: fresh?.publish_mode === 'approval' ? 'site en mode approbation' : conflicts.length ? 'conflits avec le staging' : 'non éligible',
       }],
+    };
+  }
+  // Validating publishes: release.publish protected (actions sensibles) → a human validates through the gated route.
+  if (auto.decision === 'validate' && await publicationProtected({ tenant_id: ctx.site.tenant_id, account_id: ctx.site.account_id, id: w.site_id })) {
+    auto = {
+      ...auto, decision: 'review',
+      reasons: [...auto.reasons.filter((r) => r.code !== 'ok'), { code: 'disabled', detail: 'publication protégée (actions sensibles) : validation humaine' }],
     };
   }
   await run.save({ auto_validation: JSON.stringify(auto) });
