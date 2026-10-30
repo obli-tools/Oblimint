@@ -9,7 +9,7 @@ import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from '../services/apiKey
 import type { ApiKeyContext } from '../services/apiKeys/apiKeys.service';
 import {
   CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_PATH_MAX, SITE_ENV_MAX_VALUE, SITE_ENV_MAX_VARS,
-  DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S,
+  DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S, FILE_EDIT_MAX_EDITS, FILE_READ_MAX_RANGE, FILE_SEARCH_MAX_PER_FILE, FILE_SEARCH_MAX_RESULTS,
 } from '@oblimint/shared';
 import { keyDatabases } from '../services/apiKeys/keyDatabases';
 import { keyEnv } from '../services/apiKeys/keyEnv';
@@ -26,11 +26,17 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   POST   /sites                SiteCreate − accountId → ApiV1Site (201)              sites.create
 //   GET    /sites/:id                                   → ApiV1Site
 //   PATCH  /sites/:id   {name?, docroot?, publishMode?, publishDebounceSec?, healthcheckPath?, php?} → ApiV1Site  sites.manage
-//   GET    /sites/:id/files?path=&area=                 → FileListing                  files.read
+//   GET    /sites/:id/files?path=&area=&sha256=1        → FileListing (sha256: hashes of the files) files.read
 //   GET    /sites/:id/files/text?path=&area=            → FileText (≤ 2 MiB)           files.read
+//   GET    /sites/:id/files/read?path=&area=&startLine=&endLine= | &offset=&length=&encoding= → FileRange (sha256 of the whole file) files.read
+//   POST   /sites/:id/files/search {query, path?, area?, regex?, caseSensitive?, include?, exclude?, includeVendor?, maxResults?, maxPerFile?}
+//                                                        → FileSearchResult (bounded)  files.read
+//   POST   /sites/:id/files/edit {path, area?, edits: [{oldString, newString, replaceAll?}], expectedSha256?} → FileEditResult
+//                                                        (all or nothing; 409 fileChanged {currentSha256} | editNotFound | editNotUnique) files.write
 //   GET    /sites/:id/files/content?path=&area=         → the file (Range)             files.read
-//   PUT    /sites/:id/files/content?path=&area=&overwrite=1  raw body ≤ 8 MiB → {path} files.write
-//   POST   /sites/:id/uploads   {path, size, area?, overwrite?} → FileUploadSession    files.write (bigger files)
+//   PUT    /sites/:id/files/content?path=&area=&overwrite=1&expectedSha256= (or If-Match / If-None-Match: *)
+//                                                        raw body ≤ 8 MiB → FileWriteResult {path, size, sha256} files.write
+//   POST   /sites/:id/uploads   {path, size, area?, overwrite?, expectedSha256?} → FileUploadSession files.write (bigger files)
 //   PUT    /uploads/:uid/:index raw chunk               → FileUploadChunkResult         files.write
 //   POST   /sites/:id/files/mkdir   {path, area?}       → {path}                       files.write
 //   POST   /sites/:id/files/delete  {paths, area?}      → FileOpResult[]               files.write
@@ -122,7 +128,24 @@ const itemsBody = z.object({
   area: area.optional(),
 }).strict();
 const extractBody = z.object({ path: relPath.min(1), to: relPath.optional(), overwrite: z.boolean().optional(), area: area.optional() }).strict();
-const uploadBody = z.object({ path: relPath.min(1), size: z.number().int().min(0), overwrite: z.boolean().optional(), area: area.optional() }).strict();
+const sha256Field = z.string().max(80);
+const uploadBody = z.object({ path: relPath.min(1), size: z.number().int().min(0), overwrite: z.boolean().optional(), expectedSha256: sha256Field.optional(), area: area.optional() }).strict();
+const readQuery = z.object({
+  path: relPath.min(1), area: area.optional(),
+  startLine: z.coerce.number().int().min(1).optional(), endLine: z.coerce.number().int().min(1).optional(),
+  offset: z.coerce.number().int().min(0).optional(), length: z.coerce.number().int().min(1).max(FILE_READ_MAX_RANGE).optional(),
+  encoding: z.enum(['utf8', 'base64']).optional(),
+}).strict();
+const globs = z.array(z.string().min(1).max(200)).max(20);
+const searchBody = z.object({
+  query: z.string().min(1).max(1000), path: relPath.optional(), area: area.optional(), regex: z.boolean().optional(), caseSensitive: z.boolean().optional(),
+  include: globs.optional(), exclude: globs.optional(), includeVendor: z.boolean().optional(),
+  maxResults: z.number().int().min(1).max(FILE_SEARCH_MAX_RESULTS).optional(), maxPerFile: z.number().int().min(1).max(FILE_SEARCH_MAX_PER_FILE).optional(),
+}).strict();
+const editBody = z.object({
+  path: relPath.min(1), area: area.optional(), expectedSha256: sha256Field.optional(),
+  edits: z.array(z.object({ oldString: z.string().min(1), newString: z.string(), replaceAll: z.boolean().optional() }).strict()).min(1).max(FILE_EDIT_MAX_EDITS),
+}).strict();
 const publishBody = z.object({
   message: z.string().max(500).nullable().optional(), overrideRollback: z.boolean().optional(),
   // true = the longest wait (25 s), a number = seconds.
@@ -171,8 +194,26 @@ router.post('/sites', h(async (req, res) => ok(res, await keyApi.createSite(ctxO
 router.get('/sites/:id', h(async (req, res) => ok(res, await keyApi.getSite(ctxOf(req), siteId(req)))));
 router.patch('/sites/:id', h(async (req, res) => ok(res, await keyApi.updateSite(ctxOf(req), req, siteId(req), parseBody(updateSchema, req.body)))));
 
-router.get('/sites/:id/files', h(async (req, res) => ok(res, await keyApi.listFiles(ctxOf(req), siteId(req), areaOf(req.query.area), qPath(req)))));
+const flag = (v: unknown) => v === '1' || v === 'true';
+router.get('/sites/:id/files', h(async (req, res) => ok(res, await keyApi.listFiles(ctxOf(req), siteId(req), areaOf(req.query.area), qPath(req), { sha256: flag(req.query.sha256) }))));
 router.get('/sites/:id/files/text', h(async (req, res) => ok(res, await keyApi.readText(ctxOf(req), siteId(req), areaOf(req.query.area), qPath(req)))));
+router.get('/sites/:id/files/read', h(async (req, res) => {
+  const q = parseBody(readQuery, req.query);
+  ok(res, await keyApi.readRange(ctxOf(req), siteId(req), areaOf(q.area), q.path, {
+    startLine: q.startLine, endLine: q.endLine, offset: q.offset, length: q.length, encoding: q.encoding,
+  }));
+}));
+router.post('/sites/:id/files/search', heavyOpLimiter, h(async (req, res) => {
+  const b = parseBody(searchBody, req.body);
+  ok(res, await keyApi.search(ctxOf(req), siteId(req), areaOf(b.area), b.path ?? '/', {
+    query: b.query, regex: b.regex === true, caseSensitive: b.caseSensitive === true, include: b.include, exclude: b.exclude,
+    includeVendor: b.includeVendor === true, maxResults: b.maxResults, maxPerFile: b.maxPerFile,
+  }));
+}));
+router.post('/sites/:id/files/edit', h(async (req, res) => {
+  const b = parseBody(editBody, req.body);
+  ok(res, await keyApi.edit(ctxOf(req), req, siteId(req), areaOf(b.area), b.path, b.edits, b.expectedSha256 ?? null));
+}));
 
 router.get('/sites/:id/files/content', h(async (req, res) => {
   const range = typeof req.headers.range === 'string' ? req.headers.range : undefined;
@@ -192,14 +233,19 @@ router.put('/sites/:id/files/content', (req, res, next) => {
   (async () => {
     const size = Number(req.headers['content-length']);
     if (!Number.isSafeInteger(size) || size < 0) throw new AppError(411, 'Content-Length is required', 'invalidChunk');
-    const path = await keyApi.putFile(ctxOf(req), req, siteId(req), areaOf(req.query.area), qPath(req), size, req, req.query.overwrite === '1' || req.query.overwrite === 'true');
-    ok(res, { path });
+    // Precondition: ?expectedSha256= or If-Match: "<sha256>" (409 fileChanged); If-None-Match: * = create only.
+    const ifMatch = typeof req.headers['if-match'] === 'string' && req.headers['if-match'].trim() !== '*' ? req.headers['if-match'] : undefined;
+    const expected = typeof req.query.expectedSha256 === 'string' ? req.query.expectedSha256 : ifMatch;
+    const createOnly = typeof req.headers['if-none-match'] === 'string' && req.headers['if-none-match'].trim() === '*';
+    if (expected !== undefined && createOnly) throw new AppError(400, 'Give expectedSha256 (If-Match) or If-None-Match: *, not both', 'validation');
+    ok(res, await keyApi.putFile(ctxOf(req), req, siteId(req), areaOf(req.query.area), qPath(req), size, req,
+      !createOnly && flag(req.query.overwrite), expected ?? null));
   })().catch((err) => { req.resume(); next(err); });
 });
 
 router.post('/sites/:id/uploads', h(async (req, res) => {
   const b = parseBody(uploadBody, req.body);
-  ok(res, await keyApi.uploadStart(ctxOf(req), siteId(req), areaOf(b.area), b.path, b.size, b.overwrite === true));
+  ok(res, await keyApi.uploadStart(ctxOf(req), siteId(req), areaOf(b.area), b.path, b.size, b.overwrite === true, b.expectedSha256 ?? null));
 }));
 
 router.put('/uploads/:uid/:index', (req, res, next) => {

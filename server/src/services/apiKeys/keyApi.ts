@@ -1,7 +1,8 @@
+import crypto from 'crypto';
 import type { Request } from 'express';
-import type { Readable } from 'stream';
+import { pipeline, Transform, type Readable } from 'stream';
 import type {
-  ApiV1Me, ApiV1ParentDomain, ApiV1ReleaseDetail, ApiV1ReleaseResult, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileExtractResult, FileListing, FileOpResult, FileText,
+  ApiV1Me, ApiV1ParentDomain, ApiV1ReleaseDetail, ApiV1ReleaseResult, ApiV1Site, ApiV1SiteUpdate, ApiV1Subdomain, FileEdit, FileEditResult, FileExtractResult, FileListing, FileOpResult, FileRange, FileSearchResult, FileText, FileWriteResult,
   FileUploadChunkResult, FileUploadSession, LogQueryResult, Release, ReleaseDiff, ReleaseLogLine,
   PreviewFetchResult, PreviewLink, PreviewStartResult, SitePreview,
   ReleaseFileContent, ReleaseFileList, SiteCreate, StagingRestoreResult, StagingRestoreRunning, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
@@ -11,6 +12,7 @@ import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { auditService } from '../audit.service';
 import { filesService, joinVirtual, splitVirtual } from '../files/files.service';
+import { fileTools, type ReadRangeOptions, type SearchOptions } from '../files/fileTools';
 import type { HostdFileStream } from '../hostd/files';
 import { assertReadsCode, loadAccount, loadSite } from '../hosting/access';
 import type { AccountRow, SiteRow } from '../hosting/rows';
@@ -360,11 +362,39 @@ export const keyApi = {
   },
 
   // ── files ──
-  async listFiles(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string): Promise<FileListing> {
+  async listFiles(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string, opts: { sha256?: boolean } = {}): Promise<FileListing> {
     const a = await filesAccount(ctx, false);
     const site = await keySite(ctx, siteId);
     const l = await filesService.list(a, areaPath(site, area, path));
+    if (opts.sha256) {
+      const h = await fileTools.hashListing(a, l.path, l.entries);
+      return { ...l, entries: h.entries, sha256Skipped: h.skipped, path: relOf(site, area, l.path) };
+    }
     return { ...l, path: relOf(site, area, l.path) };
+  },
+
+  /** Part of a file (lines or bytes) with the hash of the whole file. */
+  async readRange(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string, opts: ReadRangeOptions): Promise<FileRange> {
+    const a = await filesAccount(ctx, false);
+    const site = await keySite(ctx, siteId);
+    const r = await fileTools.readRange(a, areaPath(site, area, path), opts);
+    return { ...r, path: relOf(site, area, r.path) };
+  },
+
+  /** Bounded search of the text files under a folder of the site. */
+  async search(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string, opts: SearchOptions): Promise<FileSearchResult> {
+    const a = await filesAccount(ctx, false);
+    const site = await keySite(ctx, siteId);
+    return fileTools.search(a, areaPath(site, area, path), opts, (v) => relOf(site, area, v));
+  },
+
+  /** Exact replacements in a text file, all or nothing (expectedSha256: 409 fileChanged when it moved). */
+  async edit(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, edits: FileEdit[], expectedSha256: string | null): Promise<FileEditResult> {
+    const a = await filesAccount(ctx, true);
+    const site = await keySite(ctx, siteId);
+    const r = await fileTools.edit(a, areaPath(site, area, path), edits, expectedSha256);
+    await fileAudit(req, a, site.id, 'files.edit', { path: r.path, size: r.size, edits: edits.length, replacements: r.replacements, sha256: r.sha256 });
+    return { ...r, path: relOf(site, area, r.path) };
   },
 
   async readText(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string): Promise<FileText> {
@@ -386,18 +416,40 @@ export const keyApi = {
     return releaseService.stagingStatus(site.id);
   },
 
-  async putFile(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, size: number, body: Readable, overwrite: boolean): Promise<string> {
+  /**
+   * Writes a file (≤ 8 MiB). expectedSha256: the file must exist with that
+   * content (409 fileChanged + details.currentSha256 otherwise); the write is
+   * then pinned to the mtime seen. Answers the hash of what was written.
+   */
+  async putFile(
+    ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, size: number, body: Readable, overwrite: boolean,
+    expectedSha256: string | null = null,
+  ): Promise<FileWriteResult> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
-    const p = await filesService.putSmall(a, { path: areaPath(site, area, path), size, overwrite }, body);
-    await fileAudit(req, a, site.id, 'files.upload', { path: p, size });
-    return relOf(site, area, p);
+    const virtual = areaPath(site, area, path);
+    const expectedMtime = expectedSha256 !== null ? await fileTools.assertSha256(a, virtual, expectedSha256) : undefined;
+    const h = crypto.createHash('sha256');
+    const tap = new Transform({ transform(c: Buffer, _e, cb) { h.update(c); cb(null, c); } });
+    pipeline(body, tap, () => { /* errors reach the upload through tap */ });
+    let p: string;
+    try {
+      p = await filesService.putSmall(a, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime } : { overwrite }) }, tap);
+    } catch (err) {
+      tap.resume(); // the body is drained, never left hanging
+      throw err;
+    }
+    const sha256 = h.digest('hex');
+    await fileAudit(req, a, site.id, 'files.upload', { path: p, size, sha256 });
+    return { path: relOf(site, area, p), size, sha256 };
   },
 
-  async uploadStart(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string, size: number, overwrite: boolean): Promise<FileUploadSession> {
+  async uploadStart(ctx: ApiKeyContext, siteId: number, area: SiteArea, path: string, size: number, overwrite: boolean, expectedSha256: string | null = null): Promise<FileUploadSession> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
-    return filesService.uploadStart(a, ctx.creatorId, { path: areaPath(site, area, path), size, overwrite });
+    const virtual = areaPath(site, area, path);
+    const expectedMtime = expectedSha256 !== null ? await fileTools.assertSha256(a, virtual, expectedSha256) : undefined;
+    return filesService.uploadStart(a, ctx.creatorId, { path: virtual, size, ...(expectedMtime !== undefined ? { expectedMtime } : { overwrite }) });
   },
 
   async uploadChunk(ctx: ApiKeyContext, req: Request, uploadId: string, index: number, length: number, body: Readable): Promise<FileUploadChunkResult> {

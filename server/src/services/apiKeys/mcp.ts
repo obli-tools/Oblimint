@@ -4,6 +4,8 @@ import { z, type ZodTypeAny } from 'zod';
 import {
   APP_PROFILES, CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, DBX_KEY_DEFAULT_TIMEOUT_S, DBX_KEY_MAX_BYTES, DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S, DBX_TEXT_PREVIEW, SITE_BASE_IDS,
   SITE_ENV_MAX_VALUE, type ReleaseDiff,
+  FILE_EDIT_MAX_BYTES, FILE_EDIT_MAX_EDITS, FILE_HASH_MAX_BYTES, FILE_LIST_HASH_MAX_BYTES, FILE_LIST_HASH_MAX_FILES, FILE_READ_MAX_LINES,
+  FILE_SEARCH_DEFAULT_RESULTS, FILE_SEARCH_MAX_FILE_BYTES, FILE_SEARCH_MAX_FILES, FILE_SEARCH_MAX_MS, FILE_SEARCH_MAX_PER_FILE, FILE_SEARCH_MAX_RESULTS,
 } from '@oblimint/shared';
 import { serverVersion } from '../../utils/version';
 import { AppError } from '../../middleware/errorHandler';
@@ -36,6 +38,10 @@ const MCP_RELEASE_READ_CHARS = 180_000;
 /** diff_release: patch of one file (the panel's PATCH_FILE_CAP is larger than an MCP answer), and the largest JSON answer. */
 export const MCP_DIFF_PATCH_BYTES = 96 * 1024;
 export const MCP_DIFF_CHARS = 180_000;
+/** read_file: characters of a read by lines, bytes of a read by bytes (the JSON answer stays under MAX_TEXT_RESULT). */
+export const MCP_FILE_READ_CHARS = 150_000;
+export const MCP_FILE_READ_BYTES = 96 * 1024;
+const MCP_FILE_READ_JSON = 180_000;
 
 /**
  * A diff whose JSON fits in an MCP answer (never cut in the middle): the
@@ -203,37 +209,111 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: 'list_files', title: 'List a folder', readOnly: true,
-    description: 'Entries of a folder of the site (scope files.read). Paths are relative to the site area root ("/" by default).',
-    inputSchema: obj({ site_id: siteId, path: relPath('Folder, e.g. "/" or "/wp-content/themes".'), area }, ['site_id']),
-    args: z.object({ site_id: zSite, path: zPath.optional(), area: zArea }),
-    run: (ctx, _r, a) => keyApi.listFiles(ctx, a.site_id, (a.area ?? 'staging') as SiteArea, a.path ?? '/'),
+    description: `Entries of a folder of the site (scope files.read). Paths are relative to the site area root ("/" by default). with_sha256: also the SHA-256 of each file (the first ${FILE_LIST_HASH_MAX_FILES} files, ${FILE_LIST_HASH_MAX_BYTES / 1024 / 1024} MB in all; null beyond, counted in sha256Skipped).`,
+    inputSchema: obj({
+      site_id: siteId, path: relPath('Folder, e.g. "/" or "/wp-content/themes".'), area,
+      with_sha256: { type: 'boolean', description: 'Add sha256 to each file (default false).' },
+    }, ['site_id']),
+    args: z.object({ site_id: zSite, path: zPath.optional(), area: zArea, with_sha256: z.boolean().optional() }),
+    run: (ctx, _r, a) => keyApi.listFiles(ctx, a.site_id, (a.area ?? 'staging') as SiteArea, a.path ?? '/', { sha256: a.with_sha256 === true }),
   },
   {
-    name: 'read_file', title: 'Read a text file', readOnly: true,
-    description: 'Content of a text file (≤ 2 MB; binary files are reported, not returned). Scope files.read.',
-    inputSchema: obj({ site_id: siteId, path: relPath('File path, e.g. "/index.php".'), area }, ['site_id', 'path']),
-    args: z.object({ site_id: zSite, path: zPath, area: zArea }),
+    name: 'search_files', title: 'Search the files', readOnly: true, heavy: true,
+    description: `Searches the text files under a folder of the site, line by line (scope files.read): a literal text (default, case-insensitive unless case_sensitive) or a JavaScript regular expression (regex: true; one too slow is stopped: regexTooSlow). include / exclude: globs on the path relative to the area root ("*.php" matches the file name, "wp-content/plugins/**/*.php" the path). Skipped: vendor, node_modules, .git (unless include_vendor), binary files, files over ${FILE_SEARCH_MAX_FILE_BYTES / 1024 / 1024} MB, links (never followed). Bounded: max_results (default ${FILE_SEARCH_DEFAULT_RESULTS}, ≤ ${FILE_SEARCH_MAX_RESULTS}), ${FILE_SEARCH_MAX_FILES} files, ${FILE_SEARCH_MAX_MS / 1000} s — truncated / stoppedBy say why the list is incomplete: narrow path or include. Each match: path, line, column, text (cut around the match). Then read_file with start_line / end_line around the line.`,
+    inputSchema: obj({
+      site_id: siteId,
+      query: { type: 'string', description: 'Text (or regular expression with regex: true) to find, on one line.' },
+      path: relPath('Folder to search (default "/").'),
+      regex: { type: 'boolean' }, case_sensitive: { type: 'boolean' },
+      include: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'Only files matching one of these globs.' },
+      exclude: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'Skip files matching one of these globs.' },
+      include_vendor: { type: 'boolean', description: 'Also search vendor, node_modules, .git.' },
+      max_results: { type: 'integer', minimum: 1, maximum: FILE_SEARCH_MAX_RESULTS },
+      max_per_file: { type: 'integer', minimum: 1, maximum: FILE_SEARCH_MAX_PER_FILE, description: 'Default 20.' },
+      area,
+    }, ['site_id', 'query']),
+    args: z.object({
+      site_id: zSite, query: z.string().min(1).max(1000), path: zPath.optional(), regex: z.boolean().optional(), case_sensitive: z.boolean().optional(),
+      include: z.array(z.string().min(1).max(200)).max(20).optional(), exclude: z.array(z.string().min(1).max(200)).max(20).optional(),
+      include_vendor: z.boolean().optional(), max_results: z.number().int().min(1).max(FILE_SEARCH_MAX_RESULTS).optional(),
+      max_per_file: z.number().int().min(1).max(FILE_SEARCH_MAX_PER_FILE).optional(), area: zArea,
+    }),
+    run: (ctx, _r, a) => keyApi.search(ctx, a.site_id, (a.area ?? 'staging') as SiteArea, a.path ?? '/', {
+      query: a.query, regex: a.regex === true, caseSensitive: a.case_sensitive === true, include: a.include, exclude: a.exclude,
+      includeVendor: a.include_vendor === true, maxResults: a.max_results, maxPerFile: a.max_per_file,
+    }),
+  },
+  {
+    name: 'read_file', title: 'Read a file (lines or bytes)', readOnly: true,
+    description: `Reads a file of the site (scope files.read), by lines (default: lines 1 to ${FILE_READ_MAX_LINES}; start_line / end_line, 1-based, inclusive) or by bytes (offset / length ≤ ${MCP_FILE_READ_BYTES / 1024} KB, encoding utf8 | base64). Always returns sha256 (of the WHOLE file: pass it as expected_sha256 to edit_file / write_file), size, totalLines; content (lines joined by "\\n", line endings kept, no line numbers). truncated: more lines than one answer holds — continue at nextLine. binary: content null (use offset / length with encoding base64). Files over ${FILE_HASH_MAX_BYTES / 1024 / 1024} MB: tooLarge by lines, readable by bytes (sha256 null).`,
+    inputSchema: obj({
+      site_id: siteId, path: relPath('File path, e.g. "/index.php".'), area,
+      start_line: { type: 'integer', minimum: 1 }, end_line: { type: 'integer', minimum: 1 },
+      offset: { type: 'integer', minimum: 0, description: 'Bytes mode: first byte (nextOffset of the previous window).' },
+      length: { type: 'integer', minimum: 1, maximum: MCP_FILE_READ_BYTES, description: 'Bytes mode: bytes to read.' },
+      encoding: { type: 'string', enum: ['utf8', 'base64'], description: 'Bytes mode only (default utf8).' },
+    }, ['site_id', 'path']),
+    args: z.object({
+      site_id: zSite, path: zPath, area: zArea, start_line: z.number().int().min(1).optional(), end_line: z.number().int().min(1).optional(),
+      offset: z.number().int().min(0).optional(), length: z.number().int().min(1).max(MCP_FILE_READ_BYTES).optional(), encoding: z.enum(['utf8', 'base64']).optional(),
+    }),
     run: async (ctx, _r, a) => {
-      const t = await keyApi.readText(ctx, a.site_id, (a.area ?? 'staging') as SiteArea, a.path);
-      if (t.content === null) return { path: t.path, size: t.size, binary: t.binary, tooLarge: t.tooLarge, content: null };
-      return t.content;
+      const bytes = a.offset !== undefined || a.length !== undefined;
+      const read = (maxChars: number, length?: number) => keyApi.readRange(ctx, a.site_id, (a.area ?? 'staging') as SiteArea, a.path, bytes
+        ? { offset: a.offset ?? 0, length: Math.min(length ?? a.length ?? MCP_FILE_READ_BYTES, MCP_FILE_READ_BYTES), encoding: a.encoding }
+        : { startLine: a.start_line, endLine: a.end_line, maxChars });
+      let out = await read(MCP_FILE_READ_CHARS);
+      // Escaped JSON can be several times the text (control characters, non-Latin text): shrink the window.
+      const len = JSON.stringify(out.content ?? '').length;
+      if (out.content && len > MCP_FILE_READ_JSON) {
+        const ratio = (MCP_FILE_READ_JSON - 10_000) / len;
+        out = bytes
+          ? await read(MCP_FILE_READ_CHARS, Math.max(4, Math.floor((out.length ?? 0) * ratio)))
+          : await read(Math.max(1, Math.floor(out.content.length * ratio)));
+      }
+      return out;
     },
   },
   {
+    name: 'edit_file', title: 'Edit a text file',
+    description: `Exact replacements in a UTF-8 text file (≤ ${FILE_EDIT_MAX_BYTES / 1024 / 1024} MB, scope files.write), all or nothing: each old_string must occur EXACTLY once in the content as left by the previous edits (spaces, indentation and line endings included; add surrounding lines to make it unique), or set replace_all. Pass expected_sha256 (from read_file / list_files / a previous write): if the file changed since (a human over SFTP, another agent), nothing is written and the error is fileChanged with currentSha256 — read it again and redo the change. Errors: editNotFound, editNotUnique (occurrences), binaryFile, notUtf8. Returns the new sha256 (use it for the next edit), replacements; executableBitLost: the file was executable, written files are not. Code goes to staging: publish to put it live.`,
+    inputSchema: obj({
+      site_id: siteId, path: relPath('File path, e.g. "/index.php".'), area,
+      edits: {
+        type: 'array', minItems: 1, maxItems: FILE_EDIT_MAX_EDITS, description: 'Applied in order.',
+        items: obj({ old_string: { type: 'string', description: 'Exact text to replace (non-empty).' }, new_string: { type: 'string' }, replace_all: { type: 'boolean' } }, ['old_string', 'new_string']),
+      },
+      expected_sha256: { type: 'string', description: 'SHA-256 of the content you read (strongly recommended).' },
+    }, ['site_id', 'path', 'edits']),
+    args: z.object({
+      site_id: zSite, path: zPath, area: zArea, expected_sha256: z.string().max(80).optional(),
+      edits: z.array(z.object({ old_string: z.string().min(1), new_string: z.string(), replace_all: z.boolean().optional() })).min(1).max(FILE_EDIT_MAX_EDITS),
+    }),
+    run: (ctx, req, a) => keyApi.edit(ctx, req, a.site_id, (a.area ?? 'staging') as SiteArea, a.path,
+      a.edits.map((e: { old_string: string; new_string: string; replace_all?: boolean }) => ({ oldString: e.old_string, newString: e.new_string, ...(e.replace_all ? { replaceAll: true } : {}) })),
+      a.expected_sha256 ?? null),
+  },
+  {
     name: 'write_file', title: 'Write a file',
-    description: 'Creates or replaces a file (≤ 8 MB, scope files.write). Folders are created as needed. Text in `content`, or binary in `content_base64`. Code goes to staging: publish to put it live.',
+    description: 'Creates or replaces a whole file (≤ 8 MB, scope files.write). Folders are created as needed. Text in `content`, or binary in `content_base64`. expected_sha256: replace only if the file still has that content (fileChanged with currentSha256 otherwise: someone changed it, read it again); if_absent: create only (fileExists otherwise). Prefer edit_file to change part of an existing file. Returns path, bytes, sha256. Code goes to staging: publish to put it live.',
     inputSchema: obj({
       site_id: siteId, path: relPath('File path, e.g. "/index.php".'), content: { type: 'string', description: 'UTF-8 text.' },
-      content_base64: { type: 'string', description: 'Binary content, base64.' }, overwrite: { type: 'boolean', description: 'Replace an existing file (default true).' }, area,
+      content_base64: { type: 'string', description: 'Binary content, base64.' }, overwrite: { type: 'boolean', description: 'Replace an existing file (default true).' },
+      expected_sha256: { type: 'string', description: 'SHA-256 the existing file must have (from read_file / list_files).' },
+      if_absent: { type: 'boolean', description: 'Only create the file (same as overwrite: false).' }, area,
     }, ['site_id', 'path']),
-    args: z.object({ site_id: zSite, path: zPath, content: z.string().optional(), content_base64: z.string().optional(), overwrite: z.boolean().optional(), area: zArea }),
+    args: z.object({
+      site_id: zSite, path: zPath, content: z.string().optional(), content_base64: z.string().optional(), overwrite: z.boolean().optional(),
+      expected_sha256: z.string().max(80).optional(), if_absent: z.boolean().optional(), area: zArea,
+    }),
     run: async (ctx, req, a) => {
       if ((a.content === undefined) === (a.content_base64 === undefined)) throw new AppError(400, 'Give content or content_base64', 'validation');
+      if (a.expected_sha256 !== undefined && a.if_absent === true) throw new AppError(400, 'Give expected_sha256 or if_absent, not both', 'validation');
       const buf = a.content !== undefined ? Buffer.from(a.content, 'utf8') : Buffer.from(a.content_base64, 'base64');
       const ar = (a.area ?? 'staging') as SiteArea;
-      await ensureParents(ctx, req, a.site_id, ar, a.path);
-      const p = await keyApi.putFile(ctx, req, a.site_id, ar, a.path, buf.length, Readable.from([buf]), a.overwrite !== false);
-      return { path: p, bytes: buf.length };
+      if (a.expected_sha256 === undefined) await ensureParents(ctx, req, a.site_id, ar, a.path);
+      const w = await keyApi.putFile(ctx, req, a.site_id, ar, a.path, buf.length, Readable.from([buf]), a.overwrite !== false && a.if_absent !== true, a.expected_sha256 ?? null);
+      return { path: w.path, bytes: w.size, sha256: w.sha256 };
     },
   },
   {
@@ -770,6 +850,7 @@ const INSTRUCTIONS = [
   'Oblimint hosting panel. This key works on ONE hosting account and only on the sites list_sites returns. It acts as the human who created or approved it, with that human\'s CURRENT rights.',
   'A site has two file areas: "staging" (its code, never live as is) and "data" (files the site itself writes, live).',
   'Workflow: write / upload code into staging, check staging_changes, then publish to create a release and put it live.',
+  'To change code: search_files to find it, read_file with start_line / end_line around the match (it returns the sha256 of the whole file), then edit_file with exact old_string / new_string and expected_sha256. A human may change the same files over SFTP: never write without expected_sha256 a file you read; on fileChanged read it again and redo the change.',
   'The live code is read-only: every change goes through staging and publish; rollback restores a previous release.',
   'Before writing or publishing, call get_site: if rolledBack is true (liveRelease older than rolledBackFrom), a human went back to an older release — do not republish the staging as is (publish is refused: liveRolledBack; in mode "auto" the auto-publication is held: autoPublishHeld); inspect with list_release_files / read_release_file, restore the live release with restore_release_to_staging if appropriate, and ask the human.',
   'Also check staging_changes first: pending changes are someone else\'s unpublished work. One agent per site at a time.',
