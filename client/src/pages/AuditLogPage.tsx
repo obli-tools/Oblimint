@@ -160,7 +160,12 @@ export function AuditLogPage({ embedded = false }: { embedded?: boolean } = {}) 
  // Load distinct action list — narrow it to the tenant filter so the
  // dropdown only surfaces actions actually present in that tenant.
  auditApi.distinctActions(filterTenantId).then(setActions).catch(() => {});
- auditApi.distinctKeys(filterTenantId).then(setKeys).catch(() => {});
+ auditApi.distinctKeys(filterTenantId).then((list) => {
+ setKeys(list);
+ // A key filter left over from another tenant would silently empty the
+ // list (the select hides it or reads "Any key"): drop it.
+ setFilters((f) => (f.apiKeyId !== undefined && !list.some((k) => k.id === f.apiKeyId) ? { ...f, apiKeyId: undefined, offset: 0 } : f));
+ }).catch(() => {});
  // Load tenant users for the "By user" filter.
  usersApi.list().then(setUsers).catch(() => {});
  }, [filterTenantId]);
