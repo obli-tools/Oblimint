@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ReleaseLogLine, ScanSummary } from '@oblimint/shared';
 import { RELEASE_ERROR_CODES } from '@oblimint/shared';
-import { INTERNAL_REDACTED, publicReleaseText, releaseErrorCode, releaseOutcome } from './outcome';
+import { INTERNAL_REDACTED, loggedUserIds, maskStaffIds, publicReleaseText, releaseErrorCode, releaseOutcome } from './outcome';
 
 const line = (message: string, level: ReleaseLogLine['level'] = 'info'): ReleaseLogLine => ({ at: '2026-10-30T10:00:00.000Z', level, message });
 const blocked: ScanSummary = { scanner: 'fake', verdict: 'infected', findings: [], risk: { score: 100, level: 'critical' }, blocked: true };
@@ -40,12 +40,22 @@ test('releaseOutcome: live, health check, automatic return, scan, hint', () => {
     log: [line('bascule : current → 4'), line('healthcheck essai 1/1 : HTTP 500', 'warn'), line('retour automatique à la release #3', 'warn'), line('healthcheck en échec : HTTP 500', 'error')],
   }, { id: 5, number: 3 });
   assert.deepEqual([hc.live, hc.healthcheck, hc.autoReverted, hc.errorCode, hc.liveRelease], [false, 'failed', true, 'healthcheckFailed', { id: 5, number: 3 }]);
+  assert.match(hc.hint ?? '', /previous release is live again/);
 
+  // First publication: nothing to put back, the site has no live release (never "reverted").
   const rl = releaseOutcome({
     id: 7, status: 'failed', error: 'rechargement des conteneurs en échec : x', scan: null,
     log: [line('rechargement en échec : x', 'warn'), line('retour automatique : aucune release précédente', 'warn')],
   }, null);
-  assert.deepEqual([rl.healthcheck, rl.autoReverted, rl.errorCode, rl.liveRelease], ['notRun', true, 'reloadFailed', null]);
+  assert.deepEqual([rl.healthcheck, rl.autoReverted, rl.errorCode, rl.liveRelease], ['notRun', false, 'reloadFailed', null]);
+  assert.match(rl.hint ?? '', /NO live release/);
+  assert.doesNotMatch(rl.hint ?? '', /live again/);
+  const hcFirst = releaseOutcome({
+    id: 10, status: 'failed', error: 'healthcheck en échec : HTTP 500', scan: null,
+    log: [line('healthcheck en échec : HTTP 500', 'error'), line('retour automatique : aucune release précédente', 'warn')],
+  }, null);
+  assert.deepEqual([hcFirst.healthcheck, hcFirst.autoReverted, hcFirst.errorCode], ['failed', false, 'healthcheckFailed']);
+  assert.match(hcFirst.hint ?? '', /NO live release/);
 
   const sb = releaseOutcome({ id: 8, status: 'awaiting_approval', error: null, scan: blocked, log: [] }, null);
   assert.equal(sb.errorCode, 'scanBlocked');
@@ -56,6 +66,17 @@ test('releaseOutcome: live, health check, automatic return, scan, hint', () => {
   // A revert line on a READY release (target of an automatic return) is not an automatic return of this release.
   const target = releaseOutcome({ id: 3, status: 'ready', error: null, scan: null, log: [line('retour automatique : x')] }, { id: 3, number: 1 });
   assert.equal(target.autoReverted, false);
+});
+
+test('maskStaffIds: the id of a staff member never reaches a key', () => {
+  const staff = new Set([12]);
+  assert.deepEqual(loggedUserIds('analyse bloquante levée par dérogation du staff (utilisateur #12)'), [12]);
+  assert.equal(maskStaffIds('analyse bloquante levée par dérogation du staff (utilisateur #12)', staff), 'analyse bloquante levée par dérogation du staff');
+  assert.equal(maskStaffIds('rejetée par l’utilisateur #12 : pas maintenant', staff), 'rejetée par le staff : pas maintenant');
+  assert.equal(maskStaffIds("rejet par l'utilisateur #12 (restauration des bases demandée)", staff), 'rejet par le staff (restauration des bases demandée)');
+  assert.equal(maskStaffIds('restauration demandée par l’utilisateur #120', staff), 'restauration demandée par l’utilisateur #120', 'a member keeps its id');
+  assert.equal(maskStaffIds('validation par l’utilisateur #7', new Set([7, 12])), 'validation par le staff');
+  assert.ok(!maskStaffIds('a (utilisateur #12) b l’utilisateur #12 c utilisateur #12', staff).includes('12'));
 });
 
 test('publicReleaseText: no backend detail', () => {

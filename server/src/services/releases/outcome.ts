@@ -20,6 +20,8 @@ export const STAGING_EMPTY_TEXT = 'staging vide';
 export const INTERNAL_TEXT = 'erreur interne';
 /** Log line of an automatic return to the previous release after a failed switch (switchAndVerify). */
 export const AUTO_REVERT_TEXT = 'retour automatique';
+/** Start of the log line of an automatic return that put a previous release back (its number follows). */
+export const AUTO_REVERT_TO_TEXT = `${AUTO_REVERT_TEXT} à la release #`;
 /** Log line of a passed health check. */
 export const HEALTHCHECK_OK_TEXT = 'healthcheck OK';
 
@@ -56,6 +58,12 @@ const HINTS: Record<ReleaseErrorCode, string> = {
   publishFailed: 'The publication failed (see error and log): fix what it says, or retry later.',
 };
 
+/** healthcheckFailed / reloadFailed with no previous release to put back (first publication): nothing is live. */
+const NOT_REVERTED_HINTS: Partial<Record<ReleaseErrorCode, string>> = {
+  healthcheckFailed: 'The site did not pass its health check on this release and there was no previous release to put back: the site has NO live release now. Tell the human; read the error logs (read_logs source "error", since the release date), fix the staging, publish again.',
+  reloadFailed: 'A container could not be reloaded on this release and there was no previous release to put back: the site has NO live release now. Tell the human; retry the publication later.',
+};
+
 /**
  * Summary of a release (a ReleaseDetail with its raw log). currentReleaseId:
  * the release serving the site now (sites.current_release_id) and its number.
@@ -71,8 +79,9 @@ export function releaseOutcome(
   const switched = errorCode === 'healthcheckFailed' || errorCode === 'reloadFailed';
   const healthcheck: ReleaseOutcome['healthcheck'] = errorCode === 'healthcheckFailed' ? 'failed'
     : hcOk && r.status === 'ready' ? 'passed' : 'notRun';
-  const autoReverted = switched && r.log.some((l) => l.message.startsWith(AUTO_REVERT_TEXT));
-  let hint: string | null = errorCode ? HINTS[errorCode] : null;
+  // Only a return that put a previous release back ("retour automatique : aucune release précédente" leaves nothing live).
+  const autoReverted = switched && r.log.some((l) => l.message.startsWith(AUTO_REVERT_TO_TEXT));
+  let hint: string | null = errorCode ? ((switched && !autoReverted ? NOT_REVERTED_HINTS[errorCode] : undefined) ?? HINTS[errorCode]) : null;
   if (!hint && r.status === 'awaiting_approval') hint = 'The release waits for a human approval in the panel (publish mode "approval" or suspicious content): tell the human.';
   else if (!hint && r.status === 'rejected') hint = 'A human rejected this release: ask them why before publishing again.';
   else if (!hint && !settled) hint = 'Still running: call wait_for_release again.';
@@ -88,6 +97,27 @@ export function releaseOutcome(
     settled, timedOut: opts.timedOut === true && !settled, status: r.status, live: live?.id === r.id,
     healthcheck, autoReverted, liveRelease: live, scan, errorCode, hint,
   };
+}
+
+/** "utilisateur #12" in a pipeline log line, with its " (…)" or "l’" around it. */
+const LOG_USER_RE = /( ?\()?(l[’'])?utilisateur #(\d+)(\))?/g;
+
+/** Ids of the users a log line names ("dérogation du staff (utilisateur #12)", "rejetée par l’utilisateur #12 : …"). */
+export function loggedUserIds(message: string): number[] {
+  return [...message.matchAll(LOG_USER_RE)].map((m) => Number(m[3]));
+}
+
+/**
+ * A log line as a key reads it: the id of a user outside the account
+ * (`hidden`: platform staff) is never shown — " (utilisateur #12)" goes,
+ * "l’utilisateur #12" becomes "le staff". A member of the account keeps its id.
+ */
+export function maskStaffIds(message: string, hidden: Set<number>): string {
+  return message.replace(LOG_USER_RE, (all, open: string | undefined, article: string | undefined, id: string, close: string | undefined) => {
+    if (!hidden.has(Number(id))) return all;
+    if (open && close && !article) return '';
+    return `${open ?? ''}${article ? 'le staff' : 'staff'}${close ?? ''}`;
+  });
 }
 
 /** Text shown in place of an unexpected failure's raw cause. */
