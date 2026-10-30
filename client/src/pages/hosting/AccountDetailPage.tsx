@@ -6,7 +6,7 @@ import {
   AlertTriangle, AppWindow, Archive, AtSign, BarChart3, ChevronRight, Database, FolderOpen, Gauge, Globe, HardDrive, HeartPulse, Layers, LayoutGrid,
   ListChecks, Network, Pause, Play, Plus, RefreshCw, Server, ShieldCheck, Shuffle, Trash2, Workflow, Activity,
 } from 'lucide-react';
-import type { AppStack, BackupRun, DbInstance, Domain, HostingAccount, MailOverview, Plan, ProxyHost, Site, UptimeMonitor } from '@oblimint/shared';
+import type { ApiKey, ApiKeyKind, AppStack, BackupRun, DbInstance, Domain, HostingAccount, MailOverview, Plan, ProxyHost, Site, UptimeMonitor } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
 import { accountsApi } from '@/api/accounts.api';
 import { plansApi } from '@/api/plans.api';
@@ -18,6 +18,8 @@ import { appsApi } from '@/api/apps.api';
 import { proxyApi } from '@/api/proxy.api';
 import { uptimeApi } from '@/api/uptime.api';
 import { backupsApi } from '@/api/backups.api';
+import { apiKeysApi } from '@/api/apiKeys.api';
+import { AgentConnectCard } from '@/components/hosting/AgentConnectCard';
 import { hostingCan, useHostingMe } from '@/store/hostingStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { PageContainer } from '@/components/common/PageContainer';
@@ -305,9 +307,11 @@ interface OverviewData {
   proxyHosts: ProxyHost[] | null;
   monitors: UptimeMonitor[] | null;
   backups: BackupRun[] | null;
+  /** Access keys / Claude connectors (« Connect an AI agent »); null without the right to list them. */
+  apiKeys: ApiKey[] | null;
 }
 
-function useOverviewData(accountId: number, appsReadable: boolean): [OverviewData | null, () => void] {
+function useOverviewData(accountId: number, appsReadable: boolean, keysReadable: boolean): [OverviewData | null, () => void] {
   const [data, setData] = useState<OverviewData | null>(null);
   const seq = useRef(0);
   const load = useCallback(() => {
@@ -321,11 +325,12 @@ function useOverviewData(accountId: number, appsReadable: boolean): [OverviewDat
       proxyApi.listHosts({ accountId }),
       uptimeApi.listMonitors({ accountId }),
       backupsApi.account(accountId),
-    ]).then(([d, i, m, a, p, u, b]) => {
+      keysReadable ? apiKeysApi.list(accountId) : Promise.reject(new Error('no access')),
+    ]).then(([d, i, m, a, p, u, b, k]) => {
       if (n !== seq.current) return;
-      setData({ domains: v(d), instances: v(i), mail: v(m), apps: v(a), proxyHosts: v(p), monitors: v(u), backups: v(b)?.runs ?? null });
+      setData({ domains: v(d), instances: v(i), mail: v(m), apps: v(a), proxyHosts: v(p), monitors: v(u), backups: v(b)?.runs ?? null, apiKeys: v(k) });
     });
-  }, [accountId, appsReadable]);
+  }, [accountId, appsReadable, keysReadable]);
   useEffect(() => { load(); }, [load]);
   useHostingEvents([
     HostingSocketEvents.HOSTING_CHANGED, HostingSocketEvents.CERTIFICATE_UPDATED, HostingSocketEvents.DOMAIN_VERIFICATION_UPDATED,
@@ -342,10 +347,24 @@ function OverviewTab({ account, isStaff, appsReadable, onGoTo, onRefreshUsage, r
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { can } = useHostingMe();
+  const [params, setParams] = useSearchParams();
   const [plan, setPlan] = useState<Plan | null>(null);
-  const [data, reload] = useOverviewData(account.id, appsReadable);
+  // Keys are managed with sites.manage on the account (routes/apiKeys.routes.ts).
+  const keysManage = can('sites.manage', account.id);
+  const [data, reload] = useOverviewData(account.id, appsReadable, keysManage);
   // Creations in place from the checklist (coherence plan C6).
   const [creating, setCreating] = useState<'site' | 'domain' | 'db' | 'mail' | null>(null);
+  // « Connect an AI agent »: the key form opened by the checklist step or the deep link ?agent=1.
+  const [agentOpen, setAgentOpen] = useState<ApiKeyKind | null>(params.get('agent') === '1' ? 'key' : null);
+  // Once asked for, the card stays for the visit (its key form and the created key live in it).
+  const [agentShown, setAgentShown] = useState(agentOpen !== null);
+  const openAgent = () => { setAgentShown(true); setAgentOpen('key'); };
+  const clearAgentLink = () => {
+    if (params.get('agent') !== '1') return;
+    const p = new URLSearchParams(params);
+    p.delete('agent');
+    setParams(p, { replace: true });
+  };
 
   useEffect(() => {
     if (!isStaff) return;
@@ -371,6 +390,12 @@ function OverviewTab({ account, isStaff, appsReadable, onGoTo, onRefreshUsage, r
       label: t('objectPage.account.site') || 'A site is created',
       action: can('sites.manage', account.id) && active ? { label: t('accounts.sites.create') || 'New site', onClick: () => setCreating('site') } : null,
     },
+    ...(keysManage ? [{
+      key: 'agent', done: (data?.apiKeys?.length ?? 0) > 0, unknown: unknown || data?.apiKeys === null,
+      label: t('agentConnect.step') || 'An AI agent connected',
+      hint: t('objectPage.account.optional') || 'Optional',
+      action: active && !(data?.apiKeys?.length) ? { label: t('agentConnect.connect') || 'Connect', onClick: openAgent } : null,
+    } satisfies ChecklistItem] : []),
     {
       key: 'domain', done: (domains?.length ?? 0) > 0 && unverified.length === 0, unknown: unknown || domains === null,
       label: t('objectPage.account.domain') || 'A verified domain',
@@ -475,6 +500,16 @@ function OverviewTab({ account, isStaff, appsReadable, onGoTo, onRefreshUsage, r
         <Card title={t('objectPage.account.launchTitle') || 'Getting started'} icon={<ListChecks size={14} className="text-accent" />}>
           <LaunchChecklist items={items} />
         </Card>
+
+        {/* Call to action while no site or no agent yet (or opened by the checklist / ?agent=1). */}
+        {keysManage && active && (account.siteCount === 0 || data?.apiKeys?.length === 0 || agentShown) && (
+          <AgentConnectCard
+            account={account}
+            openKind={agentOpen}
+            onOpened={() => { setAgentOpen(null); clearAgentLink(); }}
+            onKeyCreated={() => { setAgentShown(true); reload(); }}
+          />
+        )}
 
         <Card
           title={t('accounts.overview.disk') || 'Disk'}
