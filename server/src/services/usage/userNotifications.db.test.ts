@@ -202,6 +202,18 @@ test('notification center: recipients, preferences, inbox, e-mail', { timeout: 3
     assert.equal(row.family, 'domains');
   });
 
+  await t.test('API key (REST v1 / MCP): the creator\'s notifications about the key\'s account only', async () => {
+    const { keyApi } = await import('../apiKeys/keyApi');
+    const { actorForUser } = await import('../hosting/access');
+    const ctx = { id: 1, name: 'agent', tenantId: A, accountId: a2, creatorId: staffA, actor: await actorForUser(staffA, A) } as never;
+    const page = await keyApi.notifications(ctx, { limit: 50 });
+    assert.ok(page.items.length >= 1);
+    assert.ok(page.items.every((n) => n.accountId === a2), 'never another account of the creator');
+    assert.equal(page.unreadCount, page.items.filter((n) => !n.readAt).length);
+    // Read-only: nothing marked read.
+    assert.equal((await keyApi.notifications(ctx, { unread: true })).items.length, page.unreadCount);
+  });
+
   await t.test('transactional sender: settings, write-only password, SMTP and platform', async () => {
     const req = { session: { userId: admin }, headers: {}, socket: { remoteAddress: '203.0.113.9' }, ip: '203.0.113.9', get: () => undefined } as unknown as Request;
     assert.equal((await tm.transactionalMailService.get()).ready, false);
