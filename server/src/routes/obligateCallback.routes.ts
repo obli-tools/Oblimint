@@ -93,6 +93,19 @@ async function applySsoMemberships(
  * open the session (new id). Returns the local user id. Obligate owns the
  * platform role of SSO accounts ('admin' = All-tenants admin there).
  */
+/**
+ * How the user authenticated at Obligate (RFC 8176 amr, newer Obligate
+ * builds): 'otp' present → a TOTP is enrolled there; a non-empty amr without
+ * it → none. Absent (older Obligate): unknown, left as it is. Read by the
+ * sensitive actions (an SSO approver needs a TOTP at Obligate).
+ */
+async function noteSsoTotpFromAmr(localUserId: number, amr: unknown): Promise<void> {
+  if (!Array.isArray(amr) || amr.length === 0) return;
+  try {
+    await db('users').where({ id: localUserId, foreign_source: 'obligate' }).update({ sso_totp_enabled: amr.includes('otp') });
+  } catch { /* informational */ }
+}
+
 async function provisionObligateUser(assertion: ObligateUserAssertion, req: Request): Promise<number> {
   const platformRole = assertion.role === 'admin' ? 'admin' : 'user';
   const obligateUserId = assertion.obligateUserId;
@@ -208,6 +221,7 @@ async function provisionObligateUser(assertion: ObligateUserAssertion, req: Requ
   }
   req.session.currentTenantId = resolvedTenantId ?? firstTenantId;
   await stampCredentialVersion(req);
+  await noteSsoTotpFromAmr(localUserId, assertion.amr);
 
   void auditService.log({
     tenantId: req.session.currentTenantId,

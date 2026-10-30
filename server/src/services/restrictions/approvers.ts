@@ -3,6 +3,7 @@ import { MASTER_TENANT_ID, restrictableAction } from '@oblimint/shared';
 import { db } from '../../db';
 import { actorCan, actorForUser, type HostingActor, type HostingNeed } from '../hosting/access';
 import { clientCapabilities } from '../hosting/rows';
+import { obligateTotpVerifierReady } from '../obligate.service';
 import type { Recipient } from '../usage/userNotifications.service';
 import type { RestrictionTarget } from './restriction.service';
 
@@ -32,20 +33,34 @@ interface UserFactorRow {
   totp_secret: string | null;
   foreign_source: string | null;
   foreign_id: number | null;
+  sso_totp_enabled: boolean | null;
 }
 
-const USER_COLS = ['id', 'kind', 'role', 'is_active', 'totp_enabled', 'totp_secret', 'foreign_source', 'foreign_id'];
+const USER_COLS = ['id', 'kind', 'role', 'is_active', 'totp_enabled', 'totp_secret', 'foreign_source', 'foreign_id', 'sso_totp_enabled'];
 
-/** Local TOTP, or an Obligate SSO staff account (its code is checked by Obligate, owner decision 3). */
-export function hasSecondFactor(u: Pick<UserFactorRow, 'kind' | 'totp_enabled' | 'totp_secret' | 'foreign_source' | 'foreign_id'>): boolean {
+type FactorFields = Pick<UserFactorRow, 'kind' | 'totp_enabled' | 'totp_secret' | 'foreign_source' | 'foreign_id' | 'sso_totp_enabled'>;
+
+/**
+ * Local TOTP, or an Obligate SSO staff account whose code Obligate can check
+ * (owner decision 3): Obligate configured (`obligateReady`) and the account
+ * not known to lack a TOTP there. `strict` (an approver, who is counted
+ * before anyone tries): the TOTP at Obligate must be KNOWN (an accepted
+ * code, or a sign-in whose amr carries 'otp') — never a request parked for
+ * someone who can never approve it.
+ */
+export function hasSecondFactor(u: FactorFields, obligateReady: boolean, strict = true): boolean {
   if (u.totp_enabled && u.totp_secret) return true;
-  return u.kind !== 'client' && u.foreign_source === 'obligate' && Number(u.foreign_id) > 0;
+  if (!obligateReady || u.kind === 'client' || u.foreign_source !== 'obligate' || !(Number(u.foreign_id) > 0)) return false;
+  return strict ? u.sso_totp_enabled === true : u.sso_totp_enabled !== false;
 }
 
-/** Does a user (by id) have a usable second factor? */
+/**
+ * Does a user (by id) have a second factor he can type himself (lenient on an
+ * SSO account whose Obligate TOTP is not known yet: his attempt settles it)?
+ */
 export async function userHasSecondFactor(userId: number): Promise<boolean> {
   const u = await db('users').where({ id: userId }).first(...USER_COLS) as UserFactorRow | undefined;
-  return !!u && u.is_active && hasSecondFactor(u);
+  return !!u && u.is_active && hasSecondFactor(u, await obligateTotpVerifierReady(), false);
 }
 
 function staffCapsGrant(actor: Extract<HostingActor, { kind: 'staff' }>, cap: string): boolean {
@@ -80,16 +95,16 @@ async function rightOf(u: UserFactorRow, def: RestrictableActionDef, target: Res
   return needs.every((n) => actorCan(actor, n as HostingNeed, { tenantId, accountId }));
 }
 
-async function eligible(u: UserFactorRow | undefined, def: RestrictableActionDef, target: RestrictionTarget, requesterId: number): Promise<boolean> {
+async function eligible(u: UserFactorRow | undefined, def: RestrictableActionDef, target: RestrictionTarget, requesterId: number, obligateReady: boolean): Promise<boolean> {
   if (!u || !u.is_active || Number(u.id) === Number(requesterId)) return false;
-  if (!hasSecondFactor(u)) return false;
+  if (!hasSecondFactor(u, obligateReady)) return false;
   return rightOf(u, def, target);
 }
 
 /** May `userId` approve `def` on `target` requested by `requesterId`? */
 export async function isEligibleApprover(userId: number, def: RestrictableActionDef, target: RestrictionTarget, requesterId: number): Promise<boolean> {
   const u = await db('users').where({ id: userId }).first(...USER_COLS) as UserFactorRow | undefined;
-  return eligible(u, def, target, requesterId);
+  return eligible(u, def, target, requesterId, await obligateTotpVerifierReady());
 }
 
 /** Everyone who may approve (capped), as notification recipients. */
@@ -97,10 +112,11 @@ export async function eligibleApprovers(def: RestrictableActionDef, target: Rest
   const out = new Map<number, Recipient>();
   const tenantId = target.tenantId;
   const accountId = target.accountId ?? null;
+  const obligateReady = await obligateTotpVerifierReady();
   const consider = async (rows: UserFactorRow[], tenantOf: (u: UserFactorRow) => number) => {
     for (const u of rows) {
       if (out.size >= MAX_APPROVERS || out.has(Number(u.id))) continue;
-      if (await eligible(u, def, target, requesterId)) {
+      if (await eligible(u, def, target, requesterId, obligateReady)) {
         out.set(Number(u.id), { userId: Number(u.id), tenantId: tenantOf(u), kind: u.kind === 'client' ? 'client' : 'staff' });
       }
     }
@@ -127,6 +143,12 @@ export async function eligibleApprovers(def: RestrictableActionDef, target: Rest
     .select(USER_COLS) as UserFactorRow[];
   await consider(admins, () => MASTER_TENANT_ID);
   return [...out.values()];
+}
+
+/** An active platform admin who can type a code: he may approve any request but his own (the "to do" tab, without a query per row). */
+export async function isPlatformAdminApprover(userId: number): Promise<boolean> {
+  const u = await db('users').where({ id: userId }).first(...USER_COLS) as UserFactorRow | undefined;
+  return !!u && u.is_active && u.kind === 'staff' && u.role === 'admin' && hasSecondFactor(u, await obligateTotpVerifierReady());
 }
 
 /** Decision time: the approver's eligibility on the stored request, recomputed. */

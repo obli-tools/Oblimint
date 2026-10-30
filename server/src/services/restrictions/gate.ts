@@ -4,7 +4,7 @@ import {
   PENDING_ACTION_HEADER, PENDING_ACTION_USER_MESSAGE_EN, PENDING_ACTION_USER_MESSAGE_FR, restrictableAction,
 } from '@oblimint/shared';
 import { db } from '../../db';
-import { AppError, ResponseError } from '../../middleware/errorHandler';
+import { AppError, ResponseError, executionErrorMessage } from '../../middleware/errorHandler';
 import { clientIp } from '../../utils/clientIp';
 import { appConfigService } from '../appConfig.service';
 import { checkActionStepUp, TWO_FACTOR_NOT_ENROLLED_MESSAGE } from '../stepUp';
@@ -12,8 +12,11 @@ import { eligibleApprovers, userHasSecondFactor } from './approvers';
 import { displayParams, paramsHmac } from './canonical';
 import { describeAction } from './describe';
 import {
-  announceCreated, consumeMatching, createOrReuse, recordExecutionError, type PendingActionRow, type Principal,
+  announceCreated, consumeMatching, createOrReuse, findReusable, recordExecutionError, type PendingActionRow, type Principal,
 } from './pendingActions.service';
+import { auditService } from '../audit.service';
+import { logger } from '../../utils/logger';
+import type { Recipient } from '../usage/userNotifications.service';
 import { restrictionService, type RestrictionTarget } from './restriction.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,6 +39,9 @@ import { restrictionService, type RestrictionTarget } from './restriction.servic
 //   key restricted    → another person's approval: consumed when given, else
 //                       428 approvalRequired (nobody eligible: 409 noEligibleApprover).
 // A key can never confirm nor approve (session routes refuse req.apiKey).
+// Lock-out escape: 'restrictions.manage' itself, restricted with nobody
+// eligible to approve, asks a platform admin of the panel for his own fresh
+// code instead (never a key) — the matrix and the floor can always be lowered.
 // ─────────────────────────────────────────────────────────────────────────────
 
 declare global {
@@ -111,8 +117,8 @@ function notEnrolled(action: string): AppError {
   return new AppError(403, TWO_FACTOR_NOT_ENROLLED_MESSAGE, 'twoFactorNotEnrolled', { action, enrollPath: '/profile' });
 }
 
-async function keyRequired(row: PendingActionRow, created: boolean, req: Request): Promise<AppError> {
-  if (created) await announceCreated(req, row);
+async function keyRequired(row: PendingActionRow, created: boolean, req: Request, approvers?: Recipient[]): Promise<AppError> {
+  if (created) await announceCreated(req, row, approvers);
   const lang = await languageOf(row.requested_by);
   const id = Number(row.id);
   const details: PendingActionRequiredDetails = {
@@ -150,7 +156,7 @@ export async function gateAction(req: Request, spec: GateSpec): Promise<GateResu
 
   const hmac = paramsHmac({
     action: def.key, tenantId: spec.target.tenantId, userId: principal.userId, apiKeyId: principal.apiKeyId,
-    params: spec.params ?? {}, secretParams: spec.secretParams ?? {},
+    target: spec.target, params: spec.params ?? {}, secretParams: spec.secretParams ?? {},
   });
 
   const consumed = await consumeMatching(principal, hmac, level, approvalId);
@@ -162,26 +168,83 @@ export async function gateAction(req: Request, spec: GateSpec): Promise<GateResu
   // A confirmation is given by the key's owner with his code: he must have one.
   const kind = req.apiKey && level === 'sensitive' ? 'confirm' : 'approve';
   if (kind === 'confirm' && !(await userHasSecondFactor(principal.userId))) throw notEnrolled(def.key);
-  if (kind === 'approve') {
-    const approvers = await eligibleApprovers(def, spec.target, principal.userId);
-    if (approvers.length === 0) throw noEligibleApprover(def.key);
+
+  // An agent that insists finds its live request: no approver computation, no new notification.
+  const live = await findReusable(principal, hmac, level, kind);
+  let approvers: Recipient[] | undefined;
+  if (!live && kind === 'approve') {
+    approvers = await eligibleApprovers(def, spec.target, principal.userId);
+    if (approvers.length === 0) {
+      if (def.key === 'restrictions.manage' && !req.apiKey && req.session?.role === 'admin') return lockoutEscape(req, def.key);
+      throw noEligibleApprover(def.key);
+    }
   }
 
-  const description = spec.describe ? String(await spec.describe()) : describeAction(def.key, spec.params ?? {});
-  const { row, created } = await createOrReuse({
-    tenantId: spec.target.tenantId, accountId: spec.target.accountId, siteId: spec.target.siteId,
-    action: def.key, level, kind, principal, ip: clientIp(req) || null, userAgent: req.get?.('user-agent') ?? null,
-    hmac, paramsDisplay: displayParams(spec.params ?? {}), description: description || def.key,
-    ttlMinutes: await restrictionService.pendingTtlMinutes(),
-  });
+  let row: PendingActionRow;
+  let created = false;
+  if (live) row = live;
+  else {
+    const description = spec.describe ? String(await spec.describe()) : describeAction(def.key, spec.params ?? {}, { where: await targetWhere(spec.target) });
+    ({ row, created } = await createOrReuse({
+      tenantId: spec.target.tenantId, accountId: spec.target.accountId, siteId: spec.target.siteId,
+      action: def.key, level, kind, principal, ip: clientIp(req) || null, userAgent: req.get?.('user-agent') ?? null,
+      hmac, paramsDisplay: displayParams({ ...(spec.params ?? {}), ...targetDisplay(spec.target) }), description: description || def.key,
+      ttlMinutes: await restrictionService.pendingTtlMinutes(),
+    }));
+  }
 
-  if (req.apiKey) throw await keyRequired(row, created, req);
+  if (req.apiKey) throw await keyRequired(row, created, req, approvers);
 
-  if (created) await announceCreated(req, row);
+  if (created) await announceCreated(req, row, approvers);
   const data: PendingApprovalResponse = {
     status: 'pendingApproval', pendingActionId: Number(row.id), expiresAt: new Date(row.expires_at).toISOString(), description: row.description,
   };
   throw new ResponseError(202, { success: true, data });
+}
+
+/**
+ * 'restrictions.manage' restricted and nobody else can approve: a platform
+ * admin of the panel lowers it with his own fresh code (never a trusted IP),
+ * so the owner is never locked out of his own matrix or floor. Audited.
+ */
+async function lockoutEscape(req: Request, action: string): Promise<GateResult> {
+  const outcome = await checkActionStepUp(req, action, { allowTrustedIp: false });
+  if (!outcome.ok) throw new ResponseError(outcome.status, outcome.body);
+  logger.warn({ userId: req.session?.userId }, 'restrictions.manage: no eligible approver, platform admin step-up used instead');
+  void auditService.logReq(req, 'restrictions.lockout_escape', {
+    resourceType: 'restrictions', resourcePath: 'restrictions.manage', details: { factor: outcome.via },
+  });
+  return { via: 'totp' };
+}
+
+/** « site Boutique (compte acme) » — what the decider reads next to the verb. */
+async function targetWhere(target: GateSpec['target']): Promise<string | null> {
+  try {
+    const parts: string[] = [];
+    if (target.siteId) {
+      const s = await db('sites').where({ id: target.siteId, tenant_id: target.tenantId }).first('name') as { name: string } | undefined;
+      parts.push(s ? `site « ${s.name} » #${target.siteId}` : `site #${target.siteId}`);
+    }
+    if (target.accountId) {
+      const a = await db('hosting_accounts').where({ id: target.accountId, tenant_id: target.tenantId }).first('username') as { username: string } | undefined;
+      parts.push(a ? `compte « ${a.username} » #${target.accountId}` : `compte #${target.accountId}`);
+    }
+    if (target.siteIds?.length) parts.push(`sites #${[...target.siteIds].sort((x, y) => x - y).join(', #')}`.slice(0, 300));
+    if (target.accountIds?.length) parts.push(`comptes #${[...target.accountIds].sort((x, y) => x - y).join(', #')}`.slice(0, 300));
+    return parts.length ? parts.join(', ') : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The target ids, stored with the displayed parameters (the decider sees the object). */
+function targetDisplay(target: GateSpec['target']): Record<string, unknown> {
+  const t: Record<string, unknown> = {};
+  if (target.accountId) t.accountId = target.accountId;
+  if (target.siteId) t.siteId = target.siteId;
+  if (target.accountIds?.length) t.accountIds = [...target.accountIds].slice(0, 100);
+  if (target.siteIds?.length) t.siteIds = [...target.siteIds].slice(0, 100);
+  return Object.keys(t).length ? { target: t } : {};
 }
 
 /**
@@ -194,7 +257,7 @@ export async function runGated<T>(req: Request, spec: GateSpec, fn: () => Promis
   try {
     return await fn();
   } catch (err) {
-    if (g.pendingActionId) await recordExecutionError(g.pendingActionId, (err as Error)?.message ?? String(err));
+    if (g.pendingActionId) await recordExecutionError(g.pendingActionId, executionErrorMessage(err));
     throw err;
   }
 }

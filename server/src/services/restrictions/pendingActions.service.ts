@@ -15,7 +15,7 @@ import { auditService } from '../audit.service';
 import { checkActionStepUp } from '../stepUp';
 import { tfaTrustService } from '../tfaTrust.service';
 import { deliverToRecipients, type Recipient } from '../usage/userNotifications.service';
-import { canApprove, eligibleApprovers } from './approvers';
+import { canApprove, eligibleApprovers, isPlatformAdminApprover } from './approvers';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pending actions (spec §3.4): a confirmation ('sensitive' through a key /
@@ -192,6 +192,40 @@ function liveQuery(p: Principal, hmac: string) {
 }
 
 /**
+ * The live request createOrReuse would hand back unchanged (pending, not
+ * expired, same level and kind), or null. Read only: the gate looks it up
+ * before computing the approvers, so an agent that insists costs one query.
+ */
+export async function findReusable(p: Principal, hmac: string, level: 'sensitive' | 'restricted', kind: PendingActionKind): Promise<PendingActionRow | null> {
+  const live = await liveQuery(p, hmac).first() as PendingActionRow | undefined;
+  if (!live) return null;
+  const fresh = live.status === 'pending' && new Date(live.expires_at).getTime() > Date.now();
+  return fresh && live.level === level && live.kind === kind ? live : null;
+}
+
+/** Live requests one principal (a session, or one key) may have waiting at once. */
+export const MAX_PENDING_PER_PRINCIPAL = 20;
+/** Requests one principal may file per hour (each one notifies every approver). */
+export const MAX_CREATED_PER_HOUR = 60;
+
+/** 429 tooManyPendingActions when the principal is over one of its budgets. */
+async function assertCreationBudget(p: Principal): Promise<void> {
+  const mine = () => db('pending_actions').where({ requested_by: p.userId }).whereRaw('COALESCE(api_key_id, 0) = ?', [p.apiKeyId ?? 0]);
+  const live = await mine().where({ status: 'pending' }).where('expires_at', '>', new Date())
+    .count<{ n: string }[]>({ n: '*' }).first();
+  if (Number(live?.n ?? 0) >= MAX_PENDING_PER_PRINCIPAL) {
+    throw new AppError(429, `Too many requests are already waiting for a decision (${MAX_PENDING_PER_PRINCIPAL}): wait for them, or cancel some in the panel`,
+      'tooManyPendingActions', { limit: MAX_PENDING_PER_PRINCIPAL, window: 'live' });
+  }
+  const recent = await mine().where('created_at', '>', new Date(Date.now() - 3_600_000))
+    .count<{ n: string }[]>({ n: '*' }).first();
+  if (Number(recent?.n ?? 0) >= MAX_CREATED_PER_HOUR) {
+    throw new AppError(429, `Too many requests filed in the last hour (${MAX_CREATED_PER_HOUR}): try again later`,
+      'tooManyPendingActions', { limit: MAX_CREATED_PER_HOUR, window: 'hour' });
+  }
+}
+
+/**
  * The live request of this fingerprint, or a new one. A live request that no
  * longer fits (another level / kind: the matrix changed; a stale one the
  * sweeper has not reached yet) is retired first — a 'sensitive'
@@ -209,6 +243,7 @@ export async function createOrReuse(i: CreateInput): Promise<{ row: PendingActio
         .update({ status: stale ? 'expired' : 'cancelled', reason: stale ? live.reason : 'superseded (level changed)' }).returning('*') as PendingActionRow[];
       if (retired) changed(retired);
     }
+    await assertCreationBudget(i.principal);
     try {
       const [row] = await db('pending_actions').insert({
         tenant_id: i.tenantId, account_id: i.accountId, site_id: i.siteId, action_key: i.action, level: i.level, kind: i.kind,
@@ -261,8 +296,8 @@ export async function recordExecutionError(id: number, message: string): Promise
   } catch { /* journal only */ }
 }
 
-/** After a request was created: who must act is told. */
-export async function announceCreated(req: Request, row: PendingActionRow): Promise<void> {
+/** After a request was created: who must act is told (`approvers`: already computed by the gate). */
+export async function announceCreated(req: Request, row: PendingActionRow, known?: Recipient[]): Promise<void> {
   void auditService.logReqAs(req, row.tenant_id, 'pending_action.requested', {
     resourceType: 'pending_action', resourcePath: String(idOf(row)),
     details: { action: row.action_key, level: row.level, kind: row.kind, via: row.via, params: displayOf(row) },
@@ -273,7 +308,7 @@ export async function announceCreated(req: Request, row: PendingActionRow): Prom
     return;
   }
   const def = restrictableAction(row.action_key);
-  const approvers = def ? await eligibleApprovers(def, { tenantId: row.tenant_id, accountId: row.account_id, siteId: row.site_id }, row.requested_by) : [];
+  const approvers = known ?? (def ? await eligibleApprovers(def, { tenantId: row.tenant_id, accountId: row.account_id, siteId: row.site_id }, row.requested_by) : []);
   await notifyRow('action.approvalRequired', row, approvers);
   changed(row, approvers.map((a) => a.userId));
 }
@@ -317,6 +352,30 @@ async function visibleTo(userId: number, req: Request, row: PendingActionRow): P
   return canApprove(userId, row);
 }
 
+/**
+ * A decision on a request the user can no longer approve: someone of its
+ * circle (a client login of its account, a staff member of its tenant, a
+ * platform admin) is told 403 notEligibleApprover — he may have seen it
+ * before losing the right; anyone else keeps 404 (nothing disclosed).
+ */
+async function loadForDecision(req: Request, id: number): Promise<PendingActionRow> {
+  const userId = sessionUser(req);
+  const row = await rowById(id);
+  if (row && await visibleTo(userId, req, row)) return row;
+  if (row && row.kind === 'approve' && (godView(req) || Number(row.tenant_id) === Number(req.tenantId)) && await inCircle(userId, row)) return row;
+  throw new AppError(404, 'Pending action not found', 'notFound');
+}
+
+async function inCircle(userId: number, row: PendingActionRow): Promise<boolean> {
+  const u = await db('users').where({ id: userId }).first('kind', 'role') as { kind: string; role: string } | undefined;
+  if (!u) return false;
+  if (u.kind === 'client') {
+    return !!row.account_id && !!(await db('account_users').where({ user_id: userId, account_id: row.account_id }).first('user_id'));
+  }
+  if (u.role === 'admin') return true;
+  return !!(await db('user_tenants').where({ user_id: userId, tenant_id: row.tenant_id }).first('user_id'));
+}
+
 function godView(req: Request): boolean {
   return req.session?.role === 'admin' && isMasterTenant(Number(req.tenantId));
 }
@@ -333,6 +392,7 @@ export const pendingActionsService = {
     const userId = sessionUser(req);
     const tenantFilter = (q: ReturnType<typeof db>) => (godView(req) ? q : q.where('tenant_id', req.tenantId));
     const todo = await todoRows(req, userId);
+    const approvable = new Set(todo.filter((r) => r.kind === 'approve').map(idOf));
     let rows: PendingActionRow[];
     if (tab === 'todo') rows = todo;
     else if (tab === 'mine') rows = await tenantFilter(db('pending_actions').where({ requested_by: userId })).orderBy('id', 'desc').limit(100) as PendingActionRow[];
@@ -342,7 +402,7 @@ export const pendingActionsService = {
         .where((b) => b.where({ requested_by: userId }).orWhere({ decided_by: userId }))
         .orderBy('id', 'desc').limit(100) as PendingActionRow[];
     }
-    return { items: await toViews(rows, userId), todoCount: todo.length };
+    return { items: await toViews(rows, userId, approvable), todoCount: todo.length };
   },
 
   async todoCount(req: Request): Promise<number> {
@@ -369,7 +429,7 @@ export const pendingActionsService = {
 
   async approve(req: Request, id: number, reason?: string | null): Promise<PendingAction> {
     const userId = sessionUser(req);
-    const row = await loadVisible(req, id);
+    const row = await loadForDecision(req, id);
     if (row.kind !== 'approve') throw new AppError(409, 'This request is confirmed by its requester with his code', 'notApprovable');
     if (Number(row.requested_by) === userId) throw new AppError(403, 'You cannot approve your own request', 'selfApproval');
     stillOpen(row);
@@ -390,7 +450,7 @@ export const pendingActionsService = {
 
   async deny(req: Request, id: number, reason?: string | null): Promise<PendingAction> {
     const userId = sessionUser(req);
-    const row = await loadVisible(req, id);
+    const row = await loadForDecision(req, id);
     const requester = Number(row.requested_by) === userId;
     if (row.kind === 'confirm' && !requester) throw new AppError(403, 'Only the requester can refuse this confirmation', 'notRequester');
     if (row.kind === 'approve') {
@@ -430,22 +490,48 @@ export const pendingActionsService = {
   },
 };
 
+const TODO_MAX = 200;
+const TODO_PAGE = 200;
+/** Rows looked at, at most, to fill the "to do" tab (bounded work per poll). */
+const TODO_SCAN_MAX = 2000;
+
 async function todoRows(req: Request, userId: number): Promise<PendingActionRow[]> {
   const now = new Date();
   const confirms = await db('pending_actions')
     .where({ requested_by: userId, kind: 'confirm', status: 'pending' }).where('expires_at', '>', now)
     .orderBy('id', 'desc').limit(100) as PendingActionRow[];
+  const u = await db('users').where({ id: userId }).first('kind', 'role', 'is_active') as { kind: string; role: string; is_active: boolean } | undefined;
+  if (!u || !u.is_active) return confirms;
   const candidates = db('pending_actions')
     .where({ kind: 'approve', status: 'pending' }).whereNot('requested_by', userId).where('expires_at', '>', now);
   if (!godView(req)) candidates.where('tenant_id', req.tenantId);
+  // The circle first, in SQL: a client approves on his accounts only, a staff
+  // member in his tenants only; a platform admin with a factor approves all.
+  const platformAdmin = u.kind === 'staff' && u.role === 'admin';
+  if (u.kind === 'client') candidates.whereIn('account_id', db('account_users').where({ user_id: userId }).select('account_id'));
+  else if (!platformAdmin) candidates.whereIn('tenant_id', db('user_tenants').where({ user_id: userId }).select('tenant_id'));
+  const adminOk = platformAdmin && await isPlatformAdminApprover(userId);
+  if (platformAdmin && !adminOk) return confirms;
+
   const approvals: PendingActionRow[] = [];
-  for (const r of await candidates.orderBy('id', 'desc').limit(200) as PendingActionRow[]) {
-    if (await canApprove(userId, r)) approvals.push(r);
+  let before: number | null = null;
+  let scanned = 0;
+  while (approvals.length < TODO_MAX && scanned < TODO_SCAN_MAX) {
+    const q = candidates.clone().orderBy('id', 'desc').limit(TODO_PAGE);
+    if (before !== null) q.where('id', '<', before);
+    const page = await q as PendingActionRow[];
+    for (const r of page) {
+      scanned++;
+      if (adminOk || await canApprove(userId, r)) approvals.push(r);
+      if (approvals.length >= TODO_MAX) break;
+    }
+    if (page.length < TODO_PAGE) break;
+    before = idOf(page[page.length - 1]);
   }
   return [...confirms, ...approvals].sort((a, b) => idOf(b) - idOf(a));
 }
 
-async function toViews(rows: PendingActionRow[], viewerId: number): Promise<PendingAction[]> {
+async function toViews(rows: PendingActionRow[], viewerId: number, approvable?: Set<number>): Promise<PendingAction[]> {
   const userIds = [...new Set(rows.flatMap((r) => [r.requested_by, r.decided_by]).filter((x): x is number => !!x))];
   const keyIds = [...new Set(rows.map((r) => r.api_key_id).filter((x): x is number => !!x))];
   const users = new Map((userIds.length ? await db('users').whereIn('id', userIds).select('id', 'username', 'display_name') as Array<{ id: number; username: string; display_name: string | null }> : [])
@@ -456,7 +542,8 @@ async function toViews(rows: PendingActionRow[], viewerId: number): Promise<Pend
   for (const r of rows) {
     const open = r.status === 'pending' && new Date(r.expires_at).getTime() > Date.now();
     const requester = Number(r.requested_by) === viewerId;
-    const approver = !requester && r.kind === 'approve' && open ? await canApprove(viewerId, r) : false;
+    const approver = !requester && r.kind === 'approve' && open
+      ? (approvable ? approvable.has(idOf(r)) : await canApprove(viewerId, r)) : false;
     out.push({
       id: idOf(r), tenantId: r.tenant_id, accountId: r.account_id ?? null, siteId: r.site_id ?? null, action: r.action_key,
       level: r.level, kind: r.kind, status: r.status, via: r.via,

@@ -1,14 +1,16 @@
 import { Router, type Request } from 'express';
-import type { RestrictionMap, RestrictionsView } from '@oblimint/shared';
+import type { RestrictionFloor, RestrictionMap, RestrictionsView } from '@oblimint/shared';
 import { MASTER_TENANT_ID, RESTRICTABLE_ACTIONS, isMasterTenant, restrictableAction } from '@oblimint/shared';
 import { db } from '../db';
 import { AppError } from '../middleware/errorHandler';
 import { requirePlatformAdminOnMaster, requireTenantCapability } from '../middleware/rbac';
 import { auditService } from '../services/audit.service';
 import { platformSettings } from '../services/platformSettings';
+import { obligateTotpVerifierReady } from '../services/obligate.service';
+import { eligibleApprovers } from '../services/restrictions/approvers';
 import { describeRestrictionChanges } from '../services/restrictions/describe';
 import { gateAction } from '../services/restrictions/gate';
-import { diffMaps, restrictionService, sanitizeFloor, sanitizeMap } from '../services/restrictions/restriction.service';
+import { computeLevel, diffMaps, restrictionService, sanitizeFloor, sanitizeMap } from '../services/restrictions/restriction.service';
 
 // /api/restrictions — the tenant's matrix of sensitive actions (spec §6.1,
 // Obliance routes/restriction.routes.ts). Session only (tenantRouter), staff
@@ -20,6 +22,10 @@ import { diffMaps, restrictionService, sanitizeFloor, sanitizeMap } from '../ser
 //   PUT  /floor   { floor }    platform floor (platform admin on the master tenant)
 // Platform actions live in the master tenant's map only and are edited by a
 // platform admin there; any other editor keeps them as they are.
+// Never a lock-out: a change (map or floor) that would leave
+// restrictions.manage 'restricted' in the panel with nobody but the editor
+// able to approve is refused (400 restrictionsLockout); out of the panel,
+// `node dist/src/cli/restrictions.js unlock` (docker exec) lowers it.
 
 const router = Router();
 
@@ -39,11 +45,14 @@ async function view(req: Request): Promise<RestrictionsView> {
   const map = await restrictionService.getMap(tenantId);
   if (!isMasterTenant(tenantId)) for (const k of Object.keys(map)) if (restrictableAction(k)?.platform) delete map[k];
   const accounts = db('hosting_accounts').where({ tenant_id: tenantId }).select('id');
-  const staffNoFactor = await db('user_tenants as ut').join('users as u', 'u.id', 'ut.user_id')
+  // An SSO account counts as having a factor only when Obligate can check its
+  // code and is known to hold a TOTP for it (the approver rule, approvers.ts).
+  const ssoFactor = await obligateTotpVerifierReady();
+  const staffNoFactorQ = db('user_tenants as ut').join('users as u', 'u.id', 'ut.user_id')
     .where({ 'ut.tenant_id': tenantId, 'u.kind': 'staff', 'u.is_active': true })
-    .whereRaw(`(COALESCE(u.totp_enabled, false) = false OR u.totp_secret IS NULL)`)
-    .whereRaw(`NOT (COALESCE(u.foreign_source, '') = 'obligate' AND u.foreign_id IS NOT NULL)`)
-    .countDistinct<{ n: string }[]>({ n: 'u.id' }).first();
+    .whereRaw(`(COALESCE(u.totp_enabled, false) = false OR u.totp_secret IS NULL)`);
+  if (ssoFactor) staffNoFactorQ.whereRaw(`NOT (COALESCE(u.foreign_source, '') = 'obligate' AND u.foreign_id IS NOT NULL AND u.sso_totp_enabled IS TRUE)`);
+  const staffNoFactor = await staffNoFactorQ.countDistinct<{ n: string }[]>({ n: 'u.id' }).first();
   const clientsNoFactor = await db('account_users as au').join('users as u', 'u.id', 'au.user_id')
     .whereIn('au.account_id', accounts).where({ 'u.kind': 'client', 'u.is_active': true })
     .whereRaw(`(COALESCE(u.totp_enabled, false) = false OR u.totp_secret IS NULL)`)
@@ -63,6 +72,22 @@ router.get('/', async (req, res, next) => {
     res.json({ success: true, data: await view(req) });
   } catch (err) { next(err); }
 });
+
+/**
+ * 400 restrictionsLockout when, with this map and this floor, changing the
+ * matrix of `tenantId` again from the panel would need an approval nobody
+ * but the editor could give.
+ */
+async function refuseLockout(req: Request, tenantId: number, map: RestrictionMap, floor: RestrictionFloor): Promise<void> {
+  const def = restrictableAction('restrictions.manage');
+  if (!def) return;
+  const target = { tenantId, accountId: null, siteId: null };
+  if (computeLevel({ def, target, viaKeys: false, targetMap: map, floor }) !== 'restricted') return;
+  if ((await eligibleApprovers(def, target, Number(req.session?.userId))).length > 0) return;
+  throw new AppError(400,
+    'This change would lock the matrix: "restrictions.manage" would need the approval of a second authorised person with two-factor authentication, and there is none. Add one first, or keep this action at "sensitive".',
+    'restrictionsLockout', { action: 'restrictions.manage' });
+}
 
 /** Scope ids kept only when they belong to the tenant (never another tenant's ids in a map). */
 async function confineScopes(tenantId: number, map: RestrictionMap): Promise<RestrictionMap> {
@@ -96,6 +121,7 @@ router.put('/', async (req, res, next) => {
     await confineScopes(tenantId, next);
     const changes = diffMaps(current, next);
     if (changes.length) {
+      await refuseLockout(req, tenantId, next, await restrictionService.floor());
       await gateAction(req, {
         action: 'restrictions.manage',
         target: { tenantId, accountId: null, siteId: null },
@@ -117,6 +143,7 @@ router.put('/floor', requirePlatformAdminOnMaster, async (req, res, next) => {
     const before = await restrictionService.floor();
     const changed = [...new Set([...Object.keys(before), ...Object.keys(floor)])].filter((k) => before[k] !== floor[k]).sort();
     if (changed.length) {
+      await refuseLockout(req, MASTER_TENANT_ID, await restrictionService.getMap(MASTER_TENANT_ID), floor);
       await gateAction(req, {
         action: 'restrictions.manage',
         target: { tenantId: MASTER_TENANT_ID, accountId: null, siteId: null },

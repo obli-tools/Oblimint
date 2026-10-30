@@ -46,11 +46,12 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
   const shared = await import('@oblimint/shared');
   const { AppError, errorHandler } = await import('../../middleware/errorHandler');
   const { captureStepUpProof } = await import('../../middleware/captureStepUpProof');
-  const { runGated } = await import('./gate');
+  const { gateAction, runGated } = await import('./gate');
   const { restrictionService } = await import('./restriction.service');
   const { sweep } = await import('./pendingActions.service');
   const { eligibleApprovers } = await import('./approvers');
-  const { checkActionStepUp } = await import('../stepUp');
+  const { checkActionStepUp, resetStepUpFailuresForTests, STEP_UP_MAX_FAILURES } = await import('../stepUp');
+  const { unlockRestrictionsManage, resetRestrictionsFloor } = await import('./unlock');
   const { setObligateTotpVerifierForTests } = await import('../obligate.service');
   const { actorCan, actorForUser } = await import('../hosting/access');
   const { platformSettings } = await import('../platformSettings');
@@ -61,7 +62,7 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
   await db.raw('DROP SCHEMA IF EXISTS public CASCADE');
   await db.raw('CREATE SCHEMA public');
   await db.migrate.latest();
-  t.after(async () => { setObligateTotpVerifierForTests(null); await db.destroy(); });
+  t.after(async () => { setObligateTotpVerifierForTests(null); resetStepUpFailuresForTests(); await db.destroy(); });
 
   // ── migration 027 seeds the defaults (master: with the platform entries) ──
   const masterMap = await restrictionService.getMap(1);
@@ -91,6 +92,10 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
   const SN = await mkUser('staff-a-nofactor', { totp: false });
   const SB = await mkUser('staff-b');
   const SSO = await mkUser('staff-sso', { sso: 77 });
+  // Obligate "configured" (test verifier) and known to hold a TOTP for SSO.
+  const obligateVerifier = async (id: number, code: string) => (id === 77 && code === '123456' ? 'valid' as const : id === 78 ? 'notEnrolled' as const : code === '999999' ? 'unavailable' as const : 'invalid' as const);
+  setObligateTotpVerifierForTests(obligateVerifier);
+  await db('users').where({ id: SSO }).update({ sso_totp_enabled: true });
   const C1 = await mkUser('client-owner', { kind: 'client' });
   const C2 = await mkUser('client-approver', { kind: 'client' });
   const C3 = await mkUser('client-nocap', { kind: 'client' });
@@ -129,8 +134,9 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
   const K1 = await mkKey('ci', C1);
   const K2 = await mkKey('ci-two', C1);
   const K5 = await mkKey('nofactor', C5);
+  const K3 = await mkKey('budget', C1);
   const keys = new Map<number, { creator: number; name: string; kind: 'key' | 'connector' }>([
-    [K1, { creator: C1, name: 'ci', kind: 'key' }], [K2, { creator: C1, name: 'ci-two', kind: 'key' }], [K5, { creator: C5, name: 'nofactor', kind: 'key' }],
+    [K1, { creator: C1, name: 'ci', kind: 'key' }], [K2, { creator: C1, name: 'ci-two', kind: 'key' }], [K5, { creator: C5, name: 'nofactor', kind: 'key' }], [K3, { creator: C1, name: 'budget', kind: 'key' }],
   ]);
 
   /** A fresh TOTP code of the user (its anti-replay marker reset unless `keep`). */
@@ -161,15 +167,26 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
   app.use('/pending-actions', pendingRoutes);
   app.post('/t/gate', async (req, res, next) => {
     try {
-      const b = req.body as { action: string; accountId?: number; tenantId?: number; params?: Record<string, unknown>; secret?: Record<string, unknown>; approvalId?: number };
+      const b = req.body as { action: string; accountId?: number; siteId?: number; tenantId?: number; params?: Record<string, unknown>; secret?: Record<string, unknown>; approvalId?: number; fail?: 'backend' | 'pg' | 'forbidden'; viaHandler?: boolean };
       const tenantId = b.tenantId ?? A;
       const accountId = b.accountId === undefined ? a1 : b.accountId;
-      await runGated(req, { action: b.action, target: { tenantId, accountId, siteId: null }, params: b.params ?? {}, secretParams: b.secret, approvalId: b.approvalId }, async () => {
+      const spec = { action: b.action, target: { tenantId, accountId, siteId: b.siteId ?? null }, params: b.params ?? {}, secretParams: b.secret, approvalId: b.approvalId };
+      const op = async () => {
+        if (b.fail === 'backend') throw new AppError(503, 'connect ENOENT /srv/oblimint/run/hostd.sock (hostd: mount failed)', 'backendUnavailable');
+        if (b.fail === 'pg') throw new Error('insert into "secret_table" values ($1) - relation "secret_table" does not exist');
+        if (b.fail === 'forbidden') throw new AppError(403, 'Insufficient permissions');
         // The handler re-checks the CURRENT rights of the acting user (a key: its creator).
         const userId = req.apiKey ? req.apiKey.creatorId : Number(req.session.userId);
         const actor = await actorForUser(userId, tenantId);
         if (b.action.startsWith('db.') && !actorCan(actor, 'databases.manage', { tenantId, accountId })) throw new AppError(403, 'Insufficient permissions');
-      });
+      };
+      if (b.viaHandler) {
+        // A panel route: gateAction, then the handler; its error reaches the error handler.
+        await gateAction(req, spec);
+        await op();
+      } else {
+        await runGated(req, spec, op);
+      }
       res.json({ success: true, data: { viaPendingAction: req.viaPendingAction ?? null } });
     } catch (err) { next(err); }
   });
@@ -314,7 +331,10 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
     r = await call('POST', `/pending-actions/${id}/approve`, asC1, { twoFactorCode: await codeOf(C1) });
     assert.equal(r.status, 403, 'self approval');
     r = await call('POST', `/pending-actions/${id}/approve`, { user: C3 });
-    assert.equal(r.status, 404, 'no right: invisible');
+    assert.equal(r.status, 403, 'a login of the same account without the right: told so');
+    assert.equal(r.body.code, 'notEligibleApprover');
+    r = await call('GET', `/pending-actions/${id}`, { user: C3 });
+    assert.equal(r.status, 404, 'but he cannot read it');
     r = await call('POST', `/pending-actions/${id}/approve`, { user: C4 });
     assert.equal(r.status, 404, 'client of another account');
     r = await call('POST', `/pending-actions/${id}/approve`, { user: SB, tenant: B });
@@ -334,12 +354,18 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
     assert.equal(r.status, 200);
   });
 
-  await t.test('approver who lost his right meanwhile: refused at decision time (invisible)', async () => {
+  await t.test('approver who lost his right meanwhile: 403 notEligibleApprover at decision time (spec §1.3)', async () => {
     const r = await gate(asKey1, 'db.drop', { name: 'lost-right' });
     const id = r.body.details.pendingActionId as number;
     await db('account_users').where({ user_id: C2, account_id: a1 }).update({ capabilities: JSON.stringify([]) });
-    const d = await call('POST', `/pending-actions/${id}/approve`, asC2, { twoFactorCode: await codeOf(C2) });
-    assert.equal(d.status, 404);
+    let d = await call('POST', `/pending-actions/${id}/approve`, asC2, { twoFactorCode: await codeOf(C2) });
+    assert.equal(d.status, 403);
+    assert.equal(d.body.code, 'notEligibleApprover');
+    d = await call('POST', `/pending-actions/${id}/deny`, asC2);
+    assert.equal(d.status, 403);
+    assert.equal(d.body.code, 'notEligibleApprover');
+    d = await call('POST', `/pending-actions/${id}/approve`, { user: C4 }, { twoFactorCode: '000000' });
+    assert.equal(d.status, 404, 'outside the circle (another account): still nothing disclosed');
     await db('account_users').where({ user_id: C2, account_id: a1 }).update({ capabilities: JSON.stringify(['databases.manage']) });
   });
 
@@ -428,7 +454,6 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
     o = await checkActionStepUp(fake(SA, undefined, '203.0.113.10'), 'site.delete', { allowTrustedIp: true });
     assert.equal(o.ok, false, 'another address');
 
-    setObligateTotpVerifierForTests(async (id, code) => (id === 77 && code === '123456' ? 'valid' : code === '999999' ? 'unavailable' : 'invalid'));
     o = await checkActionStepUp(fake(SSO, { twoFactorCode: '123456' }), 'site.delete');
     assert.deepEqual(o, { ok: true, via: 'obligate_totp' });
     o = await checkActionStepUp(fake(SSO, { twoFactorCode: '123456' }), 'site.delete');
@@ -557,5 +582,179 @@ test('sensitive actions: gate, pending actions, approvers, matrix routes', { tim
     const s = await userNotificationService.updatePrefs({} as Request, C1, { prefs: { approvals: { email: true } } });
     assert.deepEqual(s.prefs.approvals, { inApp: true, email: true });
     assert.ok(s.families.includes('approvals'), 'a client sees the family');
+  });
+
+  await t.test('frozen request bound to its target: an approval for site 7 never deletes site 8', async () => {
+    await setMap(A, { 'site.delete': 'restricted' });
+    let r = await gate(asC1, 'site.delete', {}, { siteId: 7 });
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    const id = r.body.data.pendingActionId as number;
+    assert.match(r.body.data.description, /site #7/, 'the decider sees the object');
+    assert.deepEqual((await row(id)).params_display, { target: { accountId: a1, siteId: 7 } });
+    assert.equal((await call('POST', `/pending-actions/${id}/approve`, asSA, { twoFactorCode: await codeOf(SA) })).status, 200);
+    r = await gate(asC1, 'site.delete', {}, { siteId: 8 }, { 'X-Oblimint-Approval': String(id) });
+    assert.equal(r.status, 409, 'the approval names site 7');
+    assert.equal(r.body.code, 'approvalMismatch');
+    r = await gate(asC1, 'site.delete', {}, { siteId: 8 });
+    assert.equal(r.status, 202, 'site 8: a new request');
+    assert.notEqual(r.body.data.pendingActionId, id);
+    assert.equal((await row(id)).status, 'approved', 'site 7 approval untouched');
+    r = await gate(asC1, 'site.delete', {}, { siteId: 7 });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.data.viaPendingAction, id);
+    await setMap(A, {});
+  });
+
+  await t.test('execution error kept redacted: backend text and raw server errors never stored', async () => {
+    await setMap(A, { 'db.drop': 'sensitive' });
+    for (const [fail, viaHandler, expected] of [
+      ['backend', false, /container engine or the host daemon is unreachable/],
+      ['backend', true, /container engine or the host daemon is unreachable/],
+      ['pg', false, /^Internal server error$/],
+      ['pg', true, /^Internal server error$/],
+    ] as const) {
+      const name = `fail-${fail}-${viaHandler}`;
+      let r = await call('POST', '/t/gate', asKey1, { action: 'db.drop', params: { name }, fail, viaHandler });
+      assert.equal(r.status, 428);
+      const id = r.body.details.pendingActionId as number;
+      assert.equal((await call('POST', `/pending-actions/${id}/confirm`, asC1, { twoFactorCode: await codeOf(C1) })).status, 200);
+      r = await call('POST', '/t/gate', asKey1, { action: 'db.drop', params: { name }, fail, viaHandler });
+      assert.ok(r.status >= 500, JSON.stringify(r.body));
+      await new Promise((res) => setTimeout(res, 100)); // the error handler records it asynchronously
+      const after = await row(id);
+      assert.equal(after.status, 'consumed');
+      assert.match(String(after.execution_error), expected, name);
+      assert.ok(!/srv\/oblimint|hostd\.sock|secret_table/.test(String(after.execution_error)), `${name}: no raw text`);
+      r = await call('GET', `/pending-actions/${id}`, asC1);
+      assert.ok(!/srv\/oblimint|secret_table/.test(String(r.body.data.executionError)));
+    }
+  });
+
+  await t.test('pending requests capped per principal; an insisting agent costs no new request', async () => {
+    const { MAX_PENDING_PER_PRINCIPAL } = await import('./pendingActions.service');
+    await setMap(A, { 'db.drop': 'restricted' });
+    const ids: number[] = [];
+    for (let i = 0; i < MAX_PENDING_PER_PRINCIPAL; i++) {
+      const r = await gate({ key: K3 }, 'db.drop', { name: `flood-${i}` });
+      assert.equal(r.status, 428, JSON.stringify(r.body));
+      ids.push(r.body.details.pendingActionId as number);
+    }
+    let r = await gate({ key: K3 }, 'db.drop', { name: 'flood-over' });
+    assert.equal(r.status, 429);
+    assert.equal(r.body.code, 'tooManyPendingActions');
+    r = await gate({ key: K3 }, 'db.drop', { name: 'flood-0' });
+    assert.equal(r.status, 428, 'the same request is still found');
+    assert.equal(r.body.details.pendingActionId, ids[0]);
+    r = await gate(asKey1, 'db.drop', { name: 'other-key-free' });
+    assert.equal(r.status, 428, 'another key has its own budget');
+    for (const id of ids) await call('POST', `/pending-actions/${id}/cancel`, asC1);
+    r = await gate({ key: K3 }, 'db.drop', { name: 'flood-over' });
+    assert.equal(r.status, 428, 'room again once cancelled');
+  });
+
+  await t.test('"to do" tab: a platform admin sees every approval he may give, a staff of another tenant none', async () => {
+    await setMap(A, { 'db.drop': 'restricted' });
+    const r = await gate(asKey1, 'db.drop', { name: 'todo-admin' });
+    const id = r.body.details.pendingActionId as number;
+    let l = await call('GET', '/pending-actions?tab=todo', asPA);
+    assert.ok(l.body.data.items.some((x: { id: number; can: { approve: boolean } }) => x.id === id && x.can.approve), 'god view');
+    l = await call('GET', '/pending-actions?tab=todo', { user: SB, tenant: B });
+    assert.ok(!l.body.data.items.some((x: { id: number }) => x.id === id));
+    l = await call('GET', '/pending-actions/count', asSA);
+    assert.ok(l.body.data.todo >= 1);
+  });
+
+  await t.test('wrong 2FA codes capped per user, whatever the route', async () => {
+    resetStepUpFailuresForTests();
+    await setMap(A, { 'site.delete': 'sensitive', 'db.drop': 'restricted' });
+    const tryCode = (code: string) => fetch(`${base}/t/gate`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-user': String(SA), 'x-tenant': String(A) },
+      body: JSON.stringify({ action: 'site.delete', params: { name: 'cap' }, twoFactorCode: code }),
+    });
+    for (let i = 0; i < STEP_UP_MAX_FAILURES; i++) assert.equal((await tryCode('000000')).status, 401);
+    let res = await tryCode(await codeOf(SA));
+    assert.equal(res.status, 429, 'locked even with the right code');
+    assert.equal(((await res.json()) as { code: string }).code, 'stepUpLocked');
+    // The decision routes share the same cap.
+    const k = await gate(asKey1, 'db.drop', { name: 'cap-decision' });
+    const pid = k.body.details.pendingActionId as number;
+    const d = await call('POST', `/pending-actions/${pid}/approve`, asSA, { twoFactorCode: await codeOf(SA) });
+    assert.equal(d.status, 429);
+    resetStepUpFailuresForTests();
+    res = await tryCode(await codeOf(SA));
+    assert.equal(res.status, 200);
+    await setMap(A, {});
+  });
+
+  await t.test('SSO approver: counted only with a TOTP known at Obligate; "not configured" → twoFactorNotEnrolled', async () => {
+    const SSO2 = await mkUser('staff-sso-nototp', { sso: 78 });
+    const T = Number((await db('tenants').insert({ name: 'Reseller C', slug: 'reseller-c' }).returning('id'))[0].id);
+    const LOC = await mkUser('staff-c-local');
+    await db('user_tenants').insert([{ user_id: SSO2, tenant_id: T, role: 'admin' }, { user_id: LOC, tenant_id: T, role: 'admin' }]);
+    const c1 = await mkAccount(T, 'cacct');
+    const def = shared.restrictableAction('db.drop')!;
+    const target = { tenantId: T, accountId: c1, siteId: null };
+    const listOf = async () => (await eligibleApprovers(def, target, LOC)).map((x) => x.userId);
+    assert.ok(!(await listOf()).includes(SSO2), 'unknown TOTP at Obligate: not an approver');
+    // His own step-up is tried (lenient), Obligate says "TOTP not configured": recorded, clear 403.
+    const fake = { session: { userId: SSO2 }, sessionID: 's-sso2', stepUpProof: { twoFactorCode: '123456' }, headers: {}, socket: { remoteAddress: '203.0.113.20' } } as unknown as Request;
+    const o = await checkActionStepUp(fake, 'site.delete');
+    assert.equal((o as { status: number }).status, 403);
+    assert.equal((o as { body: { code?: unknown } }).body.code, 'twoFactorNotEnrolled');
+    assert.equal((await db('users').where({ id: SSO2 }).first('sso_totp_enabled')).sso_totp_enabled, false);
+    const o2 = await checkActionStepUp({ ...fake, stepUpProof: undefined } as unknown as Request, 'site.delete');
+    assert.equal((o2 as { status: number }).status, 403, 'then refused at once, never "Invalid 2FA code" forever');
+    // Platform admins are approvers everywhere: without them, nobody → 409, no parked request.
+    await db('users').where({ id: PA }).update({ is_active: false });
+    await setMap(T, { 'db.drop': 'restricted' });
+    const res = await fetch(`${base}/t/gate`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-user': String(LOC), 'x-tenant': String(T) },
+      body: JSON.stringify({ action: 'db.drop', tenantId: T, accountId: c1, params: { name: 'x' } }),
+    });
+    assert.equal(res.status, 409);
+    assert.equal(((await res.json()) as { code: string }).code, 'noEligibleApprover');
+    // Known TOTP, but Obligate not configured: unusable.
+    await db('users').where({ id: SSO2 }).update({ sso_totp_enabled: true });
+    assert.ok((await listOf()).includes(SSO2), 'known TOTP: an approver');
+    setObligateTotpVerifierForTests(null);
+    assert.ok(!(await listOf()).includes(SSO2), 'Obligate not configured: not an approver');
+    setObligateTotpVerifierForTests(obligateVerifier);
+    await db('users').where({ id: PA }).update({ is_active: true });
+  });
+
+  await t.test('never locked out of the matrix: lock-out refused, platform-admin escape, CLI unlock', async () => {
+    // A single platform admin (the master has no other staff): restricting restrictions.manage is refused.
+    let r = await call('PUT', '/restrictions', asPA, { map: { ...await restrictionService.getMap(1), 'restrictions.manage': 'restricted' } });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.code, 'restrictionsLockout');
+    r = await call('PUT', '/restrictions/floor', asPA, { floor: { 'restrictions.manage': 'restricted' } });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.code, 'restrictionsLockout');
+    // Set behind the panel's back (old data, an approver removed later): the platform admin types his code instead.
+    await setMap(1, { ...await restrictionService.getMap(1), 'restrictions.manage': 'restricted' });
+    r = await call('PUT', '/restrictions', asPA, { map: { ...await restrictionService.getMap(1), 'restrictions.manage': 'sensitive' } });
+    assert.equal(r.status, 401, JSON.stringify(r.body));
+    assert.equal(r.body.trustIpAllowed, false);
+    r = await call('PUT', '/restrictions', asPA, { map: { ...await restrictionService.getMap(1), 'restrictions.manage': 'sensitive' }, twoFactorCode: await codeOf(PA) });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal((await restrictionService.getMap(1))['restrictions.manage'].level, 'sensitive');
+    assert.ok(await db('audit_logs').where({ action: 'restrictions.lockout_escape' }).first());
+    // Out of the panel: the docker exec CLI.
+    await setMap(1, { ...await restrictionService.getMap(1), 'restrictions.manage': 'restricted' });
+    await setMap(A, { 'restrictions.manage': 'restricted', 'db.drop': 'sensitive' });
+    await platformSettings.update({ restrictions: { floor: { 'restrictions.manage': 'restricted', 'db.dump': 'restricted' } } });
+    platformSettings.invalidate();
+    const u = await unlockRestrictionsManage(null);
+    assert.deepEqual(u.tenants.sort((x, y) => x - y), [1, A].sort((x, y) => x - y));
+    assert.equal(u.floorChanged, true);
+    platformSettings.invalidate();
+    assert.equal((await restrictionService.getMap(1))['restrictions.manage'], undefined);
+    assert.equal((await restrictionService.getMap(A))['db.drop'].level, 'sensitive', 'other entries kept');
+    assert.deepEqual(await restrictionService.floor(), { 'db.dump': 'restricted' });
+    assert.deepEqual((await resetRestrictionsFloor()).removed, ['db.dump']);
+    platformSettings.invalidate();
+    assert.deepEqual(await restrictionService.floor(), {});
+    assert.ok(await db('audit_logs').where({ action: 'restrictions.cli_unlock' }).first());
+    assert.ok(await db('audit_logs').where({ action: 'restrictions.cli_floor' }).first());
   });
 });

@@ -15,6 +15,12 @@ import type { Knex } from 'knex';
  *                         sensitive action (Obliance 069): per (user, ip),
  *                         never used by the access keys nor for a
  *                         confirmation / an approval.
+ *  users.sso_totp_enabled Whether Obligate holds a TOTP for this SSO account
+ *                         (null = not known yet): true after an accepted
+ *                         Obligate code or a sign-in whose amr carries 'otp',
+ *                         false after Obligate answered "TOTP not configured"
+ *                         or a sign-in without 'otp'. An SSO account counts as
+ *                         an approver only when it is true.
  */
 export async function up(knex: Knex): Promise<void> {
   await knex.schema.createTable('pending_actions', (t) => {
@@ -68,9 +74,16 @@ export async function up(knex: Knex): Promise<void> {
     t.unique(['user_id', 'ip_address']);
     t.index('trusted_until');
   });
+
+  await knex.schema.alterTable('users', (t) => {
+    t.boolean('sso_totp_enabled').nullable();
+  });
 }
 
 export async function down(knex: Knex): Promise<void> {
+  await knex.schema.alterTable('users', (t) => {
+    t.dropColumn('sso_totp_enabled');
+  });
   await knex.schema.dropTableIfExists('tfa_trusted_sessions');
   await knex.schema.dropTableIfExists('pending_actions');
 }

@@ -277,7 +277,10 @@ export type PendingActionDecidedVia = 'totp' | 'second_person';
 export const PENDING_ACTION_STATUSES: readonly PendingActionStatus[] = ['pending', 'approved', 'denied', 'cancelled', 'expired', 'consumed'];
 
 /** Machine codes of the gate's refusals (AppError.code). */
-export const PENDING_ACTION_CODES = ['twoFactorRequired', 'approvalRequired', 'twoFactorNotEnrolled', 'noEligibleApprover', 'approvalMismatch'] as const;
+export const PENDING_ACTION_CODES = [
+  'twoFactorRequired', 'approvalRequired', 'twoFactorNotEnrolled', 'noEligibleApprover', 'approvalMismatch',
+  'notEligibleApprover', 'tooManyPendingActions', 'stepUpLocked', 'restrictionsLockout',
+] as const;
 export type PendingActionCode = typeof PENDING_ACTION_CODES[number];
 
 /** Default lifetime of a pending request, and of an approved one before it is consumed (minutes). */

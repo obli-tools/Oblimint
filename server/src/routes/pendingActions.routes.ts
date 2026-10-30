@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { PendingActionTab } from '@oblimint/shared';
 import { AppError } from '../middleware/errorHandler';
+import { stepUpLimiter } from '../middleware/rateLimiter';
 import { pendingActionsService } from '../services/restrictions/pendingActions.service';
 import { clientIp } from '../utils/clientIp';
 
@@ -58,13 +59,15 @@ router.get('/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/:id/confirm', async (req, res, next) => {
+// The decisions carry a code: the step-up limiter (failures per user) on top
+// of the per-user wrong-code cap of checkActionStepUp.
+router.post('/:id/confirm', stepUpLimiter, async (req, res, next) => {
   try {
     res.json({ success: true, data: await pendingActionsService.confirm(req, idParam(req.params.id)) });
   } catch (err) { next(err); }
 });
 
-router.post('/:id/approve', async (req, res, next) => {
+router.post('/:id/approve', stepUpLimiter, async (req, res, next) => {
   try {
     res.json({ success: true, data: await pendingActionsService.approve(req, idParam(req.params.id), reasonOf(req.body)) });
   } catch (err) { next(err); }

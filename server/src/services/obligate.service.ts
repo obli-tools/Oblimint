@@ -182,6 +182,8 @@ export interface ObligateUserAssertion {
   capabilities?: string[];
   authSource: 'local' | 'ldap';
   linkedLocalUserId: number | null;
+  /** How the user authenticated at Obligate (RFC 8176: 'pwd', 'otp'); newer Obligate builds only. */
+  amr?: string[];
   preferences?: {
     preferredTheme?: string;
     toastEnabled?: boolean;
@@ -447,9 +449,10 @@ export const obligateService = {
    * `consume`). 'valid' only passes; 'invalid' = rejected code; 'unavailable'
    * = Obligate not configured, unreachable, non-2xx, 429 (its lock of this
    * user's checks) or unreadable answer — fail closed, never counted as the
-   * user's fault. Anti-replay is applied by the caller (stepUp.ts).
+   * user's fault; 'notEnrolled' = 409, the account has no TOTP in Obligate.
+   * Anti-replay is applied by the caller (stepUp.ts).
    */
-  async verifyTotpDetailed(obligateUserId: number, code: string): Promise<'valid' | 'invalid' | 'unavailable'> {
+  async verifyTotpDetailed(obligateUserId: number, code: string): Promise<ObligateTotpResult> {
     if (totpVerifierOverride) return totpVerifierOverride(obligateUserId, code);
     const raw = await appConfigService.getObligateRaw();
     if (!raw.url || !raw.apiKey) {
@@ -468,6 +471,7 @@ export const obligateService = {
         logger.warn({ obligateUserId }, '[Obligate verifyTotp] 429 — Obligate locked this user\'s code checks');
         return 'unavailable';
       }
+      if (res.status === 409) return 'notEnrolled';
       if (!res.ok) {
         const text = await res.text().catch(() => '');
         logger.warn({ url, status: res.status, body: text.slice(0, 200) }, '[Obligate verifyTotp] non-2xx');
@@ -483,7 +487,25 @@ export const obligateService = {
   },
 };
 
-let totpVerifierOverride: ((obligateUserId: number, code: string) => Promise<'valid' | 'invalid' | 'unavailable'>) | null = null;
+/** Outcome of an Obligate TOTP check (verifyTotpDetailed). */
+export type ObligateTotpResult = 'valid' | 'invalid' | 'unavailable' | 'notEnrolled';
+
+/**
+ * Can an SSO account's code be checked at all (Obligate URL and API key
+ * stored, or a test verifier)? When not, an SSO account without a local TOTP
+ * has no usable second factor here.
+ */
+export async function obligateTotpVerifierReady(): Promise<boolean> {
+  if (totpVerifierOverride) return true;
+  try {
+    const raw = await appConfigService.getObligateRaw();
+    return !!(raw.url && raw.apiKey);
+  } catch {
+    return false;
+  }
+}
+
+let totpVerifierOverride: ((obligateUserId: number, code: string) => Promise<ObligateTotpResult>) | null = null;
 /** Tests: replaces Obligate's TOTP check (null restores the HTTP call). */
 export function setObligateTotpVerifierForTests(fn: typeof totpVerifierOverride): void {
   totpVerifierOverride = fn;
