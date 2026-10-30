@@ -47,11 +47,11 @@
       "files": {
         "read": {
           "label": "Lire les fichiers",
-          "hint": "Lister et lire les fichiers de ses sites (code et données)."
+          "hint": "Lister, chercher et lire (en entier ou par plage) les fichiers de ses sites (code et données)."
         },
         "write": {
           "label": "Écrire les fichiers",
-          "hint": "Créer, remplacer, déplacer, supprimer, extraire des archives dans ses sites."
+          "hint": "Créer, remplacer, modifier par remplacements exacts, déplacer, supprimer, extraire des archives dans ses sites. Une écriture avec empreinte attendue n'écrase jamais un fichier changé entre-temps (SFTP compris)."
         }
       },
       "releases": {

@@ -47,11 +47,11 @@
       "files": {
         "read": {
           "label": "Read files",
-          "hint": "List and read the files of its sites (code and data)."
+          "hint": "List, search and read (whole or by range) the files of its sites (code and data)."
         },
         "write": {
           "label": "Write files",
-          "hint": "Create, replace, move, delete, extract archives in its sites."
+          "hint": "Create, replace, edit by exact replacements, move, delete, extract archives in its sites. A write with an expected hash never overwrites a file changed meanwhile (SFTP included)."
         }
       },
       "releases": {
