@@ -225,6 +225,22 @@ test('server-app security fixes on PostgreSQL (PGlite)', { timeout: 300_000 }, a
       assert.throws(() => parse({ leakPolicy: 'off' }));
     });
 
+    await t.test('leak guard migration: a site that already has a release starts on warn, a new one on block', async () => {
+      const blank = await sitesService.create(asStaffA(), await actorOf(asStaffA()), schema.siteCreateSchema.parse({
+        accountId: shop.id, name: 'Blank', slug: 'blank', base: 'nginx-static', publishMode: 'manual',
+      }));
+      await db('releases').insert({ site_id: siteId, number: 1, status: 'ready' });
+      const last = await db.migrate.currentVersion();
+      assert.ok(last.startsWith('026'), `026 is the latest migration (now ${last}): move this test`);
+      await db.migrate.down();
+      await db.migrate.up();
+      const rows = await db('sites').whereIn('id', [siteId, blank.id]).select('id', 'leak_policy');
+      const policy = new Map(rows.map((r: { id: number; leak_policy: string }) => [Number(r.id), r.leak_policy]));
+      assert.deepEqual([policy.get(siteId), policy.get(blank.id)], ['warn', 'block']);
+      await db('releases').where({ site_id: siteId }).del();
+      await db('sites').where({ id: siteId }).update({ leak_policy: 'block', leak_allowlist: JSON.stringify(['dump.sql']) });
+    });
+
     await t.test('publish mode auto needs releases.publish; a creation without it starts in manual (M6)', async () => {
       const dave = Number((await clientUsersService.add(asStaffA(), await db('hosting_accounts').where({ id: shop.id }).first(),
         schema.clientUserAddSchema.parse({ mode: 'create', username: 'dave', password: 'correct horse battery', capabilities: ['sites.manage'] }))).userId);
