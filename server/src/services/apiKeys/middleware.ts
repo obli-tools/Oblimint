@@ -4,7 +4,8 @@ import { AppError } from '../../middleware/errorHandler';
 import { ipKey } from '../../middleware/rateLimiter';
 import { clientIp } from '../../utils/clientIp';
 import { setRequestActor } from '../hosting/access';
-import { apiKeysService } from './apiKeys.service';
+import { answerBanned, recordKeySurfaceFailure } from '../../middleware/keySurfaceGate';
+import { apiKeysService, type KeyVerifyResult } from './apiKeys.service';
 import { resourceMetadataUrl } from './oauth';
 
 // Bearer authentication of /api/v1 and /mcp (API keys, shared/src/apiKeys.ts):
@@ -70,10 +71,17 @@ async function authenticate(req: Request, res: Response, next: NextFunction, con
     const h = req.headers.authorization;
     const raw = typeof h === 'string' && /^Bearer\s+/i.test(h) ? h.replace(/^Bearer\s+/i, '').trim() : '';
     // An OAuth access token (oba_) is never a REST credential: refused like an unknown key.
-    const ctx = !raw ? null
-      : raw.startsWith('oba_') ? (connectors ? await apiKeysService.verifyAccessToken(raw, clientIp(req)) : null)
-        : await apiKeysService.verify(raw, clientIp(req));
+    const result: KeyVerifyResult | null = !raw ? null
+      : raw.startsWith('oba_') ? (connectors ? await apiKeysService.verifyAccessTokenDetailed(raw, clientIp(req)) : { ok: false, reason: 'malformed' })
+        : await apiKeysService.verifyDetailed(raw, clientIp(req));
+    const ctx = result?.ok ? result.ctx : null;
     if (!ctx) {
+      // Spec §5.2: a refused credential is counted (a request WITHOUT Authorization is OAuth discovery, never a guess).
+      const surface = connectors ? 'mcp' : 'key-api';
+      if (h && await recordKeySurfaceFailure(req, surface, result && !result.ok ? result.reason : 'malformed')) {
+        answerBanned(res, next, req.keySurface ?? surface);
+        return;
+      }
       // RFC 9728 on /mcp only: where an OAuth client (connector) finds the
       // authorization server. /api/v1 never takes its tokens: no invitation (L17).
       const meta = connectors ? `, resource_metadata="${await resourceMetadataUrl(req)}"` : '';

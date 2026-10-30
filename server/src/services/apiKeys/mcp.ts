@@ -16,6 +16,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { countHeavyOp } from '../../middleware/rateLimiter';
 import { keyApi, PUBLISH_WAIT_MAX_MS, RELEASE_WAIT_MAX_MS, type SiteArea } from './keyApi';
 import { apiKeyAuthLimiter, apiKeyLimiter, countKeyRequest, mcpAuth } from './middleware';
+import { keySurfaceGate } from '../../middleware/keySurfaceGate';
 import type { ApiKeyContext } from './apiKeys.service';
 import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, siteCreateSchema, siteUpdateSchema } from '../../validators/hosting.schema';
 import { keyDatabases } from './keyDatabases';
@@ -1074,7 +1075,8 @@ export async function handleRpc(ctx: ApiKeyContext, req: Request, msg: RpcMessag
 }
 
 export const mcpRouter = Router({ caseSensitive: true });
-mcpRouter.use(apiKeyAuthLimiter, mcpAuth, apiKeyLimiter);
+// IP security of the key surfaces first (spec §5.5): every method, with or without credentials.
+mcpRouter.use(keySurfaceGate('mcp'), apiKeyAuthLimiter, mcpAuth, apiKeyLimiter);
 
 mcpRouter.post('/', async (req: Request, res: Response) => {
   const ctx = req.apiKey!;

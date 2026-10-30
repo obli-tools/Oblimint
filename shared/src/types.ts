@@ -75,6 +75,8 @@ export interface Tenant {
   name: string;
   slug: string;
   limits: TenantLimits;
+  /** "An IP is mandatory on the access keys" for this workspace; null = the platform setting (keySecurity.requireIp). */
+  keyRequireIp?: boolean | null;
   createdAt: string;
   updatedAt: string;
 }

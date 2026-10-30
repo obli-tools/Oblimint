@@ -10,7 +10,10 @@ import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
 import { publicPanelOrigin } from '../panelHosts';
 import { gateAction } from '../restrictions/gate';
-import { clientSecretMatches, hashKey, scopesHeldBy } from './apiKeys.service';
+import { clientSecretMatches, hashKey, invalidateKeySurfaces, scopesHeldBy } from './apiKeys.service';
+import { answerBanned, keySurfaceGate, recordKeySurfaceFailure } from '../../middleware/keySurfaceGate';
+import { platformSettings } from '../platformSettings';
+import { ipMatcher } from '../security/keySurfaceRules';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OAuth 2.1 authorization server of the « Connecteurs Claude » (api_keys of
@@ -40,6 +43,7 @@ const REFRESH_TTL_MS = 60 * 86_400_000;
 interface ConnectorRow {
   id: number; tenant_id: number; account_id: number; name: string; scopes: unknown; site_scope: 'all' | 'selected';
   oauth_secret_hash: string | null; expires_at: Date | string | null; account_status: string; username: string; primary_domain: string | null;
+  allowed_ips?: unknown;
 }
 
 /** Origin the OAuth URLs are built on: the panel host the request came through. */
@@ -56,7 +60,7 @@ async function loadConnector(clientId: unknown): Promise<ConnectorRow | null> {
   const row = await db('api_keys as k')
     .join('hosting_accounts as a', function joinAccount() { this.on('a.id', '=', 'k.account_id').andOn('a.tenant_id', '=', 'k.tenant_id'); })
     .where({ 'k.oauth_client_id': clientId, 'k.kind': 'connector' })
-    .first('k.id', 'k.tenant_id', 'k.account_id', 'k.name', 'k.scopes', 'k.site_scope', 'k.oauth_secret_hash', 'k.expires_at',
+    .first('k.id', 'k.tenant_id', 'k.account_id', 'k.name', 'k.scopes', 'k.site_scope', 'k.oauth_secret_hash', 'k.expires_at', 'k.allowed_ips',
       'a.status as account_status', 'a.username',
       db.raw("(SELECT d.name FROM domains d WHERE d.account_id = a.id AND d.kind = 'primary' ORDER BY d.id LIMIT 1) AS primary_domain")) as ConnectorRow | undefined;
   if (!row) return null;
@@ -154,7 +158,7 @@ export const oauthService = {
   },
 
   /** POST /oauth/token → token response, or an OAuth error (RFC 6749 §5.2). */
-  async token(body: Record<string, unknown>, authorization: string | undefined): Promise<{ status: number; body: Record<string, unknown> }> {
+  async token(body: Record<string, unknown>, authorization: string | undefined, ip?: string): Promise<{ status: number; body: Record<string, unknown> }> {
     const fail = (status: number, error: string, description: string) => ({ status, body: { error, error_description: description } });
     // Client authentication: client_secret_basic or client_secret_post.
     let clientId = str(body.client_id, 128);
@@ -170,6 +174,14 @@ export const oauthService = {
     const connector = await loadConnector(clientId);
     const secretOk = clientSecretMatches(secret, connector?.oauth_secret_hash ?? null); // same work whatever the client
     if (!connector || !secretOk) return fail(401, 'invalid_client', 'Unknown client or wrong client secret');
+    // Spec §5.3: a connector's own addresses restrict its token endpoint too (+ the connectors' source ranges).
+    if (ip !== undefined) {
+      const ips = Array.isArray(connector.allowed_ips) ? connector.allowed_ips.filter((x): x is string => typeof x === 'string') : [];
+      if (ips.length) {
+        const ranges = (await platformSettings.section('keySecurity').catch(() => null))?.connectorSourceRanges ?? [];
+        if (!ipMatcher([...ips, ...ranges])(ip)) return fail(401, 'invalid_client', 'This client is not allowed from this address');
+      }
+    }
 
     const grant = str(body.grant_type, 64);
     // Housekeeping: expired rows of this connector.
@@ -287,15 +299,30 @@ oauthPublicRouter.get(['/.well-known/oauth-authorization-server', '/.well-known/
 // Form bodies (RFC 6749) or JSON; exempt from the origin / JSON-only guard
 // (originGuard PUBLIC_OAUTH_PATHS): no cookie is involved, the client secret,
 // the single-use code and PKCE authenticate the request.
-oauthPublicRouter.post('/oauth/token', tokenLimiter, express.urlencoded({ extended: false, limit: '16kb' }), async (req: Request, res: Response, next: NextFunction) => {
+// keySurfaceGate first (spec §5.5: banned / intrusion before the limiter and the client check);
+// invalid_client / invalid_grant count as failed key attempts of the address.
+oauthPublicRouter.post('/oauth/token', keySurfaceGate('oauth-token'), tokenLimiter, express.urlencoded({ extended: false, limit: '16kb' }), async (req: Request, res: Response, next: NextFunction) => {
   try {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
     const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
-    const out = await oauthService.token(body, req.headers.authorization);
+    const out = await oauthService.token(body, req.headers.authorization, clientIp(req));
+    const error = typeof out.body.error === 'string' ? out.body.error : null;
+    if ((error === 'invalid_client' || error === 'invalid_grant') && await recordKeySurfaceFailure(req, 'oauth-token', error)) {
+      answerBanned(res, next, 'oauth-token');
+      return;
+    }
+    // A new live authorization may change the key surfaces' regime (an idle connector becomes active).
+    if (out.status === 200) invalidateKeySurfaces();
     if (out.status === 401) res.setHeader('WWW-Authenticate', 'Basic realm="oblimint"');
     res.status(out.status).json(out.body);
   } catch (err) { next(err); }
+});
+
+// Any other method on the token endpoint is a touch of a key surface too (spec §5.2).
+oauthPublicRouter.all('/oauth/token', keySurfaceGate('oauth-token'), (_req: Request, res: Response) => {
+  res.setHeader('Allow', 'POST');
+  res.status(405).json({ error: 'invalid_request', error_description: 'POST only' });
 });
 
 /** Session part: /api/oauth (requireAuth). */

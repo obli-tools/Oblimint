@@ -6,6 +6,7 @@ import { idParam } from '../services/hosting/access';
 import { parseBody } from '../services/docker/parseBody';
 import { keyApi, PUBLISH_WAIT_MAX_MS, RELEASE_WAIT_MAX_MS, type SiteArea } from '../services/apiKeys/keyApi';
 import { apiKeyAuth, apiKeyAuthLimiter, apiKeyLimiter } from '../services/apiKeys/middleware';
+import { keySurfaceGate } from '../middleware/keySurfaceGate';
 import type { ApiKeyContext } from '../services/apiKeys/apiKeys.service';
 import {
   CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_PATH_MAX, SITE_ENV_MAX_VALUE, SITE_ENV_MAX_VARS,
@@ -120,7 +121,8 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 // approved, the SAME request again runs once (optional header X-Oblimint-Approval: <pendingActionId>; 409 approvalMismatch).
 
 const router = Router();
-router.use(apiKeyAuthLimiter, apiKeyAuth, apiKeyLimiter);
+// IP security of the key surfaces first (spec §5.5): banned / intrusion before any credential is read.
+router.use(keySurfaceGate('key-api'), apiKeyAuthLimiter, apiKeyAuth, apiKeyLimiter);
 
 const ctxOf = (req: Request): ApiKeyContext => {
   if (!req.apiKey) throw new AppError(401, 'API key required', 'invalidKey');

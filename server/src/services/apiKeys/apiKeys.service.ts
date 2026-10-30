@@ -1,7 +1,12 @@
 import crypto from 'crypto';
 import type { Request } from 'express';
-import type { ApiKey, ApiKeyConnection, ApiKeyCreate, ApiKeyCreated, ApiKeyDomainScope, ApiKeyGrantable, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, ApiKeyUpdate, ClientCapability } from '@oblimint/shared';
-import { API_KEY_SCOPES, MAX_API_KEYS_PER_ACCOUNT, matchApiKeyPreset } from '@oblimint/shared';
+import type {
+  ApiKey, ApiKeyConnection, ApiKeyCreate, ApiKeyCreated, ApiKeyDomainScope, ApiKeyGrantable, ApiKeyKind, ApiKeyScope, ApiKeySiteScope, ApiKeyUpdate,
+  ApiKeyVerifyFailure, ClientCapability, KeySecuritySettings,
+} from '@oblimint/shared';
+import { API_KEY_SCOPES, DEFAULT_KEY_SECURITY_SETTINGS, MAX_API_KEYS_PER_ACCOUNT, matchApiKeyPreset } from '@oblimint/shared';
+import { platformSettings } from '../platformSettings';
+import { ipMatcher, requireIpFor } from '../security/keySurfaceRules';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
@@ -193,8 +198,10 @@ async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
   const doms = await domainRows(rows.map((r) => r.id));
   const connections = await connectionRows(rows.filter((r) => r.kind === 'connector').map((r) => r.id));
   // A connector is always reachable from the declared connector source ranges: open only without any.
-  let connectorRanges = 1;
-  try { connectorRanges = (await (await import('../platformSettings')).platformSettings.section('keySecurity')).connectorSourceRanges.length; } catch { /* defaults */ }
+  const ks = await keySecurity();
+  const connectorRanges = ks.connectorSourceRanges.length;
+  const requiredByTenant = new Map<number, boolean>();
+  for (const tid of new Set(rows.map((r) => r.tenant_id))) requiredByTenant.set(tid, await keyIpRequired(tid));
   const out: ApiKey[] = [];
   for (const r of rows) {
     const scopes = scopesOf(r.scopes);
@@ -217,6 +224,8 @@ async function toApiKeys(rows: KeyRow[]): Promise<ApiKey[]> {
       createdDomainIds: myDoms.filter((d) => d.created_by_key).map((d) => d.domain_id).sort((a, b) => a - b),
       allowedIps: ipsOf(r.allowed_ips),
       open: ipsOf(r.allowed_ips).length === 0 && ((r.kind ?? 'key') === 'key' || connectorRanges === 0),
+      ipMissing: !!requiredByTenant.get(r.tenant_id) && ipsOf(r.allowed_ips).length === 0 && ((r.kind ?? 'key') === 'key' || connectorRanges === 0),
+      connectorRanges: r.kind === 'connector' ? [...ks.connectorSourceRanges] : [],
       createdByName: r.created_by_name ?? null, createdAt: iso(r.created_at) as string,
       lastUsedAt: iso(r.last_used_at), lastUsedIp: r.last_used_ip, expiresAt: iso(r.expires_at), inactiveScopes: inactive,
       oauthClientId: r.kind === 'connector' ? r.oauth_client_id : null,
@@ -300,6 +309,18 @@ async function normalize(actor: HostingActor, account: { id: number; tenant_id: 
   return out;
 }
 
+/** The keys changed: the key surfaces' guard recomputes its regime (never throws). */
+export function invalidateKeySurfaces(): void {
+  void import('../security/keySurfaceGuard').then((m) => m.keySurfaceGuard.invalidate()).catch(() => undefined);
+}
+
+/** 400 ipRequired: a key (never a connector, covered by the connectors' ranges) without address where one is mandatory. */
+async function assertIpWhenRequired(tenantId: number, kind: ApiKeyKind, ips: readonly string[]): Promise<void> {
+  if (ips.length > 0 || !(await keyIpRequired(tenantId))) return;
+  if (kind === 'connector' && (await keySecurity()).connectorSourceRanges.length > 0) return;
+  throw new AppError(400, 'An allowed IP address is mandatory on the access keys of this workspace', 'ipRequired');
+}
+
 type ManagedRow = Pick<KeyRow, 'id' | 'name' | 'kind' | 'scopes' | 'site_scope' | 'domain_scope' | 'allowed_ips' | 'expires_at' | 'created_by'>;
 
 /** A key of the account for a manager (404 elsewhere); `creator`: the actor created it. Throws keyNotOwned (M3). */
@@ -370,6 +391,7 @@ export const apiKeysService = {
     if (body.kind !== undefined && body.kind !== 'key' && body.kind !== 'connector') throw new AppError(400, 'kind is key or connector', 'validation');
     const kind: ApiKeyKind = body.kind === 'connector' ? 'connector' : 'key';
     const n = await normalize(actor, account, body, true);
+    await assertIpWhenRequired(account.tenant_id, kind, n.allowedIps ?? []);
     const created = await db.transaction(async (trx) => {
       await trx('hosting_accounts').where({ id: account.id }).forUpdate().first('id');
       const count = await trx('api_keys').where({ account_id: account.id }).count<{ n: string }[]>('* as n');
@@ -405,6 +427,7 @@ export const apiKeysService = {
       resourceType: 'account', resourcePath: String(account.id),
       details: { keyId: created.id, kind, name: n.name, preset, scopes: n.scopes, siteScope: n.siteScope, siteIds: n.siteIds ?? [], domainScope: n.domainScope ?? 'selected', domainIds: n.domainIds ?? [], allowedIps: n.allowedIps ?? [], expiresAt: n.expiresAt?.toISOString() ?? null },
     });
+    invalidateKeySurfaces();
     const [key] = await toApiKeys(await keyQuery().where('k.id', created.id) as KeyRow[]);
     return { ...key, key: created.key, clientSecret: created.clientSecret };
   },
@@ -445,6 +468,7 @@ export const apiKeysService = {
     if (family) q.andWhere({ family });
     if (ownOnly) q.andWhere({ user_id: actor.userId });
     const n = Number(await q.del());
+    invalidateKeySurfaces();
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.disconnect', { resourceType: 'account', resourcePath: String(account.id), details: { keyId: row.id, name: row.name, family, tokens: n, ...(ownOnly ? { ownOnly } : {}) } });
     return n;
   },
@@ -461,6 +485,7 @@ export const apiKeysService = {
     const account = await loadAccount(actor, accountId, 'sites.manage');
     const { row, creator } = await managedKey(actor, account, keyId, { label: 'Key' });
     const n = await normalize(actor, account, body, false);
+    if (n.allowedIps !== undefined) await assertIpWhenRequired(account.tenant_id, row.kind ?? 'key', n.allowedIps);
     const wider = await widens(row, n);
     if (beforeWrite) await beforeWrite({ widens: wider, account, keyId: row.id, name: row.name });
     const newOwner = !creator && wider ? actor.userId : null;
@@ -506,6 +531,7 @@ export const apiKeysService = {
         ...(newOwner !== null ? { previousOwnerId: row.created_by, ownerId: newOwner } : {}),
       },
     });
+    invalidateKeySurfaces();
     const [key] = await toApiKeys(await keyQuery().where('k.id', row.id) as KeyRow[]);
     return key;
   },
@@ -517,6 +543,7 @@ export const apiKeysService = {
     // Feature B (B9): its previews are stopped BEFORE the FK nulls created_by_key.
     await stopKeyPreviews(row.id);
     await db('api_keys').where({ id: row.id }).del();
+    invalidateKeySurfaces();
     await auditService.logReqAs(req, account.tenant_id, 'apiKey.delete', {
       resourceType: 'account', resourcePath: String(account.id), details: { keyId: row.id, name: row.name },
     });
@@ -527,23 +554,35 @@ export const apiKeysService = {
    * allowed / account being deleted / creator without any right left).
    */
   async verify(raw: string, ip: string): Promise<ApiKeyContext | null> {
+    const r = await this.verifyDetailed(raw, ip);
+    return r.ok ? r.ctx : null;
+  },
+
+  /** verify() with the reason of a refusal (the key surfaces' guard counts the failures, spec §5). */
+  async verifyDetailed(raw: string, ip: string): Promise<KeyVerifyResult> {
     const id = parseKey(raw);
-    if (id === null) return null;
+    if (id === null) return { ok: false, reason: 'malformed' };
     const row = await keyWithAccount().where('k.id', id).first() as KeyWithAccount | undefined;
     const ok = keyMatches(raw, row?.token_hash ?? ''); // same work whatever the id
-    if (!row || !ok || row.kind === 'connector') return null;
-    if (!row.created_by) return null;
+    if (!row || !ok || row.kind === 'connector') return { ok: false, reason: 'unknown' };
+    if (!row.created_by) return { ok: false, reason: 'ownerInactive' };
     return contextFor(row, row.created_by, ip);
   },
 
   /** Resolves an OAuth access token of a connector (oba_…), acting for the user who authorized it. */
   async verifyAccessToken(raw: string, ip: string): Promise<ApiKeyContext | null> {
-    if (!ACCESS_TOKEN_RE.test(raw)) return null;
+    const r = await this.verifyAccessTokenDetailed(raw, ip);
+    return r.ok ? r.ctx : null;
+  },
+
+  async verifyAccessTokenDetailed(raw: string, ip: string): Promise<KeyVerifyResult> {
+    if (!ACCESS_TOKEN_RE.test(raw)) return { ok: false, reason: 'malformed' };
     const tok = await db('api_key_oauth_tokens').where({ token_hash: hashKey(raw), kind: 'access' }).first('key_id', 'user_id', 'expires_at') as
       { key_id: number; user_id: number; expires_at: Date | string } | undefined;
-    if (!tok || new Date(tok.expires_at).getTime() <= Date.now()) return null;
+    if (!tok) return { ok: false, reason: 'unknown' };
+    if (new Date(tok.expires_at).getTime() <= Date.now()) return { ok: false, reason: 'expired' };
     const row = await keyWithAccount().where('k.id', tok.key_id).first() as KeyWithAccount | undefined;
-    if (!row || row.kind !== 'connector') return null;
+    if (!row || row.kind !== 'connector') return { ok: false, reason: 'revoked' };
     return contextFor(row, tok.user_id, ip);
   },
 
@@ -557,30 +596,59 @@ export const apiKeysService = {
 /** OAuth access token of a connector: oba_<43 chars base64url>. */
 export const ACCESS_TOKEN_RE = /^oba_[A-Za-z0-9_-]{43}$/;
 
-type KeyWithAccount = KeyRow & { account_status: string };
+type KeyWithAccount = KeyRow & { account_status: string; tenant_key_require_ip: boolean | null };
+
+export type KeyVerifyResult = { ok: true; ctx: ApiKeyContext } | { ok: false; reason: ApiKeyVerifyFailure };
 
 function keyWithAccount() {
   return db('api_keys as k')
     .join('hosting_accounts as a', function joinAccount() { this.on('a.id', '=', 'k.account_id').andOn('a.tenant_id', '=', 'k.tenant_id'); })
-    .select('k.*', 'a.status as account_status');
+    .leftJoin('tenants as t', 't.id', 'k.tenant_id')
+    .select('k.*', 'a.status as account_status', 't.key_require_ip as tenant_key_require_ip');
+}
+
+/** keySecurity settings (defaults when unreadable). */
+async function keySecurity(): Promise<KeySecuritySettings> {
+  try {
+    return await platformSettings.section('keySecurity');
+  } catch {
+    return { ...DEFAULT_KEY_SECURITY_SETTINGS };
+  }
+}
+
+/** "An IP is mandatory on the keys" for this tenant (tenants.key_require_ip, else keySecurity.requireIp). */
+export async function keyIpRequired(tenantId: number, tenantValue?: boolean | null): Promise<boolean> {
+  let own = tenantValue;
+  if (own === undefined) {
+    const t = await db('tenants').where({ id: tenantId }).first('key_require_ip') as { key_require_ip: boolean | null } | undefined;
+    own = t?.key_require_ip ?? null;
+  }
+  return requireIpFor(own, (await keySecurity()).requireIp);
 }
 
 /**
  * Context of a key (or connector) acting for `userId` (the creator of a key,
- * the authorizing user of a connector): expiry, account, allowed addresses,
- * the user's CURRENT rights on the account (scopes he no longer holds drop).
+ * the authorizing user of a connector): expiry, account, allowed addresses
+ * (a connector with a list: + keySecurity.connectorSourceRanges, where its
+ * calls come from), the IP requirement, the user's CURRENT rights on the
+ * account (scopes he no longer holds drop).
  */
-async function contextFor(row: KeyWithAccount, userId: number, ip: string): Promise<ApiKeyContext | null> {
-  if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return null;
-  if (row.account_status === 'deleting') return null;
+async function contextFor(row: KeyWithAccount, userId: number, ip: string): Promise<KeyVerifyResult> {
+  const fail = (reason: ApiKeyVerifyFailure): KeyVerifyResult => ({ ok: false, reason });
+  if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return fail('expired');
+  if (row.account_status === 'deleting') return fail('accountDeleting');
+  const ks = await keySecurity();
   const ips = ipsOf(row.allowed_ips);
-  if (ips.length && !ips.some((c) => cidrContains(c, ip))) return null;
+  const connector = (row.kind ?? 'key') === 'connector';
+  if (requireIpFor(row.tenant_key_require_ip, ks.requireIp) && ips.length === 0 && (!connector || ks.connectorSourceRanges.length === 0)) return fail('ipRequired');
+  const allowed = ips.length && connector ? [...ips, ...ks.connectorSourceRanges] : ips;
+  if (allowed.length && !ipMatcher(allowed)(ip)) return fail('ipNotAllowed');
   let user: HostingActor;
-  try { user = await actorForUser(userId, row.tenant_id); } catch { return null; }
+  try { user = await actorForUser(userId, row.tenant_id); } catch { return fail('ownerInactive'); }
   // force_2fa: a user who must still enroll a TOTP gets no session, nor a key acting for him.
-  if (await twoFactorSetupRequired(userId)) return null;
+  if (await twoFactorSetupRequired(userId)) return fail('ownerInactive');
   const target = { tenantId: row.tenant_id, accountId: row.account_id };
-  if (!actorCan(user, 'read', target)) return null;
+  if (!actorCan(user, 'read', target)) return fail('ownerInactive');
   const scopes = heldScopes(user, target, scopesOf(row.scopes));
   const caps = new Set<ClientCapability>();
   for (const s of scopes) { const c = SCOPE_CAP[s]; if (c) caps.add(c); }
@@ -594,10 +662,13 @@ async function contextFor(row: KeyWithAccount, userId: number, ip: string): Prom
       .catch((err: unknown) => logger.warn({ err, keyId: row.id }, 'API key: last use not recorded'));
   }
   return {
-    id: row.id, name: row.name, kind: row.kind ?? 'key', tenantId: row.tenant_id, accountId: row.account_id, creatorId: userId,
-    scopes: new Set(scopes), siteScope: row.site_scope, siteIds: new Set(sites.map(Number)),
-    domainScope: domainManager && row.domain_scope === 'all' ? 'all' : 'selected', domainIds: new Set(domainIds),
-    actor: { kind: 'client', userId, tenantId: row.tenant_id, accounts: new Map([[row.account_id, caps]]) },
+    ok: true,
+    ctx: {
+      id: row.id, name: row.name, kind: row.kind ?? 'key', tenantId: row.tenant_id, accountId: row.account_id, creatorId: userId,
+      scopes: new Set(scopes), siteScope: row.site_scope, siteIds: new Set(sites.map(Number)),
+      domainScope: domainManager && row.domain_scope === 'all' ? 'all' : 'selected', domainIds: new Set(domainIds),
+      actor: { kind: 'client', userId, tenantId: row.tenant_id, accounts: new Map([[row.account_id, caps]]) },
+    },
   };
 }
 

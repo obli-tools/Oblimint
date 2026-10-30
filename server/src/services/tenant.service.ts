@@ -64,6 +64,8 @@ export const updateTenantSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   slug: z.string().trim().regex(SLUG_RE, 'lowercase letters, digits and dashes (1-64)').optional(),
   limits: tenantLimitsPatchSchema.optional(),
+  /** null = the platform setting (keySecurity.requireIp). Changing it is the action platform.key_security. */
+  keyRequireIp: z.boolean().nullable().optional(),
 }).strict();
 
 function normaliseLimits(raw: unknown): TenantLimits {
@@ -82,6 +84,7 @@ interface TenantRow {
   name: string;
   slug: string;
   limits: unknown;
+  key_require_ip?: boolean | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -94,6 +97,7 @@ function rowToTenant(row: TenantRow): Tenant {
     name: row.name,
     slug: row.slug,
     limits: normaliseLimits(row.limits),
+    keyRequireIp: typeof row.key_require_ip === 'boolean' ? row.key_require_ip : null,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
   };
@@ -143,6 +147,7 @@ export const tenantService = {
       patch.slug = data.slug;
     }
     if (data.limits !== undefined) patch.limits = JSON.stringify({ ...current.limits, ...data.limits });
+    if (data.keyRequireIp !== undefined) patch.key_require_ip = data.keyRequireIp;
     try {
       const [row] = await db('tenants').where({ id }).update(patch).returning('*');
       return row ? rowToTenant(row as TenantRow) : null;

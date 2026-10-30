@@ -84,14 +84,26 @@ export interface KeySecurityStatus {
   strictMode: KeyStrictEffective;
   autoStrictAt: string | null;
   openKeys: KeySecurityOpenKey[];
+  /** Active keys / connectors counted (expired, deleting accounts, inactive owners and idle connectors left out). */
+  activeKeys: number;
   allowListSize: number;
   currentIp: string | null;
   currentIpCovered: boolean;
+  /** Why the current address is covered (allow-list, trusted, connector range, platform-admin session, never banned). */
+  currentIpCoverage: KeyIpCoverage | null;
   staffSessionIps: string[];
   lastBan: { ip: string; source: string; at: string } | null;
   /** strictMode log: addresses that would have been banned (latest first). */
   wouldHaveBanned: Array<{ ip: string; surface: string; at: string }>;
 }
+
+export type KeyIpCoverage = 'allowList' | 'trusted' | 'connectorRange' | 'adminSession' | 'neverBanned';
+
+/** Surfaces watched by the guard (/mcp, /api/v1, /oauth/token). */
+export type KeySurface = 'mcp' | 'key-api' | 'oauth-token';
+
+/** PUT /api/system/key-security (autoStrictAt is the guard's own). */
+export type KeySecuritySettingsUpdate = Partial<Omit<KeySecuritySettings, 'autoStrictAt'>>;
 
 /** Why a key was refused (verify / verifyAccessToken / contextFor). */
 export type ApiKeyVerifyFailure =

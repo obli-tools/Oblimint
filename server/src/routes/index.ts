@@ -87,6 +87,7 @@ import migrationCutoverRoutes from './migrationCutover.routes';     // executor-
 // Sensitive actions: matrix of restrictions, pending confirmations / approvals (session only).
 import restrictionsRoutes from './restrictions.routes';
 import pendingActionsRoutes from './pendingActions.routes';
+import keySecurityRoutes from './keySecurity.routes';           // IP security of the access keys / MCP (platform admin)
 
 // Case-sensitive (H1, app.ts): /api/SITES is not /api/sites.
 const router = Router({ caseSensitive: true });
@@ -110,6 +111,7 @@ router.use('/system/scanner', requireAuth, requireRole('admin'), scannerRoutes);
 router.use('/system/mail', requireAuth, requireRole('admin'), systemMailRoutes);         // P4 mail-core (no catch-all)
 router.use('/system/mail', requireAuth, requireRole('admin'), systemMailSecurityRoutes); // P4 outbound-security
 router.use('/system/transactional-mail', requireAuth, requirePlatformAdminOnMaster, systemTransactionalMailRoutes); // transactional e-mail sender
+router.use('/system/key-security', requireAuth, requirePlatformAdminOnMaster, keySecurityRoutes); // IP security of the access keys / MCP
 for (const migrationRouter of [migrationSourcesRoutes, migrationDiscoveryRoutes, migrationPlansRoutes, migrationRunsRoutes, migrationCutoverRoutes]) {
   router.use('/system/migration', requireAuth, requirePlatformAdminOnMaster, migrationRouter); // P5
 }

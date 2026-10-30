@@ -86,9 +86,15 @@ router.put('/:id', requirePlatformAdminOnMaster, validate(updateTenantSchema), a
     const id = idParam(req.params.id);
     const before = await tenantService.getById(id);
     if (!before) throw new AppError(404, 'Tenant not found');
+    const nextRequireIp = (req.body as { keyRequireIp?: boolean | null }).keyRequireIp;
+    // "IP mandatory on the keys" of a workspace is part of the keys' IP security (spec §5.8).
+    if (nextRequireIp !== undefined && nextRequireIp !== (before.keyRequireIp ?? null)) {
+      await gatePlatform(req, 'platform.key_security', { tenantId: id, keyRequireIp: nextRequireIp });
+    }
     const tenant = await tenantService.update(id, req.body);
     if (!tenant) throw new AppError(404, 'Tenant not found');
     const changes: Record<string, unknown> = {};
+    if ((tenant.keyRequireIp ?? null) !== (before.keyRequireIp ?? null)) changes.keyRequireIp = { from: before.keyRequireIp ?? null, to: tenant.keyRequireIp ?? null };
     if (tenant.name !== before.name) changes.name = { from: before.name, to: tenant.name };
     if (tenant.slug !== before.slug) changes.slug = { from: before.slug, to: tenant.slug };
     if (JSON.stringify(tenant.limits) !== JSON.stringify(before.limits)) changes.limits = { from: before.limits, to: tenant.limits };

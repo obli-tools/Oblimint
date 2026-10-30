@@ -79,6 +79,9 @@ const GUARD_TTL_MS = 5 * 60_000;
 const HOST_TTL_MS = 60_000;
 const MAX_PENDING_HITS = 10_000;
 const OBLIGUARD_BATCH = 100;
+/** Obliguard's cap on an external ban (its default EXTERNAL_BAN_MAX_SECONDS) and how long before it a long ban is pushed again. */
+const OBLIGUARD_CAP_MS = 7 * 24 * 60 * 60_000;
+const OBLIGUARD_REFRESH_LEAD_MS = 24 * 60 * 60_000;
 const MAX_MANUAL_MINUTES = 10 * 365 * 24 * 60;
 const MAX_REASON = 300;
 
@@ -466,9 +469,22 @@ async function resendObliguard(): Promise<number> {
     .limit(OBLIGUARD_BATCH)
     .select('id') as Array<{ id: number }>;
   for (const r of rows) await syncBanToObliguard(r.id);
+  // Obliguard caps an external ban (7 days by default, EXTERNAL_BAN_MAX_SECONDS; banned_until null
+  // gets the cap too): a permanent — or longer — platform ban is pushed again a day before that
+  // (Obliguard keeps the later end of the two), like Obliance's ipBan refreshObliguard.
+  const now = backends.now();
+  const stale = await db('web_bans')
+    .where({ is_active: true, scope: 'platform', obliguard_status: 'sent' })
+    .whereNot('source', 'obliguard-sync')
+    .andWhere((q) => q.whereNull('banned_until').orWhere('banned_until', '>', new Date(now.getTime() + OBLIGUARD_REFRESH_LEAD_MS)))
+    .andWhere((q) => q.whereNull('obliguard_sent_at').orWhere('obliguard_sent_at', '<', new Date(now.getTime() - (OBLIGUARD_CAP_MS - OBLIGUARD_REFRESH_LEAD_MS))))
+    .orderBy('id')
+    .limit(OBLIGUARD_BATCH)
+    .select('id') as Array<{ id: number }>;
+  for (const r of stale) await syncBanToObliguard(r.id);
   const deletes = await pendingObliguardDeletes().orderBy('id').limit(OBLIGUARD_BATCH).select('id') as Array<{ id: number }>;
   for (const r of deletes) await unbanFromObliguard(r.id);
-  return rows.length + deletes.length;
+  return rows.length + stale.length + deletes.length;
 }
 
 // ── detection ────────────────────────────────────────────────────────────────
@@ -611,7 +627,10 @@ async function applyOffence(input: OffenceInput, retry = true): Promise<{ kind: 
         .first() as WebBanRow | undefined;
       if (active && (toDate(active.banned_until) === null || toDate(active.banned_until)!.getTime() > input.now.getTime())) {
         if (input.conflictIfActive) throw new AppError(409, 'This address is already banned', 'banExists', { banId: active.id });
-        const candidate = banUntil(input.now, durationForLevel(active.offense_level, input.settings, input.floorMinutes));
+        // An explicit duration (a permanent key-intrusion ban over an escalating one) wins when it ends later.
+        const candidate = input.durationMinutes !== undefined
+          ? banUntil(input.now, input.durationMinutes)
+          : banUntil(input.now, durationForLevel(active.offense_level, input.settings, input.floorMinutes));
         const patch: Record<string, unknown> = { hit_count: Number(active.hit_count) + input.hits, last_seen_at: input.now };
         if (endsLater(candidate, toDate(active.banned_until))) patch.banned_until = candidate;
         const [row] = await trx('web_bans').where({ id: active.id }).update(patch).returning('*') as WebBanRow[];
@@ -715,6 +734,100 @@ function afterPlatformBan(ban: WebBanRow, why: string): void {
   });
   void syncBanToObliguard(ban.id);
   void geoipService.lookup(ban.ip);
+}
+
+// ── key surfaces (/mcp, /api/v1, /oauth/token — keySurfaceGuard.ts) ──────────
+
+/** Never-ban rules of the web bans (Docker subnets, node addresses, bans.neverBan): keySurfaceGuard uses the same. */
+export function webBanGuard(): Promise<WebBanGuard> {
+  return guardNow();
+}
+
+export interface KeySurfaceBanInput {
+  /** Ban key (banKey: the IPv4 address or the IPv6 /64), already cleared by refuseBanKey. */
+  key: string;
+  source: 'key-intrusion' | 'key-bruteforce';
+  /** true: no end (intrusion); false: the escalation ladder (bans.escalation, offences of account 0). */
+  permanent: boolean;
+  reason: string;
+}
+
+/**
+ * Platform ban of the key surfaces' guard: every web port of the edge (nginx
+ * g-bans + nftables), pushed to Obliguard, security.banned, GeoIP — like a
+ * promotion. Returns the ban (a repeat on an active ban extends it). null
+ * when the address may not be banned after all.
+ */
+export async function banFromKeySurface(input: KeySurfaceBanInput): Promise<{ kind: 'banned' | 'repeat'; ban: WebBanRow } | null> {
+  if (refuseBanKey(input.key, await guardNow()) !== null) return null;
+  const s = await platformSettings.section('bans');
+  const outcome = await applyOffence({
+    key: input.key, scope: 'platform', accountId: null, tenantId: MASTER_TENANT_ID, source: input.source,
+    reason: cleanText(input.reason), proxyHostId: null, hits: 1, floorMinutes: null,
+    durationMinutes: input.permanent ? null : undefined, createdBy: null, now: backends.now(), settings: s,
+  });
+  if (outcome.kind === 'banned') {
+    afterPlatformBan(outcome.ban, input.source === 'key-intrusion' ? 'tentative d\'intrusion sur les clés d\'accès' : 'clés d\'accès invalides répétées');
+    void auditService.log({
+      tenantId: MASTER_TENANT_ID, action: 'bans.keySurface', resourceType: 'web_ban', resourcePath: `/bans/${outcome.ban.id}`,
+      details: { ip: input.key, source: input.source, level: outcome.ban.offense_level, until: iso(outcome.ban.banned_until), reason: outcome.ban.reason },
+      ipAddress: input.key.split('/')[0],
+    });
+  } else {
+    emitBan(outcome.ban, 'updated');
+  }
+  bansChanged(true);
+  return outcome;
+}
+
+/**
+ * Lifts every active platform ban of an address (its ban key) — the CLI
+ * escape hatch and "add to the trusted IPs". Audited, withdrawn from
+ * Obliguard, edge + nftables resynced. Returns the lifted ban ids.
+ */
+export async function liftPlatformBans(ip: string, by: { req?: Request; actor?: string }): Promise<number[]> {
+  const key = banKey(ip) ?? parseBanInput(ip);
+  if (!key) return [];
+  const now = backends.now();
+  const rows = await db('web_bans').where({ ip: key, scope: 'platform', is_active: true })
+    .update({ is_active: false, deactivated_at: now })
+    .returning(['id', 'tenant_id', 'account_id', 'scope', 'source']) as Array<Pick<WebBanRow, 'id' | 'tenant_id' | 'account_id' | 'scope' | 'source'>>;
+  for (const r of rows) {
+    const details = { ip: key, scope: 'platform', accountId: null, source: r.source, by: by.actor ?? null };
+    if (by.req) await auditService.logReqAs(by.req, MASTER_TENANT_ID, 'bans.delete', { resourceType: 'web_ban', resourcePath: `/bans/${r.id}`, details });
+    else await auditService.log({ tenantId: MASTER_TENANT_ID, action: 'bans.delete', resourceType: 'web_ban', resourcePath: `/bans/${r.id}`, details });
+    emitBan(r, 'deleted');
+    void unbanFromObliguard(r.id);
+  }
+  if (rows.length) bansChanged(true);
+  return rows.map((r) => Number(r.id));
+}
+
+/** Active platform bans (ban keys → end, null = permanent): the key surfaces' guard caches them. */
+export async function activePlatformBanKeys(): Promise<Map<string, number | null>> {
+  const now = backends.now();
+  const rows = await db('web_bans').where({ is_active: true, scope: 'platform' })
+    .andWhere((q) => q.whereNull('banned_until').orWhere('banned_until', '>', now))
+    .select('ip', 'banned_until') as Array<{ ip: string; banned_until: Date | string | null }>;
+  const out = new Map<string, number | null>();
+  for (const r of rows) out.set(r.ip, r.banned_until === null ? null : toDate(r.banned_until)!.getTime());
+  return out;
+}
+
+/** Another process (CLI) changed the bans: nginx g-bans + nftables now. */
+export function platformBansChangedElsewhere(): void {
+  bansChanged(true);
+}
+
+/** Pushes the platform bans to hostd now and withdraws the lifted ones from Obliguard (CLI, never throws). */
+export async function flushPlatformBansNow(): Promise<{ hostd: string | null }> {
+  let hostd: string | null = null;
+  try { await pushWebFirewall(); } catch (err) { hostd = errText(err); }
+  try {
+    const deletes = await pendingObliguardDeletes().orderBy('id').limit(OBLIGUARD_BATCH).select('id') as Array<{ id: number }>;
+    for (const r of deletes) await unbanFromObliguard(r.id);
+  } catch { /* retried by the server's 5-min worker */ }
+  return { hostd };
 }
 
 // ── API mapping ──────────────────────────────────────────────────────────────
@@ -996,7 +1109,11 @@ export const webBanService = {
     emitBan(row, 'deleted');
     // Withdrawn from Obliguard now; a failure (or a POST still in flight) is caught up by
     // syncBanToObliguard / the 5-min worker (unbanFromObliguard), never lost.
-    if (row.scope === 'platform') void unbanFromObliguard(row.id);
+    if (row.scope === 'platform') {
+      void unbanFromObliguard(row.id);
+      // The key surfaces' guard forgets the ban and the failures of the address at once.
+      void import('./keySurfaceGuard').then((m) => m.keySurfaceGuard.banLifted(row.ip)).catch(() => undefined);
+    }
     bansChanged(row.scope === 'platform');
     return { deleted: true };
   },

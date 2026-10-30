@@ -13,6 +13,7 @@ import { sessionUserGuard, twoFactorPolicyGuard } from './middleware/sessionUser
 import { originGuard } from './middleware/originGuard';
 import { expressTrustProxy } from './utils/clientIp';
 import { captureStepUpProof } from './middleware/captureStepUpProof';
+import { stampSessionIp } from './middleware/stampSessionIp';
 import { accessGrantTouch } from './middleware/accessGrantTouch';
 import { serverVersion } from './utils/version';
 import { logger } from './utils/logger';
@@ -169,6 +170,8 @@ export function createApp(): express.Express {
   app.use(sessionMiddleware);
   app.use(captureStepUpProof);
   app.use(sessionUserGuard);
+  // Address of the signed-in sessions (the key surfaces never ban a platform admin's open session).
+  app.use(stampSessionIp);
   app.use(apiLimiter);
   app.use(userApiLimiter);
   // force_2fa: a session without TOTP only reaches the 2FA setup routes.

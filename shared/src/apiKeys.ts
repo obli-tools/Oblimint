@@ -94,6 +94,10 @@ export interface ApiKey {
    * source range). An open key keeps the key surfaces out of strict mode (keySecurity.ts).
    */
   open: boolean;
+  /** An IP is mandatory in this workspace and the key has none: refused at use until restricted (« à restreindre »). */
+  ipMissing?: boolean;
+  /** Connector: ranges added automatically to its addresses (keySecurity.connectorSourceRanges). */
+  connectorRanges?: string[];
   createdByName: string | null;
   createdAt: string;
   lastUsedAt: string | null;

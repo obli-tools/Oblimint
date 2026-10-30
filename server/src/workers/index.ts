@@ -70,7 +70,7 @@ interface Worker { start(): void; stop(): void }
 
 /** P2 workers, in start order. */
 async function p2Workers(): Promise<Array<[string, Worker]>> {
-  const [dns, ownership, databases, firewall, usage, cron, logs, phpErrors, inbox, pendingActions] = await Promise.all([
+  const [dns, ownership, databases, firewall, usage, cron, logs, phpErrors, inbox, pendingActions, keySurfaces] = await Promise.all([
     import('../services/dns/dns.service').then((m) => m.dnsService),
     import('../services/ownership/ownership.service').then((m) => m.ownershipService),
     import('../services/databases/databases.service').then((m) => m.databaseService),
@@ -81,6 +81,7 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
     import('../services/siteErrors/siteErrors.service').then((m) => m.siteErrorsService),
     import('../services/usage/userNotifications.service').then((m) => m.userNotificationsWorker),
     import('../services/restrictions/pendingActions.service').then((m) => m.pendingActionsWorker),
+    import('../services/security/keySurfaceGuard').then((m) => m.keySurfaceGuard),
   ]);
   const list: Array<[string, Worker]> = [
     ['dns', dns],
@@ -96,6 +97,8 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
     ['user-notifications', inbox],
     // Sensitive actions: pending confirmations / approvals expired every minute (audited, requester notified), 90-day purge.
     ['pending-actions', pendingActions],
+    // IP security of the key surfaces: 48 h log-only start, regime / auto-strict notifications, CLI changes → edge resync.
+    ['key-surfaces', keySurfaces],
   ];
   if (config.hosting.usageCollector) list.push(['usage-collector', usage.usageCollector]);
   return list;
