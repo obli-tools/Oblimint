@@ -737,6 +737,7 @@
     "passwordInvalid": "Mot de passe incorrect.",
     "passwordLabel": "Mot de passe actuel",
     "passwordTitle": "Confirmez votre mot de passe",
+    "pendingApprovalFiled": "Demande n° {{id}} envoyée pour approbation : une seconde personne habilitée doit l’approuver. Rien n’a encore été fait — relancez l’action une fois qu’elle est approuvée.",
     "title": "Action sensible",
     "tooManyAttempts": "Trop de codes erronés. Réessayez dans {{minutes}} min.",
     "trustIp": "Faire confiance à cette IP pendant 24 h",

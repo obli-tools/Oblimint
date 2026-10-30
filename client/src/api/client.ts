@@ -76,12 +76,30 @@ function isStepUpThrottleBody(status: number | undefined, body: any): boolean {
  */
 export function isStepUpHandled(err: unknown): boolean {
   if (isTwoFactorCancelled(err)) return true;
+  if (isPendingApproval(err)) return true;
   const e = err as { response?: { status?: number; data?: any }; config?: { method?: string } } | null;
   const status = e?.response?.status;
   const body = e?.response?.data;
   if (isStepUpThrottleBody(status, body)) return true;
   const method = (e?.config?.method || 'get').toLowerCase();
   return (status === 401 || status === 403 || status === 423) && typeof body?.error === 'string' && method !== 'get';
+}
+
+/**
+ * A 'restricted' action answered `202 { data: { status: 'pendingApproval' } }`:
+ * NOTHING was done, a request waits for a second person. Rejected (never a
+ * success with the wrong payload at the call sites) and already announced by
+ * a toast — `isStepUpHandled` is true for it, callers skip their own toast.
+ */
+export class PendingApprovalError extends Error {
+  readonly pendingApproval = true;
+  constructor(readonly pendingActionId: number, readonly description: string | null, readonly expiresAt: string | null) {
+    super('pendingApproval');
+  }
+}
+
+export function isPendingApproval(err: unknown): err is PendingApprovalError {
+  return !!err && typeof err === 'object' && (err as { pendingApproval?: unknown }).pendingApproval === true;
 }
 
 /** Server error message of an axios error, or the given fallback. */
@@ -92,7 +110,20 @@ export function apiErrorMessage(err: unknown, fallback: string): string {
 }
 
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // ── Restricted action filed for approval (202) ─────────────────────────
+    const d = response?.status === 202 ? (response.data as { data?: { status?: unknown; pendingActionId?: unknown; description?: unknown; expiresAt?: unknown } } | null)?.data : null;
+    if (d && d.status === 'pendingApproval') {
+      const id = Number(d.pendingActionId);
+      Promise.all([import('react-hot-toast'), import('i18next')]).then(([{ default: toast }, { default: i18n }]) => {
+        toast(i18n.t('twoFactorPrompt.pendingApprovalFiled', {
+          id, defaultValue: 'Request #{{id}} sent for approval: a second authorised person must approve it. Nothing was done yet — run the action again once it is approved.',
+        }), { duration: 10000 });
+      }).catch(() => {});
+      return Promise.reject(new PendingApprovalError(id, typeof d.description === 'string' ? d.description : null, typeof d.expiresAt === 'string' ? d.expiresAt : null));
+    }
+    return response;
+  },
   async (error) => {
     const status = error?.response?.status;
     const body = error?.response?.data;

@@ -737,6 +737,7 @@
     "passwordInvalid": "Wrong password.",
     "passwordLabel": "Current password",
     "passwordTitle": "Confirm your password",
+    "pendingApprovalFiled": "Request #{{id}} sent for approval: a second authorised person must approve it. Nothing was done yet — run the action again once it is approved.",
     "title": "Sensitive action",
     "tooManyAttempts": "Too many wrong codes. Try again in {{minutes}} min.",
     "trustIp": "Trust this IP for 24h",
