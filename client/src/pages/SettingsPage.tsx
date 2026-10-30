@@ -22,6 +22,7 @@ import { AppsSettingsSections } from '@/components/settings/AppsSettingsSections
 import { ProxySettingsSections } from '@/components/settings/ProxySettingsSections';
 import { BackupSettingsSections } from '@/components/settings/BackupSettingsSections';
 import { HealthMonitorSection } from '@/components/settings/HealthMonitorSection';
+import { KeySecuritySection } from '@/components/settings/KeySecuritySection';
 import { TransactionalMailSection } from '@/components/settings/TransactionalMailSection';
 import { SettingsGroup, SettingsPageLayout, SettingsTocChips, useSettingsToc } from '@/components/settings/SettingsToc';
 import { useHostingMe } from '@/store/hostingStore';
@@ -295,6 +296,8 @@ export function SettingsPage() {
       {/* ── P4b: applications, monitoring, network segmentation (ui-apps) — edge and bans (ui-proxy) ── */}
       {admin && <SettingsGroup id="settings-group-apps" title={t('settings.toc.apps') || 'Applications & monitoring'}><AppsSettingsSections /></SettingsGroup>}
       {admin && <SettingsGroup id="settings-group-edge" title={t('settings.toc.edge') || 'Edge & bans'}><ProxySettingsSections /></SettingsGroup>}
+      {/* ── IP security of the access keys / MCP connectors (platform admin, master workspace) ── */}
+      {admin && masterAdmin && <SettingsGroup id="settings-group-key-security" title={t('keySecurity.toc') || 'API access & agents'}><KeySecuritySection /></SettingsGroup>}
 
       {/* ── External backups (destinations, passphrase, schedule, runs) ── */}
       {admin && <SettingsGroup id="settings-group-backups" title={t('settings.toc.backups') || 'Backups'}><BackupSettingsSections /></SettingsGroup>}

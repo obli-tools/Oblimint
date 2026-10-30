@@ -1,0 +1,87 @@
+{
+  "keySecurity": {
+    "toc": "API access & agents",
+    "title": "IP security of the access keys",
+    "intro": "Who may reach /mcp, /api/v1 and the OAuth token endpoint of the connectors. A ban is a platform ban: it covers every web port of the edge — the panel, the client space, the webmail and every hosted site. A shared NAT address (office, 4G) that gets banned loses the sites too.",
+    "loadFailed": "The access-key security settings could not be loaded",
+    "saved": "Access-key security saved",
+    "saveFailed": "The settings could not be saved",
+    "strictMode": "Strict mode",
+    "mode": {
+      "auto": "Automatic",
+      "log": "Log only",
+      "on": "Strict",
+      "off": "Off"
+    },
+    "modeHint": {
+      "auto": "Log only for 48 hours after the first start, then strict by itself (the platform admins are notified).",
+      "log": "Addresses outside every key are journaled (\"would have banned\"), never banned.",
+      "on": "When every active key has addresses, any other address that touches /mcp, /api/v1 or /oauth/token is banned without end.",
+      "off": "No intrusion ban. Repeated bad keys are still banned."
+    },
+    "regime": {
+      "strict": "every key closed",
+      "watch": "watch mode"
+    },
+    "effective": {
+      "on": "strict mode active",
+      "log": "log only",
+      "off": "strict mode off"
+    },
+    "coverage": {
+      "allowList": "in the list of a key",
+      "trusted": "trusted IP",
+      "connectorRange": "connectors' range",
+      "adminSession": "open platform-admin session",
+      "neverBanned": "never banned (private / node / never-ban list)"
+    },
+    "status": {
+      "title": "Current state",
+      "autoAt": "Strict from {{date}} (end of the 48 h log-only period).",
+      "keys": "{{active}} active key(s), allow-list of {{size}} entries.",
+      "ipCovered": "Your current address ({{ip}}) is covered: {{how}}.",
+      "ipNotCovered": "Your current address ({{ip}}) is in no key's list: outside your panel session it would be banned in strict mode. Add it to the trusted IPs if you call the API from here.",
+      "openKeys": "Open keys keeping the strict mode off ({{count}}):",
+      "key": "key",
+      "sessions": "Exempt (open platform-admin sessions):",
+      "lastBan": "Last ban: {{ip}} ({{date}}).",
+      "bansLink": "Bans",
+      "wouldBan": "Would have been banned (log only):"
+    },
+    "requireIp": "An IP address is mandatory on the access keys",
+    "requireIpHint": "Default of every workspace (a workspace may override it). A key without address is refused at use until restricted; a connector is covered by the connectors' ranges.",
+    "maxFailures": "Bad keys tolerated",
+    "maxFailuresHint": "From one address within the window, then a ban on the escalation ladder of the bans.",
+    "window": "Window (minutes)",
+    "trustedIps": "Trusted IPs",
+    "trustedIpsHint": "Never banned by the key surfaces (their bad keys are refused, not counted). Your office, your CI runners.",
+    "connectorRanges": "Connectors' source ranges",
+    "connectorRangesHint": "Where the Claude connectors call from (Anthropic's published outbound addresses). Always allowed for a connector and never banned. Empty: every connector counts as an open key.",
+    "anthropicRanges": "Anthropic ranges",
+    "cliHint": "Locked out? From the server: docker exec <panel container> node dist/src/cli/keySecurity.js unban <ip> (or trust <ip>, status, help).",
+    "key": {
+      "ipMissing": "to restrict",
+      "ipMissingHint": "An IP address is mandatory on the keys of this workspace: this key is refused until you restrict it.",
+      "open": "any IP",
+      "openHint": "This open key (no allowed address) keeps the strict IP mode off for the whole platform.",
+      "connectorRanges": "+ connectors",
+      "connectorRangesHint": "Added automatically: the outbound addresses of the connectors (Anthropic).",
+      "openBanner": "Without an allowed address, this key can be used from anywhere, and an open key keeps the strict IP mode of the access keys off for the whole platform. An IP may also be mandatory in this workspace.",
+      "connectorBanner": "Claude calls this connector from Anthropic's published outbound addresses: they are allowed automatically and never banned."
+    },
+    "trust": {
+      "title": "Add to the trusted IPs",
+      "confirm": "Lift the platform ban of {{ip}} and add it to the trusted IPs of the access keys: it will never be banned by the key surfaces again.",
+      "button": "Trust",
+      "done": "Trusted address ({{count}} ban(s) lifted)",
+      "failed": "The address could not be trusted"
+    },
+    "tenant": {
+      "title": "IP mandatory on the access keys",
+      "hint": "A key without allowed address is refused in this workspace (connectors are covered by the connectors' ranges). Platform setting: Settings > API access & agents.",
+      "inherit": "Platform setting",
+      "yes": "Mandatory",
+      "no": "Optional"
+    }
+  }
+}

@@ -182,7 +182,7 @@ const KNOWN_CODES = [
   'planNameTaken', 'planInactive', 'baseNotAllowed', 'accountDeleting', 'invalidSshKey', 'emailTaken', 'alreadyMember',
   'domainReserved', 'certificateNotDue', 'certificateRateLimited', 'acmeEmailMissing', 'fileServerNoPort', 'noNode',
   'invalidKeyName', 'unknownNode', 'runtimeMismatch', 'runtimePrefixLimit', 'siteDeleting', 'certificateNameTaken', 'nodeNotSupported',
-  'accountNotServed', 'tlsDisabled', 'domainServedByProxy', 'keyNotOwned',
+  'accountNotServed', 'tlsDisabled', 'domainServedByProxy', 'keyNotOwned', 'ipRequired', 'invalidCidr', 'cidrTooWide', 'addressBanned',
   // Generic codes of every module (a module namespace may still refine them).
   'notFound', 'rateLimited',
 ] as const;

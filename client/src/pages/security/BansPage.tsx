@@ -8,6 +8,8 @@ import {
   type ProxyHost, type WebBan, type WebBanList, type WebBanScope, type WebBanSource, type WebBanStats, type WebFirewallSummary,
 } from '@oblimint/shared';
 import { bansApi } from '@/api/bans.api';
+import { keySecurityApi } from '@/api/keySecurity.api';
+import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { proxyApi } from '@/api/proxy.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { PageContainer } from '@/components/common/PageContainer';
@@ -125,6 +127,7 @@ function WebBansPanel({ scope, refreshTick }: { scope: AccountScope; refreshTick
   const { t, i18n } = useTranslation();
   const confirm = useConfirm();
   const { canManage, platformAdmin } = useProxyAccess();
+  const masterWorkspace = useIsMasterTenant();
   const { accountId, tenantId, accounts } = scope;
 
   const [scopeFilter, setScopeFilter] = useState<WebBanScope | ''>('');
@@ -230,6 +233,22 @@ function WebBansPanel({ scope, refreshTick }: { scope: AccountScope; refreshTick
     }
   };
 
+  // Lift + "trusted IP" of the access keys in one go (platform admin on the master workspace).
+  const trust = async (b: WebBan) => {
+    if (!(await confirm({
+      title: t('keySecurity.trust.title') || 'Add to the trusted IPs',
+      message: t('keySecurity.trust.confirm', { ip: b.ip, defaultValue: 'Lift the platform ban of {{ip}} and add it to the trusted IPs of the access keys: it will never be banned by the key surfaces again.' }),
+      confirmLabel: t('keySecurity.trust.button') || 'Trust',
+    }))) return;
+    try {
+      const r = await keySecurityApi.trust(b.ip);
+      toast.success(t('keySecurity.trust.done', { count: r.liftedBans.length, defaultValue: 'Trusted address ({{count}} ban(s) lifted)' }));
+      void load();
+    } catch (err) {
+      toastProxyError(t, err, t('keySecurity.trust.failed') || 'The address could not be trusted', 'bans');
+    }
+  };
+
   const sourceLabel = useBanSourceLabel();
   const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(i18n.language, { dateStyle: 'short', timeStyle: 'short' }) : '—');
   const mayManage = (b: WebBan) => (b.scope === 'platform' ? platformAdmin : canManage(b.accountId));
@@ -242,6 +261,7 @@ function WebBansPanel({ scope, refreshTick }: { scope: AccountScope; refreshTick
     const items = [
       { key: 'unban', icon: <ShieldOff className="h-4 w-4" />, label: t('bans.unban') || 'Unban', onClick: () => { void unban(b); }, hidden: !b.active || !mayManage(b) },
       { key: 'promote', icon: <ArrowUpCircle className="h-4 w-4" />, label: t('bans.promote') || 'Promote', onClick: () => { void promote(b); }, hidden: !platformAdmin || !b.active || b.scope !== 'account', separator: true },
+      { key: 'trust', icon: <ShieldCheck className="h-4 w-4" />, label: t('keySecurity.trust.title') || 'Add to the trusted IPs', onClick: () => { void trust(b); }, hidden: !platformAdmin || !masterWorkspace || !b.active || b.scope !== 'platform' },
     ];
     return items.some((i) => !i.hidden) ? <ActionMenu items={items} /> : null;
   };

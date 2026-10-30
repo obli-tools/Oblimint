@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, BookOpen, Bot, Check, Copy, Download, KeyRound, Plug } from 'lucide-react';
+import { AlertTriangle, BookOpen, Bot, Check, Copy, Download, KeyRound, Plug, ShieldAlert } from 'lucide-react';
 import type { ApiKey, ApiKeyCreate, ApiKeyCreated, ApiKeyDomainScope, ApiKeyGrantable, ApiKeyKind, ApiKeyPresetId, ApiKeyScope, ApiKeySiteScope, Domain, Site } from '@oblimint/shared';
 import {
   API_KEY_PRESETS, API_KEY_SCOPES, apiKeyFormCutToGrantable, apiKeyGuide, apiKeyPreset, apiKeyPresetMatches, apiKeyPresetNeedsParents, apiKeyPresetScopes, matchApiKeyPreset,
@@ -306,6 +306,18 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
             </div>
           )}
         </div>
+        {kind !== 'connector' && !ips.trim() && (
+          <p className="flex items-start gap-2 rounded-lg bg-amber-400/10 p-3 text-xs text-amber-400">
+            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {t('keySecurity.key.openBanner') || 'Without an allowed address, this key can be used from anywhere, and an open key keeps the strict IP mode of the access keys off for the whole platform. An IP may also be mandatory in this workspace.'}
+          </p>
+        )}
+        {kind === 'connector' && (
+          <p className="text-[11px] text-text-muted">
+            {t('keySecurity.key.connectorBanner') || 'Claude calls this connector from Anthropic\'s published outbound addresses: they are allowed automatically and never banned.'}
+            {(initial?.connectorRanges?.length ?? 0) > 0 && <span className="ml-1 font-mono">{initial!.connectorRanges!.join(', ')}</span>}
+          </p>
+        )}
       </div>
     </Modal>
   );

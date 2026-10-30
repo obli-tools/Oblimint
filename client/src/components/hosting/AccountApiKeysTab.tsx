@@ -146,6 +146,9 @@ export function AccountApiKeysTab({ accountId, siteId, presetSiteIds, openNew = 
                             ? <><Pill tone="accent"><Plug className="mr-1 inline h-3 w-3" />{t('apiKeys.connector.badge') || 'Claude connector'}</Pill><code className="font-mono text-[11px] text-text-muted">{k.oauthClientId}</code></>
                             : <code className="font-mono text-[11px] text-text-muted">{k.prefix}…</code>}
                           {expired && <Pill tone="muted">{t('apiKeys.expired') || 'expired'}</Pill>}
+                          {k.ipMissing
+                            ? <Pill tone="red" title={t('keySecurity.key.ipMissingHint') || 'An IP address is mandatory on the keys of this workspace: this key is refused until you restrict it.'}>{t('keySecurity.key.ipMissing') || 'to restrict'}</Pill>
+                            : k.open && !expired && <Pill tone="amber" title={t('keySecurity.key.openHint') || 'This open key (no allowed address) keeps the strict IP mode off for the whole platform.'}>{t('keySecurity.key.open') || 'any IP'}</Pill>}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-1">
                           {k.scopes.length ? k.scopes.map((s) => (
@@ -178,6 +181,11 @@ export function AccountApiKeysTab({ accountId, siteId, presetSiteIds, openNew = 
                           <span>{t('apiKeys.lastUsed') || 'last used'} {fmt(k.lastUsedAt)}{k.lastUsedIp ? ` (${k.lastUsedIp})` : ''}</span>
                           <span>{t('apiKeys.expires') || 'expires'} {k.expiresAt ? fmt(k.expiresAt) : (t('apiKeys.never') || 'never')}</span>
                           {k.allowedIps.length > 0 && <span>IP {k.allowedIps.join(', ')}</span>}
+                          {k.kind === 'connector' && (k.connectorRanges?.length ?? 0) > 0 && (
+                            <span title={t('keySecurity.key.connectorRangesHint') || 'Added automatically: the outbound addresses of the connectors (Anthropic).'}>
+                              {t('keySecurity.key.connectorRanges') || '+ connectors'} {k.connectorRanges!.join(', ')}
+                            </span>
+                          )}
                         </div>
                         {k.kind === 'connector' && (
                           <div className="mt-2 space-y-1">

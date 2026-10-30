@@ -14,7 +14,8 @@ export const tenantsApi = {
     return res.data.data!;
   },
 
-  async update(id: number, data: Partial<TenantInput>): Promise<Tenant> {
+  /** keyRequireIp: "an IP is mandatory on the access keys" (null = the platform setting); a change is the action platform.key_security. */
+  async update(id: number, data: Partial<TenantInput> & { keyRequireIp?: boolean | null }): Promise<Tenant> {
     const res = await apiClient.put<ApiResponse<Tenant>>(`/tenants/${id}`, data);
     return res.data.data!;
   },

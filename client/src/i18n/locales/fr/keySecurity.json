@@ -1,0 +1,87 @@
+{
+  "keySecurity": {
+    "toc": "Accès API et agents",
+    "title": "Sécurité IP des clés d’accès",
+    "intro": "Qui peut joindre /mcp, /api/v1 et le point de jeton OAuth des connecteurs. Un ban est un ban plateforme : il couvre tous les ports web de l’edge — le panel, l’espace client, le webmail et tous les sites hébergés. Une adresse NAT partagée (bureau, 4G) bannie perd aussi l’accès aux sites.",
+    "loadFailed": "Les réglages de sécurité des clés n’ont pas pu être chargés",
+    "saved": "Sécurité des clés d’accès enregistrée",
+    "saveFailed": "Les réglages n’ont pas pu être enregistrés",
+    "strictMode": "Mode strict",
+    "mode": {
+      "auto": "Automatique",
+      "log": "Journal seul",
+      "on": "Strict",
+      "off": "Désactivé"
+    },
+    "modeHint": {
+      "auto": "Journal seul pendant 48 heures après le premier démarrage, puis strict de lui-même (les admins plateforme sont prévenus).",
+      "log": "Les adresses hors de toutes les clés sont journalisées (« aurait banni »), jamais bannies.",
+      "on": "Quand toutes les clés actives ont des adresses, toute autre adresse qui touche /mcp, /api/v1 ou /oauth/token est bannie sans limite de durée.",
+      "off": "Aucun ban d’intrusion. Les clés fausses répétées sont toujours bannies."
+    },
+    "regime": {
+      "strict": "toutes les clés fermées",
+      "watch": "surveillance"
+    },
+    "effective": {
+      "on": "mode strict actif",
+      "log": "journal seul",
+      "off": "mode strict désactivé"
+    },
+    "coverage": {
+      "allowList": "dans la liste d’une clé",
+      "trusted": "IP de confiance",
+      "connectorRange": "plage des connecteurs",
+      "adminSession": "session admin plateforme ouverte",
+      "neverBanned": "jamais bannie (privée / nœud / liste « ne jamais bannir »)"
+    },
+    "status": {
+      "title": "État actuel",
+      "autoAt": "Strict à partir du {{date}} (fin des 48 h en journal seul).",
+      "keys": "{{active}} clé(s) active(s), liste blanche de {{size}} entrées.",
+      "ipCovered": "Votre adresse actuelle ({{ip}}) est couverte : {{how}}.",
+      "ipNotCovered": "Votre adresse actuelle ({{ip}}) n’est dans la liste d’aucune clé : hors de votre session du panel, elle serait bannie en mode strict. Ajoutez-la aux IP de confiance si vous appelez l’API d’ici.",
+      "openKeys": "Clés ouvertes qui empêchent le mode strict ({{count}}) :",
+      "key": "clé",
+      "sessions": "Exemptées (sessions admin plateforme ouvertes) :",
+      "lastBan": "Dernier ban : {{ip}} ({{date}}).",
+      "bansLink": "Bannissements",
+      "wouldBan": "Auraient été bannies (journal seul) :"
+    },
+    "requireIp": "Une adresse IP est obligatoire sur les clés d’accès",
+    "requireIpHint": "Valeur par défaut de chaque espace (un espace peut la surcharger). Une clé sans adresse est refusée à l’usage tant qu’elle n’est pas restreinte ; un connecteur est couvert par les plages des connecteurs.",
+    "maxFailures": "Clés fausses tolérées",
+    "maxFailuresHint": "Depuis une même adresse dans la fenêtre, puis un ban selon l’échelle d’escalade des bannissements.",
+    "window": "Fenêtre (minutes)",
+    "trustedIps": "IP de confiance",
+    "trustedIpsHint": "Jamais bannies par les surfaces des clés (leurs clés fausses sont refusées, pas comptées). Votre bureau, vos runners CI.",
+    "connectorRanges": "Plages des connecteurs",
+    "connectorRangesHint": "D’où appellent les connecteurs Claude (adresses sortantes publiées par Anthropic). Toujours autorisées pour un connecteur et jamais bannies. Vide : chaque connecteur compte comme une clé ouverte.",
+    "anthropicRanges": "Plages Anthropic",
+    "cliHint": "Bloqué dehors ? Depuis le serveur : docker exec <conteneur du panel> node dist/src/cli/keySecurity.js unban <ip> (ou trust <ip>, status, help).",
+    "key": {
+      "ipMissing": "à restreindre",
+      "ipMissingHint": "Une adresse IP est obligatoire sur les clés de cet espace : cette clé est refusée tant que vous ne la restreignez pas.",
+      "open": "toute IP",
+      "openHint": "Cette clé ouverte (sans adresse autorisée) désactive le mode strict pour toute la plateforme.",
+      "connectorRanges": "+ connecteurs",
+      "connectorRangesHint": "Ajoutées automatiquement : les adresses sortantes des connecteurs (Anthropic).",
+      "openBanner": "Sans adresse autorisée, cette clé est utilisable de partout, et une clé ouverte désactive le mode strict des clés d’accès pour toute la plateforme. Une IP peut aussi être obligatoire dans cet espace.",
+      "connectorBanner": "Claude appelle ce connecteur depuis les adresses sortantes publiées par Anthropic : elles sont autorisées automatiquement et jamais bannies."
+    },
+    "trust": {
+      "title": "Ajouter aux IP de confiance",
+      "confirm": "Lever le ban plateforme de {{ip}} et l’ajouter aux IP de confiance des clés d’accès : elle ne sera plus jamais bannie par les surfaces des clés.",
+      "button": "Faire confiance",
+      "done": "Adresse de confiance ({{count}} ban(s) levé(s))",
+      "failed": "L’adresse n’a pas pu être ajoutée aux IP de confiance"
+    },
+    "tenant": {
+      "title": "IP obligatoire sur les clés d’accès",
+      "hint": "Une clé sans adresse autorisée est refusée dans cet espace (les connecteurs sont couverts par les plages des connecteurs). Réglage plateforme : Réglages > Accès API et agents.",
+      "inherit": "Réglage plateforme",
+      "yes": "Obligatoire",
+      "no": "Facultative"
+    }
+  }
+}

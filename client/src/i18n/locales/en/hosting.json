@@ -468,6 +468,8 @@
       "invalidSshKey": "This SSH public key is not valid.",
       "keyExists": "This SSH key is already registered.",
       "keyNotOwned": "This key was created by someone else and has rights you do not hold: only its creator, or a member holding all its rights, can change, revoke or disconnect it.",
+      "ipRequired": "An allowed IP address is mandatory on the access keys of this workspace: add the addresses the key will be used from.",
+      "addressBanned": "This address is banned from the access-key surfaces.",
       "noNode": "No local node is registered.",
       "nodeNotSupported": "Remote nodes are not supported yet.",
       "notImplemented": "This feature is not available yet on this server.",

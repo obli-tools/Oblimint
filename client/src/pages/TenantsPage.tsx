@@ -12,6 +12,7 @@ import { IconButton } from '@/components/common/IconButton';
 import { PageContainer } from '@/components/common/PageContainer';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { InfoTip } from '@/components/common/Tip';
+import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 
 // ── Limits <-> form conversion ──────────────────────────────────────────────
@@ -85,14 +86,15 @@ function TenantForm({
   onSave,
   onCancel,
 }: {
-  initial?: { name: string; slug: string; limits: TenantLimits };
-  onSave: (name: string, slug: string, limits: TenantLimits) => Promise<void>;
+  initial?: { name: string; slug: string; limits: TenantLimits; keyRequireIp?: boolean | null };
+  onSave: (name: string, slug: string, limits: TenantLimits, keyRequireIp?: boolean | null) => Promise<void>;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState(initial?.name ?? '');
   const [slug, setSlug] = useState(initial?.slug ?? '');
   const [limits, setLimits] = useState<LimitForm>(() => limitsToForm(initial?.limits));
+  const [keyRequireIp, setKeyRequireIp] = useState<boolean | null>(initial?.keyRequireIp ?? null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -111,7 +113,7 @@ function TenantForm({
     setSaving(true);
     setError('');
     try {
-      await onSave(name.trim(), slug.trim(), parsed);
+      await onSave(name.trim(), slug.trim(), parsed, initial ? keyRequireIp : undefined);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : (t('common.error') || 'Error'));
     } finally {
@@ -201,6 +203,30 @@ function TenantForm({
         </div>
       </div>
 
+      {/* IP security of the access keys: this workspace's own rule, or the platform's (Settings > API access & agents). */}
+      {initial && (
+        <div>
+          <div className="flex items-center gap-1.5 mb-2">
+            <span className="text-[11px] font-mono uppercase tracking-[0.12em] text-text-muted">
+              {t('keySecurity.tenant.title') || 'IP mandatory on the access keys'}
+            </span>
+            <InfoTip content={t('keySecurity.tenant.hint') || 'A key without allowed address is refused in this workspace (connectors are covered by the connectors\' ranges). Inherit: the platform setting.'} />
+          </div>
+          <SegmentedTabs
+            size="sm"
+            fill={false}
+            value={keyRequireIp === null ? 'inherit' : keyRequireIp ? 'yes' : 'no'}
+            onChange={(v) => setKeyRequireIp(v === 'inherit' ? null : v === 'yes')}
+            ariaLabel={t('keySecurity.tenant.title') || 'IP mandatory on the access keys'}
+            tabs={[
+              { id: 'inherit', label: t('keySecurity.tenant.inherit') || 'Platform setting' },
+              { id: 'yes', label: t('keySecurity.tenant.yes') || 'Mandatory' },
+              { id: 'no', label: t('keySecurity.tenant.no') || 'Optional' },
+            ]}
+          />
+        </div>
+      )}
+
       {error && <p className="text-xs text-red-400">{error}</p>}
       <div className="flex gap-2 justify-end">
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving} className="coarse:min-h-10">
@@ -288,9 +314,9 @@ export function TenantsPage() {
     await refreshAll();
   };
 
-  const handleUpdate = async (id: number, name: string, slug: string, limits: TenantLimits) => {
+  const handleUpdate = async (id: number, name: string, slug: string, limits: TenantLimits, keyRequireIp?: boolean | null) => {
     try {
-      await tenantsApi.update(id, { name, slug, limits });
+      await tenantsApi.update(id, { name, slug, limits, ...(keyRequireIp !== undefined ? { keyRequireIp } : {}) });
     } catch (err) {
       throw new Error(apiErrorMessage(err, t('common.error') || 'Error'));
     }
@@ -350,8 +376,8 @@ export function TenantsPage() {
             <div key={tenant.id} className="group rounded-xl bg-bg-secondary px-4 py-3">
               {editingId === tenant.id ? (
                 <TenantForm
-                  initial={{ name: tenant.name, slug: tenant.slug, limits: tenant.limits }}
-                  onSave={(name, slug, limits) => handleUpdate(tenant.id, name, slug, limits)}
+                  initial={{ name: tenant.name, slug: tenant.slug, limits: tenant.limits, keyRequireIp: tenant.keyRequireIp ?? null }}
+                  onSave={(name, slug, limits, keyRequireIp) => handleUpdate(tenant.id, name, slug, limits, keyRequireIp)}
                   onCancel={() => setEditingId(null)}
                 />
               ) : (
