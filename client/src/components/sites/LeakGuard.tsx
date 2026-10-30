@@ -153,7 +153,7 @@ export function LeakGuardCard({ site, onSiteChange }: { site: Site; onSiteChange
             <option value="warn" disabled={!canRelax && site.leakPolicy === 'block'}>{t('leakGuard.policyWarn') || 'Publish and warn'}</option>
           </select>
           <p className="mt-1 text-xs text-text-muted">
-            {t('leakGuard.policyHint') || 'Critical: the web server would hand the file out as is. A warning (secret inside PHP code, file outside the document root) never blocks.'}
+            {t('leakGuard.policyHint') || 'Critical: the web server would hand the file out as is, or an access key of this panel is written anywhere in the code. A warning (another secret inside PHP code, a file outside the document root, a public browser key, third-party or test code) never blocks.'}
           </p>
         </div>
         <div>

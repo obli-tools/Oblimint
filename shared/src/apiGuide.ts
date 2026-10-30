@@ -206,7 +206,7 @@ Every release goes through a **leak guard** before it goes live. It reports the 
 |---|---|
 | \`secret.panel-token\` | A key or token of this panel (\`obk_…\`, \`oba_…\`, \`obt_…\`): critical everywhere. **Never write your own key into a file.** One found must be revoked by the human (\`keyId\`) |
 | \`secret.private-key\` | A PEM / OpenSSH private key |
-| \`secret.cloud\` | AWS, Stripe live, GitHub, GitLab, Slack, Google, SendGrid, OpenAI, Anthropic credentials |
+| \`secret.cloud\` | AWS, Stripe live, GitHub, GitLab, Slack, SendGrid, OpenAI, Anthropic credentials; a Google browser key (\`AIza…\`, public by design) is always a warning |
 | \`secret.env-file\` | A \`.env\` file with secret values |
 | \`secret.key-file\` | \`id_rsa\`, \`.p12\` / \`.pfx\`, \`.htpasswd\`, \`.git-credentials\`, \`.npmrc\` / \`auth.json\` with a token… |
 | \`expose.dump\` | An SQL / database dump **with data** (\`INSERT\`, \`COPY\`), compressed dumps |
@@ -217,7 +217,7 @@ Every release goes through a **leak guard** before it goes live. It reports the 
 | \`expose.vcs\` / \`expose.log\` | \`.svn\`, \`.hg\`, \`.bzr\`, \`CVS\`; a log file served |
 
 - \`severity\`: \`critical\` when the web server would hand the file out as is (inside the document root, not PHP, not refused), \`warn\` otherwise (a secret in a \`.php\` file, a \`.env\` outside the document root, a test fixture, a sample dump shipped by a plugin or a library…).
-- The site's \`policy\` (\`get_site\` → \`leakGuard\`): \`block\` (default) — a critical finding makes the release fail with \`leakBlocked\`, nothing goes live; \`warn\` — reported only (\`outcome.leaks\`, the release log). The human may allowlist paths (\`allowlist\`, \`allowlisted\` counts them); **a key can change neither the policy nor the allowlist**.
+- The site's \`policy\` (\`get_site\` → \`leakGuard\`): \`block\` (default of new sites; sites that existed before the guard start on \`warn\`) — a critical finding makes the release fail with \`leakBlocked\`, nothing goes live; \`warn\` — reported only (\`outcome.leaks\`, the release log). The human may allowlist paths (\`allowlist\`, \`allowlisted\` counts them); **a key can change neither the policy nor the allowlist**.
 - Secrets go into the site variables (\`set_env\`, \`secret: true\`), read with \`getenv()\`; database dumps go into the database (\`import_sql\`), then are deleted from the site.
 - **Run \`check_leaks\` before \`publish\`**: the same rules on the staging, as the next publication will see them.
 
@@ -687,7 +687,7 @@ Chaque release passe par une **garde anti-fuite** avant d'aller en ligne. Elle i
 |---|---|
 | \`secret.panel-token\` | Une clé ou un jeton de ce panel (\`obk_…\`, \`oba_…\`, \`obt_…\`) : critique partout. **N'écris jamais ta propre clé dans un fichier.** Une clé trouvée doit être révoquée par l'humain (\`keyId\`) |
 | \`secret.private-key\` | Une clé privée PEM / OpenSSH |
-| \`secret.cloud\` | Identifiants AWS, Stripe live, GitHub, GitLab, Slack, Google, SendGrid, OpenAI, Anthropic |
+| \`secret.cloud\` | Identifiants AWS, Stripe live, GitHub, GitLab, Slack, SendGrid, OpenAI, Anthropic ; une clé de navigateur Google (\`AIza…\`, publique par nature) reste toujours un avertissement |
 | \`secret.env-file\` | Un fichier \`.env\` avec des valeurs secrètes |
 | \`secret.key-file\` | \`id_rsa\`, \`.p12\` / \`.pfx\`, \`.htpasswd\`, \`.git-credentials\`, \`.npmrc\` / \`auth.json\` avec un jeton… |
 | \`expose.dump\` | Un dump SQL / de base **avec des données** (\`INSERT\`, \`COPY\`), les dumps compressés |
@@ -698,7 +698,7 @@ Chaque release passe par une **garde anti-fuite** avant d'aller en ligne. Elle i
 | \`expose.vcs\` / \`expose.log\` | \`.svn\`, \`.hg\`, \`.bzr\`, \`CVS\` ; un fichier de journal servi |
 
 - \`severity\` : \`critical\` quand le serveur web distribuerait le fichier tel quel (dans la racine web, pas du PHP, pas refusé), \`warn\` sinon (un secret dans un \`.php\`, un \`.env\` hors de la racine web, un jeu de test, un dump d'exemple livré par une extension ou une bibliothèque…).
-- La \`policy\` du site (\`get_site\` → \`leakGuard\`) : \`block\` (par défaut) — une détection critique fait échouer la release avec \`leakBlocked\`, rien ne part en ligne ; \`warn\` — signalé seulement (\`outcome.leaks\`, journal de la release). L'humain peut mettre des chemins en exception (\`allowlist\`, comptés dans \`allowlisted\`) ; **une clé ne peut changer ni la politique ni les exceptions**.
+- La \`policy\` du site (\`get_site\` → \`leakGuard\`) : \`block\` (par défaut pour un nouveau site ; les sites antérieurs à la garde démarrent en \`warn\`) — une détection critique fait échouer la release avec \`leakBlocked\`, rien ne part en ligne ; \`warn\` — signalé seulement (\`outcome.leaks\`, journal de la release). L'humain peut mettre des chemins en exception (\`allowlist\`, comptés dans \`allowlisted\`) ; **une clé ne peut changer ni la politique ni les exceptions**.
 - Les secrets vont dans les variables du site (\`set_env\`, \`secret: true\`), lues avec \`getenv()\` ; un dump de base va dans la base (\`import_sql\`), puis est supprimé du site.
 - **Lance \`check_leaks\` avant \`publish\`** : les mêmes règles sur le staging, comme la prochaine publication les verra.
 

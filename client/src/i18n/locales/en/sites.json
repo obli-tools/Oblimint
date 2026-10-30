@@ -515,7 +515,7 @@
     "policyLabel": "When a critical finding is found",
     "policyBlock": "Block the publication (recommended)",
     "policyWarn": "Publish and warn",
-    "policyHint": "Critical: the web server would hand the file out as is. A warning (secret inside PHP code, file outside the document root) never blocks.",
+    "policyHint": "Critical: the web server would hand the file out as is, or an access key of this panel is written anywhere in the code. A warning (another secret inside PHP code, a file outside the document root, a public browser key, third-party or test code) never blocks.",
     "allowlistLabel": "Allowed paths (one per line)",
     "allowlistHint": "A name (\"dump.sql\") matches at any depth, \"folder/\" everything below it; * stays within a folder, ** crosses folders.",
     "relaxNeedsApprove": "Switching to warn or adding an allowed path takes the right to approve releases.",
