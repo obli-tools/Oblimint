@@ -34,6 +34,14 @@ async function tenantRoleFrom(raw: unknown, kind: string): Promise<string> {
   return role;
 }
 
+/** The member routes are mounted outside requireTenant (no req.tenantId): user.tenants_set
+ *  is gated on the session's tenant (the master one, requirePlatformAdminOnMaster), the
+ *  tenant PUT /users/:id/tenants gates on. */
+function gateMembers(req: Parameters<typeof gateTenant>[0], params: Record<string, unknown>) {
+  if (!req.tenantId && req.session?.currentTenantId) req.tenantId = req.session.currentTenantId;
+  return gateTenant(req, 'user.tenants_set', params);
+}
+
 // POST /api/tenant/switch { tenantId } → { currentTenantId }
 router.post('/switch', async (req, res, next) => {
   try {
@@ -144,7 +152,7 @@ router.post('/:id/members', requirePlatformAdminOnMaster, async (req, res, next)
     if (target.foreign_source === 'obligate') throw new AppError(400, 'Cannot modify SSO user tenant access — manage from Obligate');
     const r = await tenantRoleFrom(role, target.kind);
     // The same memberships as PUT /users/:id/tenants: user.tenants_set (never a way around it).
-    await gateTenant(req, 'user.tenants_set', { op: 'add', userId, tenantId, role: r });
+    await gateMembers(req, { op: 'add', userId, tenantId, role: r });
     await tenantService.addUser(tenantId, userId, r);
     await auditService.logReqAs(req, tenantId, 'tenant.member_added', { resourceType: 'user', resourcePath: String(userId), details: { role: r } });
     res.json({ success: true });
@@ -162,7 +170,7 @@ router.put('/:id/members/:uid', requirePlatformAdminOnMaster, async (req, res, n
     if (target.foreign_source === 'obligate') throw new AppError(400, 'Cannot modify SSO user tenant access — manage from Obligate');
     const r = await tenantRoleFrom(role, target.kind);
     if (!(await db('user_tenants').where({ tenant_id: tenantId, user_id: userId }).first('user_id'))) throw new AppError(404, 'Membership not found');
-    await gateTenant(req, 'user.tenants_set', { op: 'role', userId, tenantId, role: r });
+    await gateMembers(req, { op: 'role', userId, tenantId, role: r });
     if (!(await tenantService.updateUserRole(tenantId, userId, r))) throw new AppError(404, 'Membership not found');
     await auditService.logReqAs(req, tenantId, 'tenant.member_role_changed', { resourceType: 'user', resourcePath: String(userId), details: { role: r } });
     res.json({ success: true });
@@ -175,7 +183,7 @@ router.delete('/:id/members/:uid', requirePlatformAdminOnMaster, async (req, res
     const userId = idParam(req.params.uid);
     const target = await db('users').where({ id: userId }).first('foreign_source') as { foreign_source: string | null } | undefined;
     if (target?.foreign_source === 'obligate') throw new AppError(400, 'Cannot modify SSO user tenant access — manage from Obligate');
-    await gateTenant(req, 'user.tenants_set', { op: 'remove', userId, tenantId });
+    await gateMembers(req, { op: 'remove', userId, tenantId });
     await tenantService.removeUser(tenantId, userId);
     const { killSessionsForUser } = await import('../services/userSessions.service');
     await killSessionsForUser(userId, 'tenant_access_removed');
