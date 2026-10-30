@@ -20,8 +20,10 @@ import type { SiteErrorClass, SiteErrorLevel } from '@oblimint/shared';
 //   oblimint_exec: PHP Fatal error:  oblimint: refusing to execute X: PHP code only runs from the release …
 // Everything else (php-fpm notices, the web server's own lines) is ignored.
 //
-// Fingerprint: level + normalized message (numbers, hex, release paths out) +
-// file:line relative to the release. Sensitive values are masked in the
+// Fingerprint: level + normalized message (numbers, hex, hash-like names,
+// release paths out; the target folder only for readOnlyWrite / execRefused)
+// + file:line relative to the release. Numbers taken from the text are kept
+// in PostgreSQL integer range, NUL removed. Sensitive values are masked in the
 // message and the sample (arguments of the stack frames, key=value secrets,
 // credentials of URLs).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,11 +89,22 @@ export function tsKey(at: string): string {
   return `${m[1]}.${(m[2] ?? '').padEnd(9, '0')}Z`;
 }
 
-/** Masks values that must never leave the container log (passwords, tokens, credentials of URLs). */
+/**
+ * Masks values that must never leave the container log (passwords, tokens,
+ * credentials of URLs). A key only takes a value through an explicit "=" or
+ * ":" (never "::" / "=="): "unexpected token \"}\"" or "Auth expects array"
+ * stay readable — the token PHP points at is the clue of a parse error. A
+ * bare whitespace separator is masked only after "Bearer" / "Basic" followed
+ * by something shaped like a credential.
+ */
 export function maskSensitive(s: string): string {
   return s
     .replace(/(\/\/)[^/\s:@'"]+:[^/\s@'"]+@/g, '$1***:***@')
-    .replace(/\b(pass(?:word|wd)?|pwd|secret|token|api[_-]?key|auth(?:orization)?|bearer)(\s*[=:]\s*|\s+)("[^"]*"|'[^']*'|[^\s,;&'")\]]+)/gi, (_m, k: string, sep: string) => `${k}${sep}***`);
+    .replace(
+      /\b([\w.-]*?(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|auth(?:orization)?))(\s*(?:=(?!=)|:(?!:))\s*)((?:bearer|basic)\s+)?("[^"]*"|'[^']*'|[^\s,;&'")\]:][^\s,;&'")\]]*)/gi,
+      (_m, k: string, sep: string, scheme: string | undefined) => `${k}${sep}${scheme ?? ''}***`,
+    )
+    .replace(/\b(bearer|basic)(\s+)([A-Za-z0-9._~+/-]{16,}=*)/gi, (_m, k: string, sep: string) => `${k}${sep}***`);
 }
 
 /** A stack frame "#0 file(12): fn('a', 'b')" → "#0 file(12): fn(…)": arguments never kept. */
@@ -106,26 +119,67 @@ export function relativize(s: string): string {
   return s.replace(RELEASE_PATH, '');
 }
 
+/** Largest value of a PostgreSQL integer column (release_number, line). */
+export const PG_INT_MAX = 2_147_483_647;
+
+/** A number read from log text → integer in 1..PG_INT_MAX, otherwise null (never fails the INSERT). */
+export function pgPositiveInt(v: string | number): number | null {
+  const n = typeof v === 'number' ? v : (/^\d{1,10}$/.test(v) ? Number(v) : Number.NaN);
+  return Number.isSafeInteger(n) && n >= 1 && n <= PG_INT_MAX ? n : null;
+}
+
 function releaseNumberIn(s: string): number | null {
   RELEASE_PATH.lastIndex = 0;
   for (let m = RELEASE_PATH.exec(s); m; m = RELEASE_PATH.exec(s)) {
-    if (m[1] !== 'current') return Number(m[1]);
+    if (m[1] === 'current') continue;
+    const n = pgPositiveInt(m[1]);
+    if (n !== null) return n;
   }
   return null;
 }
 
-/** Message normalized for the fingerprint: numbers / hex / release paths out, spaces folded. */
+/** NUL is refused by PostgreSQL text columns: removed from everything read in a log. */
+export function stripNul(s: string): string {
+  return s.includes('\u0000') ? s.replace(/\u0000/g, '') : s;
+}
+
+/**
+ * Message normalized for the fingerprint: release paths, hash-like tokens
+ * (cache file names, /tmp/phpXXXX, session ids: 8+ letters and digits
+ * mixed), hex and numbers out, spaces folded.
+ */
 export function normalizeMessage(message: string): string {
   return relativize(message)
     .replace(/0x[0-9a-f]+/gi, '0xN')
+    .replace(/(?<![A-Za-z0-9])(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{8,}(?![A-Za-z0-9])/g, 'H')
     .replace(/\b\d+(?:\.\d+)?\b/g, 'N')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 300);
 }
 
-export function fingerprintOf(e: Pick<ErrorEvent, 'level' | 'message' | 'file' | 'line'>): string {
-  return createHash('sha1').update(`${e.level}\n${normalizeMessage(e.message)}\n${e.file ?? ''}\n${e.line ?? ''}`).digest('hex');
+/** A path → its folder, at most 3 levels deep ("var/cache/prod/twig/ab/x.php" → "var/cache/prod/…"). */
+function folderKey(path: string): string {
+  const abs = path.startsWith('/');
+  const parts = path.split('/').filter(Boolean);
+  parts.pop();
+  return `${abs ? '/' : ''}${parts.slice(0, 3).join('/')}/…`;
+}
+
+/**
+ * Message used for the fingerprint. For the immutable-model classes the
+ * target path is reduced to its folder: one root cause (a cache folder that
+ * is not a data path, a script dropped in uploads) is ONE group, not one per
+ * generated file — the hint says to declare the folder anyway.
+ */
+function fingerprintMessage(e: Pick<ErrorEvent, 'message'> & { errorClass?: SiteErrorClass | null }): string {
+  const cls = e.errorClass ?? classify(e.message);
+  if (cls !== 'readOnlyWrite' && cls !== 'execRefused') return e.message;
+  return e.message.replace(/(?:\/|\b)[\w.@~+-]+(?:\/[\w.@~+-]+)+\/?/g, (p) => folderKey(p));
+}
+
+export function fingerprintOf(e: Pick<ErrorEvent, 'level' | 'message' | 'file' | 'line'> & { errorClass?: SiteErrorClass | null }): string {
+  return createHash('sha1').update(`${e.level}\n${normalizeMessage(fingerprintMessage(e))}\n${e.file ?? ''}\n${e.line ?? ''}`).digest('hex');
 }
 
 export function classify(message: string): SiteErrorClass | null {
@@ -155,7 +209,8 @@ function cut(s: string, n: number): string {
 }
 
 /** First line of an error → event (null when the line is not a PHP error). */
-export function parseHead(payload: string, at: string): ErrorEvent | null {
+export function parseHead(text: string, at: string): ErrorEvent | null {
+  const payload = stripNul(text);
   const g = GUARD.exec(payload);
   if (g) {
     const message = maskSensitive(`oblimint guard: refused to execute ${relativize(g[1])}${g[2] ? ` (real path: ${relativize(g[2])})` : ''}`);
@@ -172,13 +227,14 @@ export function parseHead(payload: string, at: string): ErrorEvent | null {
   if (loc) {
     body = loc[1];
     file = loc[2];
-    line = Number(loc[3]);
+    // Line 0 exists (internal code); beyond an integer column: unknown.
+    line = loc[3] === '0' ? 0 : pgPositiveInt(loc[3]);
   }
   const releaseNumber = releaseNumberIn(file ?? '') ?? releaseNumberIn(body);
   const message = cut(maskSensitive(relativize(body)), MAX_MESSAGE);
   return {
     at, level, errorClass: classify(message), message,
-    file: file ? cut(relativize(file), 500) : null, line: line !== null && Number.isFinite(line) ? line : null,
+    file: file ? cut(relativize(file), 500) : null, line,
     releaseNumber, stack: [],
   };
 }
@@ -193,7 +249,7 @@ export function parseLines(lines: Array<{ at: string; text: string }>): ErrorEve
   let open: ErrorEvent | null = null;
   let openMs = 0;
   for (const raw of lines) {
-    for (const payload of unwrap(raw.text)) {
+    for (const payload of unwrap(stripNul(raw.text))) {
       if (!payload) continue;
       const head = parseHead(payload, raw.at);
       if (head) {

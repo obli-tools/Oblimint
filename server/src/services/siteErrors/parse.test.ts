@@ -124,6 +124,54 @@ test('masking: passwords, tokens, URL credentials, frame arguments', () => {
   assert.equal(maskFrame('#1 /srv/releases/1/a.php(3): f()'), '#1 /srv/releases/1/a.php(3): f()');
 });
 
+test('masking needs an explicit separator: parse errors and plain words stay readable', () => {
+  const p = parseHead('PHP Parse error:  syntax error, unexpected token "}", expecting ";" in /srv/releases/3/a.php on line 7', AT)!;
+  assert.equal(p.message, 'syntax error, unexpected token "}", expecting ";"');
+  assert.equal(parseHead('PHP Fatal error:  Uncaught TypeError: Auth expects array in /srv/releases/3/a.php:2', AT)!.message, 'Uncaught TypeError: Auth expects array');
+  assert.equal(maskSensitive('unexpected token "}"'), 'unexpected token "}"');
+  assert.equal(maskSensitive('Call to undefined method Token::parse()'), 'Call to undefined method Token::parse()');
+  assert.equal(maskSensitive('the secret sauce'), 'the secret sauce');
+  // still masked: explicit separators, prefixed keys, Authorization schemes, bearer credentials
+  assert.equal(maskSensitive('csrf_token=abc123'), 'csrf_token=***');
+  assert.equal(maskSensitive('Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.x.y'), 'Authorization: Bearer ***');
+  assert.equal(maskSensitive('sent Bearer eyJhbGciOiJIUzI1NiJ9abc'), 'sent Bearer ***');
+  assert.equal(maskSensitive('Bearer authentication failed'), 'Bearer authentication failed');
+  assert.equal(maskSensitive('DB_PASSWORD = "x y"'), 'DB_PASSWORD = ***');
+});
+
+test('fingerprint: hash-like file names do not split a group; read-only writes group by folder', () => {
+  const w = (name: string) => parseHead(`PHP Warning:  file_put_contents(/srv/releases/3/var/cache/prod/twig/${name.slice(0, 2)}/${name}.php): Failed to open stream: Read-only file system in /srv/releases/3/vendor/x.php on line 9`, AT)!;
+  const a = w('ab12cd34ef56');
+  const b = w('d11819a8ffee');
+  assert.equal(a.errorClass, 'readOnlyWrite');
+  assert.equal(fingerprintOf(a), fingerprintOf(b));
+  assert.ok(a.message.includes('var/cache/prod/twig/ab/ab12cd34ef56.php'), 'the stored message keeps the real path');
+  const other = parseHead('PHP Warning:  file_put_contents(/srv/releases/3/public/uploads/a.jpg): Failed to open stream: Read-only file system in /srv/releases/3/vendor/x.php on line 9', AT)!;
+  assert.notEqual(fingerprintOf(a), fingerprintOf(other), 'another folder is another root cause');
+  assert.equal(normalizeMessage('move_uploaded_file(/tmp/phpA1b2C3d): x'), 'move_uploaded_file(/tmp/H): x');
+  assert.equal(normalizeMessage('session sess_9f8e7d6c5b4a3 lost'), 'session sess_H lost');
+  assert.equal(normalizeMessage('Class "Symfony\\Component\\Foo" not found'), 'Class "Symfony\\Component\\Foo" not found');
+  const g1 = parseLines([{ at: AT, text: 'oblimint guard: refused to execute /srv/data/uploads/a1b2c3d4e5.php' }])[0];
+  const g2 = parseLines([{ at: AT, text: 'oblimint guard: refused to execute /srv/data/uploads/zz/shell.php' }])[0];
+  assert.equal(fingerprintOf(g1), fingerprintOf(g2));
+});
+
+test('numbers from the text stay in integer range; NUL removed', () => {
+  const big = parseHead('PHP Warning:  include(/srv/releases/99999999999/x.php): Failed to open stream in /srv/releases/current/index.php on line 3', AT)!;
+  assert.equal(big.releaseNumber, null);
+  const both = parseHead('PHP Warning:  include(/srv/releases/99999999999/x.php): see /srv/releases/4/y.php', AT)!;
+  assert.equal(both.releaseNumber, 4, 'an out-of-range number is skipped, the next path counts');
+  assert.equal(parseHead('PHP Warning:  x in /srv/releases/2/a.php on line 99999999999', AT)!.line, null);
+  assert.equal(parseHead('PHP Warning:  x in /srv/releases/2/a.php on line 0', AT)!.line, 0);
+  const nul = parseLines([
+    { at: AT, text: 'PHP Fatal error:  Uncaught Error: a\u0000b in /srv/releases/2/a\u0000.php:3' },
+    { at: AT, text: '#0 /srv/releases/2/b.php(4): f\u0000()' },
+  ])[0];
+  assert.equal(nul.message, 'Uncaught Error: ab');
+  assert.equal(nul.file, 'a.php');
+  assert.ok(!sampleOf(nul).includes('\u0000'));
+});
+
 test('"current" in a path gives no release number (attributed by time instead)', () => {
   const e = parseHead('PHP Warning:  x in /srv/releases/current/a.php on line 1', AT)!;
   assert.equal(e.file, 'a.php');
