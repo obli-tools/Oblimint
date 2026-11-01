@@ -73,7 +73,8 @@
       "expired": "This request expired: the action was not run. Do it again to file a new request.",
       "cancelled": "Request cancelled: the action was not run.",
       "closeHintReplay": "If you close this window, you will be offered to run the action once it is approved.",
-      "closeHintRedo": "This request carries a secret or a file that is not kept: if you close this window, do the action again once it is approved."
+      "closeHintRedo": "This request carries a secret or a file that is not kept: if you close this window, do the action again once it is approved.",
+      "closeHintRedoOnce": "This action's result can only be used now: if you close this window, do the action again once it is approved."
     },
     "replay": {
       "approved": "Request #{{id}} was approved. Nothing was done yet.",

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Database, ExternalLink, Link2, Table2 } from 'lucide-react';
+import { Database, Link2 } from 'lucide-react';
 import type { DbDatabaseListItem } from '@oblimint/shared';
 import { useHostingMe } from '@/store/hostingStore';
 import { ActionMenu } from '@/components/common/ActionMenu';
@@ -12,7 +12,7 @@ import { Pill } from '@/components/hosting/hostingUi';
 import { DbDefaultBadge } from './DbBadges';
 import { DbSitesCell } from './DbSiteBadges';
 import { DbSiteAttachModal, attachRefOf, type AttachTarget } from './DbSiteAttachModal';
-import { dbAdminLabel, openDbAdmin } from './dbAdmin';
+import { dbToolMenuItems } from './dbAdmin';
 import { dbStatusLabel, engineLabel, formatBytes } from './dbFormat';
 import { siteSortKey } from './dbSites';
 
@@ -53,8 +53,7 @@ export function DbDatabaseList({ databases, showAccount = true, showTenant = fal
       <ActionMenu
         triggerSize="sm"
         items={[
-          { key: 'explore', icon: <Table2 className="h-4 w-4" />, label: t('dbx.open') || 'Explore (tables, data, SQL)', onClick: () => navigate(`/databases/${d.instanceId}/explorer/${d.id}`), hidden: !manage, disabled: !running },
-          { key: 'admin', icon: <ExternalLink className="h-4 w-4" />, label: dbAdminLabel(t, d.family), onClick: () => { void openDbAdmin(t, d.instanceId, d.id); }, hidden: !manage || !d.adminUiAvailable, disabled: !running },
+          ...dbToolMenuItems(t, { instanceId: d.instanceId, databaseId: d.id, family: d.family, manage, running, adminUiAvailable: !!d.adminUiAvailable, navigate }),
           { key: 'instance', icon: <Database className="h-4 w-4" />, label: t('databases.sites.openInstance') || 'Open the database server', onClick: () => navigate(`/databases/${d.instanceId}`) },
           { key: 'attach', icon: <Link2 className="h-4 w-4" />, label: t('databases.sites.attachAction') || 'Attach / share with a site…', onClick: () => setAttaching({ kind: 'database', database: attachRefOf(d) }), hidden: !manage, separator: true },
         ]}

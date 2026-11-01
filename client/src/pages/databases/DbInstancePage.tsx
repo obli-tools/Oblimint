@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { Database, ExternalLink, Play, RotateCw, Square, Trash2 } from 'lucide-react';
+import { Database, ExternalLink, Play, RotateCw, Square, Table2, Trash2 } from 'lucide-react';
 import { HostingSocketEvents, type DbCatalog, type DbInstance, type DbInstanceDetail } from '@oblimint/shared';
 import { databasesApi } from '@/api/databases.api';
 import { useHostingMe } from '@/store/hostingStore';
@@ -15,7 +15,7 @@ import { TenantBadge } from '@/components/common/TenantBadge';
 import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { payloadNumber, useHostingEvents } from '@/components/hosting/hostingUi';
-import { openDbAdmin } from '@/components/databases/dbAdmin';
+import { adminUiFamily, dbAdminLabel, dbExplorerPath, openDbAdmin } from '@/components/databases/dbAdmin';
 import { formatMb } from '@/components/hosting/hostingFormat';
 import { DbDefaultBadge, DbEngineBadge, DbStatusBadge } from '@/components/databases/DbBadges';
 import { DbConnectionCard, DbExternalCard, DbSettingsCard } from '@/components/databases/DbInstanceCards';
@@ -149,10 +149,16 @@ export function DbInstancePage() {
     }
   };
 
-  const adminLabel = inst.adminUi === 'phpmyadmin' ? (t('databases.admin.openPma') || 'Open phpMyAdmin') : (t('databases.admin.openAdminer') || 'Open Adminer');
+  // Same tools, same order as the database menus (dbToolMenuItems): the explorer first, then phpMyAdmin / Adminer.
+  const firstDb = [...inst.databases].sort((a, b) => a.name.localeCompare(b.name))[0] ?? null;
+  const exploreButton = (
+    <Button size="sm" variant="secondary" disabled={!running || !firstDb || busy !== null} onClick={() => { if (firstDb) navigate(dbExplorerPath(inst.id, firstDb.id)); }} className="coarse:min-h-10">
+      <Table2 size={14} className="mr-1" />{t('dbx.openShort') || 'SQL explorer'}
+    </Button>
+  );
   const adminButton = (
     <Button size="sm" variant="secondary" loading={busy === 'admin'} disabled={!running || !inst.adminUiAvailable || busy !== null} onClick={() => { void openAdmin(); }} className="coarse:min-h-10">
-      <ExternalLink size={14} className="mr-1" />{adminLabel}
+      <ExternalLink size={14} className="mr-1" />{dbAdminLabel(t, adminUiFamily(inst.adminUi))}
     </Button>
   );
 
@@ -183,6 +189,11 @@ export function DbInstancePage() {
         onRefresh={() => { void load(true); }}
         actions={(
           <>
+            {manage && (firstDb ? exploreButton : (
+              <Tip content={t('dbx.noDatabase') || 'No database to explore yet: create one first.'}>
+                <span>{exploreButton}</span>
+              </Tip>
+            ))}
             {manage && (inst.adminUiAvailable ? adminButton : (
               <Tip content={t('databases.admin.unavailableHint') || 'The database admin UI is not available: a platform administrator must set its host name (Settings → DB admin) and start it.'}>
                 <span>{adminButton}</span>

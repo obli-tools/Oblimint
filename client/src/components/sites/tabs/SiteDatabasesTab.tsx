@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { Building2, Crown, Database, ExternalLink, Link2, Plus, Share2, Table2, Unlink } from 'lucide-react';
+import { Building2, Crown, Database, Link2, Plus, Share2, Unlink } from 'lucide-react';
 import {
   HostingSocketEvents, type DbDatabaseListItem, type DbFamily, type DbInstance, type SiteDatabase,
 } from '@oblimint/shared';
@@ -17,7 +17,7 @@ import { Card, EmptyState, Pill, inputCls, isStepUpHandled, labelCls, payloadNum
 import { DbDefaultBadge } from '@/components/databases/DbBadges';
 import { DbAccountWideBadge, DbSharedSitesBadge, DbSiteChip, DbSiteRoleBadge } from '@/components/databases/DbSiteBadges';
 import { DbSiteAttachModal, attachRefOf, useDbDetach, useDbSetOwner, type AttachTarget } from '@/components/databases/DbSiteAttachModal';
-import { dbAdminLabel, openDbAdmin } from '@/components/databases/dbAdmin';
+import { dbToolMenuItems } from '@/components/databases/dbAdmin';
 import { DB_NAME_RE, dbErrorMessage, dbStatusLabel, engineLabel, formatBytes, isReservedDbName } from '@/components/databases/dbFormat';
 import { accountHref } from '@/utils/links';
 import { cn } from '@/utils/cn';
@@ -205,8 +205,7 @@ export function SiteDatabasesTab({ site, reloadSite }: SiteTabProps) {
       <ActionMenu
         triggerSize="sm"
         items={[
-          { key: 'explore', icon: <Table2 className="h-4 w-4" />, label: t('dbx.open') || 'Explore (tables, data, SQL)', onClick: () => navigate(`/databases/${d.instanceId}/explorer/${d.id}`), hidden: !manage, disabled: !running },
-          { key: 'admin', icon: <ExternalLink className="h-4 w-4" />, label: dbAdminLabel(t, d.family), onClick: () => { void openDbAdmin(t, d.instanceId, d.id); }, hidden: !manage || !d.adminUiAvailable, disabled: !running },
+          ...dbToolMenuItems(t, { instanceId: d.instanceId, databaseId: d.id, family: d.family, manage, running, adminUiAvailable: !!d.adminUiAvailable, navigate }),
           { key: 'instance', icon: <Database className="h-4 w-4" />, label: t('databases.sites.openInstance') || 'Open the database server', onClick: () => navigate(`/databases/${d.instanceId}`) },
           { key: 'share', icon: <Share2 className="h-4 w-4" />, label: t('databases.sites.attachAction') || 'Attach / share with a site…', onClick: () => setAttaching({ kind: 'database', database: attachRefOf(d) }), hidden: !manage, separator: true },
           { key: 'owner', icon: <Crown className="h-4 w-4" />, label: t('databases.sites.makeOwner') || 'Make this site the owner', onClick: () => { void setOwner(attachRefOf(d), siteRef).then((ok) => { if (ok) refresh(); }); }, hidden: !manage || d.role === 'owner' },

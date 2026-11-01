@@ -1,6 +1,8 @@
 {
   "dbx": {
     "open": "Explore (tables, data, SQL)",
+    "openShort": "SQL explorer",
+    "noDatabase": "No database to explore yet: create one first.",
     "refresh": "Refresh",
     "exportCsv": "Export as CSV",
     "prev": "Previous page",

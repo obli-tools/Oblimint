@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { Database, Download, ExternalLink, Link2, Plus, Table2, Trash2, Upload } from 'lucide-react';
+import { Database, Download, Link2, Plus, Trash2, Upload } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { DbDatabase, DbInstanceDetail, Site } from '@oblimint/shared';
 import { databasesApi } from '@/api/databases.api';
@@ -19,6 +19,7 @@ import { DB_NAME_RE, DB_RESTORE_MAX_BYTES, dbErrorMessage, formatBytes, isReserv
 import { DbSitesCell } from './DbSiteBadges';
 import { siteSortKey } from './dbSites';
 import { DbSiteAttachModal, type AttachTarget } from './DbSiteAttachModal';
+import { dbToolMenuItems } from './dbAdmin';
 
 const MYSQL_CHARSETS = ['utf8mb4', 'utf8mb3', 'latin1', 'ascii'];
 const MYSQL_COLLATIONS = ['utf8mb4_unicode_ci', 'utf8mb4_general_ci', 'utf8mb4_unicode_520_ci', 'utf8mb4_0900_ai_ci', 'utf8mb4_bin'];
@@ -272,8 +273,7 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
     <ActionMenu
       triggerSize="sm"
       items={[
-        { key: 'explore', icon: <Table2 className="h-4 w-4" />, label: t('dbx.open') || 'Explore (tables, data, SQL)', onClick: () => navigate(`/databases/${instance.id}/explorer/${d.id}`), hidden: !manage, disabled: !running },
-        { key: 'admin', icon: <ExternalLink className="h-4 w-4" />, label: instance.adminUi === 'phpmyadmin' ? (t('databases.admin.openPma') || 'Open in phpMyAdmin') : (t('databases.admin.openAdminer') || 'Open in Adminer'), onClick: () => onOpenAdmin?.(d.id), hidden: !manage || !onOpenAdmin || !instance.adminUiAvailable || !running },
+        ...dbToolMenuItems(t, { instanceId: instance.id, databaseId: d.id, family: instance.family, manage, running, adminUiAvailable: instance.adminUiAvailable, navigate, onOpenAdmin }),
         { key: 'dump', icon: <Download className="h-4 w-4" />, label: t('databases.db.dump') || 'Download a dump', onClick: () => { void dump(d); }, hidden: !manage, disabled: !running || dumping !== null },
         { key: 'restore', icon: <Upload className="h-4 w-4" />, label: t('databases.restore.title') || 'Restore a dump', onClick: () => pickRestore(d), hidden: !manage, disabled: !running },
         {

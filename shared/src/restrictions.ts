@@ -131,6 +131,11 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'db.ddl', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'db.rows_write', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'db.dump', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: K },
+  // Opening phpMyAdmin / Adminer (SSO session = an SQL user with ALL on the account's databases of the
+  // instance): everything the matrix protects elsewhere (drop, DDL, rows…) is one click away in there,
+  // so the opening itself is protectable. Panel only: no key surface opens an admin session.
+  // Open by default (never in DEFAULT_RESTRICTIONS).
+  { key: 'db.admin_open', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: P },
   // Databases ↔ sites (migration 030): owner site set / changed / removed, sharing with a site. Target: the site.
   { key: 'db.attach', category: 'databases', need: 'databases.manage', scopable: 'site', surfaces: PK },
   { key: 'db.share', category: 'databases', need: 'databases.manage', scopable: 'site', surfaces: PK },

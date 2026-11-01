@@ -50,6 +50,7 @@ import {
   updateGrantsSql, validateCharset, validateCollation, validateDatabaseName, validatePassword, validateUserName, type GrantSpec,
 } from './sql';
 import { ssoTokens } from './ssoTokens';
+import type { DbAdminKind } from './spec';
 import { withSites } from './attachments';
 import { syncDatabaseLinks } from './linkSync';
 
@@ -419,6 +420,18 @@ async function ssoPass(): Promise<void> {
     }
   }
   await expireSsoSessions();
+}
+
+/** What adminSessionPreflight checked, reused by openAdminSession. */
+export interface DbAdminSessionPreflight {
+  row: DbInstanceRow; target: DbDatabaseRow | null; kind: DbAdminKind; hostname: string; docker: Docker;
+}
+
+/** Each admin session is an SQL user: bounded per account (they expire after 2 h). */
+function assertAdminSessionRoom(accountId: number): void {
+  if (accountSessionCount(accountId) >= MAX_SSO_SESSIONS_PER_ACCOUNT) {
+    throw new AppError(429, `At most ${MAX_SSO_SESSIONS_PER_ACCOUNT} admin sessions per account at a time`, 'rateLimited', { max: MAX_SSO_SESSIONS_PER_ACCOUNT });
+  }
 }
 
 // ── service ──────────────────────────────────────────────────────────────────
@@ -983,7 +996,15 @@ export const databaseService = {
     return { restored: true };
   },
 
-  async openAdminSession(req: Request, actor: HostingActor, id: number, body: DbAdminSessionRequest): Promise<DbAdminSession> {
+  /**
+   * Every refusal of an admin session that needs nobody (404 / 403, UI not
+   * configured or not running, instance not running, session cap), without
+   * any side effect: the route runs it BEFORE the db.admin_open gate, so a
+   * human is never asked for a code (or an approval) for a session that
+   * would be refused anyway. openAdminSession takes its result (no second
+   * docker inspect between the click and the tab), or runs it when called alone.
+   */
+  async adminSessionPreflight(actor: HostingActor, id: number, body: DbAdminSessionRequest): Promise<DbAdminSessionPreflight> {
     const row = await loadInstance(actor, id, 'databases.manage');
     const hostname = (await platformSettings.section('dbAdmin')).hostname;
     if (!hostname) throw new AppError(409, 'The database admin UI is not configured', 'dbAdminUnavailable');
@@ -992,10 +1013,20 @@ export const databaseService = {
     const docker = await dockerOf(row);
     const kind = adminKindOf(row.engine);
     if (!(await dbAdminRunning(docker, kind))) throw new AppError(409, 'The database admin UI is not running', 'dbAdminUnavailable');
-    // Each session is an SQL user: bounded per account (they expire after 2 h).
-    if (accountSessionCount(row.account_id) >= MAX_SSO_SESSIONS_PER_ACCOUNT) {
-      throw new AppError(429, `At most ${MAX_SSO_SESSIONS_PER_ACCOUNT} admin sessions per account at a time`, 'rateLimited', { max: MAX_SSO_SESSIONS_PER_ACCOUNT });
-    }
+    assertAdminSessionRoom(row.account_id);
+    return { row, target, kind, hostname, docker };
+  },
+
+  /**
+   * `gate`: how the route's db.admin_open gate let it through (free / totp /
+   * approval), kept in the audit. `pre`: the route's adminSessionPreflight of
+   * this very request (same actor, id and body); only the session cap, cheap
+   * and racy, is checked again.
+   */
+  async openAdminSession(req: Request, actor: HostingActor, id: number, body: DbAdminSessionRequest, opts: { gate?: string; pre?: DbAdminSessionPreflight } = {}): Promise<DbAdminSession> {
+    const pre = opts.pre ?? await databaseService.adminSessionPreflight(actor, id, body);
+    if (opts.pre) assertAdminSessionRoom(pre.row.account_id);
+    const { row, target, kind, hostname, docker } = pre;
     const dbs = target
       ? [{ id: target.id, name: target.name }]
       : await db('db_databases').where({ instance_id: id }).orderBy('name').select('id', 'name') as Array<{ id: number; name: string }>;
@@ -1026,7 +1057,9 @@ export const databaseService = {
         expiresAt: new Date(session.session.expiresAt).toISOString(),
       },
     });
-    await audit(req, row, 'db.admin_session', { ui: kind, database: target?.name ?? null, user: session.session.username });
+    await audit(req, row, 'db.admin_session', {
+      ui: kind, database: target?.name ?? null, user: session.session.username, ...(opts.gate ? { gate: opts.gate } : {}),
+    });
     const url = kind === 'phpmyadmin'
       ? `https://${hostname}/phpmyadmin/oblimint-sso.php?token=${encodeURIComponent(token)}`
       : `https://${hostname}/adminer/?oblimint=${encodeURIComponent(token)}`;

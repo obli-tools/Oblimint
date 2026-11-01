@@ -107,6 +107,7 @@
       "db_ddl": "Drop / truncate tables (destructive SQL)",
       "db_rows_write": "Edit table rows",
       "db_dump": "Export a database (dump)",
+      "db_admin_open": "Open phpMyAdmin / Adminer (admin session of an instance)",
       "db_attach": "Set or change the owner site of a database (also a database created for a site)",
       "db_share": "Share a database with a site (or stop sharing)",
       "domain_delete": "Delete a domain",

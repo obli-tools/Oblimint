@@ -129,8 +129,12 @@ export const databasesApi = {
   },
 
   // ── admin UI single sign-on ──
-  async openAdminSession(id: number, databaseId?: number | null): Promise<DbAdminSession> {
-    const res = await apiClient.post<ApiResponse<DbAdminSession>>(`/databases/instances/${id}/admin-session`, { databaseId: databaseId ?? null });
+  async openAdminSession(id: number, databaseId?: number | null, opts: { onStepUp?: () => void } = {}): Promise<DbAdminSession> {
+    // Protectable (db.admin_open): the 2FA prompt / approval modal of the API client apply
+    // (`onStepUp` runs just before one shows); never replayed after the modal (the URL would reach nobody).
+    const res = await apiClient.post<ApiResponse<DbAdminSession>>(`/databases/instances/${id}/admin-session`, { databaseId: databaseId ?? null }, {
+      noLaterReplay: true, onStepUp: opts.onStepUp,
+    });
     return res.data.data!;
   },
 };

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { awaitTwoFactorCode, isTwoFactorCancelled } from '@/utils/twoFactorGate';
 import { awaitPendingApproval, hasPendingApprovalListener, keepReplay } from '@/utils/pendingApprovalGate';
-import { bodyCarriesSecret, parsePendingApproval, replayConfig } from './pendingReplay';
+import { notKeptReason, parsePendingApproval, replayConfig } from './pendingReplay';
 import { restrictionErrorOf } from './restrictionErrors';
 
 // ObliTools (cross-site iframe / WebView2 shell): Chrome blocks all cookies for cross-site
@@ -12,6 +12,19 @@ export const isInObliTools = (() => {
 })();
 
 export const OBLITOOLS_TOKEN_KEY = 'oblitools_auth_token';
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /** A 'restricted' answer (202) is never kept for a « Run now » after its modal (see the response interceptor). */
+    noLaterReplay?: boolean;
+    /**
+     * Called just before this request waits on a human (2FA / password prompt,
+     * approval modal): e.g. openDbAdmin closes the blank tab it opened on the
+     * click, so the prompt of the panel is not hidden behind it.
+     */
+    onStepUp?: () => void;
+  }
+}
 
 const apiClient = axios.create({
   baseURL: '/api',
@@ -52,6 +65,11 @@ function retryWithProof(config: any, proof: Record<string, unknown>) {
   const next = { ...config, _tfaRetried: true, data: JSON.stringify(payload) };
   next.headers = { ...(config.headers ?? {}), 'Content-Type': 'application/json' };
   return apiClient(next);
+}
+
+/** The call site's onStepUp hook (never fatal to the request). */
+function notifyStepUp(config: { onStepUp?: () => void } | null | undefined): void {
+  try { config?.onStepUp?.(); } catch { /* the prompt still shows */ }
 }
 
 /** Step-up failures the server marks explicitly → translated message. */
@@ -135,8 +153,12 @@ apiClient.interceptors.response.use(
       }).catch(() => {});
       return reject();
     }
-    const replayableLater = !bodyCarriesSecret(config.data);
-    const decision = await awaitPendingApproval(info, replayableLater);
+    // `noLaterReplay` (notKeptReason 'callSite'): a call whose result only its call
+    // site can use (an admin UI URL): the user runs the action again instead.
+    const notKept = notKeptReason(config);
+    const replayableLater = notKept === null;
+    notifyStepUp(config);
+    const decision = await awaitPendingApproval(info, replayableLater, notKept ?? undefined);
     if (decision === 'run') return apiClient(replayConfig(config, id));
     if (replayableLater) keepReplay(id, () => apiClient(replayConfig(config, id)));
     return reject();
@@ -152,6 +174,7 @@ apiClient.interceptors.response.use(
         const actionLabel = body?.action || 'Sensitive action';
         const currentIp = typeof body?.currentIp === 'string' ? body.currentIp : undefined;
         const trustIpAllowed = body?.trustIpAllowed !== false;
+        notifyStepUp(config);
         const { code, trustIp } = await awaitTwoFactorCode(actionLabel, currentIp, {
           trustIpAllowed,
           codeMustBeNew: body?.codeMustBeNew === true,
@@ -168,6 +191,7 @@ apiClient.interceptors.response.use(
     if (status === 401 && body?.passwordRequired && !(config as any)._tfaRetried) {
       try {
         const actionLabel = body?.action || 'Sensitive action';
+        notifyStepUp(config);
         const { code: password } = await awaitTwoFactorCode(actionLabel, undefined, { mode: 'password', trustIpAllowed: false });
         return await retryWithProof(config, { stepUpPassword: password });
       } catch (cancelled) {

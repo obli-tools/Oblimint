@@ -171,7 +171,9 @@ function PendingApprovalModal({ prompt, onDone, onOpenPage }: {
         <p className="text-[11px] text-text-muted/80">
           {prompt.replayableLater
             ? t('approvals.gate.closeHintReplay', 'If you close this window, you will be offered to run the action once it is approved.')
-            : t('approvals.gate.closeHintRedo', 'This request carries a secret or a file that is not kept: if you close this window, do the action again once it is approved.')}
+            : prompt.notKeptReason === 'callSite'
+              ? t('approvals.gate.closeHintRedoOnce', "This action's result can only be used now: if you close this window, do the action again once it is approved.")
+              : t('approvals.gate.closeHintRedo', 'This request carries a secret or a file that is not kept: if you close this window, do the action again once it is approved.')}
         </p>
       )}
     </Modal>

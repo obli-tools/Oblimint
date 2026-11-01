@@ -107,6 +107,7 @@
       "db_ddl": "Supprimer / vider des tables (SQL destructeur)",
       "db_rows_write": "Modifier des lignes de tables",
       "db_dump": "Exporter une base (dump)",
+      "db_admin_open": "Ouvrir phpMyAdmin / Adminer (session d'administration d'une instance)",
       "db_attach": "Définir ou changer le site propriétaire d'une base (aussi une base créée pour un site)",
       "db_share": "Partager une base avec un site (ou arrêter)",
       "domain_delete": "Supprimer un domaine",

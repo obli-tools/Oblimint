@@ -7,6 +7,7 @@ import path from 'path';
 import zlib from 'zlib';
 import type { AddressInfo } from 'net';
 import type { Readable, Writable } from 'stream';
+import * as OTPAuth from 'otpauth';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DB integration of the databases module on a PGlite server
@@ -18,7 +19,8 @@ import type { Readable, Writable } from 'stream';
 // limits, default-per-family rule, access rules (other tenant / account →
 // 404, no capability → 403), external port allocation uniqueness, the
 // instance converge + reconcile hook, SQL never carrying a password on a
-// command line, dump / restore streaming, SSO session.
+// command line, dump / restore streaming, SSO session (and its protectable
+// opening db.admin_open: preflight refusals first, 2FA, approval, audit).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_URL = process.env.DATABASES_TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:55443/postgres';
@@ -51,6 +53,9 @@ test('databases module on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: 
   const express = (await import('express')).default;
   const { db } = await import('../../db');
   const { errorHandler } = await import('../../middleware/errorHandler');
+  const { captureStepUpProof } = await import('../../middleware/captureStepUpProof');
+  const { restrictionService } = await import('../restrictions/restriction.service');
+  const { twoFactorService } = await import('../twoFactor.service');
   const routes = (await import('../../routes/databases.routes')).default;
   const { setEngineFactoryForTests } = await import('../docker/engine');
   const { setBackendsForTests } = await import('../docker/backends');
@@ -175,8 +180,10 @@ test('databases module on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: 
   // ── app ────────────────────────────────────────────────────────────────────
   const app = express();
   app.use(express.json());
+  app.use(captureStepUpProof);
   app.use((req, _res, next) => {
     (req as unknown as { session: unknown }).session = { userId: Number(req.header('x-user')) };
+    (req as unknown as { sessionID: string }).sessionID = `s-${req.header('x-user')}`;
     (req as unknown as { tenantId: number }).tenantId = Number(req.header('x-tenant'));
     next();
   });
@@ -188,10 +195,10 @@ test('databases module on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: 
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
   type Who = { user: number; tenant: number };
-  const call = async (method: string, url: string, who: Who, body?: unknown) => {
+  const call = async (method: string, url: string, who: Who, body?: unknown, headers: Record<string, string> = {}) => {
     const res = await fetch(`${base}${url}`, {
       method,
-      headers: { 'content-type': 'application/json', 'x-user': String(who.user), 'x-tenant': String(who.tenant) },
+      headers: { 'content-type': 'application/json', 'x-user': String(who.user), 'x-tenant': String(who.tenant), ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { status: res.status, body: await res.json() as { success: boolean; data?: any; code?: string; error?: string; details?: any } };
@@ -629,13 +636,119 @@ test('databases module on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: 
   await expireSsoSessions(); // drops the users
 
   // at most 10 live sessions per account
-  for (let i = 0; i < 10; i++) {
+  // The route runs the preflight ONCE and hands it to openAdminSession (no second docker inspect before the tab).
+  const preflights = t.mock.method(databaseService, 'adminSessionPreflight');
+  for (let i = 0; i < 9; i++) {
     r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {});
     assert.equal(r.status, 200, `session ${i}`);
   }
+  assert.equal(preflights.mock.callCount(), 9, 'one preflight per request');
+  // A preflight taken while room remained, the cap reached before the session: re-checked, refused.
+  const stalePre = await (preflights.mock.calls.at(-1)!.result as ReturnType<typeof databaseService.adminSessionPreflight>);
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {});
+  assert.equal(r.status, 200, 'session 9');
+  preflights.mock.restore();
+  await assert.rejects(
+    databaseService.openAdminSession({} as never, {} as never, m1, {}, { pre: stalePre }),
+    (e: { statusCode?: number; code?: string }) => e.statusCode === 429 && e.code === 'rateLimited',
+  );
   r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {});
   assert.equal(r.status, 429);
   assert.equal(r.body.code, 'rateLimited');
+  await expireSsoSessions(Date.now() + 3 * 60 * 60_000);
+  assert.equal(liveSsoSessions().length, 0);
+
+  // ── db.admin_open: opening phpMyAdmin / Adminer is a protectable action ────
+  const lastAdminAudit = async () => {
+    const a = await db('audit_logs').where({ action: 'db.admin_session', tenant_id: tA }).orderBy('id', 'desc').first('details');
+    return (typeof a?.details === 'string' ? JSON.parse(a.details) : a?.details) as Record<string, unknown>;
+  };
+  // Open by default (nothing in the matrix): free, and the audit says so.
+  assert.equal((await lastAdminAudit()).gate, 'free');
+  const createsSso = () => execCalls.filter((c) => /CREATE USER 'oblsso_/.test(c.sql ?? '')).length;
+  await restrictionService.setMap(tA, { 'db.admin_open': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' } });
+  // A refusal that needs nobody comes BEFORE the gate: no code asked for a session refused anyway.
+  docker.containers.get('oblimint-phpmyadmin')!.state = 'exited';
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {});
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'dbAdminUnavailable', 'admin UI stopped: refused before any 2FA prompt');
+  docker.containers.get('oblimint-phpmyadmin')!.state = 'running';
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asReader, {});
+  assert.equal(r.status, 403, 'no databases.manage: 403, never a code prompt');
+  assert.notEqual(r.body.code, 'twoFactorNotEnrolled');
+  // sensitive, no second factor: refused with the invitation to enable one, nothing created.
+  let ssoBefore = createsSso();
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, { databaseId: shopId });
+  assert.equal(r.status, 403, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'twoFactorNotEnrolled');
+  assert.equal(createsSso(), ssoBefore, 'no SQL user before the gate passed');
+  assert.equal(liveSsoSessions().length, 0);
+  // sensitive, TOTP enrolled: 401 twoFactorRequired, then the fresh code opens it.
+  const secretCm = twoFactorService.generateTotpSecret(`cm-${suffix}`).secret;
+  await db('users').where({ id: clientManage }).update({ totp_enabled: true, totp_secret: secretCm });
+  const codeOf = async (userId: number, secret: string) => {
+    await db('users').where({ id: userId }).update({ totp_last_step: null });
+    return new OTPAuth.TOTP({ algorithm: 'SHA1', digits: 6, period: 30, secret: OTPAuth.Secret.fromBase32(secret) }).generate();
+  };
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, { databaseId: shopId });
+  assert.equal(r.status, 401, JSON.stringify(r.body));
+  assert.equal((r.body as { twoFactorRequired?: boolean }).twoFactorRequired, true);
+  assert.equal((r.body as { action?: string }).action, 'db.admin_open');
+  assert.equal(createsSso(), ssoBefore);
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, { databaseId: shopId, twoFactorCode: '000000' });
+  assert.equal(r.status, 401, 'wrong code');
+  assert.equal(createsSso(), ssoBefore);
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, { databaseId: shopId, twoFactorCode: await codeOf(clientManage, secretCm) });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(new URL(r.body.data.url).pathname, '/phpmyadmin/oblimint-sso.php');
+  assert.equal(createsSso(), ssoBefore + 1);
+  assert.equal(liveSsoSessions().length, 1);
+  let audited = await lastAdminAudit();
+  assert.equal(audited.gate, 'totp');
+  assert.equal(audited.database, 'shop');
+  // restricted: filed for a second person (202), nothing created; approved → the very same request opens it once.
+  await restrictionService.setMap(tA, { 'db.admin_open': { level: 'restricted', scope: { mode: 'all' }, via: 'all' } });
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {});
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.equal(r.body.code, 'noEligibleApprover', 'nobody else with a second factor');
+  const secretSa = twoFactorService.generateTotpSecret(`sta-${suffix}`).secret;
+  await db('users').where({ id: staffAdminA }).update({ totp_enabled: true, totp_secret: secretSa });
+  ssoBefore = createsSso();
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {});
+  assert.equal(r.status, 202, JSON.stringify(r.body));
+  assert.equal(r.body.data.status, 'pendingApproval');
+  const paId = Number(r.body.data.pendingActionId);
+  const pa = await db('pending_actions').where({ id: paId }).first();
+  assert.equal(pa.action_key, 'db.admin_open');
+  assert.equal(pa.level, 'restricted');
+  assert.equal(Number(pa.account_id), acct.id);
+  assert.match(pa.description, /phpMyAdmin/);
+  assert.equal(createsSso(), ssoBefore, 'nothing opened while it waits');
+  await db('pending_actions').where({ id: paId }).update({
+    status: 'approved', decided_by: staffAdminA, decided_at: db.fn.now(), decided_via: 'second_person', consume_by: db.raw("now() + interval '15 minutes'"),
+  });
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, { databaseId: shopId }, { 'X-Oblimint-Approval': String(paId) });
+  assert.equal(r.status, 409, 'the approval covers the very request approved (another database: mismatch)');
+  assert.equal(r.body.code, 'approvalMismatch');
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {}, { 'X-Oblimint-Approval': String(paId) });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal((await db('pending_actions').where({ id: paId }).first()).status, 'consumed');
+  audited = await lastAdminAudit();
+  assert.equal(audited.gate, 'approval');
+  assert.equal(audited.viaPendingAction, paId);
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {});
+  assert.equal(r.status, 202, 'single use: a new request is filed');
+  // Panel only: an entry limited to the keys leaves the panel free.
+  await restrictionService.setMap(tA, { 'db.admin_open': { level: 'restricted', scope: { mode: 'all' }, via: 'keys' } });
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {});
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  // Scope: another account only → this one stays free.
+  await restrictionService.setMap(tA, { 'db.admin_open': { level: 'sensitive', scope: { mode: 'include', accountIds: [other.id] }, via: 'all' } });
+  r = await call('POST', `/databases/instances/${m1}/admin-session`, asManager, {});
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  await restrictionService.setMap(tA, {});
+  await db('pending_actions').where({ tenant_id: tA }).del();
+  await db('users').whereIn('id', [clientManage, staffAdminA]).update({ totp_enabled: false, totp_secret: null });
   await expireSsoSessions(Date.now() + 3 * 60 * 60_000);
   assert.equal(liveSsoSessions().length, 0);
 

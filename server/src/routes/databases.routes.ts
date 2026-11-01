@@ -31,7 +31,8 @@ import { idParam, loadSite, resolveActor } from '../services/hosting/access';
 //   PUT    /instances/:id/users/:userId           DbUserUpdate → DbUser                                   (databases.manage)
 //   POST   /instances/:id/users/:userId/password  { password?: string } → DbPasswordResult                (databases.manage)
 //   DELETE /instances/:id/users/:userId           → { deleted: true }                                     (databases.manage)
-//   POST   /instances/:id/admin-session           DbAdminSessionRequest → DbAdminSession                  (databases.manage; heavyOpLimiter, 10 live sessions per account)
+//   POST   /instances/:id/admin-session           DbAdminSessionRequest → DbAdminSession                  (databases.manage; heavyOpLimiter, 10 live sessions per account;
+//                                                 gate db.admin_open, panel only: no key surface opens phpMyAdmin / Adminer)
 // Databases ↔ sites (migration 030; a database: ONE optional owner site, shared with 0..N others):
 //   GET    /databases                             ?accountId=&siteId=&tenantId= → DbDatabaseListItem[] (owner + shared sites) (read)
 //   GET    /sites/:siteId/databases               → SiteDatabase[] (owned, then shared)                    (read)
@@ -407,7 +408,19 @@ router.post('/instances/:id/admin-session', heavyOpLimiter, async (req, res, nex
     const actor = await resolveActor(req);
     const id = idParam(req);
     await assertInstanceAccess(actor, id, 'databases.manage');
-    const data = await databaseService.openAdminSession(req, actor, id, parseBody(adminSessionSchema, req.body));
+    const body = parseBody(adminSessionSchema, req.body);
+    // A phpMyAdmin / Adminer session can drop, alter and rewrite everything the
+    // other db.* actions protect: its opening is the protectable db.admin_open
+    // (open by default). Refusals that need nobody come first (no code asked
+    // for a session that would be refused anyway), then the gate, then the session.
+    const pre = await databaseService.adminSessionPreflight(actor, id, body);
+    const { row, target, kind } = pre;
+    const gate = await gateAction(req, {
+      action: 'db.admin_open', target: instanceTarget(row),
+      params: { name: row.name, instanceId: row.id, ui: kind, database: target?.name ?? null, databaseId: target?.id ?? null },
+    });
+    // The preflight is reused (no second docker inspect before the tab opens); only the session cap is re-checked.
+    const data = await databaseService.openAdminSession(req, actor, id, body, { gate: gate.via, pre });
     res.setHeader('Cache-Control', 'no-store');
     res.json({ success: true, data });
   } catch (err) { next(err); }

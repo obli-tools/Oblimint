@@ -70,6 +70,26 @@ export function bodyCarriesSecret(data: unknown): boolean {
   return /"secret"\s*:\s*true/.test(rows);
 }
 
+/**
+ * The request may be kept after the waiting modal for a « Run now » at
+ * approval time: no secret nor file in its body, and its call site did not
+ * opt out (`noLaterReplay`: a result only the call site can use, e.g. the
+ * single-use URL of an admin UI — replayed later it would spend the approval
+ * for nothing).
+ */
+export function keepableForLater(config: { data?: unknown; noLaterReplay?: unknown } | null | undefined): boolean {
+  return notKeptReason(config) === null;
+}
+
+/** Why the request is NOT kept for later (the waiting modal says it), or null when it is. */
+export type NotKeptReason = 'secret' | 'callSite';
+
+export function notKeptReason(config: { data?: unknown; noLaterReplay?: unknown } | null | undefined): NotKeptReason | null {
+  if (bodyCarriesSecret(config?.data)) return 'secret';
+  if (config?.noLaterReplay === true) return 'callSite';
+  return null;
+}
+
 export interface ReplayableConfig {
   headers?: Record<string, unknown> | unknown;
   [k: string]: unknown;

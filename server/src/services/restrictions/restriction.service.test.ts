@@ -29,6 +29,10 @@ test('catalogue: unique valid keys, defaults only on catalogue actions, platform
   assert.ok(defaultRestrictionsFor(true)['platform.tenant_delete']);
   assert.equal(defaultRestrictionsFor(false)['platform.tenant_delete'], undefined);
   assert.ok(defaultRestrictionsFor(false)['db.drop']);
+  // Opening phpMyAdmin / Adminer: protectable, panel only (no key surface opens it), OPEN by default.
+  assert.deepEqual(def('db.admin_open'), { key: 'db.admin_open', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: ['panel'] });
+  assert.equal(DEFAULT_RESTRICTIONS['db.admin_open'], undefined);
+  assert.equal(defaultRestrictionsFor(true)['db.admin_open'], undefined);
 });
 
 test('normalizeEntry: short and long forms, junk and none refused', () => {

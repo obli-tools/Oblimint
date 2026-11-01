@@ -73,7 +73,8 @@
       "expired": "Cette demande a expiré : l'action n'a pas été exécutée. Refaites-la pour déposer une nouvelle demande.",
       "cancelled": "Demande annulée : l'action n'a pas été exécutée.",
       "closeHintReplay": "Si vous fermez cette fenêtre, il vous sera proposé d'exécuter l'action une fois approuvée.",
-      "closeHintRedo": "Cette demande contient un secret ou un fichier qui n'est pas conservé : si vous fermez cette fenêtre, refaites l'action une fois approuvée."
+      "closeHintRedo": "Cette demande contient un secret ou un fichier qui n'est pas conservé : si vous fermez cette fenêtre, refaites l'action une fois approuvée.",
+      "closeHintRedoOnce": "Le résultat de cette action n'est utilisable que maintenant : si vous fermez cette fenêtre, refaites l'action une fois approuvée."
     },
     "replay": {
       "approved": "La demande n°{{id}} a été approuvée. Rien n'a encore été fait.",

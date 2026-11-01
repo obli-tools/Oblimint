@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PENDING_ACTION_HEADER } from '@oblimint/shared';
-import { bodyCarriesSecret, isSecretField, parsePendingApproval, remaining, replayConfig } from './pendingReplay';
+import { bodyCarriesSecret, isSecretField, keepableForLater, notKeptReason, parsePendingApproval, remaining, replayConfig } from './pendingReplay';
 import { restrictionErrorOf } from './restrictionErrors';
 import {
   awaitPendingApproval, dropReplay, hasPendingApprovalListener, hasReplay, keepReplay, setPendingApprovalListener, takeReplay,
@@ -101,4 +101,29 @@ test('waiting-modal bridge: no modal = dismiss, decisions flow back, replays bou
   for (let i = 100; i < 130; i++) keepReplay(i, run);
   assert.equal(hasReplay(100), false);
   assert.equal(hasReplay(129), true);
+});
+
+test('keepableForLater: no secret / file, and not opted out by the call site (admin UI session)', () => {
+  assert.equal(keepableForLater({ data: JSON.stringify({ databaseId: 4 }) }), true);
+  assert.equal(keepableForLater({ data: JSON.stringify({ databaseId: 4 }), noLaterReplay: true }), false, 'its URL would reach nobody');
+  assert.equal(keepableForLater({ data: JSON.stringify({ password: 'hunter2' }) }), false);
+  assert.equal(keepableForLater({ data: undefined, noLaterReplay: false }), true);
+  assert.equal(keepableForLater(undefined), true);
+});
+
+test('notKeptReason: the waiting modal tells why the request is not kept (secret / file vs call-site result)', async () => {
+  assert.equal(notKeptReason({ data: JSON.stringify({ databaseId: 4 }) }), null);
+  assert.equal(notKeptReason({ data: JSON.stringify({ databaseId: 4 }), noLaterReplay: true }), 'callSite', 'admin UI session: no secret in it');
+  assert.equal(notKeptReason({ data: JSON.stringify({ password: 'hunter2' }) }), 'secret');
+  assert.equal(notKeptReason({ data: JSON.stringify({ password: 'hunter2' }), noLaterReplay: true }), 'secret', 'a secret is said first');
+  assert.equal(notKeptReason({ data: new Blob(['x']) }), 'secret');
+  assert.equal(notKeptReason(undefined), null);
+
+  const seen: Array<string | undefined> = [];
+  setPendingApprovalListener((p) => { seen.push(p.notKeptReason); p.resolve('dismiss'); });
+  await awaitPendingApproval({ pendingActionId: 1, description: null, expiresAt: null }, false, 'callSite');
+  await awaitPendingApproval({ pendingActionId: 2, description: null, expiresAt: null }, false);
+  await awaitPendingApproval({ pendingActionId: 3, description: null, expiresAt: null }, true, 'callSite');
+  setPendingApprovalListener(null);
+  assert.deepEqual(seen, ['callSite', 'secret', undefined], 'default reason = secret; none when replayable later');
 });

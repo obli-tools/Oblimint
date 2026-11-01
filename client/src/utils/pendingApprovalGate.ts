@@ -1,4 +1,4 @@
-import type { PendingApprovalInfo } from '@/api/pendingReplay';
+import type { NotKeptReason, PendingApprovalInfo } from '@/api/pendingReplay';
 
 // Module-level bridge between the axios interceptor (outside React) and the
 // <PendingApprovalGate> singleton (the waiting modal), like twoFactorGate.ts.
@@ -13,6 +13,8 @@ export type PendingApprovalDecision = 'run' | 'dismiss';
 export interface PendingApprovalPrompt extends PendingApprovalInfo {
   /** The original request can be replayed later (no secret, no file): a toast offers it once approved. */
   replayableLater: boolean;
+  /** Not replayable later: why (a secret / file in the body, or a result only the call site can use). */
+  notKeptReason?: NotKeptReason;
   resolve: (d: PendingApprovalDecision) => void;
 }
 
@@ -29,10 +31,10 @@ export function hasPendingApprovalListener(): boolean {
 }
 
 /** Shows the waiting modal; resolves with the user's decision ('dismiss' when no modal is mounted). */
-export function awaitPendingApproval(info: PendingApprovalInfo, replayableLater: boolean): Promise<PendingApprovalDecision> {
+export function awaitPendingApproval(info: PendingApprovalInfo, replayableLater: boolean, notKeptReason?: NotKeptReason): Promise<PendingApprovalDecision> {
   return new Promise((resolve) => {
     if (!listener) { resolve('dismiss'); return; }
-    listener({ ...info, replayableLater, resolve });
+    listener({ ...info, replayableLater, ...(replayableLater ? {} : { notKeptReason: notKeptReason ?? 'secret' }), resolve });
   });
 }
 
