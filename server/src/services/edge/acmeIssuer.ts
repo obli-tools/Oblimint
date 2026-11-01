@@ -53,6 +53,12 @@ export const defaultAcmeClientFactory: AcmeClientFactory = (opts) => {
   // acme-client's shared axios instance: without a timeout, a TCP connection
   // dropped without RST (NAT / firewall) never settles.
   if (!acme.axios.defaults.timeout) acme.axios.defaults.timeout = ACME_HTTP_TIMEOUT_MS;
+  // Its retry loop sleeps for the Retry-After of a 429: a Let's Encrypt rate
+  // limit (hours to days) became a "createOrder timed out" hiding the real
+  // error, while the request kept retrying in the background. Failures are
+  // retried by the renewal backoff instead.
+  const settings = (acme.axios.defaults as { acmeSettings?: { retryMaxAttempts: number } }).acmeSettings;
+  if (settings) settings.retryMaxAttempts = 0;
   return new acme.Client(opts) as unknown as AcmeClientLike;
 };
 
