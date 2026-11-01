@@ -7,6 +7,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { withTimeout } from '../setup/docker';
 import { segmentBackends } from './deps';
+import { MAX_MANAGED_PREFIX } from './addressLayout';
 import { cidrContainsCidr, cidrsOverlap, formatCidr4, gatewayOf, parseCidr4, pickFreeSubnet, poolCapacity, type Cidr4 } from './ipv4';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,8 +21,8 @@ import { cidrContainsCidr, cidrsOverlap, formatCidr4, gatewayOf, parseCidr4, pic
 // One allocation at a time in the process (the unique cidr index guards the rest).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type SubnetPool = 'fabric' | 'app';
-export type SubnetPurpose = 'front' | 'back' | 'app';
+export type SubnetPool = 'fabric' | 'app' | 'platform';
+export type SubnetPurpose = 'front' | 'back' | 'app' | 'platform';
 
 export const RELEASE_COOLDOWN_MS = 60 * 60_000;
 const DOCKER_TIMEOUT_MS = 30_000;
@@ -36,6 +37,10 @@ export interface SubnetRow {
   purpose: SubnetPurpose;
   allocated_at: Date | string;
   released_at: Date | string | null;
+  /** Migration 031: Docker's dynamic range, bridge interface, static address support. */
+  ip_range?: string | null;
+  bridge_name?: string | null;
+  static_ip?: 'unknown' | 'supported' | 'refused';
 }
 
 export interface SubnetOwner {
@@ -57,10 +62,13 @@ export interface DockerNetworkSubnets {
 }
 
 export function poolConfig(pool: SubnetPool): { cidr: Cidr4; prefix: number } {
-  const text = pool === 'fabric' ? config.hosting.fabricPool : config.hosting.appNetworkPool;
-  const prefix = pool === 'fabric' ? config.hosting.fabricPrefix : config.hosting.appNetworkPrefix;
+  const text = pool === 'fabric' ? config.hosting.fabricPool : pool === 'platform' ? config.hosting.platformPool : config.hosting.appNetworkPool;
+  const prefix = pool === 'fabric' ? config.hosting.fabricPrefix : pool === 'platform' ? config.hosting.platformPrefix : config.hosting.appNetworkPrefix;
   const cidr = parseCidr4(text);
-  if (!cidr || !Number.isInteger(prefix) || poolCapacity(cidr, prefix) === 0 || prefix > 30) {
+  // Managed networks (fabrics, platform: fixed addresses, network/addressLayout.ts) need ≤ /26: 32 fixed offsets,
+  // a pool and Docker's dynamic /28.
+  const maxPrefix = pool === 'app' ? 30 : MAX_MANAGED_PREFIX;
+  if (!cidr || !Number.isInteger(prefix) || poolCapacity(cidr, prefix) === 0 || prefix > maxPrefix) {
     throw new AppError(500, `Invalid ${pool} subnet pool ${text} /${prefix}`, 'poolInvalid');
   }
   return { cidr, prefix };
@@ -216,17 +224,53 @@ export async function releaseSubnets(where: { accountId?: number; stackId?: numb
   return Number(await qb.update({ released_at: segmentBackends().now() }));
 }
 
-/** Usage of both pools (live allocations inside each pool). */
+const POOLS = ['fabric', 'app', 'platform'] as const;
+
+function poolSettingText(name: SubnetPool): { text: string; prefix: number } {
+  if (name === 'fabric') return { text: config.hosting.fabricPool, prefix: config.hosting.fabricPrefix };
+  if (name === 'platform') return { text: config.hosting.platformPool, prefix: config.hosting.platformPrefix };
+  return { text: config.hosting.appNetworkPool, prefix: config.hosting.appNetworkPrefix };
+}
+
+function poolEnvHint(name: SubnetPool): string {
+  return name === 'fabric' ? 'OBLIMINT_FABRIC_POOL / OBLIMINT_FABRIC_PREFIX'
+    : name === 'platform' ? 'OBLIMINT_PLATFORM_POOL / OBLIMINT_PLATFORM_PREFIX'
+      : 'OBLIMINT_APP_NETWORK_POOL / OBLIMINT_APP_NETWORK_PREFIX';
+}
+
+/**
+ * Boot check of the subnet pools (index.ts): an invalid one (e.g. a fabric prefix longer than /26 since the fixed
+ * addresses of migration 031) makes every new account fabric fail — said loudly once at boot, not only per account.
+ */
+export function validatePools(): Array<{ pool: SubnetPool; error: string }> {
+  const out: Array<{ pool: SubnetPool; error: string }> = [];
+  for (const name of POOLS) {
+    try {
+      poolConfig(name);
+    } catch {
+      const { text, prefix } = poolSettingText(name);
+      const max = name === 'app' ? 30 : MAX_MANAGED_PREFIX;
+      const error = `Invalid ${name} subnet pool ${text} /${prefix} (${poolEnvHint(name)}; prefix ≤ /${max}): new ${name === 'app' ? 'application networks' : name === 'platform' ? 'platform networks' : 'account networks'} cannot be created`;
+      out.push({ pool: name, error });
+      logger.error({ pool: name, cidr: text, prefix }, error);
+    }
+  }
+  return out;
+}
+
+/** Usage of the pools (live allocations inside each pool); an invalid pool is listed with its error. */
 export async function poolStatus(): Promise<NetworkPoolStatus[]> {
   const rows = await db('network_subnets').whereNull('released_at').select('cidr', 'pool') as Array<{ cidr: string; pool: SubnetPool }>;
   const out: NetworkPoolStatus[] = [];
-  for (const name of ['fabric', 'app'] as const) {
+  for (const name of POOLS) {
     try {
       const { cidr, prefix } = poolConfig(name);
       const used = rows.filter((r) => r.pool === name).filter((r) => { const c = parseCidr4(r.cidr); return !!c && cidrContainsCidr(cidr, c); }).length;
       out.push({ name, cidr: formatCidr4(cidr), prefix, used, total: poolCapacity(cidr, prefix) });
     } catch (err) {
       logger.warn({ err: (err as Error)?.message, pool: name }, 'segments: invalid subnet pool');
+      const { text, prefix } = poolSettingText(name);
+      out.push({ name, cidr: text, prefix: Number.isFinite(prefix) ? prefix : 0, used: 0, total: 0, error: `${(err as Error)?.message ?? 'invalid'} (${poolEnvHint(name)})` });
     }
   }
   return out;

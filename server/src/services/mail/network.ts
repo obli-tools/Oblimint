@@ -31,7 +31,8 @@ async function doEnsure(log: (line: string) => void): Promise<void> {
   const docker = await engineFor(await localNodeId());
   const existing = await inspectNetwork(docker, MAIL_NETWORK);
   if (!existing) {
-    await createNetwork(docker, MAIL_NETWORK, { [LABELS.internal]: 'true' });
+    const { platformNetworkOptions } = await import('../network/platformNet');
+    await createNetwork(docker, MAIL_NETWORK, { [LABELS.internal]: 'true' }, await platformNetworkOptions(MAIL_NETWORK, docker));
     log(`Network ${MAIL_NETWORK} created`);
   } else if (existing.Labels?.[LABELS.account] !== undefined) {
     // Never an account network: refuse to put the panel / mail containers on it.

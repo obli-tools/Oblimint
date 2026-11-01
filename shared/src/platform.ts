@@ -270,6 +270,16 @@ export interface MonitoringSettings {
 export interface NetworkSettings {
   /** enforce: default deny inside the account fabrics; monitor: count + log only; off: no filtering (P1–P4 behaviour). */
   mode: 'enforce' | 'monitor' | 'off';
+  /**
+   * Fixed container addresses (network/pinning.ts): 'auto' = every pinning sweep (boot, then every
+   * 5 min) re-pins the RUNNING containers whose address is still dynamic (~250 ms network blip each,
+   * TCP connections survive) — the default; 'manual' = the running tenant containers of a fabric
+   * that has an IPRange wait for the staff action « Pin the addresses now ». In both modes, stopped
+   * containers, the panel, its PostgreSQL, the platform networks and EVERY network without IPRange
+   * (all the networks created before 031) are pinned whole: a fixed address next to dynamic ones is
+   * taken by a dynamic container at the next daemon restart and its owner then never starts.
+   */
+  addressPinning: 'auto' | 'manual';
 }
 
 /**
@@ -466,7 +476,7 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     workflowsEnabled: true,
     certExpiryWarningDays: 14,
   },
-  network: { mode: 'enforce' },
+  network: { mode: 'enforce', addressPinning: 'auto' },
   restrictions: { floor: {}, pendingTtlMinutes: PENDING_ACTION_TTL_MINUTES },
   keySecurity: { ...DEFAULT_KEY_SECURITY_SETTINGS, trustedIps: [], connectorSourceRanges: [...DEFAULT_KEY_SECURITY_SETTINGS.connectorSourceRanges] },
 };

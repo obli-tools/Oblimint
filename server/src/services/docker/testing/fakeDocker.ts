@@ -16,13 +16,31 @@ export interface FakeContainer {
   labels: Record<string, string>;
   state: 'running' | 'exited' | 'created' | 'restarting';
   spec: Docker.ContainerCreateOptions | null;
-  networks: Map<string, { Aliases: string[] }>;
+  networks: Map<string, FakeEndpoint>;
   startedAt: string | null;
+  /** State.Error of the last failed start (e.g. its static address taken). */
+  error?: string;
 }
+
+/** An endpoint: aliases, the static address requested (IPAMConfig) and the address it has while running. */
+export interface FakeEndpoint {
+  Aliases: string[];
+  IPv4?: string | null;
+  /** Address Docker chose (dynamic, running containers only). */
+  addr?: string | null;
+}
+
+const STATIC_REFUSED = 'user specified IP address is supported only when connecting to networks with user configured subnets';
 
 export interface FakeNetwork {
   name: string;
   labels: Record<string, string>;
+  /** IPv4 subnet (IPAM.Config[0].Subnet), when modelled. */
+  subnet?: string;
+  ipRange?: string;
+  options?: Record<string, string>;
+  /** Docker ≤ 28 + subnet chosen by Docker: a static address is refused (connect; start for a create). */
+  refuseStatic?: boolean;
 }
 
 export interface FakeExec {
@@ -94,7 +112,8 @@ export class FakeDocker {
   /** Adds an existing container (fixtures). */
   addContainer(c: Partial<FakeContainer> & { name: string }): FakeContainer {
     const full: FakeContainer = {
-      id: `c${++seq}`.padEnd(12, '0'),
+      // Zero-padded on the left: 'c1' and 'c10' padded on the right were the same id (find() returned the wrong one).
+      id: `c${String(++seq).padStart(11, '0')}`,
       image: 'img',
       labels: {},
       state: 'running',
@@ -123,13 +142,19 @@ export class FakeDocker {
       async inspect(): Promise<Docker.ContainerInspectInfo> {
         const c = need();
         const nets: Record<string, unknown> = {};
-        for (const [n, ep] of c.networks) nets[n] = { Aliases: ep.Aliases, DNSNames: null };
+        for (const [n, ep] of c.networks) {
+          nets[n] = {
+            Aliases: ep.Aliases, DNSNames: null, IPAMConfig: ep.IPv4 ? { IPv4Address: ep.IPv4 } : null,
+            IPAddress: c.state === 'running' ? (ep.IPv4 ?? ep.addr ?? '') : '',
+          };
+        }
         return {
           Id: c.id,
           Name: `/${c.name}`,
+          Image: c.image,
           Config: { Image: c.image, Labels: c.labels },
           State: {
-            Status: c.state, Running: c.state === 'running' || c.state === 'restarting', StartedAt: c.startedAt ?? '0001-01-01T00:00:00Z', ExitCode: 0, Error: '',
+            Status: c.state, Running: c.state === 'running' || c.state === 'restarting', StartedAt: c.startedAt ?? '0001-01-01T00:00:00Z', ExitCode: 0, Error: c.error ?? '',
           },
           HostConfig: { Memory: c.spec?.HostConfig?.Memory ?? 0, NanoCpus: c.spec?.HostConfig?.NanoCpus ?? 0 },
           NetworkSettings: { Networks: nets },
@@ -138,6 +163,14 @@ export class FakeDocker {
       async start() {
         const c = need();
         if (c.state === 'running') throw dockerError(304, 'container already started');
+        for (const [n, ep] of c.networks) {
+          if (ep.IPv4 && self.networks.get(n)?.refuseStatic) throw dockerError(400, STATIC_REFUSED);
+          if (ep.IPv4 && self.addressHolder(n, ep.IPv4, c.name)) {
+            c.error = 'failed to set up container networking: Address already in use';
+            throw dockerError(500, c.error);
+          }
+        }
+        c.error = '';
         c.state = 'running';
         c.startedAt = new Date().toISOString();
         self.calls.push(`start ${c.name}`);
@@ -209,15 +242,17 @@ export class FakeDocker {
     const name = spec.name!;
     if (this.containers.has(name)) throw dockerError(409, `Conflict. The container name "/${name}" is already in use`);
     if (!this.images.has(spec.Image!)) throw dockerError(404, `No such image: ${spec.Image}`);
-    const networks = new Map<string, { Aliases: string[] }>();
+    const networks = new Map<string, FakeEndpoint>();
     const mode = spec.HostConfig?.NetworkMode;
-    if (mode && mode !== 'host') {
+    if (mode && mode !== 'host' && mode !== 'none') {
       if (!this.networks.has(mode)) throw dockerError(404, `network ${mode} not found`);
-      networks.set(mode, { Aliases: (spec.NetworkingConfig?.EndpointsConfig?.[mode]?.Aliases as string[] | undefined) ?? [] });
+      const ep = spec.NetworkingConfig?.EndpointsConfig?.[mode];
+      const ip = ep?.IPAMConfig?.IPv4Address;
+      networks.set(mode, { Aliases: (ep?.Aliases as string[] | undefined) ?? [], ...(ip ? { IPv4: ip } : {}) });
     }
     this.addContainer({ name, image: spec.Image!, labels: { ...(spec.Labels ?? {}) }, state: 'created', spec, networks, startedAt: null });
     this.calls.push(`create ${name}`);
-    return this.getContainer(name);
+    return Object.assign(this.getContainer(name), { id: this.containers.get(name)!.id });
   }
 
   async listContainers(opts: { all?: boolean; filters?: { label?: string[] } } = {}): Promise<Docker.ContainerInfo[]> {
@@ -231,7 +266,11 @@ export class FakeDocker {
       }))
       .map((c) => ({
         Id: c.id, Names: [`/${c.name}`], Image: c.image, State: c.state, Labels: c.labels,
-        NetworkSettings: { Networks: Object.fromEntries([...c.networks].map(([n, ep]) => [n, { Aliases: ep.Aliases }])) },
+        NetworkSettings: {
+          Networks: Object.fromEntries([...c.networks].map(([n, ep]) => [n, {
+            Aliases: ep.Aliases, IPAMConfig: ep.IPv4 ? { IPv4Address: ep.IPv4 } : null, IPAddress: c.state === 'running' ? (ep.IPv4 ?? ep.addr ?? '') : '',
+          }])),
+        },
       }) as unknown as Docker.ContainerInfo);
   }
 
@@ -246,11 +285,18 @@ export class FakeDocker {
     return {
       async inspect() {
         const n = need();
-        const containers: Record<string, { Name: string }> = {};
-        for (const c of self.containers.values()) if (c.networks.has(name)) containers[c.id] = { Name: c.name };
-        return { Name: n.name, Labels: n.labels, Containers: containers };
+        const containers: Record<string, { Name: string; IPv4Address?: string }> = {};
+        for (const c of self.containers.values()) {
+          const ep = c.networks.get(name);
+          if (!ep) continue;
+          containers[c.id] = { Name: c.name, ...(c.state === 'running' && (ep.IPv4 ?? ep.addr) ? { IPv4Address: `${ep.IPv4 ?? ep.addr}/24` } : {}) };
+        }
+        return {
+          Id: `n-${n.name}`.padEnd(64, '0'), Name: n.name, Driver: 'bridge', Labels: n.labels, Containers: containers, Options: n.options ?? {},
+          IPAM: { Config: n.subnet ? [{ Subnet: n.subnet, ...(n.ipRange ? { IPRange: n.ipRange } : {}) }] : [] },
+        };
       },
-      async connect(opts: { Container: string; EndpointConfig?: { Aliases?: string[] } }) {
+      async connect(opts: { Container: string; EndpointConfig?: { Aliases?: string[]; IPAMConfig?: { IPv4Address?: string } } }) {
         need();
         const c = self.find(opts.Container);
         if (!c) throw dockerError(404, `No such container: ${opts.Container}`);
@@ -261,8 +307,17 @@ export class FakeDocker {
           self.calls.push(`connect-failed ${c.name} ${name}`);
           throw dockerError(500, 'daemon hiccup');
         }
-        c.networks.set(name, { Aliases: opts.EndpointConfig?.Aliases ?? [] });
-        self.calls.push(`connect ${c.name} ${name}${opts.EndpointConfig?.Aliases?.length ? ` alias=${opts.EndpointConfig.Aliases.join(',')}` : ''}`);
+        const ip = opts.EndpointConfig?.IPAMConfig?.IPv4Address ?? null;
+        if (ip && self.networks.get(name)?.refuseStatic) {
+          self.calls.push(`connect-refused ${c.name} ${name} ip=${ip}`);
+          throw dockerError(400, STATIC_REFUSED);
+        }
+        if (ip && c.state === 'running' && self.addressHolder(name, ip, c.name)) {
+          self.calls.push(`connect-inuse ${c.name} ${name} ip=${ip}`);
+          throw dockerError(403, `Address already in use`);
+        }
+        c.networks.set(name, { Aliases: opts.EndpointConfig?.Aliases ?? [], ...(ip ? { IPv4: ip } : {}) });
+        self.calls.push(`connect ${c.name} ${name}${opts.EndpointConfig?.Aliases?.length ? ` alias=${opts.EndpointConfig.Aliases.join(',')}` : ''}${ip ? ` ip=${ip}` : ''}`);
       },
       async disconnect(opts: { Container: string }) {
         need();
@@ -279,11 +334,30 @@ export class FakeDocker {
     };
   }
 
-  async createNetwork(opts: { Name: string; Labels?: Record<string, string> }) {
+  /** Running container (other than `except`) holding `ip` on `network`. */
+  addressHolder(network: string, ip: string, except: string): string | null {
+    for (const c of this.containers.values()) {
+      if (c.name === except || c.state !== 'running') continue;
+      const ep = c.networks.get(network);
+      if (ep && (ep.IPv4 ?? ep.addr) === ip) return c.name;
+    }
+    return null;
+  }
+
+  async version() {
+    this.guard();
+    return { Version: this.engineVersion };
+  }
+
+  /** Version answered by version() (Docker ≥ 29 accepts static addresses on any user network). */
+  engineVersion = '28.5.2';
+
+  async createNetwork(opts: { Name: string; Labels?: Record<string, string>; Options?: Record<string, string>; IPAM?: { Config?: Array<{ Subnet?: string; IPRange?: string }> } }) {
     this.guard();
     if (this.networks.has(opts.Name)) throw dockerError(409, `network with name ${opts.Name} already exists`);
     if (this.networkCreateFails) throw dockerError(500, this.networkCreateFails);
-    this.networks.set(opts.Name, { name: opts.Name, labels: opts.Labels ?? {} });
+    const cfg = opts.IPAM?.Config?.[0];
+    this.networks.set(opts.Name, { name: opts.Name, labels: opts.Labels ?? {}, subnet: cfg?.Subnet, ipRange: cfg?.IPRange, options: opts.Options });
     this.calls.push(`create-network ${opts.Name}`);
     return { id: `n-${opts.Name}` };
   }
@@ -296,6 +370,9 @@ export class FakeDocker {
         const [k, v] = l.split('=');
         return v === undefined ? k in n.labels : n.labels[k] === v;
       }))
-      .map((n) => ({ Name: n.name, Id: `n-${n.name}`, Labels: n.labels }));
+      .map((n) => ({
+        Name: n.name, Id: `n-${n.name}`.padEnd(64, '0'), Driver: 'bridge', Labels: n.labels, Options: n.options ?? {},
+        IPAM: { Config: n.subnet ? [{ Subnet: n.subnet, ...(n.ipRange ? { IPRange: n.ipRange } : {}) }] : [] },
+      }));
   }
 }

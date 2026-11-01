@@ -26,6 +26,18 @@ export const OLD_PANEL_RE = (name: string): RegExp => new RegExp(`^${name.replac
 
 const DEFAULT_NETWORKS = new Set(['bridge', 'host', 'none', 'default']);
 
+/**
+ * Managed networks (network/addressLayout.ts isManagedNetwork; not imported: the helper loads no Oblimint
+ * configuration): the panel keeps its address there across the update — the policy hostd persisted is keyed
+ * by it (migration 031). An address Docker chose (no IPAMConfig yet) is cloned as a static one.
+ */
+const MANAGED_NETWORK_RE = /^oblimint(?:-mail|-mail-core|-auth)?$|^oblimint-acct-\d{1,10}(?:-db)?$/;
+
+/** Docker ≤ 28 refuses a static address on a network whose subnet it chose itself. */
+export function isStaticIpRefusal(message: string): boolean {
+  return /user specified IP address is supported only|user specified IP address is supported on user defined networks only/i.test(message);
+}
+
 function sameJson(a: unknown, b: unknown): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
@@ -42,6 +54,8 @@ export interface ClonedPanel {
   create: Docker.ContainerCreateOptions;
   /** Networks connected after the creation (the first one is in `create`). */
   extraNetworks: NetworkAttachment[];
+  /** The network given in `create` (null: none). */
+  firstNetwork: NetworkAttachment | null;
 }
 
 /** Aliases worth keeping: not the container id / name Docker adds by itself. */
@@ -93,17 +107,18 @@ export function clonePanelContainer(self: Docker.ContainerInspectInfo, oldImage:
 
   const networks = Object.entries(self.NetworkSettings?.Networks ?? {}).map(([net, ep]): NetworkAttachment => {
     const ipam = (ep as { IPAMConfig?: { IPv4Address?: string; IPv6Address?: string } | null }).IPAMConfig;
+    const observed = MANAGED_NETWORK_RE.test(net) && /^\d{1,3}(?:\.\d{1,3}){3}$/.test(String(ep.IPAddress ?? '')) ? String(ep.IPAddress) : null;
     return {
       name: net,
       aliases: DEFAULT_NETWORKS.has(net) ? [] : cleanAliases(ep.Aliases, self.Id, name),
-      ipv4: ipam?.IPv4Address || null,
+      ipv4: ipam?.IPv4Address || observed,
       ipv6: ipam?.IPv6Address || null,
     };
   });
   const mode = String(self.HostConfig?.NetworkMode ?? '');
   const first = networks.find((n) => n.name === mode) ?? networks[0] ?? null;
   if (first) config.NetworkingConfig = { EndpointsConfig: { [first.name]: endpointConfig(first) } };
-  return { name, create: config, extraNetworks: networks.filter((n) => n !== first) };
+  return { name, create: config, extraNetworks: networks.filter((n) => n !== first), firstNetwork: first };
 }
 
 export function endpointConfig(n: NetworkAttachment): Docker.EndpointSettings {

@@ -10,6 +10,7 @@ import { platformSettings } from '../platformSettings';
 import { errText } from '../setup/docker';
 import { ensureDefaultDbLinks, segmentedAccountsOfNode } from './defaultLinks';
 import { segmentBackends } from './deps';
+import { setLastPushProvider } from './addresses';
 import { observeNode } from './model';
 import { buildPolicy } from './policy';
 
@@ -46,6 +47,43 @@ interface PushStatus {
 }
 
 const status: PushStatus = { lastPushAt: null, lastPushError: null, lastState: null, lastReason: null };
+
+/** Time of the last SUCCESSFUL push of this process (null before the first one). */
+let lastSuccessfulPush: Date | null = null;
+
+/** Last successful push (network/addresses.ts: a released address is reusable only once a push followed its release). */
+export function lastSuccessfulPushAt(): Date | null {
+  return lastSuccessfulPush;
+}
+setLastPushProvider(lastSuccessfulPushAt);
+
+// ── policy hold (network/pinning.ts) ────────────────────────────────────────
+// While a container is re-pinned (disconnect + connect with the same address, ~250 ms), a push would observe it
+// detached and drop its flows for a second: pushes are deferred during the hold, at most HOLD_MAX_MS.
+
+export const HOLD_MAX_MS = 10_000;
+let holds = 0;
+let holdDeadline = 0;
+
+/** Runs fn with the pushes deferred (≤ HOLD_MAX_MS); a push requested meanwhile runs right after. */
+export async function withPolicyHold<T>(fn: () => Promise<T>): Promise<T> {
+  holds++;
+  holdDeadline = Date.now() + HOLD_MAX_MS;
+  try {
+    return await fn();
+  } finally {
+    holds = Math.max(0, holds - 1);
+    if (holds === 0 && dirtyReason !== null) {
+      if (timer) { clearTimeout(timer); timer = null; }
+      arm(0);
+    }
+  }
+}
+
+/** Are the pushes held now? */
+export function policyHeld(): boolean {
+  return holds > 0 && Date.now() < holdDeadline;
+}
 
 let dirtyReason: string | null = null;
 let timer: NodeJS.Timeout | null = null;
@@ -130,6 +168,7 @@ async function pushOnce(reason: string): Promise<boolean> {
     }
     await backends.hostd(nodeId).setSegments(built.state);
     status.lastPushAt = backends.now();
+    lastSuccessfulPush = status.lastPushAt;
     status.lastPushError = null;
     status.lastState = built.state;
     status.lastReason = reason;
@@ -178,6 +217,7 @@ function arm(delayMs: number): void {
 
 async function flush(): Promise<void> {
   if (running) { arm(SYNC_DEBOUNCE_MS); return; }
+  if (policyHeld()) { arm(250); return; }
   const reason = dirtyReason;
   if (reason === null) return;
   dirtyReason = null;
@@ -337,6 +377,9 @@ export function resetSegmentSyncForTests(): void {
   status.lastPushError = null;
   status.lastState = null;
   status.lastReason = null;
+  lastSuccessfulPush = null;
+  holds = 0;
+  holdDeadline = 0;
 }
 
 /** Tests: retry delays of a failed push (null = defaults). */

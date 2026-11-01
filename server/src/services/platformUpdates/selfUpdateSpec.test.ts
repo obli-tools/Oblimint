@@ -145,3 +145,24 @@ test('docker log frames demultiplexed (helper result read from the logs)', () =>
   assert.equal(parseHelperResult(text)?.outcome, 'succeeded');
   assert.equal(demuxDockerLogs(Buffer.from('plain tty output\n')), 'plain tty output\n');
 });
+
+test('self-update clone (migration 031): the panel keeps its address on the managed networks, a dynamic one becomes static', () => {
+  const p = panelInspect();
+  (p.NetworkSettings.Networks as Record<string, unknown>).oblimint = { Aliases: ['oblimint-panel'], IPAMConfig: null, IPAddress: '172.18.0.8' };
+  (p.NetworkSettings.Networks as Record<string, unknown>)['oblimint-acct-3'] = { Aliases: ['oblimint-panel'], IPAMConfig: { IPv4Address: '10.224.3.2' }, IPAddress: '10.224.3.2' };
+  (p.NetworkSettings.Networks as Record<string, unknown>)['oblimint-app-4-default'] = { Aliases: [], IPAMConfig: null, IPAddress: '10.240.0.5' };
+  (p.NetworkSettings.Networks as Record<string, unknown>).bridge = { Aliases: null, IPAMConfig: null, IPAddress: '172.17.0.2' };
+  const clone = clonePanelContainer(p, imageInspect, 'meejay/oblimint:latest');
+  const byName = new Map([...clone.extraNetworks, ...(clone.firstNetwork ? [clone.firstNetwork] : [])].map((n) => [n.name, n]));
+  assert.equal(byName.get('oblimint')?.ipv4, '172.18.0.8', 'dynamic address on a managed network cloned as static');
+  assert.equal(byName.get('oblimint-acct-3')?.ipv4, '10.224.3.2', 'static address kept');
+  assert.equal(byName.get('oblimint-app-4-default')?.ipv4, null, 'unmanaged network: Docker chooses');
+  assert.equal(byName.get('bridge')?.ipv4, null, 'default bridge: Docker chooses');
+  assert.equal(clone.firstNetwork?.name, 'bridge');
+});
+
+test('static address refusal is recognised (helper reconnects without it instead of rolling back)', async () => {
+  const { isStaticIpRefusal } = await import('./selfUpdateSpec');
+  assert.ok(isStaticIpRefusal('Error response from daemon: user specified IP address is supported only when connecting to networks with user configured subnets'));
+  assert.equal(isStaticIpRefusal('Address already in use'), false);
+});

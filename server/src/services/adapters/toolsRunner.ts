@@ -1,4 +1,5 @@
 import type Docker from 'dockerode';
+import { config } from '../../config';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { errText, withTimeout } from '../setup/docker';
@@ -145,6 +146,16 @@ export async function runToolsContainer(docker: Docker, spec: Docker.ContainerCr
   } finally {
     try {
       await removeContainer(docker, name);
+      // Its fixed addresses (one name per run and step, never recreated): released now rather than by the GC
+      // (30 min), so frequent deployments cannot exhaust the fabric pool. Reusable once a policy push followed.
+      try {
+        if (config.databaseUrl) {
+          const { releaseAddresses } = await import('../network/addresses');
+          await releaseAddresses({ container: name });
+        }
+      } catch (err) {
+        logger.debug({ name, err: errText(err) }, 'Adapters: tools container addresses left to the GC');
+      }
     } catch (err) {
       logger.warn({ name, err: errText(err) }, 'Adapters: tools container not removed (removed at the next recovery)');
     }

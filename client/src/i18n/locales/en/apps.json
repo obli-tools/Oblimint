@@ -1006,13 +1006,43 @@
       "sync": "Push now",
       "syncFailed": "The push failed",
       "synced": "Policy pushed",
-      "title": "Segmentation (platform)"
+      "title": "Segmentation (platform)",
+      "poolInvalid": "Pool {{pool}} invalid: {{error}}",
+      "addresses": {
+        "title": "Fixed addresses",
+        "pin": "Pin now",
+        "pinTitle": "Pin the container addresses now",
+        "pinMessage": "Every container whose address is still dynamic gets it as a fixed one, without being recreated: about 250 ms of network interruption per running container (open TCP connections survive), platform first, one every half second. The address rules then stay right across reboots.",
+        "pinned": "{{count}} address(es) pinned",
+        "pinPartial": "{{pinned}} pinned, {{failed}} failed (see the logs)",
+        "pinFailed": "The pinning failed",
+        "pinnedCount": "{{count}} pinned",
+        "unpinnedCount": "{{count}} dynamic",
+        "conflictCount": "{{count}} conflict(s)",
+        "modeAuto": "automatic pinning",
+        "modeManual": "manual pinning (Settings → Network)",
+        "lastSweep": "last sweep: {{date}}",
+        "unpinnedHint": "Containers with a dynamic address may get another one at the next reboot: the rules restored by hostd would then name the wrong containers until the panel pushes fresh ones. Pin them now (a brief network interruption per container).",
+        "conflictHint": "A container uses an address allocated to another one (connected by hand?): it gets no flow on the account networks until it is reconnected or recreated.",
+        "refused": "Docker refuses fixed addresses on {{networks}} (subnet chosen by Docker, Docker 28 or older): update Docker to 29 or later (live-restore keeps the containers running), or recreate these networks with an explicit subnet.",
+        "unknown": "Support of fixed addresses not checked yet on {{networks}}."
+      }
     },
     "target": "To",
     "disableDefaultTitle": "Disable the default link",
     "disableDefaultConfirm": "This default link (site to database instance) is kept, disabled, so that it is not re-created: you can enable it again at any time. Check that the site does not use this database first.",
     "disabledDefault": "Default link disabled: enable it again at any time",
-    "defaultAlreadyDisabled": "This default link is already disabled: it stays listed so that it is not re-created."
+    "defaultAlreadyDisabled": "This default link is already disabled: it stays listed so that it is not re-created.",
+    "pinning": {
+      "title": "Fixed container addresses",
+      "description": "The filtering rules are keyed by container addresses and restored at boot before the panel starts: fixed addresses keep them right across reboots.",
+      "manualLabel": "Manual",
+      "manualHint": "Only on the account networks that have a dynamic range (created by this version): running containers still dynamic wait for System → Network (« Pin now »). Every other network (platform, networks created before) is still pinned whole: a fixed address next to dynamic ones would be taken at the next reboot.",
+      "autoLabel": "Automatic",
+      "autoHint": "Every sweep (boot, then every 5 minutes) pins every running container still dynamic: about 250 ms of network interruption per container, once (open TCP connections survive). Recommended.",
+      "autoConfirmTitle": "Pin the running containers automatically",
+      "autoConfirm": "At the next sweep (within 5 minutes), every running container whose address is still dynamic gets it as a fixed one: about 250 ms of network interruption per container, one every half second, open TCP connections survive. Continue?"
+    }
   },
   "statusPage": {
     "daysAgo": "{{count}} days ago",

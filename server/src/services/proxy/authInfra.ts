@@ -116,7 +116,8 @@ export async function convergeAuth(log: (line: string) => void = () => undefined
 
     if (!(await inspectNetwork(docker, AUTH_NETWORK))) {
       log(`Creating network ${AUTH_NETWORK}`);
-      await createNetwork(docker, AUTH_NETWORK, { [LABELS.internal]: 'true' });
+      const { platformNetworkOptions } = await import('../network/platformNet');
+      await createNetwork(docker, AUTH_NETWORK, { [LABELS.internal]: 'true' }, await platformNetworkOptions(AUTH_NETWORK, docker));
       try {
         const { infraService } = await import('../docker/infra.service');
         await infraService.ensureEdge(log);

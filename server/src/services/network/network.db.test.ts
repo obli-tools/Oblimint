@@ -420,7 +420,7 @@ test('segmentation on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Test
 
   // ── allocator ──────────────────────────────────────────────────────────────
   const optFront = await fabricNetworkOptions(fresh, 'front');
-  assert.deepEqual(optFront, { subnet: '10.224.1.0/24', gateway: '10.224.1.1', bridgeName: `omf${fresh}`, labels: { 'oblimint.fabric': 'front' } }, 'skips the foreign 10.224.0.0/24');
+  assert.deepEqual(optFront, { subnet: '10.224.1.0/24', gateway: '10.224.1.1', ipRange: '10.224.1.240/28', bridgeName: `omf${fresh}`, labels: { 'oblimint.fabric': 'front' } }, 'skips the foreign 10.224.0.0/24');
   assert.deepEqual(await fabricNetworkOptions(fresh, 'front'), optFront, 'idempotent per network');
   assert.equal((await fabricNetworkOptions(fresh, 'back')).subnet, '10.224.2.0/24');
   // ensureAccountFabrics creates both with the reconcile labels (never oblimint.account on the back).
@@ -488,7 +488,7 @@ test('segmentation on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Test
   assert.equal(r.body.data.dropped, 17);
   assert.equal(r.body.data.rules, pushed.allow.length);
   assert.ok(r.body.data.lastPushAt);
-  assert.deepEqual(r.body.data.pools.map((p: { name: string; used: number; total: number }) => [p.name, p.total]), [['fabric', 4096], ['app', 32768]]);
+  assert.deepEqual(r.body.data.pools.map((p: { name: string; used: number; total: number }) => [p.name, p.total]), [['fabric', 4096], ['app', 32768], ['platform', 4]]);
   const statuses = await db('network_links').where({ account_id: acct }).select('id', 'status', 'status_message', 'origin');
   assert.ok(statuses.filter((l) => l.origin === 'migration').every((l) => l.status === 'active'));
   const appDbRow = statuses.find((l) => l.id === appDb.id)!;

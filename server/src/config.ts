@@ -251,6 +251,14 @@ export const config = {
     /** Pool of the account fabrics (front / back bridges created from P4b on) and their prefix length. */
     fabricPool: process.env.OBLIMINT_FABRIC_POOL || '10.224.0.0/12',
     fabricPrefix: Number(process.env.OBLIMINT_FABRIC_PREFIX || 24),
+    /**
+     * Pool of the platform networks the panel CREATES (oblimint, oblimint-mail, oblimint-mail-core, oblimint-auth:
+     * new installations, a network recreated with its addresses pinned) and their prefix length. Default: the top
+     * /22 of the fabric pool (the fabric allocator takes the lowest free /24 and skips every registered subnet).
+     * Existing platform networks keep their subnet.
+     */
+    platformPool: process.env.OBLIMINT_PLATFORM_POOL || '10.239.252.0/22',
+    platformPrefix: Number(process.env.OBLIMINT_PLATFORM_PREFIX || 24),
     /** Pool of the private networks of the app stacks and their prefix length. */
     appNetworkPool: process.env.OBLIMINT_APP_NETWORK_POOL || '10.240.0.0/12',
     appNetworkPrefix: Number(process.env.OBLIMINT_APP_NETWORK_PREFIX || 27),

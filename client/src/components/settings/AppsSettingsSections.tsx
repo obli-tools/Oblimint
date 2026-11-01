@@ -385,23 +385,35 @@ function NetworkBlock({ value, save }: { value: NetworkSettings; save: SaveFn })
   const { t } = useTranslation();
   const confirm = useConfirm();
   const [mode, setMode] = useState<NetworkSettings['mode']>(value.mode);
+  const [pinning, setPinning] = useState<NetworkSettings['addressPinning']>(value.addressPinning ?? 'auto');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { setMode(value.mode); }, [value.mode]);
+  useEffect(() => { setPinning(value.addressPinning ?? 'auto'); }, [value.addressPinning]);
+  const pinningModes: Array<{ id: NetworkSettings['addressPinning']; label: string; hint: string }> = [
+    { id: 'auto', label: t('network.pinning.autoLabel') || 'Automatic', hint: t('network.pinning.autoHint') || 'Every sweep (boot, then every 5 minutes) pins every running container still dynamic: about 250 ms of network interruption per container, once (open TCP connections survive). Recommended.' },
+    { id: 'manual', label: t('network.pinning.manualLabel') || 'Manual', hint: t('network.pinning.manualHint') || 'Only on the account networks that have a dynamic range (created by this version): running containers still dynamic wait for System → Network (« Pin now »). Every other network (platform, networks created before) is still pinned whole: a fixed address next to dynamic ones would be taken at the next reboot.' },
+  ];
   const modes: Array<{ id: NetworkSettings['mode']; label: string; hint: string }> = [
     { id: 'enforce', label: t('network.mode.enforceLabel') || 'Enforce', hint: t('network.mode.enforceHint') || 'Default deny between the containers of an account; only the policy flows and declared links pass.' },
     { id: 'monitor', label: t('network.mode.monitorLabel') || 'Monitor', hint: t('network.mode.monitorHint') || 'Everything passes; frames that would be refused are counted and logged (diagnosis).' },
     { id: 'off', label: t('network.mode.offLabel') || 'Off', hint: t('network.mode.offHint') || 'No filtering inside the accounts (behaviour before P4b).' },
   ];
   const submit = async () => {
-    if (mode !== 'enforce' && !(await confirm({
+    // Only a CHANGE of mode towards monitor / off weakens the isolation (not a save of the pinning setting alone).
+    if (mode !== value.mode && mode !== 'enforce' && !(await confirm({
       title: t('network.mode.confirmTitle') || 'Weaken the network isolation',
       message: t('network.mode.confirmMessage') || 'The containers of an account (sites, databases, applications) will be able to reach each other. Continue?',
       confirmLabel: t('common.confirm') || 'Confirm',
       danger: true,
     }))) return;
+    if (pinning === 'auto' && (value.addressPinning ?? 'auto') !== 'auto' && !(await confirm({
+      title: t('network.pinning.autoConfirmTitle') || 'Pin the running containers automatically',
+      message: t('network.pinning.autoConfirm') || 'At the next sweep (within 5 minutes), every running container whose address is still dynamic gets it as a fixed one: about 250 ms of network interruption per container, one every half second, open TCP connections survive. Continue?',
+      confirmLabel: t('common.confirm') || 'Confirm',
+    }))) return;
     setSaving(true);
-    setError(await save({ network: { mode } }));
+    setError(await save({ network: { mode, addressPinning: pinning } }));
     setSaving(false);
   };
   return (
@@ -410,10 +422,10 @@ function NetworkBlock({ value, save }: { value: NetworkSettings; save: SaveFn })
       icon={<Network />}
       title={t('apps.settingsPage.networkTitle') || 'Network isolation'}
       description={t('apps.settingsPage.networkDescription') || 'Filtering of the traffic between the containers of one account (nftables, pushed to hostd).'}
-      dirty={mode !== value.mode}
+      dirty={mode !== value.mode || pinning !== (value.addressPinning ?? 'auto')}
       saving={saving}
       onSave={() => { void submit(); }}
-      onReset={() => { setMode(value.mode); setError(null); }}
+      onReset={() => { setMode(value.mode); setPinning(value.addressPinning ?? 'auto'); setError(null); }}
       error={error}
     >
       <div role="radiogroup" aria-label={t('apps.settingsPage.networkTitle') || 'Network isolation'} className="grid grid-cols-1 gap-2 md:grid-cols-3">
@@ -440,6 +452,28 @@ function NetworkBlock({ value, save }: { value: NetworkSettings; save: SaveFn })
           {t('network.mode.warning') || 'Without enforcement, a compromised site or application can reach the other containers of its account (databases, other applications).'}
         </p>
       )}
+      <div className="space-y-2 pt-2">
+        <div className="text-xs font-semibold text-text-primary">{t('network.pinning.title') || 'Fixed container addresses'}</div>
+        <p className="text-xs text-text-secondary">{t('network.pinning.description') || 'The filtering rules are keyed by container addresses and restored at boot before the panel starts: fixed addresses keep them right across reboots.'}</p>
+        <div role="radiogroup" aria-label={t('network.pinning.title') || 'Fixed container addresses'} className="grid grid-cols-1 gap-2 md:grid-cols-2">
+          {pinningModes.map((m) => {
+            const selected = pinning === m.id;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => setPinning(m.id)}
+                className={cn('rounded-lg border-2 p-3 text-left transition-all', selected ? 'border-accent bg-accent/5' : 'border-transparent bg-bg-primary hover:border-accent/30')}
+              >
+                <div className="text-sm font-semibold text-text-primary">{m.label}</div>
+                <p className="mt-1 text-xs text-text-secondary">{m.hint}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </SettingsBlock>
   );
 }

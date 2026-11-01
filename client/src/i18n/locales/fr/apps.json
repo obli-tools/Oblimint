@@ -1006,13 +1006,43 @@
       "sync": "Pousser maintenant",
       "syncFailed": "La poussée a échoué",
       "synced": "Politique poussée",
-      "title": "Segmentation (plateforme)"
+      "title": "Segmentation (plateforme)",
+      "poolInvalid": "Pool {{pool}} invalide : {{error}}",
+      "addresses": {
+        "title": "Adresses figées",
+        "pin": "Figer maintenant",
+        "pinTitle": "Figer les adresses des conteneurs maintenant",
+        "pinMessage": "Chaque conteneur dont l'adresse est encore dynamique la reçoit en adresse fixe, sans être recréé : environ 250 ms de coupure réseau par conteneur en marche (les connexions TCP ouvertes survivent), la plateforme d'abord, un toutes les demi-secondes. Les règles par adresse restent alors justes après un redémarrage.",
+        "pinned": "{{count}} adresse(s) figée(s)",
+        "pinPartial": "{{pinned}} figée(s), {{failed}} en échec (voir les journaux)",
+        "pinFailed": "Le figement a échoué",
+        "pinnedCount": "{{count}} figée(s)",
+        "unpinnedCount": "{{count}} dynamique(s)",
+        "conflictCount": "{{count}} conflit(s)",
+        "modeAuto": "figement automatique",
+        "modeManual": "figement manuel (Paramètres → Réseau)",
+        "lastSweep": "dernier balayage : {{date}}",
+        "unpinnedHint": "Un conteneur à adresse dynamique peut en recevoir une autre au prochain redémarrage : les règles restaurées par hostd viseraient alors les mauvais conteneurs jusqu'à ce que le panel en pousse de nouvelles. Figez-les maintenant (brève coupure réseau par conteneur).",
+        "conflictHint": "Un conteneur utilise une adresse attribuée à un autre (connecté à la main ?) : il n'obtient aucun flux sur les réseaux de compte tant qu'il n'est pas reconnecté ou recréé.",
+        "refused": "Docker refuse les adresses fixes sur {{networks}} (sous-réseau choisi par Docker, Docker 28 ou antérieur) : mettez Docker à jour en 29 ou plus (live-restore garde les conteneurs en marche), ou recréez ces réseaux avec un sous-réseau explicite.",
+        "unknown": "Prise en charge des adresses fixes pas encore vérifiée sur {{networks}}."
+      }
     },
     "target": "Vers",
     "disableDefaultTitle": "Désactiver la liaison par défaut",
     "disableDefaultConfirm": "Cette liaison par défaut (site vers instance de base de données) est conservée, désactivée, pour ne pas être recréée : vous pouvez la réactiver à tout moment. Vérifiez d’abord que le site n’utilise pas cette base.",
     "disabledDefault": "Liaison par défaut désactivée : réactivable à tout moment",
-    "defaultAlreadyDisabled": "Cette liaison par défaut est déjà désactivée : elle reste listée pour ne pas être recréée."
+    "defaultAlreadyDisabled": "Cette liaison par défaut est déjà désactivée : elle reste listée pour ne pas être recréée.",
+    "pinning": {
+      "title": "Adresses fixes des conteneurs",
+      "description": "Les règles de filtrage sont indexées par adresse de conteneur et restaurées au démarrage avant le panel : des adresses fixes les gardent justes après un redémarrage.",
+      "manualLabel": "Manuel",
+      "manualHint": "Seulement sur les réseaux de compte qui ont une plage dynamique (créés par cette version) : les conteneurs en marche encore en adresse dynamique attendent Système → Réseau (« Figer maintenant »). Tous les autres réseaux (plateforme, réseaux créés avant) restent figés en entier : une adresse fixe voisine d'adresses dynamiques serait prise au prochain redémarrage.",
+      "autoLabel": "Automatique",
+      "autoHint": "Chaque balayage (au démarrage, puis toutes les 5 minutes) fige tout conteneur en marche encore en adresse dynamique : environ 250 ms de coupure réseau par conteneur, une seule fois (les connexions TCP ouvertes survivent). Recommandé.",
+      "autoConfirmTitle": "Figer automatiquement les conteneurs en marche",
+      "autoConfirm": "Au prochain balayage (sous 5 minutes), chaque conteneur en marche dont l'adresse est encore dynamique la reçoit en adresse fixe : environ 250 ms de coupure réseau par conteneur, un toutes les demi-secondes, les connexions TCP ouvertes survivent. Continuer ?"
+    }
   },
   "statusPage": {
     "daysAgo": "il y a {{count}} jours",

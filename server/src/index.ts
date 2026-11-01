@@ -73,6 +73,8 @@ function printSetupBanner(token: string): void {
 }
 
 async function startSetupMode(): Promise<void> {
+  // Fixed container addresses on the panel network (migration 031): the wizard pins the panel (.2) and PostgreSQL (.3).
+  (await import('./services/network/addressResolver')).installAddressResolver();
   const token = crypto.randomBytes(32).toString('base64url');
   const { createSetupApp } = await import('./app');
   const app = createSetupApp(token);
@@ -134,6 +136,17 @@ async function startNormalMode(): Promise<void> {
     process.exit(1);
   }
   logger.info({ source: config.configSource }, 'Panel configuration loaded');
+
+  // Migration 031: every container created / connected on a managed network gets its fixed address.
+  (await import('./services/network/addressResolver')).installAddressResolver();
+  // Subnet pools checked once, loudly (an invalid one — e.g. a fabric prefix > /26 — fails every new account network).
+  (await import('./services/network/allocator')).validatePools();
+  // Before the database: the panel network and the panel / PostgreSQL addresses back as recorded (a stale policy
+  // restored by hostd at boot must not keep the panel away from its PostgreSQL — incident 2026-11-01). Never throws.
+  if (config.hosting.workersEnabled) {
+    const { selfHealPanelNetwork } = await import('./services/network/selfHeal');
+    await selfHealPanelNetwork();
+  }
 
   const { db } = await import('./db');
   const { waitForDatabase } = await import('./db/waitForDatabase');

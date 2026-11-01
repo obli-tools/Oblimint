@@ -1,6 +1,6 @@
 import apiClient from './client';
 import type {
-  ApiResponse, NetworkFlowView, NetworkLink, NetworkLinkCreate, NetworkLinkUpdate, NetworkMigrateRequest, NetworkSegmentInfo,
+  ApiResponse, NetworkFlowView, NetworkLink, NetworkLinkCreate, NetworkLinkUpdate, NetworkMigrateRequest, NetworkPinResult, NetworkSegmentInfo,
   NetworkSystemStatus,
 } from '@oblimint/shared';
 
@@ -41,6 +41,11 @@ export const systemNetworkApi = {
   },
   async migrate(data: NetworkMigrateRequest = {}): Promise<NetworkSystemStatus> {
     const res = await apiClient.post<ApiResponse<NetworkSystemStatus>>('/system/network/migrate', data);
+    return res.data.data!;
+  },
+  /** Pins the container addresses now (running containers included: ≈ 250 ms network blip each). */
+  async pin(): Promise<NetworkPinResult> {
+    const res = await apiClient.post<ApiResponse<NetworkPinResult>>('/system/network/pin');
     return res.data.data!;
   },
   async flows(accountId?: number): Promise<NetworkFlowView[]> {

@@ -1,6 +1,7 @@
 import Docker from 'dockerode';
 import {
-  clonePanelContainer, demuxDockerLogs, endpointConfig, HELPER_RESULT_PREFIX, healthVerdict, oldPanelName, parseHelperPlan, type HelperResult,
+  clonePanelContainer, demuxDockerLogs, endpointConfig, HELPER_RESULT_PREFIX, healthVerdict, isStaticIpRefusal, oldPanelName, parseHelperPlan,
+  type HelperResult, type NetworkAttachment,
 } from './selfUpdateSpec';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,6 +33,38 @@ async function removeQuiet(docker: Docker, id: string): Promise<void> {
   try { await docker.getContainer(id).remove({ force: true }); } catch { /* gone */ }
 }
 
+/** Endpoint settings without the static address (Docker refused it): aliases kept. */
+function withoutAddress(n: NetworkAttachment): Docker.EndpointSettings {
+  return endpointConfig({ ...n, ipv4: null, ipv6: null });
+}
+
+/**
+ * Connects the new container to an extra network with its address; when Docker refuses static addresses
+ * there (Docker ≤ 28, subnet chosen by Docker) it is connected without — never a rollback for that.
+ */
+async function connectKeepingAddress(docker: Docker, id: string, n: NetworkAttachment): Promise<void> {
+  try {
+    await docker.getNetwork(n.name).connect({ Container: id, EndpointConfig: endpointConfig(n) });
+  } catch (err) {
+    if (!(n.ipv4 || n.ipv6) || !isStaticIpRefusal(errText(err))) throw err;
+    say(`${n.name}: Docker refuses static addresses there, connected with a dynamic one`);
+    await docker.getNetwork(n.name).connect({ Container: id, EndpointConfig: withoutAddress(n) });
+  }
+}
+
+/** Starts the new container; a static address refused at start (Docker 24 accepts the create) is dropped. */
+async function startKeepingAddress(docker: Docker, created: Docker.Container, first: NetworkAttachment | null): Promise<void> {
+  try {
+    await created.start();
+  } catch (err) {
+    if (!first || !(first.ipv4 || first.ipv6) || !isStaticIpRefusal(errText(err))) throw err;
+    say(`${first.name}: Docker refuses static addresses there, reconnected with a dynamic one`);
+    await docker.getNetwork(first.name).disconnect({ Container: created.id, Force: true });
+    await docker.getNetwork(first.name).connect({ Container: created.id, EndpointConfig: withoutAddress(first) });
+    await created.start();
+  }
+}
+
 /** Set once the panel container was renamed: the failure path restores it. */
 let restore: { docker: Docker; id: string; name: string; newId: string | null } | null = null;
 
@@ -61,10 +94,8 @@ async function main(): Promise<void> {
     const created = await docker.createContainer(clone.create);
     newId = created.id;
     if (restore) restore.newId = created.id;
-    for (const n of clone.extraNetworks) {
-      await docker.getNetwork(n.name).connect({ Container: created.id, EndpointConfig: endpointConfig(n) });
-    }
-    await created.start();
+    for (const n of clone.extraNetworks) await connectKeepingAddress(docker, created.id, n);
+    await startKeepingAddress(docker, created, clone.firstNetwork);
     say(`new container ${created.id.slice(0, 12)} started, waiting until it is healthy (${plan.healthTimeoutSec} s max)`);
     const started = Date.now();
     for (;;) {

@@ -20,6 +20,7 @@ import { segmentService } from '../services/network/segments.service';
 //   GET    /                                                    → NetworkSystemStatus
 //   POST   /sync                                                → NetworkSystemStatus    (push the policy now)
 //   POST   /migrate                    NetworkMigrateRequest    → NetworkSystemStatus    (audited)
+//   POST   /pin                                                 → NetworkPinResult       (fixed addresses now, audited)
 //   GET    /flows?accountId                                     → NetworkFlowView[]      (troubleshooting)
 //
 // Codes: linkInvalidEndpoint (400: unknown / other account / same segment / site as target), linkPortNotExposed (400:
@@ -120,6 +121,12 @@ systemNetworkRoutes.post('/sync', async (_req, res, next) => {
 systemNetworkRoutes.post('/migrate', async (req, res, next) => {
   try {
     res.json({ success: true, data: await segmentService.migrate(req, parseBody(migrateSchema, req.body)) });
+  } catch (err) { next(err); }
+});
+
+systemNetworkRoutes.post('/pin', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await segmentService.pinNow(req) });
   } catch (err) { next(err); }
 });
 

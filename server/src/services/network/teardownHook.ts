@@ -1,6 +1,7 @@
 import { logger } from '../../utils/logger';
 import type { AccountTeardownHook } from '../docker/extensions';
 import { errText } from '../setup/docker';
+import { releaseAddresses } from './addresses';
 import { releaseSubnets } from './allocator';
 import { requestPolicySync } from './sync';
 
@@ -17,6 +18,12 @@ export const segmentTeardownHook: AccountTeardownHook = {
       await releaseSubnets({ accountId });
     } catch (err) {
       logger.warn({ accountId, err: errText(err) }, 'segments: subnets of the deleted account not released (kept reserved)');
+    }
+    // Migration 031: the fixed addresses on its fabrics (reusable once a policy push followed the release).
+    try {
+      await releaseAddresses({ accountId });
+    } catch (err) {
+      logger.warn({ accountId, err: errText(err) }, 'segments: addresses of the deleted account not released (GC later)');
     }
     requestPolicySync(`teardown:${accountId}`);
   },

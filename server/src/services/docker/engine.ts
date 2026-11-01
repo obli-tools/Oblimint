@@ -26,6 +26,13 @@ interface NodeRow {
 type EngineFactory = (nodeId: number) => Docker | Promise<Docker>;
 
 const clientCache = new Map<number, Docker>();
+/** Docker client → its node (the address resolver of dockerOps allocates per node). */
+const engineNodes = new WeakMap<object, number>();
+
+/** Node of a client returned by engineFor (null for another client: setup wizard, helpers). */
+export function nodeOfEngine(docker: object): number | null {
+  return engineNodes.get(docker) ?? null;
+}
 let localIdCache: number | null = null;
 let factoryOverride: EngineFactory | null = null;
 let localIdOverride: number | null = null;
@@ -41,13 +48,18 @@ function buildEngine(row: NodeRow): Docker {
 
 /** dockerode client of a node (cached per node id). */
 export async function engineFor(nodeId: number): Promise<Docker> {
-  if (factoryOverride) return factoryOverride(nodeId);
+  if (factoryOverride) {
+    const d = await factoryOverride(nodeId);
+    if (d && typeof d === 'object') engineNodes.set(d, nodeId);
+    return d;
+  }
   const cached = clientCache.get(nodeId);
   if (cached) return cached;
   const row = await db('nodes').where({ id: nodeId }).first('id', 'name', 'engine_type', 'is_local', 'config') as NodeRow | undefined;
   if (!row) throw new AppError(404, `Node ${nodeId} not found`, 'notFound');
   const client = buildEngine(row);
   clientCache.set(nodeId, client);
+  engineNodes.set(client, nodeId);
   return client;
 }
 

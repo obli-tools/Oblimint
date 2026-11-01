@@ -46,6 +46,13 @@ export interface ModelEndpoint {
   ip: string | null;
   /** Container labels (null = unknown container: no flow). */
   labels: Record<string, string> | null;
+  /** Migration 031: static address Docker holds for it on this network (null / absent = dynamic). */
+  staticIp?: string | null;
+  /**
+   * Migration 031: its address is the STATIC address of another (stopped) container — Docker does not reserve it,
+   * the owner will want it back at its start / at the next boot: no flow on a fabric (narrowing, never widening).
+   */
+  addressConflict?: boolean;
 }
 
 export interface ModelFabric {
@@ -268,7 +275,7 @@ export function buildSegmentFlows(model: SegmentModel): { flows: AnnotatedFlow[]
       const members: Classified[] = [];
       for (const ep of fabric.endpoints) {
         const ip = endpointIpv4(ep.ip);
-        if (!ip || ipCount.get(ip) !== 1) continue;
+        if (!ip || ipCount.get(ip) !== 1 || ep.addressConflict) continue;
         members.push({ ep, ip, role: classifyEndpoint(model, account.id, fabric.fabric, ep) });
       }
       const of = (pred: (r: EndpointRole) => boolean) => members.filter((m) => pred(m.role));

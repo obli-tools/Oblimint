@@ -7,8 +7,10 @@ import { inspectContainer, inspectNetwork } from '../docker/dockerOps';
 import { LABELS, P3_LABELS } from '../hosting/naming';
 import { json } from '../hosting/rows';
 import { errText, selfContainerRef, withTimeout } from '../setup/docker';
+import { isEphemeralContainer, sameIdentity } from './addressLayout';
 import { segmentBackends } from './deps';
 import { fabricNetworkName, observedBridgeName } from './fabric';
+import { endpointIpv4 } from './ipv4';
 import { PLATFORM_NETWORKS, type ModelPlatformNetwork } from './platform';
 import type { FabricWhich, ModelAccount, ModelEndpoint, ModelLink, ModelProxyTarget, SegmentModel } from './policy';
 
@@ -78,6 +80,42 @@ export function toModelLink(r: LinkRow): ModelLink {
   };
 }
 
+/**
+ * Migration 031: static addresses (IPAMConfig) of the listed containers — `staticOwners` (network → ip → name) for
+ * the STOPPED ones only: Docker does not reserve them, a container that took such an address is not its owner (no
+ * flow on a fabric, policy.ts); `staticById` (id → network → ip) for every one (informative: ModelEndpoint.staticIp).
+ * A probe left behind and the stopped copy of a container being replaced (<name>-oblimint-prev, <panel>-old-<ts>)
+ * are never owners: the copy's successor holds the same address on purpose.
+ */
+export function staticAddressMaps(containers: readonly Docker.ContainerInfo[]): {
+  staticOwners: Map<string, Map<string, string>>;
+  staticById: Map<string, Map<string, string>>;
+} {
+  const staticOwners = new Map<string, Map<string, string>>();
+  const staticById = new Map<string, Map<string, string>>();
+  for (const c of containers) {
+    const running = String(c.State ?? '').toLowerCase() === 'running';
+    const name = String(c.Names?.[0] ?? '').replace(/^\//, '');
+    for (const [net, ep] of Object.entries(c.NetworkSettings?.Networks ?? {})) {
+      const ip = endpointIpv4((ep as { IPAMConfig?: { IPv4Address?: string } | null }).IPAMConfig?.IPv4Address);
+      if (!ip) continue;
+      let byNet = staticById.get(c.Id);
+      if (!byNet) { byNet = new Map(); staticById.set(c.Id, byNet); }
+      byNet.set(net, ip);
+      if (running || isEphemeralContainer(name)) continue;
+      let m = staticOwners.get(net);
+      if (!m) { m = new Map(); staticOwners.set(net, m); }
+      m.set(ip, name);
+    }
+  }
+  return { staticOwners, staticById };
+}
+
+/** An endpoint holding the static address of a stopped container that is not itself (nor its own copy). */
+export function hasAddressConflict(owner: string | undefined, endpointName: string): boolean {
+  return !!owner && !sameIdentity(owner, endpointName);
+}
+
 /** A fabric of an observed account exists but could not be read: the whole push is aborted (fail-safe). */
 export class FabricObservationError extends Error {
   constructor(readonly network: string, cause: string) {
@@ -139,8 +177,11 @@ export async function observeNode(nodeId: number, opts: ObserveOptions): Promise
   const self = selfContainerRef();
   if (self) panelRefs.push(self);
   const runIds = new Set<number>();
+  let staticOwners = new Map<string, Map<string, string>>();
+  let staticById = new Map<string, Map<string, string>>();
   if (docker) {
     const containers = await withTimeout(docker.listContainers({ all: true, filters: { label: [LABELS.internal] } }), DOCKER_TIMEOUT_MS, 'list containers');
+    ({ staticOwners, staticById } = staticAddressMaps(containers));
     for (const c of containers) {
       labelsById.set(c.Id, c.Labels ?? {});
       const run = c.Labels?.[P3_LABELS.adapterRun];
@@ -177,12 +218,19 @@ export async function observeNode(nodeId: number, opts: ObserveOptions): Promise
       if (!net) { missingFabrics.push(name); continue; }
       const bridge = observedBridgeName(net as unknown as { Id?: string; Options?: Record<string, string> });
       if (!bridge) throw new FabricObservationError(name, 'no bridge interface name');
-      const endpoints: ModelEndpoint[] = Object.entries(net.Containers ?? {}).map(([id, c]) => ({
-        id,
-        name: String((c as { Name?: string }).Name ?? ''),
-        ip: (c as { IPv4Address?: string }).IPv4Address ?? null,
-        labels: labelsById.get(id) ?? null,
-      }));
+      const endpoints: ModelEndpoint[] = Object.entries(net.Containers ?? {}).map(([id, c]) => {
+        const epName = String((c as { Name?: string }).Name ?? '');
+        const ip = (c as { IPv4Address?: string }).IPv4Address ?? null;
+        const owner = staticOwners.get(name)?.get(endpointIpv4(ip) ?? '');
+        return {
+          id,
+          name: epName,
+          ip,
+          labels: labelsById.get(id) ?? null,
+          staticIp: staticById.get(id)?.get(name) ?? null,
+          ...(hasAddressConflict(owner, epName) ? { addressConflict: true } : {}),
+        };
+      });
       account.fabrics.push({ fabric: which, network: name, bridge, endpoints });
     }
     accounts.push(account);

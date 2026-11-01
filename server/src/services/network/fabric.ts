@@ -2,16 +2,18 @@ import type Docker from 'dockerode';
 import { db } from '../../db';
 import type { NetworkCreateOptions } from '../docker/dockerOps';
 import { accountDbNetwork, accountNetwork, P4B_LABELS } from '../hosting/naming';
+import { defaultIpRange } from './addressLayout';
 import { allocateSubnet, listDockerSubnets } from './allocator';
 import { segmentBackends } from './deps';
 
 // Account fabrics (docs/P4b-PLAN.md §4.2). OWNED BY MODULE `segmentation`.
 // Called by reconcile.service.ts when it creates oblimint-acct-<id> (front) / oblimint-acct-<id>-db (back)
 // (and by segmentService.ensureAccountFabrics): a subnet allocated from config.hosting.fabricPool
-// (network_subnets), the bridge name omf<id> / omb<id> (≤ 15 chars, the name hostd filters on) and the label
-// oblimint.fabric=front|back. Throws on failure (pool exhausted, Docker / DB unreachable): reconcile then
-// falls back to Docker's defaults (P1–P4 behaviour), the account works unfiltered by bridge name until the
-// policy push observes the real bridge (br-<12 hex>).
+// (network_subnets), the bridge name omf<id> / omb<id> (≤ 15 chars, the name hostd filters on), the label
+// oblimint.fabric=front|back and Docker's dynamic range on the last /28 (IPRange: a container connected
+// without an address never takes a fixed one, migration 031). Throws on failure (pool exhausted, Docker / DB
+// unreachable): the network creation then fails and is retried at the next pass (never Docker's defaults:
+// a subnet chosen by Docker ≤ 28 refuses the fixed addresses).
 
 /** Docker network name of an account fabric. */
 export function fabricNetworkName(accountId: number, which: 'front' | 'back'): string {
@@ -44,6 +46,7 @@ export async function fabricNetworkOptions(accountId: number, which: 'front' | '
   return {
     subnet: cidr,
     gateway,
+    ipRange: defaultIpRange(cidr),
     bridgeName: fabricBridgeName(accountId, which),
     labels: { [P4B_LABELS.fabric]: which },
   };

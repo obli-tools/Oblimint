@@ -177,6 +177,7 @@ const sectionSchemas = {
   }).strict(),
   network: z.object({
     mode: z.enum(['enforce', 'monitor', 'off']),
+    addressPinning: z.enum(['auto', 'manual']),
   }).strict(),
   // Sensitive actions (services/restrictions): written by PUT /api/restrictions/floor only.
   restrictions: z.object({

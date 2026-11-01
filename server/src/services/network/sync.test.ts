@@ -31,3 +31,37 @@ test('a failed push is retried with an exponential backoff until it stops failin
   }
   assert.equal(pushRetryPending(), false, 'reset clears the retry');
 });
+
+test('withPolicyHold defers the pushes while a container is re-pinned; lastSuccessfulPushAt follows the successes', async () => {
+  const { withPolicyHold, lastSuccessfulPushAt, whenSegmentSyncIdle } = await import('./sync');
+  resetSegmentSyncForTests();
+  const pushes: number[] = [];
+  setSegmentBackendsForTests({
+    async localNode() { return 1; },
+    hostd: () => ({ async setSegments() { pushes.push(Date.now()); } }) as never,
+  });
+  try {
+    const { platformSettings } = await import('../platformSettings');
+    const original = platformSettings.section;
+    (platformSettings as { section: unknown }).section = async () => ({ mode: 'off', addressPinning: 'manual' });
+    try {
+      assert.equal(lastSuccessfulPushAt(), null);
+      let during = 0;
+      await withPolicyHold(async () => {
+        requestPolicySync('docker:network:disconnect');
+        await new Promise((r) => setTimeout(r, 1300)); // longer than the 1 s debounce
+        during = pushes.length;
+      });
+      assert.equal(during, 0, 'no push while held');
+      await new Promise((r) => setTimeout(r, 50));
+      await whenSegmentSyncIdle();
+      assert.equal(pushes.length, 1, 'the deferred push runs right after the hold');
+      assert.ok(lastSuccessfulPushAt() instanceof Date);
+    } finally {
+      (platformSettings as { section: unknown }).section = original;
+    }
+  } finally {
+    resetSegmentSyncForTests();
+    setSegmentBackendsForTests(null);
+  }
+});

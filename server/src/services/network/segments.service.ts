@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import type Docker from 'dockerode';
 import type {
-  NetworkFlowView, NetworkLink, NetworkLinkCreate, NetworkLinkProtocol, NetworkLinkUpdate, NetworkMigrateRequest, NetworkSegmentInfo,
+  NetworkFlowView, NetworkLink, NetworkLinkCreate, NetworkLinkProtocol, NetworkLinkUpdate, NetworkMigrateRequest, NetworkPinResult, NetworkSegmentInfo,
   NetworkSystemStatus, SegmentKind, SegmentRef,
 } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
@@ -482,7 +482,17 @@ export const segmentService = {
       bridges: st.lastState?.bridges.length ?? hostdBridges ?? 0,
       rules: st.lastState?.allow.length ?? hostdRules ?? 0,
       dropped,
+      addresses: await (await import('./pinning')).addressStatus(),
     };
+  },
+
+  /** POST /system/network/pin — « Pin the addresses now » (running containers included, audited). */
+  async pinNow(req: Request): Promise<NetworkPinResult> {
+    const { pinningSweep } = await import('./pinning');
+    const result = await pinningSweep({ force: true, reason: 'staff' });
+    await auditService.logReqAs(req, 1, 'network.addresses.pin', { details: { ...result } });
+    await syncPolicyNow('pinning');
+    return { pinned: result.pinned, failed: result.failed, skipped: result.skipped, status: await segmentService.systemStatus() };
   },
 
   /** POST /system/network/sync — push the policy now. */
@@ -618,7 +628,14 @@ export const segmentService = {
       const tick = (reason: string) => {
         if (sweepRunning) return;
         sweepRunning = true;
-        void migrateLegacySweep()
+        // The policy is pushed FIRST (it reads the observed addresses, not network_addresses): after a reboot the
+        // stale rules hostd restored are replaced at once, not after the probes / adoption / paced pinning of the
+        // sweep (migration 031). The sweep requests another push when it moved or pinned something.
+        requestPolicySync(reason);
+        void import('./pinning')
+          .then(({ pinningSweep }) => pinningSweep({ reason }))
+          .catch((err) => logger.warn({ err: errText(err) }, 'segments: address pinning sweep failed'))
+          .then(() => migrateLegacySweep())
           .catch(() => undefined)
           .finally(() => { sweepRunning = false; requestPolicySync(reason); });
       };

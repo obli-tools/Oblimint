@@ -8,7 +8,8 @@ import { config, dataDir } from '../../config';
 import { logger } from '../../utils/logger';
 import { obligateUrlError } from '../obligateUrl';
 import { docker, errText, INTERNAL_LABELS, selfContainerRef, withTimeout } from './docker';
-import { attachWithAlias, ensureImage } from '../docker/dockerOps';
+import type Docker from 'dockerode';
+import { attachWithAlias, createNetwork, ensureImage, inspectNetwork, withEndpointAddresses } from '../docker/dockerOps';
 import { PLATFORM_OOM_SCORE_ADJ } from '../docker/specs';
 import { PANEL_ALIAS } from '../hosting/naming';
 import { writeFileAtomic0600, writePanelConfig } from './configFile';
@@ -125,8 +126,37 @@ async function stepNetwork(): Promise<void> {
     log('network', `Network ${NETWORK_NAME} already exists (${existing.Id.slice(0, 12)})`);
     return;
   }
-  const net = await withTimeout(d.createNetwork({ Name: NETWORK_NAME, Driver: 'bridge', Labels: { ...INTERNAL_LABELS } }), 15_000, 'create network');
-  log('network', `Network ${NETWORK_NAME} created (${net.id.slice(0, 12)})`);
+  // Migration 031: a subnet chosen by the panel (platform pool), Docker's dynamic range on its last /28 and an
+  // explicit bridge name — static container addresses are then accepted by every Docker version.
+  const { pickPlatformSubnetWithoutDb, platformOptionsFor } = await import('../network/platformNet');
+  let cidr: string | null = null;
+  try {
+    cidr = await pickPlatformSubnetWithoutDb(d);
+  } catch (err) {
+    log('network', `No subnet from the platform pool (${errText(err)}): Docker chooses one`);
+  }
+  const opts = cidr ? platformOptionsFor(NETWORK_NAME, cidr) : {};
+  await withTimeout(createNetwork(d, NETWORK_NAME, { ...INTERNAL_LABELS }, opts), 15_000, 'create network');
+  const net = await inspectNetwork(d, NETWORK_NAME);
+  log('network', `Network ${NETWORK_NAME} created (${(net?.Id ?? '').slice(0, 12)}${cidr ? `, ${cidr}, bridge ${opts.bridgeName}` : ''})`);
+}
+
+/**
+ * Address of the previous PostgreSQL container on the panel network (static one first, else the one Docker gave
+ * it): kept by the new container when Docker accepts a static address there — the policy hostd persisted names it.
+ */
+async function previousPostgresAddress(d: Docker, info: Docker.ContainerInspectInfo | null): Promise<string | null> {
+  const ep = info?.NetworkSettings?.Networks?.[NETWORK_NAME] as { IPAMConfig?: { IPv4Address?: string } | null; IPAddress?: string } | undefined;
+  const ip = ep?.IPAMConfig?.IPv4Address || ep?.IPAddress || null;
+  if (!ip || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return null;
+  try {
+    const net = await inspectNetwork(d, NETWORK_NAME);
+    if (!net) return null;
+    const { staticSupportOf } = await import('../network/addressResolver');
+    return (await staticSupportOf(d, net, { probe: true })) === 'supported' ? ip : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Password of the panel database: generated once, kept 0600 next to the
@@ -157,11 +187,12 @@ async function stepPostgres(): Promise<string> {
 
   const old = d.getContainer(POSTGRES_CONTAINER);
   const oldInfo = await old.inspect().catch(() => null);
+  const keptIp = await previousPostgresAddress(d, oldInfo);
   if (oldInfo) {
     log('postgres', `Removing the previous ${POSTGRES_CONTAINER} container (data kept in ${hostPgDir})`);
     await withTimeout(old.remove({ force: true }), 60_000, `remove ${POSTGRES_CONTAINER}`);
   }
-  const container = await withTimeout(d.createContainer({
+  const spec: Docker.ContainerCreateOptions = {
     name: POSTGRES_CONTAINER,
     Image: POSTGRES_IMAGE,
     Env: [`POSTGRES_USER=${PG_USER}`, `POSTGRES_PASSWORD=${password}`, `POSTGRES_DB=${PG_DB}`],
@@ -180,7 +211,13 @@ async function stepPostgres(): Promise<string> {
       RestartPolicy: { Name: 'unless-stopped' },
       NetworkMode: NETWORK_NAME,
     },
-  }), 30_000, `create ${POSTGRES_CONTAINER}`);
+  };
+  // Fixed address (migration 031): the previous one when known, else slot .3 of the panel network (resolver).
+  if (keptIp) spec.NetworkingConfig = { EndpointsConfig: { [NETWORK_NAME]: { IPAMConfig: { IPv4Address: keptIp } } } };
+  const prepared = await withEndpointAddresses(d, spec);
+  const pinned = prepared.NetworkingConfig?.EndpointsConfig?.[NETWORK_NAME]?.IPAMConfig?.IPv4Address;
+  if (pinned) log('postgres', `${POSTGRES_CONTAINER} gets the fixed address ${pinned} on ${NETWORK_NAME}`);
+  const container = await withTimeout(d.createContainer(prepared), 30_000, `create ${POSTGRES_CONTAINER}`);
   await withTimeout(container.start(), 30_000, `start ${POSTGRES_CONTAINER}`);
   log('postgres', `Container ${POSTGRES_CONTAINER} started, waiting for pg_isready…`);
   const deadline = Date.now() + 180_000;
@@ -277,6 +314,13 @@ export function startApply(req: SetupApplyRequest, opts: { exitOnDone?: boolean 
         // empty setup-mode one (which fell back to a public constant).
         config.sessionSecret = effectiveSessionSecret(sessionSecret, process.env.SESSION_SECRET);
         log('config', `Configuration written to ${file} (0600)`);
+        // Snapshot of the platform addresses (self-heal at boot before the database, install.sh --upgrade).
+        try {
+          const { writeAddressSnapshot } = await import('../network/snapshot');
+          await writeAddressSnapshot(docker());
+        } catch (err) {
+          log('config', `Address snapshot not written: ${errText(err)}`);
+        }
       });
       await runPostDeploySteps(req);
       // Non-fatal: the panel works without them; the operator redeploys from the Nodes page.

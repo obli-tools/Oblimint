@@ -94,8 +94,14 @@ run_panel() {      # (re)create the panel container from $CONF_FILE
   # the oblimint-panel alias, account fabrics, mail network…): a plain 'docker run'
   # only joins the default bridge, so they are re-attached below — the panel reaches
   # its PostgreSQL and the edge reaches the panel through them.
-  local nets n seen=" "
+  # The panel KEEPS its address on the networks whose addresses the panel fixes (platform
+  # networks, account fabrics): the filtering rules hostd restores at boot are keyed by
+  # it. Taken from the previous container (its static address, else the one Docker gave
+  # it), else from $DATA_DIR/config/panel-addresses.env (written by the panel).
+  local nets n ip seen=" " addrs="" line st dyn
   nets=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$PANEL_NAME" 2>/dev/null || true)
+  # One "network|static|dynamic" line per network (Docker 29 prints "invalid IP" for an empty static address).
+  addrs=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}|{{with $v.IPAMConfig}}{{.IPv4Address}}{{end}}|{{$v.IPAddress}}{{"\n"}}{{end}}' "$PANEL_NAME" 2>/dev/null || true)
   docker network inspect oblimint >/dev/null 2>&1 && nets="oblimint $nets"
   docker rm -f "$PANEL_NAME" >/dev/null 2>&1 || true
   docker run -d --name "$PANEL_NAME" --restart unless-stopped \
@@ -107,9 +113,37 @@ run_panel() {      # (re)create the panel container from $CONF_FILE
     case "$n" in bridge|host|none) continue ;; esac
     case "$seen" in *" $n "*) continue ;; esac
     seen="$seen$n "
+    ip=""
+    if managed_network "$n"; then
+      while IFS='|' read -r line st dyn; do
+        [ "$line" = "$n" ] || continue
+        if valid_ipv4 "$st"; then ip=$st; elif valid_ipv4 "$dyn"; then ip=$dyn; fi
+      done <<<"$addrs"
+      valid_ipv4 "$ip" || ip=$(recorded_panel_address "$n")
+      valid_ipv4 "$ip" || ip=""
+    fi
+    if [ -n "$ip" ] && docker network connect --alias oblimint-panel --ip "$ip" "$n" "$PANEL_NAME" >/dev/null 2>&1; then
+      continue
+    fi
+    [ -n "$ip" ] && warn "Adresse fixe $ip refusée sur $n (adresse occupée, ou Docker ≤ 28 avec un sous-réseau choisi par Docker) : reconnexion avec une adresse dynamique."
     docker network connect --alias oblimint-panel "$n" "$PANEL_NAME" >/dev/null 2>&1 \
       || warn "Reconnexion du panel au réseau $n impossible : docker network connect --alias oblimint-panel $n $PANEL_NAME"
   done
+}
+managed_network() {  # networks whose container addresses the panel fixes (network/addressLayout.ts)
+  case "$1" in
+    oblimint|oblimint-mail|oblimint-mail-core|oblimint-auth) return 0 ;;
+  esac
+  [[ "$1" =~ ^oblimint-acct-[0-9]+(-db)?$ ]]
+}
+valid_ipv4() { [[ "${1:-}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
+recorded_panel_address() {  # address of the panel on $1 in panel-addresses.env (written by the panel), empty when unknown
+  local f="$DATA_DIR/config/panel-addresses.env" line
+  [ -r "$f" ] || return 0
+  while IFS= read -r line; do
+    case "$line" in "$1="*) printf '%s' "${line#*=}"; return 0 ;; esac
+  done <"$f"
+  return 0
 }
 do_upgrade() {
   [ -r "$CONF_FILE" ] || die "Aucune installation trouvée ($CONF_FILE)."

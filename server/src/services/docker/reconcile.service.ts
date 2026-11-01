@@ -38,13 +38,26 @@ import { recordWorkerTick } from '../healthMonitor/workerTicks';
  * (P1–P4 behaviour): the network is still created, the migration pass of the
  * segmentation module registers it later.
  */
+let fabricOptionsOverride: ((accountId: number, which: 'front' | 'back') => Promise<NetworkCreateOptions>) | null = null;
+
+/** Test seam (unit tests without a database): the fabric creation options (null restores the allocator). */
+export function setFabricOptionsForTests(fn: ((accountId: number, which: 'front' | 'back') => Promise<NetworkCreateOptions>) | null): void {
+  fabricOptionsOverride = fn;
+}
+
+/**
+ * Options of an account fabric (subnet from the fabric pool, bridge name, dynamic range). Migration 031: no
+ * fallback to Docker's defaults any more — a subnet chosen by Docker ≤ 28 refuses the fixed container
+ * addresses; the creation fails instead (account in error, retried at every pass).
+ */
 async function fabricOptions(accountId: number, which: 'front' | 'back'): Promise<NetworkCreateOptions> {
+  if (fabricOptionsOverride) return fabricOptionsOverride(accountId, which);
+  const { fabricNetworkOptions } = await import('../network/fabric');
   try {
-    const { fabricNetworkOptions } = await import('../network/fabric');
     return await fabricNetworkOptions(accountId, which);
   } catch (err) {
-    logger.warn({ err: errText(err), accountId, which }, 'fabric network options unavailable: Docker defaults used');
-    return {};
+    logger.warn({ err: errText(err), accountId, which }, 'fabric network options unavailable: network not created (retried at the next pass)');
+    throw new Error(`Sous-réseau du réseau de compte (${which}) indisponible : ${errText(err)}`);
   }
 }
 

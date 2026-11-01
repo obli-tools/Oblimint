@@ -84,11 +84,13 @@ export interface NetworkSegmentInfo {
 export type NetworkPolicyMode = 'enforce' | 'monitor' | 'off';
 
 export interface NetworkPoolStatus {
-  name: 'fabric' | 'app';
+  name: 'fabric' | 'app' | 'platform';
   cidr: string;
   prefix: number;
   used: number;
   total: number;
+  /** The pool setting is invalid (e.g. a managed prefix longer than /26): nothing can be allocated from it. */
+  error?: string;
 }
 
 /** GET /system/network (platform admin). */
@@ -103,6 +105,43 @@ export interface NetworkSystemStatus {
   rules: number;
   /** hostd counters of dropped frames (monitor / enforce), when available. */
   dropped: number | null;
+  /** Fixed container addresses (migration 031, network/addresses.ts); null when Docker could not be read. */
+  addresses: NetworkAddressStatus | null;
+}
+
+/** Docker accepts a static IPv4 on this network? (probe / Docker ≥ 29 / subnet chosen by the panel). */
+export type NetworkStaticIpSupport = 'unknown' | 'supported' | 'refused';
+
+/**
+ * Fixed addresses of the managed networks (account fabrics + platform networks). An endpoint is
+ * "pinned" when Docker holds its allocated address as a static one (IPAMConfig): it survives reboots,
+ * restarts and recreation order, so the rules hostd persisted stay right. Unpinned endpoints keep
+ * their dynamic address until the next pinning sweep (Settings → Network, or the staff action).
+ */
+export interface NetworkAddressStatus {
+  /** Endpoints whose static address in Docker is their allocation. */
+  pinned: number;
+  /** Endpoints with a dynamic address (or a static one that is not their allocation) on a network that supports static addresses. */
+  unpinned: number;
+  /** Endpoints whose observed address is not their allocation (no flow for them on a fabric) or whose allocation is held by another container. */
+  conflicts: number;
+  /** Managed networks where Docker refuses static addresses (Docker ≤ 28 + subnet chosen by Docker): to recreate, or Docker to update. */
+  refusedNetworks: string[];
+  /** Managed networks whose support is not known yet (probe pending). */
+  unknownNetworks: string[];
+  /** Last pinning sweep (ISO) and its error, if any. */
+  lastSweepAt: string | null;
+  lastSweepError: string | null;
+  /** Settings → Network: 'auto' pins the running containers at every sweep, 'manual' only on the staff action. */
+  pinning: 'auto' | 'manual';
+}
+
+/** POST /system/network/pin */
+export interface NetworkPinResult {
+  pinned: number;
+  failed: number;
+  skipped: number;
+  status: NetworkSystemStatus;
 }
 
 export type NetworkFlowReason = 'edge' | 'panel' | 'link' | 'relay' | 'filesrv' | 'dbadmin' | 'intra';

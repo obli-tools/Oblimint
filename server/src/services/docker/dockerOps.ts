@@ -111,8 +111,87 @@ export async function removeContainer(docker: Docker, name: string): Promise<voi
   }
 }
 
+// ── fixed addresses of the managed networks (network/addresses.ts, migration 031) ──
+
+export interface EndpointAddressRequest {
+  docker: Docker;
+  network: string;
+  /** Container name (create) or reference (connect: name or id, the resolver inspects it). */
+  container: string;
+  phase: 'create' | 'connect';
+  /** connect: the container is disconnected first (reconnectWithAlias): its CURRENT address is kept when possible. */
+  reconnect?: boolean;
+}
+
+/**
+ * Decides the IPv4 a container gets on a network (network/addressResolver.ts):
+ * null = not a managed network / Docker would refuse it / an ephemeral
+ * container (Docker chooses). Throws when the address cannot be allocated
+ * (DB down, pool exhausted): the creation / connection then FAILS (retried by
+ * the caller's next pass), never silently dynamic.
+ */
+export interface EndpointAddressResolver {
+  resolve(req: EndpointAddressRequest): Promise<string | null>;
+  /** Docker refused a static address on that network (Docker ≤ 28 + subnet chosen by Docker). */
+  refused?(docker: Docker, network: string): void;
+}
+
+let addressResolver: EndpointAddressResolver | null = null;
+
+/** Registered at boot by the network module (both modes); null in the unit tests (Docker chooses). */
+export function setEndpointAddressResolver(r: EndpointAddressResolver | null): void {
+  addressResolver = r;
+}
+
+export function endpointAddressResolver(): EndpointAddressResolver | null {
+  return addressResolver;
+}
+
+/** Docker ≤ 28 refuses a static address on a network whose subnet it chose itself. */
+export function isStaticIpRefused(err: unknown): boolean {
+  return /user specified IP address is supported only|user specified IP address is supported on user defined networks only/i.test(errText(err));
+}
+
+/** The requested static address is held by another endpoint. */
+export function isAddressInUse(err: unknown): boolean {
+  return /address already in use|already allocated|Address in use/i.test(errText(err));
+}
+
+const NON_NETWORK_MODES = new Set(['', 'default', 'bridge', 'host', 'none']);
+
+/** Networks a creation spec joins (NetworkMode + EndpointsConfig keys), container:<x> / host / none excluded. */
+export function specNetworks(spec: Docker.ContainerCreateOptions): string[] {
+  const out: string[] = [];
+  const mode = String(spec.HostConfig?.NetworkMode ?? '');
+  if (!NON_NETWORK_MODES.has(mode) && !mode.startsWith('container:')) out.push(mode);
+  for (const n of Object.keys(spec.NetworkingConfig?.EndpointsConfig ?? {})) if (!out.includes(n) && !NON_NETWORK_MODES.has(n)) out.push(n);
+  return out;
+}
+
+/**
+ * `spec` with IPAMConfig.IPv4Address set on every network the resolver manages
+ * (a copy: the caller's spec — and its spec hash, computed before — is left
+ * untouched). An address already given by the caller wins.
+ */
+export async function withEndpointAddresses(docker: Docker, spec: Docker.ContainerCreateOptions): Promise<Docker.ContainerCreateOptions> {
+  const r = addressResolver;
+  if (!r || !spec.name) return spec;
+  let out: Docker.ContainerCreateOptions | null = null;
+  for (const network of specNetworks(spec)) {
+    const current = spec.NetworkingConfig?.EndpointsConfig?.[network];
+    if (current?.IPAMConfig?.IPv4Address) continue;
+    const ip = await r.resolve({ docker, network, container: spec.name, phase: 'create' });
+    if (!ip) continue;
+    out ??= { ...spec, NetworkingConfig: { ...(spec.NetworkingConfig ?? {}), EndpointsConfig: { ...(spec.NetworkingConfig?.EndpointsConfig ?? {}) } } };
+    const eps = out.NetworkingConfig!.EndpointsConfig!;
+    eps[network] = { ...(current ?? {}), IPAMConfig: { ...(current?.IPAMConfig ?? {}), IPv4Address: ip } };
+  }
+  return out ?? spec;
+}
+
 export async function createContainer(docker: Docker, spec: Docker.ContainerCreateOptions): Promise<void> {
-  await withTimeout(docker.createContainer(spec), CALL_TIMEOUT_MS, `create ${spec.name ?? spec.Image}`);
+  const prepared = await withEndpointAddresses(docker, spec);
+  await withTimeout(docker.createContainer(prepared), CALL_TIMEOUT_MS, `create ${spec.name ?? spec.Image}`);
 }
 
 /** Removes any container of that name, creates it from `spec`, starts it when asked. */
@@ -152,12 +231,19 @@ export interface NetworkCreateOptions {
   driverOptions?: Record<string, string>;
   /** Extra labels merged over `labels`. */
   labels?: Record<string, string>;
+  /** Docker's dynamic range inside `subnet` (IPAM IPRange): connections without an address stay there. */
+  ipRange?: string | null;
 }
 
 export async function createNetwork(docker: Docker, name: string, labels: Record<string, string>, opts: NetworkCreateOptions = {}): Promise<void> {
   try {
     const spec: Docker.NetworkCreateOptions = { Name: name, Driver: 'bridge', CheckDuplicate: true, Labels: { ...labels, ...(opts.labels ?? {}) } };
-    if (opts.subnet) spec.IPAM = { Driver: 'default', Config: [{ Subnet: opts.subnet, ...(opts.gateway ? { Gateway: opts.gateway } : {}) }] };
+    if (opts.subnet) {
+      spec.IPAM = {
+        Driver: 'default',
+        Config: [{ Subnet: opts.subnet, ...(opts.gateway ? { Gateway: opts.gateway } : {}), ...(opts.ipRange ? { IPRange: opts.ipRange } : {}) }],
+      };
+    }
     if (opts.bridgeName || opts.driverOptions) {
       spec.Options = { ...(opts.driverOptions ?? {}), ...(opts.bridgeName ? { 'com.docker.network.bridge.name': opts.bridgeName } : {}) };
     }
@@ -169,16 +255,55 @@ export async function createNetwork(docker: Docker, name: string, labels: Record
   }
 }
 
-/** Connects a container to a network (idempotent: "already attached" is success). */
-export async function connectNetwork(docker: Docker, network: string, container: string, aliases?: string[]): Promise<boolean> {
+export interface ConnectOptions {
+  /** Static IPv4 to request (null = none); absent = the address resolver decides. */
+  ipv4?: string | null;
+}
+
+function isAlreadyConnected(err: unknown): boolean {
+  return /already exists|already attached|endpoint with name .* already exists/i.test(errText(err));
+}
+
+async function rawConnect(docker: Docker, network: string, container: string, aliases: string[] | undefined, ipv4: string | null): Promise<void> {
+  const ep: Docker.EndpointSettings = {};
+  if (aliases?.length) ep.Aliases = aliases;
+  if (ipv4) ep.IPAMConfig = { IPv4Address: ipv4 };
+  await withTimeout(docker.getNetwork(network).connect({
+    Container: container,
+    ...(Object.keys(ep).length ? { EndpointConfig: ep } : {}),
+  }), CALL_TIMEOUT_MS, `connect ${container} to ${network}`);
+}
+
+/**
+ * Connects a container to a network (idempotent: "already attached" is
+ * success). On a managed network the resolver's address is requested; when
+ * Docker refuses static addresses there (Docker ≤ 28, subnet chosen by
+ * Docker) the connection is retried without one (the network is reported).
+ */
+export async function connectNetwork(docker: Docker, network: string, container: string, aliases?: string[], opts: ConnectOptions = {}): Promise<boolean> {
+  const ipv4 = opts.ipv4 !== undefined ? opts.ipv4 : addressResolver ? await addressResolver.resolve({ docker, network, container, phase: 'connect' }) : null;
   try {
-    await withTimeout(docker.getNetwork(network).connect({
-      Container: container,
-      ...(aliases?.length ? { EndpointConfig: { Aliases: aliases } } : {}),
-    }), CALL_TIMEOUT_MS, `connect ${container} to ${network}`);
+    await rawConnect(docker, network, container, aliases, ipv4);
     return true;
   } catch (err) {
-    if (/already exists|already attached|endpoint with name .* already exists/i.test(errText(err))) return false;
+    if (isAlreadyConnected(err)) return false;
+    if (ipv4 && isStaticIpRefused(err)) {
+      addressResolver?.refused?.(docker, network);
+      logger.warn({ network, container, ip: ipv4 }, `Docker refuses static addresses on ${network}: ${container} connected with a dynamic one`);
+      try {
+        await rawConnect(docker, network, container, aliases, null);
+        return true;
+      } catch (err2) {
+        if (isAlreadyConnected(err2)) return false;
+        throw err2;
+      }
+    }
+    if (ipv4 && isAddressInUse(err)) {
+      throw Object.assign(
+        new Error(`L'adresse ${ipv4} attribuée à ${container} sur ${network} est occupée par un autre conteneur (conflit d'adresse : Système → Réseau)`),
+        { statusCode: 409 },
+      );
+    }
     throw err;
   }
 }
@@ -231,9 +356,20 @@ export function endpointHasAlias(endpoint: { Aliases?: string[] | null; DNSNames
 export interface ReconnectOptions {
   /** Base delay between connect retries (ms, multiplied by the attempt number). */
   retryDelayMs?: number;
+  /** Static IPv4 to request (null = none); absent = the address resolver decides. */
+  ipv4?: string | null;
 }
 
 const RECONNECT_ATTEMPTS = 3;
+
+/** IPv4 a container has on a network now: its static one (IPAMConfig), else the one it runs with. Null when none. */
+export async function currentEndpointIpv4(docker: Docker, network: string, container: string): Promise<string | null> {
+  const info = await inspectContainer(docker, container);
+  const ep = info?.NetworkSettings?.Networks?.[network] as { IPAMConfig?: { IPv4Address?: string } | null; IPAddress?: string } | undefined;
+  if (!ep) return null;
+  const pick = (v: string | undefined | null) => (v && /^\d{1,3}(\.\d{1,3}){3}$/.test(v.split('/')[0]) ? v.split('/')[0] : null);
+  return pick(ep.IPAMConfig?.IPv4Address) ?? (info?.State?.Running ? pick(ep.IPAddress) : null);
+}
 
 /**
  * Disconnect + reconnect with `aliases`, never leaving the container
@@ -246,26 +382,52 @@ export async function reconnectWithAlias(
   docker: Docker, network: string, container: string, aliases: string[], log: Log, opts: ReconnectOptions = {},
 ): Promise<void> {
   const delay = opts.retryDelayMs ?? 1_000;
+  // The address is resolved BEFORE the disconnection (the resolver may need the DB / Docker).
+  let ipv4: string | null = null;
+  if (opts.ipv4 !== undefined) ipv4 = opts.ipv4;
+  else if (addressResolver) {
+    try {
+      ipv4 = await addressResolver.resolve({ docker, network, container, phase: 'connect', reconnect: true });
+    } catch (err) {
+      // Resolver down (DB, Docker timeout): the endpoint keeps the address it has now — its static one, else the
+      // one it runs with. Reconnecting it dynamic would move it away from the address the rules in force name.
+      ipv4 = await currentEndpointIpv4(docker, network, container).catch(() => null);
+      log(`no fixed address for ${container} on ${network} (${errText(err)}): ${ipv4 ? `current address ${ipv4} kept` : 'reconnected with a dynamic one'}`);
+    }
+  }
   await disconnectNetwork(docker, network, container);
   let lastErr: unknown;
   for (let attempt = 1; attempt <= RECONNECT_ATTEMPTS; attempt++) {
     try {
-      await connectNetwork(docker, network, container, aliases);
+      await connectNetwork(docker, network, container, aliases, { ipv4 });
       return;
     } catch (err) {
       lastErr = err;
-      log(`reconnect ${container} to ${network} (alias ${aliases.join(',')}) failed, attempt ${attempt}/${RECONNECT_ATTEMPTS}: ${errText(err)}`);
+      log(`reconnect ${container} to ${network} (alias ${aliases.join(',')}${ipv4 ? `, address ${ipv4}` : ''}) failed, attempt ${attempt}/${RECONNECT_ATTEMPTS}: ${errText(err)}`);
       if (attempt < RECONNECT_ATTEMPTS && delay > 0) await new Promise((r) => setTimeout(r, delay * attempt));
     }
   }
-  try {
-    await connectNetwork(docker, network, container);
-    logger.error({ network, container, err: errText(lastErr) }, `${container} reconnected to ${network} WITHOUT the alias ${aliases.join(',')}: the alias will be retried at the next boot / pass`);
-    log(`${container} reconnected to ${network} without the alias (fallback)`);
-  } catch (err) {
-    logger.fatal({ network, container, err: errText(err) }, `${container} is DETACHED from ${network}: run \`docker network connect --alias ${aliases[0] ?? ''} ${network} ${container}\` by hand`);
-    log(`${container} could not be reconnected to ${network}: ${errText(err)}`);
+  // Fallbacks, never detached: the address without the alias, then neither.
+  const fallbacks: Array<{ ipv4: string | null; what: string }> = [
+    ...(ipv4 ? [{ ipv4, what: `WITHOUT the alias ${aliases.join(',')} (address ${ipv4} kept)` }] : []),
+    { ipv4: null, what: `WITHOUT the alias ${aliases.join(',')}${ipv4 ? ' nor its fixed address' : ''}` },
+  ];
+  for (const fb of fallbacks) {
+    let connected = false;
+    try {
+      await connectNetwork(docker, network, container, undefined, { ipv4: fb.ipv4 });
+      connected = true;
+    } catch (err) {
+      log(`fallback reconnection of ${container} to ${network} failed: ${errText(err)}`);
+    }
+    if (connected) {
+      logger.error({ network, container, err: errText(lastErr) }, `${container} reconnected to ${network} ${fb.what}: retried at the next boot / pass`);
+      log(`${container} reconnected to ${network} ${fb.what} (fallback)`);
+      throw lastErr;
+    }
   }
+  logger.fatal({ network, container }, `${container} is DETACHED from ${network}: run \`docker network connect --alias ${aliases[0] ?? ''} ${network} ${container}\` by hand`);
+  log(`${container} could not be reconnected to ${network}`);
   throw lastErr;
 }
 
@@ -296,4 +458,69 @@ export async function attachWithAlias(
   await connectNetwork(docker, network, container, [alias]);
   log(`${cleanName(info?.Name) || container} connected to ${network} (alias ${alias})`);
   return 'connected';
+}
+
+/** Aliases worth keeping on an endpoint: not the container id / name Docker adds by itself. */
+export function userAliases(aliases: readonly string[] | null | undefined, id: string, name: string): string[] {
+  const shortId = id.slice(0, 12);
+  return [...new Set((aliases ?? []).filter((a) => a && a !== shortId && !id.startsWith(a) && a !== name))];
+}
+
+export type PinOutcome = 'already' | 'pinned' | 'connected';
+
+/**
+ * Gives a container the static address `ip` on `network` without recreating
+ * it: disconnect, then connect with IPAMConfig (≈ 250 ms blip on a running
+ * container, its TCP connections survive; nothing for a stopped one). The
+ * aliases are read from the endpoint (or given). Never leaves the container
+ * detached: when the static connect keeps failing (3 attempts; at once when
+ * Docker refuses static addresses or the address is taken) it is reconnected
+ * WITHOUT the address (Docker ≤ 28 leaves a refused connect detached), then
+ * the error is thrown.
+ */
+export async function pinEndpoint(
+  docker: Docker, network: string, container: string, ip: string, opts: { aliases?: string[]; retryDelayMs?: number; log?: Log } = {},
+): Promise<PinOutcome> {
+  const log = opts.log ?? (() => undefined);
+  const info = await inspectContainer(docker, container);
+  if (!info) throw Object.assign(new Error(`No such container: ${container}`), { statusCode: 404 });
+  const name = cleanName(info.Name) || container;
+  const ep = info.NetworkSettings?.Networks?.[network] as { Aliases?: string[] | null; IPAMConfig?: { IPv4Address?: string } | null } | undefined;
+  if (ep?.IPAMConfig?.IPv4Address === ip) return 'already';
+  const aliases = opts.aliases ?? userAliases(ep?.Aliases, info.Id, name);
+  const delay = opts.retryDelayMs ?? 500;
+  if (ep) await disconnectNetwork(docker, network, info.Id);
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= RECONNECT_ATTEMPTS; attempt++) {
+    try {
+      await rawConnect(docker, network, info.Id, aliases, ip);
+      log(`${name} pinned to ${ip} on ${network}`);
+      return ep ? 'pinned' : 'connected';
+    } catch (err) {
+      // Raced with another connection: the next sweep checks which address it holds.
+      if (isAlreadyConnected(err)) return 'connected';
+      lastErr = err;
+      log(`pin ${name} to ${ip} on ${network} failed, attempt ${attempt}/${RECONNECT_ATTEMPTS}: ${errText(err)}`);
+      if (isStaticIpRefused(err)) { addressResolver?.refused?.(docker, network); break; }
+      if (isAddressInUse(err)) break;
+      if (attempt < RECONNECT_ATTEMPTS && delay > 0) await new Promise((r) => setTimeout(r, delay * attempt));
+    }
+  }
+  if (ep) {
+    for (const a of [aliases, undefined]) {
+      let connected = false;
+      try {
+        await rawConnect(docker, network, info.Id, a, null);
+        connected = true;
+      } catch (err) {
+        if (isAlreadyConnected(err)) connected = true;
+      }
+      if (connected) {
+        logger.warn({ network, container: name, ip, err: errText(lastErr) }, `${name} reconnected to ${network} WITHOUT its fixed address ${ip}`);
+        throw lastErr;
+      }
+    }
+    logger.fatal({ network, container: name }, `${name} is DETACHED from ${network}: run \`docker network connect ${network} ${name}\` by hand`);
+  }
+  throw lastErr;
 }

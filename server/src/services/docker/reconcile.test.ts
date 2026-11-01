@@ -38,6 +38,8 @@ const fakeHostd = {
 
 before(async () => {
   mod = await import('./reconcile.service');
+  // No database here: fabrics get explicit options (migration 031: no fallback to Docker's defaults in the service).
+  mod.setFabricOptionsForTests(async (accountId, which) => ({ subnet: `10.224.${accountId}.${which === 'front' ? 0 : 128}/25` }));
   FakeDockerCls = (await import('./testing/fakeDocker')).FakeDocker;
   setBackends = (await import('./backends')).setBackendsForTests;
   setBackends({

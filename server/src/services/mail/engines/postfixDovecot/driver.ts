@@ -181,7 +181,8 @@ async function isRunning(docker: Docker, name: string): Promise<boolean> {
 export async function ensureCoreNetwork(docker: Docker, log: Log): Promise<void> {
   const existing = await inspectNetwork(docker, MAIL_CORE_NETWORK);
   if (!existing) {
-    await createNetwork(docker, MAIL_CORE_NETWORK, { [LABELS.internal]: 'true', 'oblimint.mail-engine': ENGINE });
+    const { platformNetworkOptions } = await import('../../../network/platformNet');
+    await createNetwork(docker, MAIL_CORE_NETWORK, { [LABELS.internal]: 'true', 'oblimint.mail-engine': ENGINE }, await platformNetworkOptions(MAIL_CORE_NETWORK, docker));
     log(`Network ${MAIL_CORE_NETWORK} created`);
   } else if (existing.Labels?.[LABELS.account] !== undefined) {
     throw new MailDriverError('invalidState', `Network ${MAIL_CORE_NETWORK} carries the ${LABELS.account} label: remove it by hand (docker network rm ${MAIL_CORE_NETWORK})`);
