@@ -421,8 +421,11 @@ export async function issueCertificate(params: IssueParams, deps: IssueDeps): Pr
   const certKey = deps.createCertificateKey ? await deps.createCertificateKey() : await acme.crypto.createPrivateEcdsaKey('P-256');
   const [, csr] = await acme.crypto.createCsr({ commonName: primaryName, altNames: names }, certKey);
   await log('info', 'All challenges validated — finalizing the order');
-  await call(client.finalizeOrder(order, csr), 'finalizeOrder');
-  const fullchain = await call(client.getCertificate(order), 'getCertificate');
+  // The order returned by finalize carries the certificate URL. An order whose
+  // authorizations were all still valid was created 'ready': passing that stale
+  // object to getCertificate skips its wait and fails with "URL not found".
+  const finalized = await call(client.finalizeOrder(order, csr), 'finalizeOrder');
+  const fullchain = await call(client.getCertificate(finalized), 'getCertificate');
 
   // Sanity checks before installing: parsable, matches our key, covers the names.
   const leaf = new X509Certificate(firstCertificate(fullchain));

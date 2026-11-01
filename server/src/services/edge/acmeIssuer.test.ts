@@ -225,6 +225,34 @@ test('a certificate that does not match the key or the names is refused', async 
   assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'mine.example.net')), false);
 });
 
+test('authorizations already valid: the certificate is downloaded from the order returned by finalize', async (t) => {
+  const root = tempRoot(t);
+  const mine = makeCert(['again.example.net'], 90);
+  // Like acme-client: the stale 'ready' order has no certificate URL, only the finalized one does.
+  const factory: AcmeClientFactory = () => ({
+    async createAccount() { return {}; },
+    async createOrder() { return { url: 'o', status: 'ready', finalize: 'f' } as unknown as acme.Order; },
+    async getAuthorizations() {
+      return [{ url: 'a', status: 'valid', identifier: { type: 'dns', value: 'again.example.net' }, challenges: [] }] as unknown as acme.Authorization[];
+    },
+    async getChallengeKeyAuthorization() { throw new Error('no challenge to solve'); },
+    async completeChallenge() { throw new Error('no challenge to solve'); },
+    async waitForValidStatus(item) { return item; },
+    async finalizeOrder(o) { return { ...o, status: 'valid', certificate: 'cert-url' } as acme.Order; },
+    async getCertificate(o) {
+      if (!o.certificate) throw new Error('Unable to download certificate, URL not found');
+      return mine.cert;
+    },
+  });
+  const deps: IssueDeps = {
+    edgeDir: path.join(root, 'edge'), acmeWebroot: path.join(root, 'edge', 'acme'), certsDir: path.join(root, 'edge', 'certs'),
+    createClient: factory, createCertificateKey: async () => mine.key, log: () => {},
+  };
+  const issued = await issueCertificate({ names: ['again.example.net'], email: 'ops@example.com', directory: 'production' }, deps);
+  assert.equal(issued.primaryName, 'again.example.net');
+  assert.equal(fs.existsSync(path.join(root, 'edge', 'certs', 'again.example.net', 'fullchain.pem')), true);
+});
+
 test('every ACME call is bounded: a hung request times out, an aborted issuance installs nothing', async (t) => {
   const root = tempRoot(t);
   const deps = (factory: AcmeClientFactory, extra: Partial<IssueDeps> = {}): IssueDeps => ({
