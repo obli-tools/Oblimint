@@ -9,8 +9,8 @@ export const ACCOUNT_TABS: readonly AccountTab[] = ['overview', 'sites', 'apps',
 export type AccountAccessSection = 'users' | 'keys' | 'firewall';
 
 /** Tabs of /sites/:id (SiteDetailPage) — coherence plan 1.3. */
-export type SiteTab = 'overview' | 'releases' | 'domains' | 'runtime' | 'config' | 'files' | 'cron' | 'logs' | 'maintenance';
-export const SITE_TABS: readonly SiteTab[] = ['overview', 'releases', 'domains', 'runtime', 'config', 'files', 'cron', 'logs', 'maintenance'];
+export type SiteTab = 'overview' | 'releases' | 'domains' | 'databases' | 'runtime' | 'config' | 'files' | 'cron' | 'logs' | 'maintenance';
+export const SITE_TABS: readonly SiteTab[] = ['overview', 'releases', 'domains', 'databases', 'runtime', 'config', 'files', 'cron', 'logs', 'maintenance'];
 
 type Extra = Record<string, string | number | null | undefined>;
 

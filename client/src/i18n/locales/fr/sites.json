@@ -495,7 +495,8 @@
       "maintenance": "Maintenance & accès",
       "releasesRestore": "Releases & restauration",
       "runtimePhp": "Moteur & PHP",
-      "cron": "Cron"
+      "cron": "Cron",
+      "databases": "Bases de données"
     },
     "title": "Sites",
     "count": "{{count}} site(s)",

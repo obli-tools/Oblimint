@@ -1,7 +1,8 @@
 import apiClient from './client';
 import type {
-  ApiResponse, DbAdminSession, DbCatalog, DbDatabase, DbDatabaseCreate, DbInstance, DbInstanceCreate, DbInstanceDetail,
-  DbInstanceUpdate, DbPasswordResult, DbUser, DbUserCreate, DbUserUpdate,
+  ApiResponse, DbAdminSession, DbAttachmentResult, DbCatalog, DbDatabase, DbDatabaseCreate, DbDatabaseListItem, DbInstance,
+  DbInstanceCreate, DbInstanceDetail, DbInstanceUpdate, DbPasswordResult, DbSetOwnerRequest, DbShareRequest, DbUser, DbUserCreate,
+  DbUserUpdate, SiteDatabase, SiteDatabaseCreate,
 } from '@oblimint/shared';
 
 // /api/databases — docs/P2-PLAN.md §6.3. OWNED BY MODULE `ui-dns-db`
@@ -77,6 +78,37 @@ export const databasesApi = {
       timeout: 0,
       onUploadProgress: (e) => { if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100)); },
     });
+  },
+
+  // ── databases ↔ sites (migration 030: one optional owner site, shared with 0..N others) ──
+  /** Every database the caller reads, with its owner site and shared sites (siteId: owned by / shared with that site). */
+  async listDatabases(params: { accountId?: number; siteId?: number; tenantId?: number } = {}): Promise<DbDatabaseListItem[]> {
+    const res = await apiClient.get<ApiResponse<DbDatabaseListItem[]>>('/databases/databases', { params });
+    return res.data.data ?? [];
+  },
+  /** The databases of a site: owned, then shared with it. */
+  async siteDatabases(siteId: number): Promise<SiteDatabase[]> {
+    const res = await apiClient.get<ApiResponse<SiteDatabase[]>>(`/databases/sites/${siteId}/databases`);
+    return res.data.data ?? [];
+  },
+  /** A new database owned by the site, on the account's default instance of `family` (409 noDefaultInstance). */
+  async createSiteDatabase(siteId: number, data: SiteDatabaseCreate): Promise<SiteDatabase> {
+    const res = await apiClient.post<ApiResponse<SiteDatabase>>(`/databases/sites/${siteId}/databases`, data);
+    return res.data.data!;
+  },
+  /** siteId null = shared across the account again (the previous owner stays attached as shared). */
+  async setOwner(id: number, dbId: number, data: DbSetOwnerRequest): Promise<DbAttachmentResult> {
+    const res = await apiClient.put<ApiResponse<DbAttachmentResult>>(`/databases/instances/${id}/databases/${dbId}/owner`, data);
+    return res.data.data!;
+  },
+  async share(id: number, dbId: number, data: DbShareRequest): Promise<DbAttachmentResult> {
+    const res = await apiClient.post<ApiResponse<DbAttachmentResult>>(`/databases/instances/${id}/databases/${dbId}/shares`, data);
+    return res.data.data!;
+  },
+  /** Detaches the database from a site (owner or shared); the SQL rights stay as they are. */
+  async detach(id: number, dbId: number, siteId: number): Promise<DbAttachmentResult> {
+    const res = await apiClient.delete<ApiResponse<DbAttachmentResult>>(`/databases/instances/${id}/databases/${dbId}/sites/${siteId}`);
+    return res.data.data!;
   },
 
   // ── users ──

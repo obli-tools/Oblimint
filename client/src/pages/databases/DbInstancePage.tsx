@@ -14,7 +14,8 @@ import { PageContainer } from '@/components/common/PageContainer';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { Tip } from '@/components/common/Tip';
 import { useConfirm } from '@/components/common/ConfirmDialog';
-import { apiErrorCode, payloadNumber, useHostingEvents } from '@/components/hosting/hostingUi';
+import { payloadNumber, useHostingEvents } from '@/components/hosting/hostingUi';
+import { openDbAdmin } from '@/components/databases/dbAdmin';
 import { formatMb } from '@/components/hosting/hostingFormat';
 import { DbDefaultBadge, DbEngineBadge, DbStatusBadge } from '@/components/databases/DbBadges';
 import { DbConnectionCard, DbExternalCard, DbSettingsCard } from '@/components/databases/DbInstanceCards';
@@ -119,34 +120,9 @@ export function DbInstancePage() {
   };
 
   const openAdmin = async (databaseId?: number) => {
-    // Open the tab synchronously, while the click's user activation is still
-    // valid: after the await, popup blockers would silently drop window.open
-    // (and the single-use 60 s token would be wasted).
-    const w = window.open('', '_blank');
-    if (w) w.opener = null;
     setBusy('admin');
     try {
-      const s = await databasesApi.openAdminSession(inst.id, databaseId ?? null);
-      if (w && !w.closed) {
-        w.location.href = s.url;
-      } else {
-        // Popup blocked: offer the link (the user's own click opens it).
-        toast((tt) => (
-          <span className="text-sm">
-            {t('databases.admin.popupBlocked') || 'Your browser blocked the new tab.'}{' '}
-            <a href={s.url} target="_blank" rel="noopener noreferrer" className="font-medium text-accent underline" onClick={() => toast.dismiss(tt.id)}>
-              {t('databases.admin.openLink') || 'Open the admin UI'}
-            </a>
-          </span>
-        ), { duration: 30_000 });
-      }
-    } catch (err) {
-      if (w && !w.closed) w.close();
-      if (apiErrorCode(err) === 'dbAdminUnavailable') {
-        toast.error(t('databases.admin.unavailableHint') || 'The database admin UI is not available: a platform administrator must set its host name (Settings → DB admin) and start it.', { duration: 8000 });
-      } else {
-        toastDbError(t, err, t('databases.admin.failed') || 'Failed to open the admin UI');
-      }
+      await openDbAdmin(t, inst.id, databaseId ?? null);
     } finally {
       setBusy(null);
     }

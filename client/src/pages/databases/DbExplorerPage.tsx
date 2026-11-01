@@ -19,6 +19,7 @@ import { SqlConsole } from '@/components/databases/explorer/SqlConsole';
 import { ObjectsPanel, OverviewPanel, SearchPanel } from '@/components/databases/explorer/DatabasePanels';
 import { ExportModal, ImportModal } from '@/components/databases/explorer/TransferDialogs';
 import { qIdent } from '@/components/databases/explorer/sqlIdent';
+import { DbSitesCell } from '@/components/databases/DbSiteBadges';
 import { cn } from '@/utils/cn';
 
 type Tab = 'data' | 'structure' | 'sql';
@@ -106,6 +107,8 @@ export function DbExplorerPage() {
 
   const family: DbFamily = instance?.family ?? (info?.engine === 'postgresql' ? 'postgresql' : 'mysql');
   const selected = tables?.find((x) => x.id === tableId) ?? null;
+  // Owner site / shared sites of this database (migration 030), shown in the header.
+  const current = instance?.databases.find((d) => d.id === dbId) ?? null;
   const initialSql = selected ? `SELECT * FROM ${qIdent(family, selected)} LIMIT 100;` : '';
   const tabs: SegmentedTab<Tab>[] = [
     { id: 'data', label: t('dbx.tabs.data') || 'Data', icon: <Rows3 size={15} /> },
@@ -128,7 +131,10 @@ export function DbExplorerPage() {
         <IconButton label={t('common.back') || 'Back'} icon={<ArrowLeft className="h-5 w-5" />} onClick={() => navigate(`/databases/${instanceId}`)} />
         <Database className="h-6 w-6 text-accent" />
         <div className="min-w-0">
-          <h1 className="font-display text-2xl font-semibold leading-tight text-text-primary">{info?.database ?? '…'}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-2xl font-semibold leading-tight text-text-primary">{info?.database ?? '…'}</h1>
+            {current && <DbSitesCell ownerSite={current.ownerSite} sharedSites={current.sharedSites} />}
+          </div>
           <div className="font-mono text-[11px] text-text-muted">
             {instance && <Link to={`/databases/${instanceId}`} className="hover:text-accent">{instance.name}</Link>}
             {info && ` · ${info.engine}${info.version ? ` ${info.version}` : ''} · ${t('dbx.sessionUser', { user: info.user, defaultValue: 'session {{user}}' })}`}

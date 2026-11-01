@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  CalendarClock, Cpu, DoorOpen, Eye, FolderOpen, Globe, History, LayoutDashboard, Play, Rocket, ScrollText, Settings2,
+  CalendarClock, Cpu, Database, DoorOpen, Eye, FolderOpen, Globe, History, LayoutDashboard, Play, Rocket, ScrollText, Settings2,
   Square, Trash2, ExternalLink, Wrench,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -28,6 +28,7 @@ import { SiteRuntimeTab } from '@/components/sites/tabs/SiteRuntimeTab';
 import { SiteRoutesTab } from '@/components/sites/tabs/SiteRoutesTab';
 import { SiteConfigTab } from '@/components/sites/tabs/SiteConfigTab';
 import { SiteFilesTab } from '@/components/sites/tabs/SiteFilesTab';
+import { SiteDatabasesTab } from '@/components/sites/tabs/SiteDatabasesTab';
 import { SiteMonitorsCard } from '@/components/sites/tabs/SiteMonitorsCard';
 import { SiteSettingsCard, siteHasPhp } from '@/components/sites/SiteSettingsCard';
 import { SiteCronTab } from '@/components/cron/SiteCronTab';
@@ -207,11 +208,12 @@ export function SiteDetailPage() {
     }
   };
 
-  // Coherence plan 1.3: the site page is self-sufficient, in 9 tabs.
+  // Coherence plan 1.3: the site page is self-sufficient, in 10 tabs (Databases: migration 030).
   const tabs: SegmentedTab<Tab>[] = [
     { id: 'overview', label: t('sites.tabs.overview') || 'Overview', icon: <LayoutDashboard size={16} /> },
     { id: 'releases', label: t('sites.tabs.releasesRestore') || 'Releases & restore', icon: <History size={16} /> },
     { id: 'domains', label: t('sites.tabs.domains') || 'Domains', icon: <Globe size={16} /> },
+    { id: 'databases', label: t('sites.tabs.databases') || 'Databases', icon: <Database size={16} /> },
     { id: 'runtime', label: t('sites.tabs.runtimePhp') || 'Runtime & PHP', icon: <Cpu size={16} /> },
     { id: 'config', label: t('sites.tabs.config') || 'Configuration', icon: <Settings2 size={16} /> },
     { id: 'files', label: t('sites.tabs.files') || 'Files', icon: <FolderOpen size={16} /> },
@@ -318,6 +320,7 @@ export function SiteDetailPage() {
         </div>
       )}
       {tab === 'domains' && <SiteRoutesTab {...tabProps} />}
+      {tab === 'databases' && <SiteDatabasesTab {...tabProps} />}
       {tab === 'runtime' && (
         <div className="space-y-4">
           <SiteRuntimeTab

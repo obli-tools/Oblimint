@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, Clock, Cpu, Eye, FolderUp, Globe, History, ListChecks, RefreshCw, Rocket, ScanSearch, Timer, Wand2 } from 'lucide-react';
+import { AlertTriangle, Check, Clock, Cpu, Database, Eye, FolderUp, Globe, History, ListChecks, RefreshCw, Rocket, ScanSearch, Timer, Wand2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TFunction } from 'i18next';
 import {
@@ -175,7 +175,7 @@ function LaunchCard({ site, onPublish, onGoTo, staging }: SiteTabProps & { onGoT
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <MiniStat
           icon={<History size={15} />}
           label={t('sites.tabs.releases') || 'Releases'}
@@ -191,6 +191,19 @@ function LaunchCard({ site, onPublish, onGoTo, staging }: SiteTabProps & { onGoT
           sub={unverified ? (t('objectPage.toVerify') || 'to verify') : undefined}
           tone={unverified ? 'amber' : undefined}
           onClick={() => onGoTo('domains')}
+        />
+        <MiniStat
+          icon={<Database size={15} />}
+          label={t('sites.tabs.databases') || 'Databases'}
+          value={site.databases ? site.databases.length : null}
+          sub={site.databases && site.databases.length > 0
+            ? t('databases.sites.ownedShared', {
+              owned: site.databases.filter((d) => d.role === 'owner').length,
+              shared: site.databases.filter((d) => d.role !== 'owner').length,
+              defaultValue: '{{owned}} owned · {{shared}} shared',
+            })
+            : undefined}
+          onClick={() => onGoTo('databases')}
         />
       </div>
 

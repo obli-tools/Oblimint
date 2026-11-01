@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { Database, Download, ExternalLink, Plus, Table2, Trash2, Upload } from 'lucide-react';
+import { Database, Download, ExternalLink, Link2, Plus, Table2, Trash2, Upload } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { DbDatabase, DbInstanceDetail } from '@oblimint/shared';
+import type { DbDatabase, DbInstanceDetail, Site } from '@oblimint/shared';
 import { databasesApi } from '@/api/databases.api';
+import { sitesApi } from '@/api/sites.api';
 import { ActionMenu } from '@/components/common/ActionMenu';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
@@ -15,6 +16,9 @@ import { downloadUrl, saveBlob } from '@/utils/download';
 import { canUseNative } from '@/native/bridge';
 import { cn } from '@/utils/cn';
 import { DB_NAME_RE, DB_RESTORE_MAX_BYTES, dbErrorMessage, formatBytes, isReservedDbName, toastDbError } from './dbFormat';
+import { DbSitesCell } from './DbSiteBadges';
+import { siteSortKey } from './dbSites';
+import { DbSiteAttachModal, type AttachTarget } from './DbSiteAttachModal';
 
 const MYSQL_CHARSETS = ['utf8mb4', 'utf8mb3', 'latin1', 'ascii'];
 const MYSQL_COLLATIONS = ['utf8mb4_unicode_ci', 'utf8mb4_general_ci', 'utf8mb4_unicode_520_ci', 'utf8mb4_0900_ai_ci', 'utf8mb4_bin'];
@@ -34,7 +38,16 @@ function DbCreateModal({ open, instance, onClose, onCreated }: {
   const [collation, setCollation] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { if (open) { setName(''); setCharset(''); setCollation(''); setError(null); } }, [open]);
+  // Owner site (migration 030): none = shared across the account.
+  const [sites, setSites] = useState<Site[] | null>(null);
+  const [siteId, setSiteId] = useState<number | null>(null);
+  useEffect(() => { if (open) { setName(''); setCharset(''); setCollation(''); setError(null); setSiteId(null); } }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    sitesApi.list({ accountId: instance.accountId }).then((l) => { if (live) setSites(l); }).catch(() => { if (live) setSites([]); });
+    return () => { live = false; };
+  }, [open, instance.accountId]);
 
   // PostgreSQL folds unquoted names to lower case: the server stores them lower-cased.
   const effective = pg ? name.toLowerCase() : name;
@@ -45,7 +58,7 @@ function DbCreateModal({ open, instance, onClose, onCreated }: {
     setSaving(true);
     setError(null);
     try {
-      onCreated(await databasesApi.createDatabase(instance.id, { name: effective, charset: charset.trim() || null, collation: collation.trim() || null }));
+      onCreated(await databasesApi.createDatabase(instance.id, { name: effective, charset: charset.trim() || null, collation: collation.trim() || null, siteId }));
     } catch (err) {
       if (isStepUpHandled(err)) return;
       setError(dbErrorMessage(t, err, t('databases.db.createFailed') || 'Failed to create the database'));
@@ -100,6 +113,20 @@ function DbCreateModal({ open, instance, onClose, onCreated }: {
             <datalist id="db-collations">{(pg ? PG_COLLATIONS : MYSQL_COLLATIONS).map((c) => <option key={c} value={c} />)}</datalist>
           </div>
         </div>
+        {sites && sites.length > 0 && (
+          <div>
+            <label className={labelCls} htmlFor="db-site">{t('databases.sites.ownerSite') || 'Owner site'}</label>
+            <select id="db-site" value={siteId ?? ''} onChange={(e) => setSiteId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+              <option value="">{t('databases.sites.noOwnerOption') || 'None — shared across the account'}</option>
+              {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <p className="mt-1 text-[11px] text-text-muted">
+              {siteId
+                ? (t('databases.sites.ownerSiteHint') || 'The database belongs to this site; it can be shared with other sites later.')
+                : (t('databases.sites.accountWideHint') || 'No owner site: the database is shared across the account, every site of the account reaches its server.')}
+            </p>
+          </div>
+        )}
         {error && <p className="whitespace-pre-line text-xs text-status-down">{error}</p>}
       </div>
     </Modal>
@@ -152,6 +179,7 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
   const navigate = useNavigate();
   const confirm = useConfirm();
   const [creating, setCreating] = useState(false);
+  const [attaching, setAttaching] = useState<AttachTarget | null>(null);
   const [job, setJob] = useState<{ db: DbDatabase; file: File; pct: number; phase: 'upload' | 'import' | 'done' | 'error'; error: string | null } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const restoreTarget = useRef<DbDatabase | null>(null);
@@ -248,6 +276,13 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
         { key: 'admin', icon: <ExternalLink className="h-4 w-4" />, label: instance.adminUi === 'phpmyadmin' ? (t('databases.admin.openPma') || 'Open in phpMyAdmin') : (t('databases.admin.openAdminer') || 'Open in Adminer'), onClick: () => onOpenAdmin?.(d.id), hidden: !manage || !onOpenAdmin || !instance.adminUiAvailable || !running },
         { key: 'dump', icon: <Download className="h-4 w-4" />, label: t('databases.db.dump') || 'Download a dump', onClick: () => { void dump(d); }, hidden: !manage, disabled: !running || dumping !== null },
         { key: 'restore', icon: <Upload className="h-4 w-4" />, label: t('databases.restore.title') || 'Restore a dump', onClick: () => pickRestore(d), hidden: !manage, disabled: !running },
+        {
+          key: 'attach', icon: <Link2 className="h-4 w-4" />, label: t('databases.sites.attachAction') || 'Attach / share with a site…', hidden: !manage, separator: true,
+          onClick: () => setAttaching({ kind: 'database', database: {
+            id: d.id, name: d.name, instanceId: instance.id, accountId: instance.accountId, instanceRunning: running,
+            ownerSite: d.ownerSite ?? null, sharedSites: d.sharedSites ?? [],
+          } }),
+        },
         { key: 'delete', icon: <Trash2 className="h-4 w-4" />, label: t('databases.db.delete') || 'Delete the database', onClick: () => { void remove(d); }, danger: true, separator: true, hidden: !manage },
       ]}
     />
@@ -277,7 +312,7 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
         <GroupedTable<DbDatabase>
           singleGroupFlat
           className="bg-bg-primary"
-          minWidth={640}
+          minWidth={780}
           defaultSort={{ column: 'name' }}
           groups={[{ key: 'databases', label: '', sortLabel: '', nodes: flatNodes(instance.databases, (d) => d.id) }]}
           renderCard={(d) => (
@@ -289,6 +324,7 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
                   {d.charset && <span className="font-mono">{d.charset}</span>}
                   {d.collation && <span className="font-mono">{d.collation}</span>}
                 </div>
+                <DbSitesCell ownerSite={d.ownerSite} sharedSites={d.sharedSites} className="mt-1.5" />
               </div>
               {actions(d)}
             </div>
@@ -297,6 +333,12 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
             { id: 'name', header: t('databases.name') || 'Name', tdClassName: 'font-mono text-text-primary', sort: (d) => d.name, cell: (d) => (manage && running
               ? <Link to={`/databases/${instance.id}/explorer/${d.id}`} className="hover:text-accent hover:underline" title={t('dbx.open') || 'Explore (tables, data, SQL)'}>{d.name}</Link>
               : d.name) },
+            {
+              id: 'sites', header: t('databases.sites.column') || 'Site(s)',
+              // Owned first (by site name), then the account-wide ones.
+              sort: siteSortKey,
+              cell: (d) => <DbSitesCell ownerSite={d.ownerSite} sharedSites={d.sharedSites} />,
+            },
             { id: 'charset', header: t('databases.db.charset') || 'Character set', tdClassName: 'font-mono text-xs text-text-secondary', sort: (d) => d.charset ?? '', cell: (d) => d.charset ?? '—' },
             { id: 'collation', header: t('databases.db.collation') || 'Collation', tdClassName: 'font-mono text-xs text-text-secondary', sort: (d) => d.collation ?? '', cell: (d) => d.collation ?? '—' },
             { id: 'size', header: t('databases.col.size') || 'Size', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs tabular-nums', sort: (d) => d.sizeBytes ?? null, cell: (d) => formatBytes(t, d.sizeBytes) },
@@ -316,6 +358,13 @@ export function DbDatabasesCard({ instance, manage, onChanged, onOpenAdmin }: {
         }}
       />
       <RestoreModal job={job} onClose={() => setJob(null)} />
+      <DbSiteAttachModal
+        open={!!attaching}
+        target={attaching}
+        onClose={() => setAttaching(null)}
+        onDone={() => { setAttaching(null); onChanged(); }}
+        onChanged={onChanged}
+      />
     </Card>
   );
 }
