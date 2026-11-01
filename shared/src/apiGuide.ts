@@ -96,7 +96,9 @@ Consequences:
 | \`domains.subdomain\` | Attach to the sites **subdomains** of a domain **already in** the account (given to the key in the panel, or serving only its sites), remove the ones the key created |
 | \`logs.read\` | Read access, error (web server / PHP) and application logs, and the PHP errors grouped by release |
 
-**Databases**: a key valid for every site sees every database of the account; a key limited to some sites sees only the databases and users **it created**. A key deletes only what it created, and never stops nor deletes a database server.
+**Databases**: a key valid for every site sees every database of the account; a key limited to some sites sees only the databases and users **it created**, plus the databases **owned by or shared with its sites**. A key deletes only what it created, and never stops nor deletes a database server.
+
+**Databases and sites**: the databases live on the account's shared servers. A database may belong to **one site** (its owner) and be **shared** with other sites; a database without an owner is shared across the account. On a segmented network, a site reaches a database server when it owns or is shared a database there, or when that server still holds a database shared across the account. A key limited to some sites never takes a database from a site outside its selection, never shares one owned by a site outside it (even one shared with its sites), and never makes one shared across the account. Creating a database owned by a site is an attachment like setting its owner (it may need a confirmation).
 
 **Routes**: a key changes the routes of the domains given to it in the panel, and of a domain whose routes **all** lead to its sites (a key limited to some sites; a key valid for every site works only on the domains given to it), and only towards its sites. A route of such a domain towards a site outside the key is never changed nor removed by the key.
 
@@ -154,7 +156,9 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`run_cron_job\` / \`list_cron_runs\` / \`get_cron_run\` | Run now, history, full output of one run | \`cron.manage\` |
 | \`list_databases\` / \`database_catalog\` | Database servers, their databases and users (the ones the key reaches), connection; plan engines and limits | \`databases.manage\` |
 | \`create_database_instance\` | Create a database server (\`name\`, \`engine\`, \`version\`): a few minutes before \`running\` | \`databases.manage\` |
-| \`create_database\` / \`delete_database\` | Create an empty database; delete one the key created (\`confirm_name\`) | \`databases.manage\` |
+| \`create_database\` / \`delete_database\` | Create an empty database (\`site_id?\`: its owner site); delete one the key created (\`confirm_name\`) | \`databases.manage\` |
+| \`list_site_databases\` / \`create_site_database\` | Databases of a site (owned, then shared); create one owned by the site on the account's default server of the \`family\` | \`databases.manage\` |
+| \`set_database_owner\` / \`share_database\` / \`detach_database\` | Owner site of a database (\`site_id\`, null = shared across the account), share it with a site, detach it from a site; \`grant_user_id?\` + \`grant_level?\` also grant an existing user (nothing is revoked) | \`databases.manage\` |
 | \`create_database_user\` | User + rights (\`grants\`); with \`env_site_id\` the credentials go straight into the site's variables and the password is never returned | \`databases.manage\` |
 | \`set_database_user_grants\` / \`reset_database_user_password\` / \`delete_database_user\` | Rights, new password (same \`env_site_id\` option), deletion (if created by the key) | \`databases.manage\` |
 | \`import_sql\` | Run a \`.sql\` / \`.sql.gz\` dump (uploaded first as a file of a site) into a database | \`databases.manage\` + \`files.read\` |
@@ -296,7 +300,7 @@ A domain with \`verified: false\` is not proven yet: its subdomains show a place
 ### An application's database
 
 1. \`list_databases\`: with no server of the right engine, \`database_catalog\` then \`create_database_instance\` (wait for \`status: "running"\`).
-2. \`create_database\`: \`{ "instance_id": 3, "name": "app" }\`.
+2. \`create_site_database\`: \`{ "site_id": 12, "name": "app", "family": "mysql" }\` (the database belongs to the site), or \`create_database\`: \`{ "instance_id": 3, "name": "app", "site_id": 12 }\`.
 3. \`create_database_user\` with \`grants: [{ "database_id": 7, "level": "all" }]\` and **\`env_site_id\`**: the site receives \`DB_HOST\`, \`DB_SOCKET\`, \`DB_NAME\`, \`DB_USER\`, \`DB_PASSWORD\` (secret) and restarts. The password never goes through you.
 4. In the code: \`getenv('DB_HOST')\`, etc. MySQL / MariaDB: \`DB_HOST\` is \`localhost\` (the site goes through the \`DB_SOCKET\` socket; with PDO, use \`unix_socket=\` + \`DB_SOCKET\` when the server is not the default one). PostgreSQL: \`DB_HOST\` is the socket directory.
 5. Existing data: upload the dump (a \`.sql\` or \`.sql.gz\` file, e.g. in the \`data\` area), \`import_sql\`, then delete the file.
@@ -381,8 +385,12 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | PUT · DELETE | \`/routes/:routeId\` | PUT: \`{ pathPrefix?, siteId?, runtimeId? }\` | \`routes.manage\` |
 | GET | \`/databases\` · \`/databases/catalog\` · \`/databases/:instanceId\` | servers, databases, users · engines and limits | \`databases.manage\` |
 | POST | \`/databases\` | \`{ name, engine, version }\` (new server) | \`databases.manage\` |
-| POST | \`/databases/:instanceId/databases\` | \`{ name, charset?, collation? }\` | \`databases.manage\` |
+| POST | \`/databases/:instanceId/databases\` | \`{ name, charset?, collation?, siteId? }\` (\`siteId\`: owner site) | \`databases.manage\` |
 | DELETE | \`/databases/:instanceId/databases/:dbId\` | \`{ confirm: "<name>" }\` (created by the key) | \`databases.manage\` |
+| GET · POST | \`/sites/:id/databases\` | databases of the site (owned, then shared) · \`{ name, family: "mysql" \\| "postgresql", charset?, collation? }\` (owned by the site) | \`databases.manage\` |
+| PUT | \`/databases/:instanceId/databases/:dbId/owner\` | \`{ siteId \\| null, grantUser?: { userId, level } }\` | \`databases.manage\` |
+| POST | \`/databases/:instanceId/databases/:dbId/shares\` | \`{ siteId, grantUser? }\` | \`databases.manage\` |
+| DELETE | \`/databases/:instanceId/databases/:dbId/sites/:siteId\` | detach from the site (SQL rights kept) | \`databases.manage\` |
 | GET | \`/databases/:instanceId/databases/:dbId/dump\` | gzip dump | \`databases.manage\` |
 | POST | \`/databases/:instanceId/databases/:dbId/import\` | **raw body** \`application/sql\` or \`application/gzip\`, or JSON \`{ siteId, path, area? }\` (a file of a site) | \`databases.manage\` |
 | GET | \`/databases/:instanceId/databases/:dbId/tables\` · \`…/tables/:table\` | tables and views · description of one table | \`databases.manage\` |
@@ -498,6 +506,7 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`hostdOutdated\` (503) | The server's file service is older than the panel | Tell the human (an update to apply in the panel), then retry |
 | \`hostdBusy\` (503) | The host agent is busy | Retry in a minute |
 | \`keyNotCreator\` (403) | Deleting a database / user the key did not create | Ask the human |
+| \`keySiteScope\` (403) · \`noDefaultInstance\` (409) | A key limited to some sites taking a database from another site, sharing one owned outside its sites, or making one shared across the account · no database server of that family in the account | Ask the human · \`create_database_instance\` first |
 | \`readOnlyStatement\` · \`oneStatement\` · \`sqlError\` (400) | \`query_database\`: a write without \`write: true\` · several statements · the engine refused the statement (its message follows) | Read the message; split the work; back up before \`write: true\` |
 | \`keyDomainNotManageable\` (403) | The domain is not given to the key (Domains section of the key in the panel) and also serves sites outside it (routes, parent of a subdomain) | Ask the human to give it to the key, or use a domain of \`list_parent_domains\` |
 | \`keyRouteOutside\` (403) | The route leads to a site outside the key | Leave it; add another path, or ask the human |
@@ -612,7 +621,9 @@ Conséquences :
 | \`domains.subdomain\` | Rattacher aux sites des **sous-domaines** d'un domaine **déjà présent** sur le compte (donné à la clé dans le panel, ou qui ne sert que ses sites), retirer ceux créés par la clé |
 | \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs, et les erreurs PHP regroupées par release |
 
-**Bases de données** : une clé valable pour tous les sites voit toutes les bases du compte ; une clé limitée à certains sites ne voit que les bases et utilisateurs **qu'elle a créés**. Une clé ne supprime que ce qu'elle a créé, et n'arrête ni ne supprime jamais un serveur de bases.
+**Bases de données** : une clé valable pour tous les sites voit toutes les bases du compte ; une clé limitée à certains sites ne voit que les bases et utilisateurs **qu'elle a créés**, ainsi que les bases **appartenant à ses sites ou partagées avec eux**. Une clé ne supprime que ce qu'elle a créé, et n'arrête ni ne supprime jamais un serveur de bases.
+
+**Bases et sites** : les bases vivent sur les serveurs partagés du compte. Une base peut appartenir à **un site** (son propriétaire) et être **partagée** avec d'autres sites ; une base sans propriétaire est partagée par tout le compte. Sur un réseau segmenté, un site atteint un serveur de bases quand il y possède une base ou qu'on lui en partage une, ou quand ce serveur contient encore une base partagée par tout le compte. Une clé limitée à certains sites ne prend jamais une base à un site hors de sa sélection, ne partage jamais une base appartenant à un site hors d'elle (même partagée avec ses sites), et n'en rend jamais une partagée par tout le compte. Créer une base possédée par un site est un rattachement, comme en changer le propriétaire (il peut demander une confirmation).
 
 **Routes** : une clé change les routes des domaines qui lui sont donnés dans le panel, et d'un domaine dont **toutes** les routes mènent à ses sites (clé limitée à certains sites ; une clé valable pour tous les sites ne travaille que sur les domaines qui lui sont donnés), et seulement vers ses sites. Une route d'un tel domaine vers un site hors de la clé n'est jamais modifiée ni retirée par la clé.
 
@@ -670,7 +681,9 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`run_cron_job\` / \`list_cron_runs\` / \`get_cron_run\` | Lancer tout de suite, historique, sortie complète d'une exécution | \`cron.manage\` |
 | \`list_databases\` / \`database_catalog\` | Serveurs de bases, leurs bases et utilisateurs (ceux que la clé atteint), connexion ; moteurs et limites du plan | \`databases.manage\` |
 | \`create_database_instance\` | Créer un serveur de bases (\`name\`, \`engine\`, \`version\`) : quelques minutes avant \`running\` | \`databases.manage\` |
-| \`create_database\` / \`delete_database\` | Créer une base vide ; supprimer une base créée par la clé (\`confirm_name\`) | \`databases.manage\` |
+| \`create_database\` / \`delete_database\` | Créer une base vide (\`site_id?\` : son site propriétaire) ; supprimer une base créée par la clé (\`confirm_name\`) | \`databases.manage\` |
+| \`list_site_databases\` / \`create_site_database\` | Bases d'un site (possédées, puis partagées) ; en créer une possédée par le site sur le serveur par défaut du compte pour la \`family\` | \`databases.manage\` |
+| \`set_database_owner\` / \`share_database\` / \`detach_database\` | Site propriétaire d'une base (\`site_id\`, null = partagée par tout le compte), la partager avec un site, la détacher d'un site ; \`grant_user_id?\` + \`grant_level?\` donnent aussi un droit à un utilisateur existant (rien n'est retiré) | \`databases.manage\` |
 | \`create_database_user\` | Utilisateur + droits (\`grants\`) ; avec \`env_site_id\`, les identifiants vont directement dans les variables du site et le mot de passe n'est jamais renvoyé | \`databases.manage\` |
 | \`set_database_user_grants\` / \`reset_database_user_password\` / \`delete_database_user\` | Droits, nouveau mot de passe (même option \`env_site_id\`), suppression (si créé par la clé) | \`databases.manage\` |
 | \`import_sql\` | Exécuter un dump \`.sql\` / \`.sql.gz\` (déposé d'abord comme fichier d'un site) dans une base | \`databases.manage\` + \`files.read\` |
@@ -812,7 +825,7 @@ Un domaine en \`verified: false\` n'est pas encore prouvé : ses sous-domaines a
 ### Base de données d'une application
 
 1. \`list_databases\` : s'il n'y a aucun serveur du bon moteur, \`database_catalog\` puis \`create_database_instance\` (attends \`status: "running"\`).
-2. \`create_database\` : \`{ "instance_id": 3, "name": "app" }\`.
+2. \`create_site_database\` : \`{ "site_id": 12, "name": "app", "family": "mysql" }\` (la base appartient au site), ou \`create_database\` : \`{ "instance_id": 3, "name": "app", "site_id": 12 }\`.
 3. \`create_database_user\` avec \`grants: [{ "database_id": 7, "level": "all" }]\` et **\`env_site_id\`** : le site reçoit \`DB_HOST\`, \`DB_SOCKET\`, \`DB_NAME\`, \`DB_USER\`, \`DB_PASSWORD\` (secret) et redémarre. Le mot de passe ne passe jamais par toi.
 4. Dans le code : \`getenv('DB_HOST')\`, etc. MySQL / MariaDB : \`DB_HOST\` vaut \`localhost\` (le site passe par le socket \`DB_SOCKET\` ; pour PDO, utilise \`unix_socket=\` + \`DB_SOCKET\` si le serveur n'est pas celui par défaut). PostgreSQL : \`DB_HOST\` est le dossier du socket.
 5. Données existantes : envoie le dump (fichier \`.sql\` ou \`.sql.gz\`, par ex. dans la zone \`data\`), \`import_sql\`, puis supprime le fichier.
@@ -897,8 +910,12 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | PUT · DELETE | \`/routes/:routeId\` | PUT : \`{ pathPrefix?, siteId?, runtimeId? }\` | \`routes.manage\` |
 | GET | \`/databases\` · \`/databases/catalog\` · \`/databases/:instanceId\` | serveurs, bases, utilisateurs · moteurs et limites | \`databases.manage\` |
 | POST | \`/databases\` | \`{ name, engine, version }\` (nouveau serveur) | \`databases.manage\` |
-| POST | \`/databases/:instanceId/databases\` | \`{ name, charset?, collation? }\` | \`databases.manage\` |
+| POST | \`/databases/:instanceId/databases\` | \`{ name, charset?, collation?, siteId? }\` (\`siteId\` : site propriétaire) | \`databases.manage\` |
 | DELETE | \`/databases/:instanceId/databases/:dbId\` | \`{ confirm: "<nom>" }\` (créée par la clé) | \`databases.manage\` |
+| GET · POST | \`/sites/:id/databases\` | bases du site (possédées, puis partagées) · \`{ name, family: "mysql" \\| "postgresql", charset?, collation? }\` (possédée par le site) | \`databases.manage\` |
+| PUT | \`/databases/:instanceId/databases/:dbId/owner\` | \`{ siteId \\| null, grantUser?: { userId, level } }\` | \`databases.manage\` |
+| POST | \`/databases/:instanceId/databases/:dbId/shares\` | \`{ siteId, grantUser? }\` | \`databases.manage\` |
+| DELETE | \`/databases/:instanceId/databases/:dbId/sites/:siteId\` | détacher du site (droits SQL conservés) | \`databases.manage\` |
 | GET | \`/databases/:instanceId/databases/:dbId/dump\` | dump gzip | \`databases.manage\` |
 | POST | \`/databases/:instanceId/databases/:dbId/import\` | **corps brut** \`application/sql\` ou \`application/gzip\`, ou JSON \`{ siteId, path, area? }\` (fichier d'un site) | \`databases.manage\` |
 | GET | \`/databases/:instanceId/databases/:dbId/tables\` · \`…/tables/:table\` | tables et vues · description d'une table | \`databases.manage\` |
@@ -1014,6 +1031,7 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`hostdOutdated\` (503) | Le service de fichiers du serveur est plus ancien que le panel | Prévenir l'humain (mise à jour à appliquer dans le panel), puis réessayer |
 | \`hostdBusy\` (503) | L'agent de l'hôte est occupé | Réessayer dans une minute |
 | \`keyNotCreator\` (403) | Suppression d'une base / d'un utilisateur que la clé n'a pas créé | Demander à l'humain |
+| \`keySiteScope\` (403) · \`noDefaultInstance\` (409) | Une clé limitée à certains sites qui prend une base à un autre site, partage une base appartenant à un site hors d'elle, ou la rend partagée par tout le compte · aucun serveur de bases de cette famille dans le compte | Demander à l'humain · d'abord \`create_database_instance\` |
 | \`readOnlyStatement\` · \`oneStatement\` · \`sqlError\` (400) | \`query_database\` : écriture sans \`write: true\` · plusieurs instructions · le moteur a refusé l'instruction (son message suit) | Lire le message ; découper le travail ; sauvegarder avant \`write: true\` |
 | \`keyDomainNotManageable\` (403) | Le domaine n'est pas donné à la clé (section Domaines de la clé dans le panel) et sert aussi des sites hors d'elle (routes, parent d'un sous-domaine) | Demander à l'humain de le donner à la clé, ou utiliser un domaine de \`list_parent_domains\` |
 | \`keyRouteOutside\` (403) | La route mène à un site hors de la clé | La laisser ; ajouter un autre chemin, ou demander à l'humain |

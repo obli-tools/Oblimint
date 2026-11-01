@@ -165,6 +165,7 @@ function toLink(r: LinkRow, labels: Map<string, string>): NetworkLink {
     port: Number(r.port),
     origin: r.origin,
     enabled: !!r.enabled,
+    pinned: !!r.pinned,
     description: r.description ?? null,
     status: r.status,
     statusMessage: r.status_message ?? null,
@@ -180,6 +181,11 @@ async function linkOut(id: number): Promise<NetworkLink> {
 
 function emitLink(tenantId: number, accountId: number, linkId: number | null): void {
   emitHosting(HostingSocketEvents.NETWORK_UPDATED, { accountId, linkId }, { tenantId, accountId });
+}
+
+/** A default site → DB link (defaultLinks.ts): disabled instead of deleted, pinned once the user touches it. */
+function isDefaultDbLink(row: Pick<LinkRow, 'origin' | 'source_kind' | 'target_kind'>): boolean {
+  return row.origin === 'migration' && row.source_kind === 'site' && row.target_kind === 'db';
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -392,6 +398,8 @@ export const segmentService = {
       patch.port = choosePort(target, row.protocol, input.port).port;
     }
     if (Object.keys(patch).length) {
+      // A default site → DB link the user edits is his from now on: the attachment rule no longer touches it.
+      if (isDefaultDbLink(row)) patch.pinned = true;
       if ('enabled' in patch || 'port' in patch) {
         patch.status = 'pending';
         patch.status_message = null;
@@ -424,9 +432,10 @@ export const segmentService = {
     const row = await loadOwned<LinkRow & { [column: string]: unknown }>(actor, 'network_links', id, 'apps.manage', 'Network link');
     // A default site → DB link (origin 'migration') is DISABLED, not deleted: the row is what keeps
     // ensureDefaultDbLinks from re-creating it at the next pass (defaultLinks.ts). The flow goes away the same.
-    const keepDisabled = row.origin === 'migration' && row.source_kind === 'site' && row.target_kind === 'db';
+    // It is also PINNED: the attachment rule never enables it again (the user's choice).
+    const keepDisabled = isDefaultDbLink(row);
     if (keepDisabled) {
-      await db('network_links').where({ id: row.id }).update({ enabled: false, status: 'pending', status_message: null, updated_at: db.fn.now() });
+      await db('network_links').where({ id: row.id }).update({ enabled: false, pinned: true, status: 'pending', status_message: null, updated_at: db.fn.now() });
     } else {
       await db('network_links').where({ id: row.id }).del();
     }

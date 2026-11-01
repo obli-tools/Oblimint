@@ -20,7 +20,7 @@ import { engineFor } from '../docker/engine';
 import { withAccountLock } from '../docker/locks';
 import { withTenantLock } from '../hosting/envelope.service';
 import {
-  actorSees, actorCan, assertNeedSomewhere, loadAccount, scopeToActor, type HostingActor, type HostingNeed,
+  actorSees, actorCan, assertNeedSomewhere, loadAccount, loadSite, scopeToActor, type HostingActor, type HostingNeed,
 } from '../hosting/access';
 import { isUniqueViolation } from '../hosting/hostingValidation.service';
 import { lowestFree, withAllocationRetry } from '../hosting/allocation.service';
@@ -50,6 +50,8 @@ import {
   updateGrantsSql, validateCharset, validateCollation, validateDatabaseName, validatePassword, validateUserName, type GrantSpec,
 } from './sql';
 import { ssoTokens } from './ssoTokens';
+import { withSites } from './attachments';
+import { syncDatabaseLinks } from './linkSync';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Databases per account (module databases, docs/P2-PLAN.md §6.3, §9.3).
@@ -213,7 +215,7 @@ export async function loadDatabaseRow(instance: DbInstanceRow, dbId: number): Pr
   return row;
 }
 
-async function loadUserRow(instance: DbInstanceRow, userId: number): Promise<DbUserRow> {
+export async function loadUserRow(instance: DbInstanceRow, userId: number): Promise<DbUserRow> {
   if (!Number.isInteger(userId) || userId <= 0) throw notFound('Database user');
   const row = await db('db_users').where({ id: userId, instance_id: instance.id }).first() as DbUserRow | undefined;
   if (!row) throw notFound('Database user');
@@ -281,12 +283,26 @@ function requestFirewallSync(accountId: number, reason: string): void {
     .catch((err) => logger.warn({ err: errText(err), accountId }, 'firewall requestSync failed'));
 }
 
-async function audit(req: Request, row: Pick<DbInstanceRow, 'id' | 'tenant_id' | 'account_id' | 'name'>, action: string, details: Record<string, unknown> = {}): Promise<void> {
+/** Audit entry of an instance / its databases / users (db.instance.*, db.database.*, db.user.*), in the instance's tenant. */
+export async function auditInstance(req: Request, row: Pick<DbInstanceRow, 'id' | 'tenant_id' | 'account_id' | 'name'>, action: string, details: Record<string, unknown> = {}): Promise<void> {
   await auditService.logReqAs(req, row.tenant_id, action, {
     resourceType: 'db_instance',
     resourcePath: String(row.id),
     details: { instance: row.name, accountId: row.account_id, ...details },
   });
+}
+const audit = auditInstance;
+
+/**
+ * The owner site of a new / attached database: visible to the actor, in the
+ * instance's account (404 invisible, 400 another account).
+ */
+export async function ownerSiteFor(actor: HostingActor, instance: Pick<DbInstanceRow, 'account_id'>, siteId: number): Promise<{ id: number; name: string; slug: string; tenant_id: number; account_id: number }> {
+  const site = await loadSite(actor, siteId, 'read');
+  if (Number(site.account_id) !== Number(instance.account_id)) {
+    throw new AppError(400, 'The site belongs to another account than the database', 'validation', { field: 'siteId' });
+  }
+  return { id: Number(site.id), name: site.name, slug: site.slug, tenant_id: Number(site.tenant_id), account_id: Number(site.account_id) };
 }
 
 async function publicHost(): Promise<string | null> {
@@ -464,7 +480,7 @@ export const databaseService = {
     } catch { /* unavailable */ }
     return {
       ...base,
-      databases: dbRows.map(toDbDatabase),
+      databases: await withSites(dbRows.map(toDbDatabase)),
       users: userRows.map((u) => toDbUser(u, grants)),
       connection: {
         socketPath: siteSocketPath(family, row.id, !!row.is_default),
@@ -680,6 +696,8 @@ export const databaseService = {
     const name = validateDatabaseName(family, body?.name);
     const charset = body.charset ? validateCharset(body.charset) : (family === 'postgresql' ? 'UTF8' : 'utf8mb4');
     const collation = body.collation ? validateCollation(body.collation) : null;
+    // Owner site (migration 030): a site of the instance's account the actor sees.
+    const owner = body.siteId ? await ownerSiteFor(actor, row, body.siteId) : null;
     await assertRunning(row);
     const { limits } = await accountWithPlan(row.account_id);
     await assertSizeWithinPlan(row.account_id, limits);
@@ -695,7 +713,13 @@ export const databaseService = {
         const taken = await trx('db_databases').where({ instance_id: id }).whereRaw('lower(name) = ?', [name.toLowerCase()]).first('id');
         if (taken) throw new AppError(409, 'This instance already has a database of that name', 'databaseNameTaken');
         const [ins] = await trx('db_databases').insert({ instance_id: id, account_id: row.account_id, name, charset, collation }).returning('id');
-        return Number((ins as { id: number }).id ?? ins);
+        const newId = Number((ins as { id: number }).id ?? ins);
+        if (owner) {
+          await trx('site_databases').insert({
+            tenant_id: row.tenant_id, account_id: row.account_id, site_id: owner.id, database_id: newId, role: 'owner', created_by: actor.userId ?? null,
+          });
+        }
+        return newId;
       });
     } catch (err) {
       if (isUniqueViolation(err)) throw new AppError(409, 'This instance already has a database of that name', 'databaseNameTaken');
@@ -705,11 +729,16 @@ export const databaseService = {
       await sql(await dockerOf(row), row, createDatabaseSql(family, { id: dbId, name, charset, collation }));
     } catch (err) {
       await db('db_databases').where({ id: dbId }).del();
+      // A policy push may have seen the row (and its owner) meanwhile: the default links follow its removal.
+      await syncDatabaseLinks(row.account_id, 'database-create-failed');
       throw err;
     }
-    await audit(req, row, 'db.database.create', { database: name, charset, collation });
+    await audit(req, row, 'db.database.create', { database: name, charset, collation, ...(owner ? { ownerSiteId: owner.id, ownerSite: owner.name } : {}) });
     emitInstance(row, row.status);
-    return toDbDatabase(await db('db_databases').where({ id: dbId }).first() as DbDatabaseRow);
+    // A new database changes which sites have a reason to reach the instance (network/defaultLinks.ts).
+    await syncDatabaseLinks(row.account_id, 'database-created');
+    const [out] = await withSites([toDbDatabase(await db('db_databases').where({ id: dbId }).first() as DbDatabaseRow)]);
+    return out;
   },
 
   async deleteDatabase(req: Request, actor: HostingActor, id: number, dbId: number, confirm: string): Promise<void> {
@@ -726,6 +755,8 @@ export const databaseService = {
     }
     await audit(req, row, 'db.database.delete', { database: target.name });
     emitInstance(row, row.status);
+    // Its attachments went with it (cascade): which sites reach the instance may change.
+    await syncDatabaseLinks(row.account_id, 'database-deleted');
   },
 
   async createUser(req: Request, actor: HostingActor, id: number, body: DbUserCreate): Promise<DbPasswordResult> {
@@ -1039,8 +1070,11 @@ export const databaseService = {
     }
   },
 
-  /** Workers: size measurement (hourly), expired SSO users cleanup, admin session tokens expiry. */
+  /** Workers: size measurement (hourly), expired SSO users cleanup, admin session tokens expiry; the 030 owner backfill once. */
   start(): void {
+    // Migration 030: owner sites inferred once from the site environments (no-op once done).
+    void import('./siteDbBackfill').then((m) => m.runSiteDatabasesBackfill())
+      .catch((err) => logger.warn({ err: errText(err) }, 'databases: owner backfill not started'));
     if (!ssoTimer) {
       ssoTimer = setInterval(() => {
         if (ssoRunning) return;

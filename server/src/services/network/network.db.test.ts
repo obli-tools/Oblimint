@@ -554,20 +554,33 @@ test('segmentation on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Test
   assert.ok(pushes[pushes.length - 1].allow.some((a) => a.src === '172.18.0.3' && a.dst === '172.18.0.2' && a.port === config.port), 'F7 edge → panel');
 
   // ── default site → DB links after the migration (P2 TCP db-<id> kept) ─────
+  // The migration kept every pair (preserveAll): the instances are empty, so those links are pinned.
+  assert.ok((await db('network_links').where({ account_id: acct, origin: 'migration' }).select('pinned')).every((l: { pinned: boolean }) => l.pinned), 'empty instances: kept, pinned');
+  // A database shared across the account on each instance: every site has a reason to reach it (migration 030).
+  await db('db_databases').insert([{ instance_id: iMaria, account_id: acct, name: 'common_m' }, { instance_id: iPg, account_id: acct, name: 'common_p' }]);
   const s3 = await mkSite(acct, 'three');
   await segmentReconcileHook.afterAccountPass(ctx(acct));
   const s3Links = await db('network_links').where({ account_id: acct, source_kind: 'site', source_id: s3 }).orderBy('target_id').select('id', 'target_id', 'port', 'origin', 'enabled', 'description');
   assert.deepEqual(s3Links.map((l) => [l.target_id, l.port, l.origin, l.enabled]), [[iMaria, 3306, 'migration', true], [iPg, 5432, 'migration', true]], 'new site: one default link per instance');
   assert.match(s3Links[0].description, /par défaut/);
-  // A new instance without any account pass: the policy push creates its links.
+  // A new instance without any account pass: empty, no site has a reason yet; its first database
+  // (shared across the account) and the policy push create its links.
   const iNew = await mkInstance(acct, 'late', 'mariadb');
+  await segmentService.syncNow();
+  assert.equal(Number((await db('network_links').where({ account_id: acct, source_kind: 'site', target_kind: 'db', target_id: iNew }).count('id as n'))[0].n), 0, 'empty instance: no link yet');
+  await db('db_databases').insert({ instance_id: iNew, account_id: acct, name: 'late_db' });
   await segmentService.syncNow();
   assert.equal(Number((await db('network_links').where({ account_id: acct, source_kind: 'site', target_kind: 'db', target_id: iNew }).count('id as n'))[0].n), 3, 's1, s2, s3 → new instance');
   // Deleting a default link disables it (never re-created behind the user's back).
   r = await call('DELETE', `/network/links/${s3Links[0].id}`, asManager);
   assert.deepEqual(r.body.data, { deleted: true });
-  const kept = await db('network_links').where({ id: s3Links[0].id }).first('enabled');
+  const kept = await db('network_links').where({ id: s3Links[0].id }).first('enabled', 'pinned');
   assert.equal(kept.enabled, false, 'kept disabled');
+  assert.equal(kept.pinned, true, 'pinned: the attachment rule never enables it again');
+  // Editing a default link pins it too (migration 030); the API shows it.
+  r = await call('PUT', `/network/links/${s3Links[1].id}`, asManager, { description: 'kept by hand' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.pinned, true);
   await segmentReconcileHook.afterAccountPass(ctx(acct));
   await segmentService.syncNow();
   assert.equal(Number((await db('network_links').where({ account_id: acct, source_kind: 'site', source_id: s3, target_id: iMaria }).count('id as n'))[0].n), 1, 'not re-created');

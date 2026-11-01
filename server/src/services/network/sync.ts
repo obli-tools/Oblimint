@@ -75,18 +75,24 @@ async function currentMode(): Promise<NetworkPolicyMode> {
 const PENDING_NO_CONTAINER = "En attente : aucun conteneur des deux segments ne partage un tissu réseau du compte (démarrez ou redéployez l'application concernée).";
 const PENDING_LEGACY = "En attente : le réseau du compte n'est pas encore segmenté (migration en cours).";
 const DISABLED = 'Liaison désactivée.';
+const AUTO_DISABLED = 'Liaison désactivée automatiquement : aucune base de cette instance n’est rattachée au site ni partagée avec tout le compte (elle revient dès qu’une base l’est).';
 
 /** Persists the link statuses after a successful push; returns the accounts whose links changed. */
 async function updateLinkStatuses(nodeId: number, activeLinks: ReadonlySet<number>, mode: NetworkPolicyMode): Promise<Map<number, number>> {
   const changed = new Map<number, number>(); // accountId → tenantId
   const rows = await db('network_links as l').join('hosting_accounts as a', 'a.id', 'l.account_id')
     .where('a.node_id', nodeId)
-    .select('l.id', 'l.account_id', 'l.tenant_id', 'l.enabled', 'l.status', 'l.status_message', 'a.network_model') as Array<{
+    .select('l.id', 'l.account_id', 'l.tenant_id', 'l.enabled', 'l.status', 'l.status_message', 'l.origin', 'l.pinned', 'l.source_kind', 'l.target_kind', 'a.network_model') as Array<{
       id: number; account_id: number; tenant_id: number; enabled: boolean; status: string; status_message: string | null; network_model: string;
+      origin: string; pinned: boolean; source_kind: string; target_kind: string;
     }>;
   for (const r of rows) {
     let next: { status: 'active' | 'pending'; message: string | null };
-    if (!r.enabled) next = { status: 'pending', message: DISABLED };
+    if (!r.enabled) {
+      // An unpinned default site → DB link is disabled by the attachment rule (defaultLinks.ts), never by the user.
+      const auto = r.origin === 'migration' && !r.pinned && r.source_kind === 'site' && r.target_kind === 'db';
+      next = { status: 'pending', message: auto ? AUTO_DISABLED : DISABLED };
+    }
     else if (r.network_model !== 'segmented') next = { status: 'pending', message: PENDING_LEGACY };
     else if (mode === 'off' || activeLinks.has(Number(r.id))) next = { status: 'active', message: null };
     else next = { status: 'pending', message: PENDING_NO_CONTAINER };
@@ -109,12 +115,13 @@ async function pushOnce(reason: string): Promise<boolean> {
     if (mode === 'off') {
       built = buildPolicy({ mode, accounts: [], sites: new Map(), dbInstances: new Map(), stacks: new Map(), adapterRuns: new Map(), panelRefs: [], links: [], proxyTargets: [], internalPort: 0 });
     } else {
-      // A new DB instance does not always run an account pass: its container start (Docker event) lands here.
+      // A new DB instance does not always run an account pass: its container start (Docker event) lands here;
+      // the default links also follow the database attachments (defaultLinks.ts).
       try {
-        const added = await ensureDefaultDbLinks(await segmentedAccountsOfNode(nodeId));
-        if (added) logger.info({ added }, 'segments: default site → DB links created');
+        const changed = await ensureDefaultDbLinks(await segmentedAccountsOfNode(nodeId));
+        if (changed) logger.info({ changed }, 'segments: default site → DB links created / enabled / disabled');
       } catch (err) {
-        logger.warn({ err: errText(err) }, 'segments: default site → DB links not created (next push)');
+        logger.warn({ err: errText(err) }, 'segments: default site → DB links not reconciled (next push)');
       }
       const observed = await observeNode(nodeId, { mode });
       if (observed.proxyTargetsError) logger.debug({ err: observed.proxyTargetsError }, 'segments: proxy targets unavailable (no edge → app flow)');

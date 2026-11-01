@@ -131,6 +131,9 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'db.ddl', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'db.rows_write', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'db.dump', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: K },
+  // Databases ↔ sites (migration 030): owner site set / changed / removed, sharing with a site. Target: the site.
+  { key: 'db.attach', category: 'databases', need: 'databases.manage', scopable: 'site', surfaces: PK },
+  { key: 'db.share', category: 'databases', need: 'databases.manage', scopable: 'site', surfaces: PK },
   // ── Domains, DNS, proxy, firewall ──
   { key: 'domain.delete', category: 'domains', need: 'domains.manage', scopable: 'account', surfaces: P },
   { key: 'domain.route_change', category: 'domains', need: 'domains.manage', scopable: 'account', surfaces: PK },

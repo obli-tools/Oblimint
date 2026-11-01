@@ -244,7 +244,10 @@ export const sitesService = {
 
   async get(actor: HostingActor, siteId: number): Promise<Site> {
     await loadSite(actor, siteId, 'read');
-    return forActor(actor, await fetchSite(siteId));
+    const site = forActor(actor, await fetchSite(siteId));
+    // Migration 030: the databases of the site (owned, then shared with it).
+    const { databasesOfSites } = await import('../databases/attachments');
+    return { ...site, databases: (await databasesOfSites([siteId])).get(siteId) ?? [] };
   },
 
   /** POST /sites — sites.manage on the ACCOUNT (a client with the capability may create). */

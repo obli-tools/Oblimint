@@ -90,7 +90,13 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   GET    /databases                                   → ApiV1DbInstance[]                         databases.manage
 //   POST   /databases             {name, engine, version} → DbInstance (201, provisioning)          databases.manage
 //   GET    /databases/:iid                              → ApiV1DbInstance                           databases.manage
-//   POST   /databases/:iid/databases {name, charset?, collation?} → ApiV1Database (201)           databases.manage
+//   POST   /databases/:iid/databases {name, charset?, collation?, siteId?} → ApiV1Database (201; siteId: owner site) databases.manage
+//   GET    /sites/:id/databases                         → ApiV1SiteDatabase[] (owned, then shared)  databases.manage
+//   POST   /sites/:id/databases {name, family, charset?, collation?} → ApiV1SiteDatabase (201, owner = the site,
+//                                                        account's default server of the family)  databases.manage
+//   PUT    /databases/:iid/databases/:dbId/owner {siteId | null, grantUser?} → DbAttachmentResult  databases.manage (gate db.attach)
+//   POST   /databases/:iid/databases/:dbId/shares {siteId, grantUser?} → DbAttachmentResult       databases.manage (gate db.share)
+//   DELETE /databases/:iid/databases/:dbId/sites/:sid   → DbAttachmentResult (SQL rights kept)     databases.manage
 //   DELETE /databases/:iid/databases/:dbId {confirm: name} → { deleted: true } (its own only)      databases.manage
 //   GET    /databases/:iid/databases/:dbId/dump         → application/gzip                          databases.manage
 //   POST   /databases/:iid/databases/:dbId/import       raw SQL (plain / gzip), or JSON {siteId, path, area?} → { restored: true } databases.manage
@@ -495,8 +501,32 @@ router.post('/databases', h(async (req, res) => {
 }));
 router.get('/databases/:iid', h(async (req, res) => ok(res, await keyDatabases.get(ctxOf(req), iid(req)))));
 router.post('/databases/:iid/databases', h(async (req, res) => {
-  const b = parseBody(z.object({ name: z.string().min(1).max(64), charset: z.string().max(32).nullable().optional(), collation: z.string().max(64).nullable().optional() }).strict(), req.body);
+  const b = parseBody(z.object({
+    name: z.string().min(1).max(64), charset: z.string().max(32).nullable().optional(), collation: z.string().max(64).nullable().optional(),
+    siteId: z.number().int().positive().nullable().optional(),
+  }).strict(), req.body);
   ok(res, await keyDatabases.createDatabase(ctxOf(req), req, iid(req), b), 201);
+}));
+// Databases ↔ sites (owner site, sharing).
+const grantUser = z.object({ userId: z.number().int().positive(), level: z.enum(['all', 'readonly']) }).strict().nullable().optional();
+router.get('/sites/:id/databases', h(async (req, res) => ok(res, await keyDatabases.siteDatabases(ctxOf(req), siteId(req)))));
+router.post('/sites/:id/databases', h(async (req, res) => {
+  const b = parseBody(z.object({
+    name: z.string().min(1).max(64), family: z.enum(['mysql', 'postgresql']),
+    charset: z.string().max(32).nullable().optional(), collation: z.string().max(64).nullable().optional(),
+  }).strict(), req.body);
+  ok(res, await keyDatabases.createForSite(ctxOf(req), req, siteId(req), b), 201);
+}));
+router.put('/databases/:iid/databases/:dbId/owner', h(async (req, res) => {
+  const b = parseBody(z.object({ siteId: z.number().int().positive().nullable(), grantUser }).strict(), req.body);
+  ok(res, await keyDatabases.setOwner(ctxOf(req), req, iid(req), Number(req.params.dbId), b));
+}));
+router.post('/databases/:iid/databases/:dbId/shares', h(async (req, res) => {
+  const b = parseBody(z.object({ siteId: z.number().int().positive(), grantUser }).strict(), req.body);
+  ok(res, await keyDatabases.share(ctxOf(req), req, iid(req), Number(req.params.dbId), b));
+}));
+router.delete('/databases/:iid/databases/:dbId/sites/:sid', h(async (req, res) => {
+  ok(res, await keyDatabases.detach(ctxOf(req), req, iid(req), Number(req.params.dbId), Number(req.params.sid)));
 }));
 router.delete('/databases/:iid/databases/:dbId', h(async (req, res) => {
   const b = parseBody(z.object({ confirm: z.string().max(128) }).strict(), req.body ?? {});

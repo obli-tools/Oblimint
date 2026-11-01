@@ -1,4 +1,4 @@
-import type { DbConnectionInfo, DbDatabase, DbEngine, DbFamily, DbInstanceStatus, DbUser } from './databases';
+import type { DbConnectionInfo, DbDatabase, DbEngine, DbFamily, DbInstanceStatus, DbUser, SiteDatabase } from './databases';
 import type { CurrentReleaseVia, LeakPolicy, LeakReport, SiteUpdate } from './hosting';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,6 +400,14 @@ export interface ApiV1Subdomain {
 export interface ApiV1Database extends DbDatabase {
   /** Created through this key (it may delete it). */
   createdByKey: boolean;
+  /** Key limited to some sites: the owner is a site outside its selection (hidden; ownerSite is then null). */
+  ownedElsewhere?: boolean;
+}
+
+/** GET /api/v1/sites/:id/databases — a database of one of the key's sites. */
+export interface ApiV1SiteDatabase extends SiteDatabase {
+  createdByKey: boolean;
+  ownedElsewhere?: boolean;
 }
 
 /** A database user as the key API shows it (its password is never shown again). */

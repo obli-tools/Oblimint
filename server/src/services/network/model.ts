@@ -57,6 +57,8 @@ export interface LinkRow {
   port: number;
   origin: 'user' | 'migration' | 'catalog';
   enabled: boolean;
+  /** Migration 030: a default site → DB link the user edited / disabled (no longer follows the attachments). */
+  pinned?: boolean;
   description: string | null;
   status: 'active' | 'pending' | 'error';
   status_message: string | null;

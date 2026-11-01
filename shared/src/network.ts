@@ -39,6 +39,13 @@ export interface NetworkLink {
   port: number;
   origin: NetworkLinkOrigin;
   enabled: boolean;
+  /**
+   * Default site → DB link (origin 'migration') the panel no longer manages: the user
+   * edited / disabled it (or the 030 backfill kept it as it was). An unpinned default
+   * link follows the database attachments (enabled while the site has a reason to
+   * reach the instance, disabled otherwise). Always false for the other links.
+   */
+  pinned?: boolean;
   description: string | null;
   /** active = in the pushed policy; pending = waiting for the next push / a container; error = see statusMessage. */
   status: 'active' | 'pending' | 'error';

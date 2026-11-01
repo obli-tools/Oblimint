@@ -75,6 +75,8 @@ export const ACTION_VERBS_FR: Readonly<Record<string, string>> = {
   'db.ddl': 'Supprimer ou vider un objet de la base',
   'db.rows_write': 'Modifier des lignes de la base',
   'db.dump': 'Exporter la base de données',
+  'db.attach': 'Définir ou changer le site propriétaire d’une base de données',
+  'db.share': 'Changer le partage d’une base de données avec un site',
   'domain.delete': 'Supprimer le domaine',
   'domain.route_change': 'Changer la route d’un domaine',
   'subdomain.remove': 'Retirer un sous-domaine',

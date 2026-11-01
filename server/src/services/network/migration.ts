@@ -16,10 +16,12 @@ import { requestPolicySync } from './sync';
 //      purpose front / back, their current Docker subnet as is);
 //   2. one 'migration' link site → DB instance (TCP engine port) for EVERY
 //      (site, instance) pair of the account: P2 sites reached every instance
-//      by db-<id> (the sockets stay mounted, unchanged);
+//      by db-<id> (the sockets stay mounted, unchanged). A pair without a
+//      reason under the database attachments (migration 030) gets its link
+//      PINNED: the access of the account is kept as it was;
 //   3. network_model = 'segmented', policy push requested.
-// Sites / instances created afterwards get the same default link
-// (defaultLinks.ts: reconcile hook + every policy push).
+// Sites / instances / databases created afterwards get their default links
+// under the attachment rule (defaultLinks.ts: reconcile hook + every policy push).
 // On failure: network_error set, the account stays 'legacy' (unfiltered) and
 // is retried at the next pass. Runs inside the account lock when called by the
 // reconcile hook (never takes it itself); the admin route takes it.
@@ -31,7 +33,7 @@ export { MIGRATION_LINK_DESCRIPTION };
 
 /** Creates the missing 'migration' links of an account (site × DB instance). Returns how many were inserted. */
 export async function createMigrationLinks(accountId: number, tenantId: number): Promise<number> {
-  return ensureDefaultDbLinks([{ accountId, tenantId }], MIGRATION_LINK_DESCRIPTION);
+  return ensureDefaultDbLinks([{ accountId, tenantId }], MIGRATION_LINK_DESCRIPTION, { preserveAll: true });
 }
 
 /**

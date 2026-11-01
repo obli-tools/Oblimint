@@ -123,6 +123,14 @@ export interface DbDatabase {
   sizeBytes: number | null;
   sizeCheckedAt: string | null;
   createdAt: string;
+  /**
+   * Site the database belongs to (migration 030). null = shared across the
+   * account (« Partagée du compte »): every site of the account reaches its
+   * instance, as before. Filled by the lists and the instance detail.
+   */
+  ownerSite?: DbSiteRef | null;
+  /** Other sites of the account it is shared with (they reach its instance too). */
+  sharedSites?: DbSiteRef[];
 }
 
 export interface DbDatabaseCreate {
@@ -130,6 +138,93 @@ export interface DbDatabaseCreate {
   /** MySQL family: utf8mb4 (default); PostgreSQL: UTF8 (default). */
   charset?: string | null;
   collation?: string | null;
+  /** Owner site (same account); omitted / null = shared across the account. */
+  siteId?: number | null;
+}
+
+// ── Databases ↔ sites (migration 030 site_databases) ─────────────────────────
+// Every database lives in a shared instance of the account (one default per
+// family). A database has at most ONE owner site and may be shared with
+// other sites of the account. Network (segmented accounts): a site gets its
+// default link to an instance iff it owns or is shared ≥ 1 database there, or
+// the instance holds ≥ 1 account-wide database (no owner). An instance without
+// database gives no default link (the links existing before 030 are pinned by
+// the migration); links created or edited by a user are never touched.
+
+export type DbSiteRole = 'owner' | 'shared';
+
+export interface DbSiteRef {
+  id: number;
+  name: string;
+  slug: string;
+}
+
+/** GET /api/databases/databases — a database with its instance and its sites. */
+export interface DbDatabaseListItem extends DbDatabase {
+  tenantId: number;
+  accountId: number;
+  accountUsername: string;
+  instanceName: string;
+  engine: DbEngine;
+  family: DbFamily;
+  instanceStatus: DbInstanceStatus;
+  instanceIsDefault: boolean;
+  ownerSite: DbSiteRef | null;
+  sharedSites: DbSiteRef[];
+  /**
+   * The admin UI (phpMyAdmin / Adminer) of its instance can open a session
+   * (host name set, container running), as DbInstanceDetail.adminUiAvailable.
+   * Filled by the panel lists (databases list, databases of a site); absent elsewhere.
+   */
+  adminUiAvailable?: boolean;
+}
+
+/** A database as a site sees it (site detail, GET /api/databases/sites/:siteId/databases). */
+export interface SiteDatabase extends DbDatabaseListItem {
+  /** owner = the site's own database; shared = another site's (or the account's) database shared with it. */
+  role: DbSiteRole;
+}
+
+/** Optional on an attachment: also grant an EXISTING user of the same instance on the database (nothing is revoked). */
+export interface DbAttachGrant {
+  userId: number;
+  level: DbPrivilegeLevel;
+}
+
+/** PUT …/databases/:dbId/owner — siteId null = make it shared across the account again. */
+export interface DbSetOwnerRequest {
+  siteId: number | null;
+  grantUser?: DbAttachGrant | null;
+}
+
+/** POST …/databases/:dbId/shares */
+export interface DbShareRequest {
+  siteId: number;
+  grantUser?: DbAttachGrant | null;
+}
+
+/** POST /api/databases/sites/:siteId/databases — on the account's default instance of `family` (or `instanceId`). */
+export interface SiteDatabaseCreate {
+  name: string;
+  family: DbFamily;
+  instanceId?: number | null;
+  charset?: string | null;
+  collation?: string | null;
+}
+
+/** What an attachment change did to the default site → instance links (segmented accounts). */
+export interface DbSiteLinkChange {
+  siteId: number;
+  instanceId: number;
+  linkId: number | null;
+  change: 'created' | 'enabled' | 'disabled';
+}
+
+export interface DbAttachmentResult {
+  database: DbDatabaseListItem;
+  network: DbSiteLinkChange[];
+  /** The user granted (grantUser), null otherwise. */
+  grantedUser: DbUser | null;
 }
 
 /** 'all' = every privilege on the database; 'readonly' = SELECT (+ SHOW VIEW / USAGE). */

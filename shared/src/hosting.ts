@@ -8,7 +8,7 @@
 
 import type { TenantLimits } from './types';
 import type { AccessMode } from './access';
-import type { DbEngine, DbTuningProfile } from './databases';
+import type { DbEngine, DbTuningProfile, SiteDatabase } from './databases';
 import type { DnsZoneKind, DomainVerificationSummary } from './dns';
 import type { OverQuotaAction, OverQuotaState } from './usage';
 
@@ -632,6 +632,8 @@ export interface Site {
   leakAllowlist: string[];
   /** First domain routed to this site at '/', if any. */
   primaryDomain: string | null;
+  /** Site detail only (GET /sites/:id): its databases (owned, then shared with it). */
+  databases?: SiteDatabase[];
   createdAt: string;
   updatedAt: string;
 }

@@ -130,6 +130,7 @@ const zEnv = { env_site_id: zId.optional(), env_prefix: z.string().min(1).max(32
 const toEnv = (a: { env_site_id?: number; env_prefix?: string; env_database_id?: number }) => (a.env_site_id
   ? { siteId: a.env_site_id, ...(a.env_prefix ? { prefix: a.env_prefix } : {}), ...(a.env_database_id ? { databaseId: a.env_database_id } : {}) }
   : undefined);
+const toGrantUser = (a: { grant_user_id?: number; grant_level?: 'all' | 'readonly' }) => (a.grant_user_id ? { userId: a.grant_user_id, level: a.grant_level ?? 'readonly' } : null);
 const cronProps = {
   name: { type: 'string', description: 'Label (unique on the site).' },
   schedule: { type: 'string', description: '5-field crontab expression in UTC (e.g. "*/5 * * * *"), or @hourly / @daily / @weekly / @monthly; the plan sets a minimum interval.' },
@@ -763,11 +764,61 @@ const TOOLS: ToolDef[] = [
     run: (ctx, req, a) => keyDatabases.createInstance(ctx, req, a as never),
   },
   {
-    name: 'create_database', title: 'Create a database',
-    description: 'Creates an empty database on an instance (scope databases.manage). Then create_database_user with a grant on it.',
-    inputSchema: obj({ instance_id: instanceId, name: { type: 'string', description: 'Letters, digits and _, 1 to 64.' } }, ['instance_id', 'name']),
-    args: z.object({ instance_id: zId, name: z.string().min(1).max(64) }),
-    run: (ctx, req, a) => keyDatabases.createDatabase(ctx, req, a.instance_id, { name: a.name }),
+    name: 'create_database', title: 'Create a database', gated: ['db.attach'],
+    description: 'Creates an empty database on an instance (scope databases.manage). site_id: the database belongs to that site (else it is shared across the account; with site_id it is an attachment, db.attach). Then create_database_user with a grant on it.',
+    inputSchema: obj({
+      instance_id: instanceId, name: { type: 'string', description: 'Letters, digits and _, 1 to 64.' },
+      site_id: { type: 'integer', description: 'Owner site (a site of this key). Omitted: shared across the account.' },
+    }, ['instance_id', 'name']),
+    args: z.object({ instance_id: zId, name: z.string().min(1).max(64), site_id: zSite.optional() }),
+    run: (ctx, req, a) => keyDatabases.createDatabase(ctx, req, a.instance_id, { name: a.name, siteId: a.site_id ?? null }),
+  },
+  {
+    name: 'list_site_databases', title: 'Databases of a site', readOnly: true,
+    description: 'The databases of a site: the ones it owns (role owner), then the ones shared with it (role shared), with their server (instance_id). Scope databases.manage.',
+    inputSchema: obj({ site_id: siteId }, ['site_id']),
+    args: z.object({ site_id: zSite }),
+    run: (ctx, _r, a) => keyDatabases.siteDatabases(ctx, a.site_id),
+  },
+  {
+    name: 'create_site_database', title: 'Create a database for a site', gated: ['db.attach'],
+    description: 'Creates an empty database owned by the site, on the account\'s default database server of the family (mysql = MySQL / MariaDB, postgresql). Then create_database_user with env_site_id.',
+    inputSchema: obj({
+      site_id: siteId, name: { type: 'string', description: 'Letters, digits and _, 1 to 64.' },
+      family: { type: 'string', enum: ['mysql', 'postgresql'] },
+    }, ['site_id', 'name', 'family']),
+    args: z.object({ site_id: zSite, name: z.string().min(1).max(64), family: z.enum(['mysql', 'postgresql']) }),
+    run: (ctx, req, a) => keyDatabases.createForSite(ctx, req, a.site_id, { name: a.name, family: a.family }),
+  },
+  {
+    name: 'set_database_owner', title: 'Owner site of a database', gated: ['db.attach', 'db.user_grants'],
+    description: 'Makes a site (of this key) the owner of a database; the previous owner keeps it as shared. site_id null: shared across the account again (keys on every site only). grant_user_id (+ grant_level): also grant an existing user of the same server on it (nothing is revoked). Returns the network links that changed.',
+    inputSchema: obj({
+      instance_id: instanceId, database_id: { type: 'integer' },
+      site_id: { type: ['integer', 'null'], description: 'The new owner, or null.' },
+      grant_user_id: { type: 'integer', description: 'Existing database user of the same server to grant.' },
+      grant_level: { type: 'string', enum: ['all', 'readonly'], description: 'Default readonly.' },
+    }, ['instance_id', 'database_id', 'site_id']),
+    args: z.object({ instance_id: zId, database_id: zId, site_id: zSite.nullable(), grant_user_id: zId.optional(), grant_level: z.enum(['all', 'readonly']).optional() }),
+    run: (ctx, req, a) => keyDatabases.setOwner(ctx, req, a.instance_id, a.database_id, { siteId: a.site_id, grantUser: toGrantUser(a) }),
+  },
+  {
+    name: 'share_database', title: 'Share a database with a site', gated: ['db.share', 'db.user_grants'],
+    description: 'Shares a database with one of the key\'s sites (the site may then reach its server). A key limited to some sites shares only a database owned by one of its sites, or one it created without owner (keySiteScope otherwise). grant_user_id (+ grant_level) as for set_database_owner.',
+    inputSchema: obj({
+      instance_id: instanceId, database_id: { type: 'integer' }, site_id: siteId,
+      grant_user_id: { type: 'integer', description: 'Existing database user of the same server to grant.' },
+      grant_level: { type: 'string', enum: ['all', 'readonly'], description: 'Default readonly.' },
+    }, ['instance_id', 'database_id', 'site_id']),
+    args: z.object({ instance_id: zId, database_id: zId, site_id: zSite, grant_user_id: zId.optional(), grant_level: z.enum(['all', 'readonly']).optional() }),
+    run: (ctx, req, a) => keyDatabases.share(ctx, req, a.instance_id, a.database_id, { siteId: a.site_id, grantUser: toGrantUser(a) }),
+  },
+  {
+    name: 'detach_database', title: 'Detach a database from a site', gated: ['db.attach', 'db.share'],
+    description: 'Detaches a database from a site: stops sharing it, or removes the owner (keys on every site only: it becomes shared across the account). The SQL rights stay as they are.',
+    inputSchema: obj({ instance_id: instanceId, database_id: { type: 'integer' }, site_id: siteId }, ['instance_id', 'database_id', 'site_id']),
+    args: z.object({ instance_id: zId, database_id: zId, site_id: zSite }),
+    run: (ctx, req, a) => keyDatabases.detach(ctx, req, a.instance_id, a.database_id, a.site_id),
   },
   {
     name: 'delete_database', title: 'Delete a database', destructive: true, gated: ['db.drop'],

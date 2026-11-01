@@ -2,17 +2,19 @@ import crypto from 'crypto';
 import type { Request, Response } from 'express';
 import type { Readable } from 'stream';
 import type {
-  ApiV1Database, ApiV1DbCredentials, ApiV1DbEnvTarget, ApiV1DbInstance, ApiV1DbQueryResult, ApiV1DbUser, DbCatalog, DbDatabase, DbEngine, DbGrantInput,
-  DbInstance, DbUser, DbxTable, DbxTableInfo,
+  ApiV1Database, ApiV1DbCredentials, ApiV1DbEnvTarget, ApiV1DbInstance, ApiV1DbQueryResult, ApiV1DbUser, ApiV1SiteDatabase, DbAttachGrant,
+  DbAttachmentResult, DbCatalog, DbDatabase, DbEngine, DbFamily, DbGrantInput, DbInstance, DbSiteRef, DbUser, DbxTable, DbxTableInfo,
 } from '@oblimint/shared';
 import { dbFamilyOf } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { auditService } from '../audit.service';
+import { databasesAttachedTo, databasesOfSites, sitesOfDatabases } from '../databases/attachments';
 import { databaseService, loadDatabaseRow, loadInstance } from '../databases/databases.service';
+import { createAttachParams, siteCreateTarget, siteDatabaseService } from '../databases/siteDatabases.service';
 import { auditSql, explorerService } from '../databases/explorer/explorer.service';
 import type { DbDatabaseRow, DbInstanceRow } from '../databases/rows';
-import { requireScope, type ApiKeyContext } from './apiKeys.service';
+import { keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
 import { keyApi, keySite, type SiteArea } from './keyApi';
 import { keyEnv } from './keyEnv';
 import { actionLevel, type GateSpec } from '../restrictions/gate';
@@ -28,7 +30,14 @@ import { asKeyRequest, keyGated, siteTarget } from '../restrictions/targets';
 //     (plan limits), never stop, reconfigure nor delete one;
 //   - databases / users: a key on every site (siteScope 'all') reaches all of
 //     the account's; a key limited to some sites only the ones it created
-//     (api_key_db_objects) — so it never reads another site's data;
+//     (api_key_db_objects) and the databases owned by / shared with its sites
+//     (migration 030 site_databases) — so it never reads another site's data;
+//     the other sites of the account stay hidden in the owner / shared lists;
+//   - attachments (owner site, sharing): db.attach / db.share gated on the
+//     sites concerned (a database created owned by a site: db.attach); a key
+//     limited to some sites never takes a database from a site outside its
+//     selection, never shares one owned outside it, nor makes one shared
+//     across the account;
 //   - a grant only on a database the key reaches; deletion only of what the
 //     key created;
 //   - credentials of a new user (or a reset) may go straight into a site's
@@ -50,6 +59,39 @@ async function record(ctx: ApiKeyContext, kind: ObjKind, id: number): Promise<vo
 
 const reaches = (ctx: ApiKeyContext, own: Set<number>, id: number) => ctx.siteScope === 'all' || own.has(id);
 
+/**
+ * The databases a key limited to some sites reaches: the ones it created, and
+ * (migration 030) the ones owned by / shared with its sites. A key on every
+ * site reaches them all (`reaches`).
+ */
+export async function keyReachableDatabases(ctx: ApiKeyContext): Promise<Set<number>> {
+  const own = await created(ctx, 'database');
+  if (ctx.siteScope === 'all') return own;
+  for (const id of await databasesAttachedTo(ctx.siteIds, ctx.accountId)) own.add(id);
+  return own;
+}
+
+/** A key limited to some sites never sees the other sites of the account (names): out of its selection = hidden. */
+function maskSites<T extends { ownerSite?: DbSiteRef | null; sharedSites?: DbSiteRef[] }>(ctx: ApiKeyContext, d: T): T & { ownedElsewhere?: boolean } {
+  if (ctx.siteScope === 'all') return d;
+  const owner = d.ownerSite ?? null;
+  const outside = !!owner && !keyAllowsSite(ctx, owner.id);
+  return {
+    ...d,
+    ownerSite: outside ? null : owner,
+    sharedSites: (d.sharedSites ?? []).filter((s) => keyAllowsSite(ctx, s.id)),
+    ...(outside ? { ownedElsewhere: true } : {}),
+  };
+}
+
+function maskResult(ctx: ApiKeyContext, r: DbAttachmentResult): DbAttachmentResult {
+  return {
+    ...r,
+    database: maskSites(ctx, r.database),
+    network: ctx.siteScope === 'all' ? r.network : r.network.filter((n) => keyAllowsSite(ctx, n.siteId)),
+  };
+}
+
 /** An instance of the key's account (404 otherwise). */
 async function keyInstance(ctx: ApiKeyContext, id: number): Promise<DbInstanceRow> {
   requireScope(ctx, 'databases.manage');
@@ -61,7 +103,7 @@ async function keyInstance(ctx: ApiKeyContext, id: number): Promise<DbInstanceRo
 
 async function databaseOf(ctx: ApiKeyContext, instanceId: number, dbId: number): Promise<{ id: number; name: string }> {
   const row = await db('db_databases').where({ id: dbId, instance_id: instanceId, account_id: ctx.accountId }).first('id', 'name') as { id: number; name: string } | undefined;
-  if (!row || !reaches(ctx, await created(ctx, 'database'), row.id)) throw notFound('Database');
+  if (!row || !reaches(ctx, await keyReachableDatabases(ctx), row.id)) throw notFound('Database');
   return row;
 }
 
@@ -95,11 +137,11 @@ function viewUser(u: DbUser, own: Set<number>): ApiV1DbUser {
 
 async function instanceView(ctx: ApiKeyContext, id: number): Promise<ApiV1DbInstance> {
   const d = await databaseService.getInstance(ctx.actor, id);
-  const [ownDb, ownUser] = await Promise.all([created(ctx, 'database'), created(ctx, 'user')]);
+  const [ownDb, ownUser, reach] = await Promise.all([created(ctx, 'database'), created(ctx, 'user'), keyReachableDatabases(ctx)]);
   return {
     id: d.id, name: d.name, engine: d.engine, version: d.version, family: d.family, status: d.status, isDefault: d.isDefault,
     connection: d.connection,
-    databases: d.databases.filter((x) => reaches(ctx, ownDb, x.id)).map((x): ApiV1Database => ({ ...x, createdByKey: ownDb.has(x.id) })),
+    databases: d.databases.filter((x) => reaches(ctx, reach, x.id)).map((x): ApiV1Database => maskSites(ctx, { ...x, createdByKey: ownDb.has(x.id) })),
     users: d.users.filter((u) => reaches(ctx, ownUser, u.id)).map((u) => viewUser(u, ownUser)),
   };
 }
@@ -173,6 +215,16 @@ async function gatedImport(
 /** The database's instance as a restriction target (its account). */
 const instanceTarget = (row: DbInstanceRow) => ({ tenantId: Number(row.tenant_id), accountId: Number(row.account_id), siteId: null });
 
+/** A site of the instance's account as a restriction target (the previous owner may be outside the key). */
+const siteOfRow = (row: DbInstanceRow, siteId: number) => ({ tenantId: Number(row.tenant_id), accountId: Number(row.account_id), siteId });
+
+const keySiteScope = (message: string) => new AppError(403, message, 'keySiteScope');
+
+/** db.user_grants when an attachment also grants an existing user. */
+function grantGate(row: DbInstanceRow, dbId: number, grant: DbAttachGrant | null | undefined): GateSpec[] {
+  return grant ? [{ action: 'db.user_grants', target: instanceTarget(row), params: { userId: grant.userId, instanceId: row.id, grants: [{ databaseId: dbId, level: grant.level }], from: 'attachment' } }] : [];
+}
+
 async function credentials(ctx: ApiKeyContext, req: Request, instanceId: number, user: DbUser, password: string, env: ApiV1DbEnvTarget | undefined): Promise<ApiV1DbCredentials> {
   const own = await created(ctx, 'user');
   if (!env) return { user: viewUser(user, own), password };
@@ -208,11 +260,114 @@ export const keyDatabases = {
     return databaseService.createInstance(req, ctx.actor, { accountId: ctx.accountId, name: body.name, engine: body.engine, version: body.version });
   },
 
-  async createDatabase(ctx: ApiKeyContext, req: Request, instanceId: number, body: { name: string; charset?: string | null; collation?: string | null }): Promise<ApiV1Database> {
+  /** `siteId` (a site of the key): the new database belongs to that site. */
+  async createDatabase(ctx: ApiKeyContext, req: Request, instanceId: number, body: { name: string; charset?: string | null; collation?: string | null; siteId?: number | null }): Promise<ApiV1Database> {
     const row = await keyInstance(ctx, instanceId);
-    const d: DbDatabase = await databaseService.createDatabase(req, ctx.actor, row.id, body);
-    await record(ctx, 'database', d.id);
-    return { ...d, createdByKey: true };
+    const site = body.siteId ? await keySite(ctx, body.siteId) : null;
+    const run = async (): Promise<ApiV1Database> => {
+      const d: DbDatabase = await databaseService.createDatabase(req, ctx.actor, row.id, { name: body.name, charset: body.charset, collation: body.collation, siteId: site?.id ?? null });
+      await record(ctx, 'database', d.id);
+      return maskSites(ctx, { ...d, createdByKey: true });
+    };
+    if (!site) return run();
+    // Owned by the site from its creation: an attachment (db.attach on the site).
+    return keyGated(ctx, req, { action: 'db.attach', target: siteTarget(site), params: createAttachParams(row, site.id, body.name) }, run);
+  },
+
+  // ── databases ↔ sites (migration 030) ──
+
+  /** The databases of one of the key's sites (owned, then shared with it). */
+  async siteDatabases(ctx: ApiKeyContext, siteId: number): Promise<ApiV1SiteDatabase[]> {
+    requireScope(ctx, 'databases.manage');
+    const site = await keySite(ctx, siteId);
+    const own = await created(ctx, 'database');
+    const list = (await databasesOfSites([site.id])).get(site.id) ?? [];
+    return list.map((d) => maskSites(ctx, { ...d, createdByKey: own.has(d.id) }));
+  },
+
+  /** A new database owned by the site, on the account's default instance of `family`. */
+  async createForSite(ctx: ApiKeyContext, req: Request, siteId: number, body: { name: string; family: DbFamily; charset?: string | null; collation?: string | null }): Promise<ApiV1SiteDatabase> {
+    requireScope(ctx, 'databases.manage');
+    const site = await keySite(ctx, siteId);
+    const { instance } = await siteCreateTarget(ctx.actor, site.id, { family: body.family });
+    if (Number(instance.account_id) !== ctx.accountId) throw notFound('Database instance');
+    // Owned by the site from its creation: an attachment (db.attach on the site), on the instance it lands on.
+    return keyGated(ctx, req, { action: 'db.attach', target: siteTarget(site), params: createAttachParams(instance, site.id, body.name) }, async () => {
+      const d = await siteDatabaseService.createForSite(req, ctx.actor, site.id, {
+        name: body.name, family: body.family, instanceId: instance.id, charset: body.charset, collation: body.collation,
+      });
+      await record(ctx, 'database', d.id);
+      return maskSites(ctx, { ...d, createdByKey: true });
+    });
+  },
+
+  /**
+   * Sets (siteId, a site of the key) or removes (null) the owner site. A key
+   * limited to some sites never takes a database from a site outside its
+   * selection, and never makes one shared across the account (every site of
+   * the account would reach its server): 403 keySiteScope.
+   */
+  async setOwner(ctx: ApiKeyContext, req: Request, instanceId: number, dbId: number, body: { siteId: number | null; grantUser?: DbAttachGrant | null }): Promise<DbAttachmentResult> {
+    const row = await keyInstance(ctx, instanceId);
+    const target = await databaseOf(ctx, row.id, dbId);
+    const site = body.siteId ? await keySite(ctx, body.siteId) : null;
+    const prev = (await sitesOfDatabases([target.id])).get(target.id)?.owner ?? null;
+    if (ctx.siteScope !== 'all') {
+      if (!site) throw keySiteScope('A key limited to some sites cannot make a database shared across the account');
+      const mine = prev ? keyAllowsSite(ctx, prev.id) : (await created(ctx, 'database')).has(target.id);
+      if (!mine) throw keySiteScope('This database does not belong to a site of this key');
+    }
+    if (body.grantUser) await userOf(ctx, row.id, body.grantUser.userId);
+    const changes = (site?.id ?? null) !== (prev?.id ?? null);
+    const params = { database: target.name, databaseId: target.id, instanceId: row.id, ownerSiteId: site?.id ?? null, previousOwnerSiteId: prev?.id ?? null };
+    const gates: GateSpec[] = [
+      ...(changes ? [...new Set([site?.id, prev?.id].filter((s): s is number => !!s))].map((s) => ({ action: 'db.attach', target: siteOfRow(row, s), params })) : []),
+      ...grantGate(row, target.id, body.grantUser),
+    ];
+    // Only while the owner is still the one checked and gated above (409 otherwise).
+    const run = () => siteDatabaseService.setOwner(req, ctx.actor, row.id, target.id, { siteId: site?.id ?? null, grantUser: body.grantUser ?? null }, { expectedOwnerId: prev?.id ?? null });
+    return maskResult(ctx, gates.length ? await keyGated(ctx, req, gates, run) : await run());
+  },
+
+  /**
+   * Shares a database with one of the key's sites. A key limited to some
+   * sites shares only a database owned by one of its sites, or one it created
+   * that has no owner — never one owned by a site outside its selection (it
+   * may reach it because it is shared with one of its sites, but exposing it
+   * further is the owner's call): 403 keySiteScope. db.share is gated on the
+   * receiving site and on the owner site.
+   */
+  async share(ctx: ApiKeyContext, req: Request, instanceId: number, dbId: number, body: { siteId: number; grantUser?: DbAttachGrant | null }): Promise<DbAttachmentResult> {
+    const row = await keyInstance(ctx, instanceId);
+    const target = await databaseOf(ctx, row.id, dbId);
+    const site = await keySite(ctx, body.siteId);
+    const owner = (await sitesOfDatabases([target.id])).get(target.id)?.owner ?? null;
+    if (ctx.siteScope !== 'all') {
+      const mine = owner ? keyAllowsSite(ctx, owner.id) : (await created(ctx, 'database')).has(target.id);
+      if (!mine) throw keySiteScope('This database does not belong to a site of this key');
+    }
+    if (body.grantUser) await userOf(ctx, row.id, body.grantUser.userId);
+    const params = { database: target.name, databaseId: target.id, instanceId: row.id, siteId: site.id, ownerSiteId: owner?.id ?? null, share: true };
+    return maskResult(ctx, await keyGated(ctx, req, [
+      { action: 'db.share', target: siteTarget(site), params },
+      ...(owner && owner.id !== site.id ? [{ action: 'db.share' as const, target: siteOfRow(row, owner.id), params }] : []),
+      ...grantGate(row, target.id, body.grantUser),
+    ], () => siteDatabaseService.share(req, ctx.actor, row.id, target.id, { siteId: site.id, grantUser: body.grantUser ?? null }, { expectedOwnerId: owner?.id ?? null })));
+  },
+
+  /** Detaches a database from one of the key's sites (owner: keys on every site only, see setOwner). SQL rights kept. */
+  async detach(ctx: ApiKeyContext, req: Request, instanceId: number, dbId: number, siteId: number): Promise<DbAttachmentResult> {
+    const row = await keyInstance(ctx, instanceId);
+    const target = await databaseOf(ctx, row.id, dbId);
+    const site = await keySite(ctx, siteId);
+    const sites = (await sitesOfDatabases([target.id])).get(target.id);
+    const owner = sites?.owner?.id === site.id;
+    if (!owner && !sites?.shared.some((s) => s.id === site.id)) throw new AppError(404, 'The database is not attached to this site', 'notFound');
+    if (owner && ctx.siteScope !== 'all') throw keySiteScope('A key limited to some sites cannot make a database shared across the account');
+    return maskResult(ctx, await keyGated(ctx, req, {
+      action: owner ? 'db.attach' : 'db.share', target: siteTarget(site),
+      params: { database: target.name, databaseId: target.id, instanceId: row.id, siteId: site.id, detach: true },
+    }, () => siteDatabaseService.detach(req, ctx.actor, row.id, target.id, site.id)));
   },
 
   async deleteDatabase(ctx: ApiKeyContext, req: Request, instanceId: number, dbId: number, confirm: string): Promise<void> {
@@ -245,11 +400,13 @@ export const keyDatabases = {
     const row = await keyInstance(ctx, instanceId);
     const user = await userOf(ctx, row.id, userId);
     await assertGrants(ctx, row.id, grants);
-    // The grants it keeps on databases the key does not reach are not its to remove.
+    // A key limited to some sites: the grants it does not list are kept, except on the databases it created.
     const hidden = (await db('db_grants as g').where({ 'g.user_id': user.id }).select('g.database_id', 'g.level') as Array<{ database_id: number; level: DbGrantInput['level'] }>)
       .filter((g) => ctx.siteScope !== 'all' && !grants.some((w) => w.databaseId === g.database_id));
+    // Only the rights on the databases the key CREATED are its to remove: a right on a database it merely reaches
+    // (owned by / shared with its sites, migration 030) is kept — attaching / sharing never revokes a grant.
     const ownDb = await created(ctx, 'database');
-    const keep = hidden.filter((g) => !ownDb.has(g.database_id)).map((g) => ({ databaseId: g.database_id, level: g.level }));
+    const keep = hidden.filter((g) => !ownDb.has(Number(g.database_id))).map((g) => ({ databaseId: Number(g.database_id), level: g.level }));
     const u = await keyGated(ctx, req, {
       action: 'db.user_grants', target: instanceTarget(row), params: { username: user.username, userId: user.id, instanceId: row.id, grants },
     }, () => databaseService.updateUser(req, ctx.actor, row.id, user.id, { grants: [...grants, ...keep] }));

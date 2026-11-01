@@ -57,13 +57,15 @@ async function accountRow(ctx: ApiKeyContext): Promise<AccountRow> {
 
 /**
  * Feature B (database clone): the databases a key reaches — every one of the account on a key for
- * all sites, else the ones it created (api_key_db_objects, as keyDatabases). A key without the
+ * all sites, else the ones it created and those of its sites (keyDatabases.keyReachableDatabases). A key without the
  * databases.manage scope reaches none (its actor lacks databases.manage anyway).
  */
 async function keyDbReach(ctx: ApiKeyContext): Promise<'all' | Set<number>> {
   if (!ctx.scopes.has('databases.manage')) return new Set();
   if (ctx.siteScope === 'all') return 'all';
-  return new Set((await db('api_key_db_objects').where({ key_id: ctx.id, kind: 'database' }).pluck('object_id') as number[]).map(Number));
+  // Migration 030: the databases owned by / shared with the key's sites as well.
+  const { keyReachableDatabases } = await import('./keyDatabases');
+  return keyReachableDatabases(ctx);
 }
 
 /** previews.manage, and files.read (a preview runs and shows the code): 403 codeReadForbidden with a hint otherwise. */
