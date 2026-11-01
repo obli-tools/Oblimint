@@ -192,10 +192,14 @@ test('databases ↔ sites on PostgreSQL', { timeout: 300_000 }, async (t: TestCo
   assert.match((await db('app_config').where({ key: 'site_databases_backfill' }).first('value'))?.value ?? '', /^done /);
   // Instance m still holds blog (account-wide): every site keeps its link. Instance p: stats belongs to s2 only.
   assert.deepEqual((await links()).map((l) => [l.source_id, l.target_id, l.enabled, l.pinned]), [
-    [s1, m, true, false], [s1, p, false, false], // s1 matched (shop): loses p, where it has nothing
+    [s1, m, true, false], [s1, p, true, true], // s1 matched (shop) but may reach p by a config file: kept (pinned)
     [s2, m, true, false], [s2, p, true, false],
     [s3, m, true, false], [s3, p, true, true], // s3 matched NOTHING: its link is kept (pinned)
   ]);
+  // Unpinned (the panel manages it again): the rule applies, s1 has nothing on p.
+  await db('network_links').where({ source_id: s1, target_id: p }).update({ pinned: false });
+  await reconcileDefaultDbLinks([{ accountId: acct, tenantId: tA }]);
+  assert.equal((await linkOf(s1, p))?.enabled, false, 'unpinned: follows the rule');
   const backfillAudit = await db('audit_logs').where({ action: 'db.database.backfill', tenant_id: tA }).orderBy('id').select('details');
   assert.equal(backfillAudit.length, 2, 'one entry per account');
   assert.ok(!JSON.stringify(backfillAudit).includes('pw@'), 'no variable value in the audit');

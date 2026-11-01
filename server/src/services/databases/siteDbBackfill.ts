@@ -22,8 +22,8 @@ import { syncDatabaseLinks } from './linkSync';
 //   - a name matching several databases of the account for one site (two
 //     instances, no host to tell them apart) → ambiguous, ignored;
 //   - nothing matches               → the database stays shared across the account.
-// Never breaks anything: a site that matched NOTHING keeps every default link
-// it has (the links the new rule would disable are PINNED), and a database
+// Never breaks anything: every site keeps every default link it has (the links
+// the new rule would disable are PINNED, matched site or not), and a database
 // already attached is left alone. Audited per account (db.database.backfill).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -92,13 +92,13 @@ async function backfillAccount(accountId: number, tenantId: number): Promise<Acc
   }
   const plan = backfillAttachments(refs, lite.databases, new Set(existing.map((e) => Number(e.database_id))));
 
-  // Sites that matched nothing keep every link they have today.
+  // Every site keeps every link it has today, matched or not: a site may also
+  // reach an instance through settings outside its environment (a config file
+  // of the release), which the backfill cannot see.
   const after = [...existing.map((e) => ({ siteId: Number(e.site_id), databaseId: Number(e.database_id), role: e.role })), ...plan];
-  const attachedSites = new Set(after.map((a) => a.siteId));
   const reason = siteInstanceReasons({ databases: lite.databases, attachments: after });
   const toPin: Array<{ siteId: number; instanceId: number }> = [];
   for (const s of sites) {
-    if (attachedSites.has(Number(s.id))) continue;
     for (const i of lite.instances) if (!reason(Number(s.id), i.id)) toPin.push({ siteId: Number(s.id), instanceId: i.id });
   }
 
