@@ -1,4 +1,51 @@
-/* Oblimint webmail — additions to the shared theme (../index.css). */
+/* ─────────────────────────────────────────────────────────────────────────────
+   Oblimint webmail — additions to the shared theme (../index.css).
+   Look and layout taken from Oblidesk (client/src/index.css there): depth by a
+   background step plus a soft shadow (NO-BORDER RULE: no outline on cards,
+   pills or buttons; hairlines only as separators), pills 7px / cards 10px /
+   modals 14px, focus as a ring. The accent stays the Oblimint mint of the
+   theme tokens (--c-accent). Scoped to the webmail bundle: the panel never
+   loads this file.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* color-scheme: native controls (select lists, date pickers, checkboxes)
+   follow the theme instead of the system's light rendering. --wm-warn: the
+   warning tone per theme (flags, errors), readable on each surface (Oblidesk
+   redefines its alert tones per theme the same way). */
+:root, [data-theme="obli-operator"] {
+  color-scheme: dark;
+  --wm-shadow-card: 0 1px 0 0 rgba(255, 255, 255, 0.03), 0 6px 24px -8px rgba(0, 0, 0, 0.45);
+  --wm-shadow-pop: 0 1px 0 0 rgba(255, 255, 255, 0.04), 0 18px 48px -12px rgba(0, 0, 0, 0.65);
+  --wm-backdrop: 11 13 26;
+  --wm-warn: 251 191 36;
+}
+
+[data-theme="obli-daylight"] {
+  color-scheme: light;
+  --wm-shadow-card: 0 1px 2px 0 rgba(46, 52, 64, 0.04), 0 6px 24px -12px rgba(46, 52, 64, 0.12);
+  --wm-shadow-pop: 0 1px 2px 0 rgba(46, 52, 64, 0.06), 0 18px 48px -14px rgba(46, 52, 64, 0.28);
+  --wm-backdrop: 46 52 64;
+  --wm-warn: 180 83 9;
+}
+
+[data-theme="obli-dim"] {
+  color-scheme: dark;
+  --wm-shadow-card: 0 1px 0 0 rgba(255, 255, 255, 0.03), 0 6px 20px -8px rgba(20, 23, 30, 0.40);
+  --wm-shadow-pop: 0 1px 0 0 rgba(255, 255, 255, 0.04), 0 18px 44px -12px rgba(20, 23, 30, 0.55);
+  --wm-backdrop: 30 34 42;
+  --wm-warn: 235 203 139;
+}
+
+.wm-warn { color: rgb(var(--wm-warn)); }
+.wm-warn-bg { background-color: rgb(var(--wm-warn) / 0.12); }
+.wm-warn-rail { box-shadow: inset 3px 0 0 0 rgb(var(--wm-warn)); }
+
+/* Native option lists take the theme's surfaces (Chrome / Edge on Windows draw them from the select). */
+.wm-select option { background-color: rgb(var(--c-bg-secondary)); color: rgb(var(--c-text-primary)); }
+
+/* Splitter drag: iframes (HTML mail, rich editor) never swallow the pointer. */
+.wm-resizing { cursor: col-resize; user-select: none; }
+.wm-resizing iframe { pointer-events: none; }
 
 html, body, #root {
   height: 100%;
@@ -6,6 +53,89 @@ html, body, #root {
 
 body {
   overflow: hidden;
+  /* Same stack as Oblidesk; the webmail CSP allows no font CDN, so Inter is
+     used when installed, the system face otherwise. */
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+}
+
+/* Focus is a RING, never a border (Oblidesk). */
+.wm-app :is(button, a, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgb(var(--c-accent) / 0.55);
+}
+
+.wm-card { box-shadow: var(--wm-shadow-card); }
+.wm-pop { box-shadow: var(--wm-shadow-pop); }
+.wm-backdrop { background-color: rgb(var(--wm-backdrop) / 0.55); backdrop-filter: blur(3px); }
+
+/* Thin scrollbars inside the panes. */
+.wm-scroll { scrollbar-width: thin; scrollbar-color: rgb(var(--c-border)) transparent; }
+.wm-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.wm-scroll::-webkit-scrollbar-track { background: transparent; }
+.wm-scroll::-webkit-scrollbar-thumb { background: rgb(var(--c-border)); border-radius: 9999px; }
+.wm-scroll::-webkit-scrollbar-thumb:hover { background: rgb(var(--c-border-light)); }
+
+/* Popovers and the palette scale in, toasts fade in (Oblidesk). */
+@keyframes wm-scale-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes wm-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes wm-dock-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.wm-scale-in { animation: wm-scale-in 130ms ease-out; transform-origin: top; }
+.wm-fade-up { animation: wm-fade-up 160ms ease-out; }
+.wm-dock-in { animation: wm-dock-in 180ms ease-out; }
+
+/* Loading skeletons: a slow shimmer on the tertiary surface. */
+@keyframes wm-shimmer {
+  0% { background-position: -320px 0; }
+  100% { background-position: 320px 0; }
+}
+.wm-skel {
+  border-radius: 6px;
+  background-color: rgb(var(--c-bg-tertiary));
+  background-image: linear-gradient(90deg, rgb(var(--c-bg-tertiary)) 0, rgb(var(--c-bg-hover)) 50%, rgb(var(--c-bg-tertiary)) 100%);
+  background-size: 640px 100%;
+  background-repeat: no-repeat;
+  animation: wm-shimmer 1.3s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wm-scale-in, .wm-fade-up, .wm-dock-in, .wm-skel { animation: none; }
+}
+
+/* Row hover actions: shown on hover / keyboard focus in the row (focus-visible:
+   a mouse click on a row does not leave them up), never on touch screens (no
+   hover there): rows then rely on the avatar checkbox and the reading pane
+   toolbar. */
+.wm-row .wm-row-actions { opacity: 0; pointer-events: none; }
+.wm-row:hover .wm-row-actions,
+.wm-row:focus-visible .wm-row-actions,
+.wm-row:has(:focus-visible) .wm-row-actions { opacity: 1; pointer-events: auto; }
+.wm-row:hover .wm-row-date,
+.wm-row:focus-visible .wm-row-date,
+.wm-row:has(:focus-visible) .wm-row-date { visibility: hidden; }
+@media (hover: none) {
+  .wm-row .wm-row-actions { display: none; }
+  .wm-row:hover .wm-row-date { visibility: visible; }
+}
+
+/* Avatar ↔ checkbox swap of a row (Outlook): the checkbox shows on hover,
+   on keyboard focus (so Tab reaches it) or while a selection exists. */
+.wm-row .wm-row-check { display: none; }
+.wm-row:hover .wm-row-check, .wm-row:focus-visible .wm-row-check, .wm-row:has(:focus-visible) .wm-row-check, .wm-selecting .wm-row .wm-row-check { display: flex; }
+.wm-row:hover .wm-row-avatar, .wm-row:focus-visible .wm-row-avatar, .wm-row:has(:focus-visible) .wm-row-avatar, .wm-selecting .wm-row .wm-row-avatar { display: none; }
+@media (hover: none) {
+  .wm-row:hover .wm-row-check { display: none; }
+  .wm-row:hover .wm-row-avatar { display: flex; }
+  .wm-selecting .wm-row .wm-row-check { display: flex; }
+  .wm-selecting .wm-row .wm-row-avatar { display: none; }
 }
 
 /* Rich text editor of the composer: a sandboxed iframe (RichEditor.tsx), styled from its own document. */
@@ -15,5 +145,19 @@ body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 14px;
-  line-height: 1.55;
+  line-height: 1.6;
+}
+
+kbd.wm-kbd {
+  display: inline-flex;
+  min-width: 1.4rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: rgb(var(--c-bg-tertiary));
+  padding: 0.05rem 0.35rem;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  font-size: 11px;
+  color: rgb(var(--c-text-secondary));
+  box-shadow: inset 0 -1px 0 rgb(var(--c-border));
 }

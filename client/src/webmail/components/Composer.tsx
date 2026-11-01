@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileText, Loader2, Paperclip, Send, Trash2, Type, X } from 'lucide-react';
-import { Button } from '@/components/common/Button';
+import { FileText, Loader2, Maximize2, Minimize2, Minus, Paperclip, Send, Trash2, Type, X } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { ApiError, wmApi } from '../api';
 import { destroyEmails, saveDraft, sendMessage, setKeyword, type OutgoingMessage } from '../jmap';
-import { parseAddressList, textToHtml } from '../lib/compose';
+import { COMPOSER_CLOSE_EVENT } from '../actions';
+import { COMPOSER_ATTR } from '../hotkeys';
+import { composerBody, parseAddressList, textToHtml } from '../lib/compose';
 import { formatSize } from '../lib/format';
+import { htmlToText } from '../lib/sanitize';
 import { mailboxByRole, useWebmail, type ComposerState } from '../store';
 import { RichEditor, type RichEditorHandle } from './RichEditor';
+import { IconButton, PillButton } from './ui';
 
 // Composer: plain text or simple rich text, reply / reply all / forward,
 // drafts saved automatically (Drafts folder, replaced at each save),
@@ -33,6 +36,8 @@ export function Composer({ c }: { c: ComposerState }) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [sending, setSending] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  /** Docked bottom-right, enlarged in the middle, or minimized to its title bar (desktop; full screen on phones). */
+  const [view, setView] = useState<'dock' | 'max' | 'min'>('dock');
   const editor = useRef<RichEditorHandle>(null);
   const dirty = useRef(false);
   const saving = useRef<Promise<void> | null>(null);
@@ -49,8 +54,7 @@ export function Composer({ c }: { c: ComposerState }) {
     const cur = cRef.current;
     const identity = identities.find((i) => i.id === identityId) ?? identities[0];
     if (!identity) return null;
-    const html = rich ? editor.current?.html() ?? '' : null;
-    const text = rich ? editor.current?.text() ?? '' : cur.text;
+    const { html, text } = composerBody(rich, editor.current, cur, htmlToText);
     return {
       identity,
       to: parseAddressList(cur.to).list,
@@ -162,6 +166,24 @@ export function Composer({ c }: { c: ComposerState }) {
     closeComposer();
     void refreshMailboxes(true);
   };
+  // The phone's system Back button closes the composer like its X (MailShell, draft saved).
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    const onClose = () => { void closeRef.current(); };
+    window.addEventListener(COMPOSER_CLOSE_EVENT, onClose);
+    return () => window.removeEventListener(COMPOSER_CLOSE_EVENT, onClose);
+  }, []);
+
+  /** Minimizing unmounts the rich editor: its content is kept in the store first (remounted from it on restore). */
+  const minimize = () => {
+    if (rich && editor.current) {
+      const html = editor.current.html();
+      updateComposer({ html });
+      cRef.current = { ...cRef.current, html };
+    }
+    setView('min');
+  };
 
   const toggleRich = () => {
     if (rich) {
@@ -175,110 +197,141 @@ export function Composer({ c }: { c: ComposerState }) {
     changed();
   };
 
-  const field = 'min-w-0 flex-1 bg-transparent px-1 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none';
+  const field = 'min-w-0 flex-1 bg-transparent px-1 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none';
   const title = c.mode === 'reply' || c.mode === 'replyAll' ? (t('wm.compose.titleReply') || 'Reply')
     : c.mode === 'forward' ? (t('wm.compose.titleForward') || 'Forward') : (t('wm.compose.new') || 'New message');
+  const headline = c.subject.trim() || title;
+  const saveText = saveState === 'saving' ? (t('wm.compose.saving') || 'Saving…') : saveState === 'saved' ? (t('wm.compose.saved') || 'Draft saved') : saveState === 'error' ? (t('wm.compose.saveFailed') || 'Draft not saved') : '';
+
+  // Ctrl / Cmd + Enter sends from any field of the composer (the rich editor's iframe forwards it, RichEditor.tsx).
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); if (!sending) void send(); }
+    if (e.key === 'Escape' && view === 'max') { e.stopPropagation(); setView('dock'); }
+  };
+
+  if (view === 'min') {
+    return (
+      <div {...{ [COMPOSER_ATTR]: '' }} className="wm-pop wm-dock-in fixed bottom-0 right-4 z-40 flex w-72 max-w-[calc(100vw-2rem)] items-center gap-1 rounded-t-[10px] bg-bg-secondary py-1.5 pl-3 pr-1" role="dialog" aria-label={title}>
+        <button type="button" onClick={() => setView('dock')} className="min-w-0 flex-1 truncate text-left text-[13px] font-medium text-text-primary">{headline}</button>
+        <IconButton size="sm" label={t('wm.compose.restore') || 'Restore'} onClick={() => setView('dock')}><Maximize2 size={13} /></IconButton>
+        <IconButton size="sm" label={t('wm.common.close') || 'Close'} onClick={() => { void close(); }}><X size={14} /></IconButton>
+      </div>
+    );
+  }
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-bg-secondary sm:inset-auto sm:bottom-4 sm:right-4 sm:h-[min(44rem,calc(100vh-2rem))] sm:w-[min(44rem,calc(100vw-2rem))] sm:rounded-xl sm:border sm:border-border sm:shadow-2xl"
-      role="dialog" aria-label={title}>
-      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <h2 className="flex-1 truncate text-sm font-semibold text-text-primary">{title}</h2>
-        <span className="text-[11px] text-text-muted">
-          {saveState === 'saving' ? (t('wm.compose.saving') || 'Saving…') : saveState === 'saved' ? (t('wm.compose.saved') || 'Draft saved') : saveState === 'error' ? (t('wm.compose.saveFailed') || 'Draft not saved') : ''}
-        </span>
-        <button type="button" onClick={() => { void close(); }} className="rounded-md p-1.5 text-text-muted hover:bg-bg-hover hover:text-text-primary coarse:min-h-10 coarse:min-w-10" aria-label={t('wm.common.close') || 'Close'}>
-          <X size={16} />
-        </button>
-      </div>
-
-      <div className="shrink-0 divide-y divide-border/60 border-b border-border px-3">
-        {identities.length > 1 && (
-          <label className="flex items-center gap-2">
-            <span className="w-12 shrink-0 text-xs text-text-muted">{t('wm.compose.from') || 'From'}</span>
-            <select value={identityId} onChange={(e) => { setIdentityId(e.target.value); changed(); }} className={cn(field, 'bg-bg-secondary')}>
-              {identities.map((i) => <option key={i.id} value={i.id}>{i.name ? `${i.name} <${i.email}>` : i.email}</option>)}
-            </select>
-          </label>
+    <>
+      {view === 'max' && <div className="wm-backdrop fixed inset-0 z-40 max-sm:hidden" onMouseDown={() => setView('dock')} />}
+      <div
+        {...{ [COMPOSER_ATTR]: '' }}
+        onKeyDown={onKeyDown}
+        className={cn(
+          'wm-pop wm-dock-in fixed z-40 flex flex-col overflow-hidden bg-bg-secondary',
+          // Phone: full screen. Desktop: docked bottom-right (Outlook), or large and centred.
+          'inset-0 pb-[var(--safe-bottom,0px)] pt-[var(--safe-top,0px)] sm:pb-0 sm:pt-0',
+          view === 'max'
+            ? 'sm:inset-auto sm:left-1/2 sm:top-1/2 sm:h-[min(52rem,calc(100vh-3rem))] sm:w-[min(64rem,calc(100vw-3rem))] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-[14px]'
+            : 'sm:inset-auto sm:bottom-0 sm:right-4 sm:h-[min(40rem,calc(100vh-5rem))] sm:w-[min(40rem,calc(100vw-2rem))] sm:rounded-t-[14px]',
         )}
-        <label className="flex items-center gap-2">
-          <span className="w-12 shrink-0 text-xs text-text-muted">{t('wm.compose.to') || 'To'}</span>
-          <input value={c.to} onChange={(e) => set({ to: e.target.value })} className={field} autoFocus={c.mode === 'new' || c.mode === 'forward'} autoCapitalize="off" spellCheck={false} />
-          {!showCcBcc && <button type="button" onClick={() => setShowCcBcc(true)} className="shrink-0 text-xs text-text-muted hover:text-accent">{t('wm.compose.ccBcc') || 'Cc / Bcc'}</button>}
-        </label>
-        {showCcBcc && (
-          <>
-            <label className="flex items-center gap-2">
-              <span className="w-12 shrink-0 text-xs text-text-muted">{t('wm.compose.cc') || 'Cc'}</span>
-              <input value={c.cc} onChange={(e) => set({ cc: e.target.value })} className={field} autoCapitalize="off" spellCheck={false} />
-            </label>
-            <label className="flex items-center gap-2">
-              <span className="w-12 shrink-0 text-xs text-text-muted">{t('wm.compose.bcc') || 'Bcc'}</span>
-              <input value={c.bcc} onChange={(e) => set({ bcc: e.target.value })} className={field} autoCapitalize="off" spellCheck={false} />
-            </label>
-          </>
-        )}
-        <label className="flex items-center gap-2">
-          <span className="w-12 shrink-0 text-xs text-text-muted">{t('wm.compose.subject') || 'Subject'}</span>
-          <input value={c.subject} onChange={(e) => set({ subject: e.target.value })} className={field} maxLength={998} />
-        </label>
-      </div>
-
-      {rich ? (
-        <RichEditor key={c.key} ref={editor} initialHtml={c.html ?? ''} onChange={changed} placeholder={t('wm.compose.bodyPlaceholder') || 'Write your message…'} />
-      ) : (
-        <textarea
-          value={c.text}
-          onChange={(e) => set({ text: e.target.value })}
-          placeholder={t('wm.compose.bodyPlaceholder') || 'Write your message…'}
-          autoFocus={c.mode === 'reply' || c.mode === 'replyAll'}
-          className="min-h-[12rem] flex-1 resize-none bg-transparent px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
-          onFocus={(e) => { if (c.mode !== 'new' && e.currentTarget.selectionStart === e.currentTarget.value.length) e.currentTarget.setSelectionRange(0, 0); }}
-        />
-      )}
-
-      {(c.attachments.length > 0 || uploads.length > 0) && (
-        <div className="flex shrink-0 flex-wrap gap-2 border-t border-border px-3 py-2">
-          {c.attachments.map((a) => (
-            <span key={a.blobId} className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-secondary">
-              <Paperclip size={12} className="shrink-0" />
-              <span className="truncate">{a.name}</span>
-              <span className="shrink-0 text-text-muted">{formatSize(a.size)}</span>
-              <button type="button" onClick={() => { updateComposer({ attachments: c.attachments.filter((x) => x.blobId !== a.blobId) }); changed(); }}
-                className="text-text-muted hover:text-text-primary" aria-label={t('wm.common.remove') || 'Remove'}><X size={12} /></button>
-            </span>
-          ))}
-          {uploads.map((u) => (
-            <span key={u.key} className={cn('flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs', u.error ? 'border-status-down/40 text-amber-400' : 'border-border text-text-muted')}>
-              {u.error ? <X size={12} /> : <Loader2 size={12} className="animate-spin" />}
-              <span className="truncate">{u.name}</span>
-              <span>{u.error ? u.error.slice(0, 60) : `${Math.round(u.progress * 100)} %`}</span>
-              {u.error && <button type="button" onClick={() => setUploads((x) => x.filter((y) => y.key !== u.key))} aria-label={t('wm.common.remove') || 'Remove'}><X size={12} /></button>}
-            </span>
-          ))}
+        role="dialog" aria-label={title}
+      >
+        <div className="flex shrink-0 items-center gap-1 bg-bg-tertiary py-1.5 pl-4 pr-1.5">
+          <h2 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text-primary">{headline}</h2>
+          <span className="mr-1 hidden text-[11px] text-text-muted sm:inline">{saveText}</span>
+          <IconButton size="sm" className="max-sm:hidden" label={t('wm.compose.minimize') || 'Minimize'} onClick={minimize}><Minus size={14} /></IconButton>
+          <IconButton size="sm" className="max-sm:hidden" label={view === 'max' ? (t('wm.compose.dock') || 'Dock') : (t('wm.compose.maximize') || 'Enlarge')} onClick={() => setView(view === 'max' ? 'dock' : 'max')}>
+            {view === 'max' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </IconButton>
+          <IconButton size="sm" label={t('wm.common.close') || 'Close'} onClick={() => { void close(); }}><X size={15} /></IconButton>
         </div>
-      )}
 
-      <div className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-2 pb-[max(0.5rem,var(--safe-bottom,0px))]">
-        <Button onClick={() => { void send(); }} loading={sending} disabled={!drafts || identities.length === 0}>
-          <Send size={15} className="mr-1.5" />{t('wm.compose.send') || 'Send'}
-        </Button>
-        <label className="cursor-pointer rounded-md p-2 text-text-muted hover:bg-bg-hover hover:text-text-primary coarse:min-h-10 coarse:min-w-10" title={t('wm.compose.attach') || 'Attach files'}>
-          <Paperclip size={17} />
-          <input type="file" multiple className="hidden" onChange={(e) => { void addFiles(e.target.files); e.target.value = ''; }} />
-        </label>
-        <button type="button" onClick={toggleRich} title={rich ? (t('wm.compose.plain') || 'Plain text') : (t('wm.compose.rich') || 'Rich text')}
-          className={cn('rounded-md p-2 hover:bg-bg-hover coarse:min-h-10 coarse:min-w-10', rich ? 'text-accent' : 'text-text-muted hover:text-text-primary')}>
-          {rich ? <Type size={17} /> : <FileText size={17} />}
-        </button>
-        {maxBytes > 0 && usedBytes > 0 && <span className="text-[11px] text-text-muted">{formatSize(usedBytes)} / {formatSize(Math.floor(maxBytes / MIME_OVERHEAD))}</span>}
-        <div className="flex-1" />
-        <button type="button" onClick={() => { void discard(); }} title={t('wm.compose.discard') || 'Discard'}
-          className="rounded-md p-2 text-text-muted hover:bg-bg-hover hover:text-text-primary coarse:min-h-10 coarse:min-w-10">
-          <Trash2 size={17} />
-        </button>
+        <div className="shrink-0 divide-y divide-border/60 px-4">
+          {identities.length > 1 && (
+            <label className="flex items-center gap-2">
+              <span className="w-12 shrink-0 text-[12px] text-text-muted">{t('wm.compose.from') || 'From'}</span>
+              <select value={identityId} onChange={(e) => { setIdentityId(e.target.value); changed(); }} className={cn(field, 'wm-select bg-bg-secondary')}>
+                {identities.map((i) => <option key={i.id} value={i.id}>{i.name ? `${i.name} <${i.email}>` : i.email}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="flex items-center gap-2">
+            <span className="w-12 shrink-0 text-[12px] text-text-muted">{t('wm.compose.to') || 'To'}</span>
+            <input value={c.to} onChange={(e) => set({ to: e.target.value })} className={field} autoFocus={c.mode === 'new' || c.mode === 'forward'} autoCapitalize="off" spellCheck={false} />
+            {!showCcBcc && <button type="button" onClick={() => setShowCcBcc(true)} className="shrink-0 rounded-[7px] px-2 py-1 text-[12px] text-text-muted transition-colors hover:bg-bg-hover hover:text-accent">{t('wm.compose.ccBcc') || 'Cc / Bcc'}</button>}
+          </label>
+          {showCcBcc && (
+            <>
+              <label className="flex items-center gap-2">
+                <span className="w-12 shrink-0 text-[12px] text-text-muted">{t('wm.compose.cc') || 'Cc'}</span>
+                <input value={c.cc} onChange={(e) => set({ cc: e.target.value })} className={field} autoCapitalize="off" spellCheck={false} />
+              </label>
+              <label className="flex items-center gap-2">
+                <span className="w-12 shrink-0 text-[12px] text-text-muted">{t('wm.compose.bcc') || 'Bcc'}</span>
+                <input value={c.bcc} onChange={(e) => set({ bcc: e.target.value })} className={field} autoCapitalize="off" spellCheck={false} />
+              </label>
+            </>
+          )}
+          <label className="flex items-center gap-2">
+            <span className="w-12 shrink-0 text-[12px] text-text-muted">{t('wm.compose.subject') || 'Subject'}</span>
+            <input value={c.subject} onChange={(e) => set({ subject: e.target.value })} className={cn(field, 'font-medium')} maxLength={998} />
+          </label>
+        </div>
+        <div className="h-px shrink-0 bg-border" />
+
+        {rich ? (
+          <RichEditor key={c.key} ref={editor} initialHtml={c.html ?? ''} onChange={changed} onSubmit={() => { if (!sending) void send(); }} placeholder={t('wm.compose.bodyPlaceholder') || 'Write your message…'} />
+        ) : (
+          <textarea
+            value={c.text}
+            onChange={(e) => set({ text: e.target.value })}
+            placeholder={t('wm.compose.bodyPlaceholder') || 'Write your message…'}
+            autoFocus={c.mode === 'reply' || c.mode === 'replyAll'}
+            className="wm-scroll min-h-[12rem] flex-1 resize-none bg-transparent px-4 py-3 text-[14px] leading-relaxed text-text-primary placeholder:text-text-muted focus:outline-none"
+            onFocus={(e) => { if (c.mode !== 'new' && e.currentTarget.selectionStart === e.currentTarget.value.length) e.currentTarget.setSelectionRange(0, 0); }}
+          />
+        )}
+
+        {(c.attachments.length > 0 || uploads.length > 0) && (
+          <div className="wm-scroll flex max-h-32 shrink-0 flex-wrap gap-2 overflow-y-auto px-4 py-2">
+            {c.attachments.map((a) => (
+              <span key={a.blobId} className="flex max-w-full items-center gap-1.5 rounded-[7px] bg-bg-tertiary py-1 pl-2 pr-1 text-[12px] text-text-secondary">
+                <Paperclip size={12} className="shrink-0 text-accent" />
+                <span className="truncate">{a.name}</span>
+                <span className="shrink-0 font-mono text-[10.5px] text-text-muted">{formatSize(a.size)}</span>
+                <button type="button" onClick={() => { updateComposer({ attachments: c.attachments.filter((x) => x.blobId !== a.blobId) }); changed(); }}
+                  className="rounded p-0.5 text-text-muted hover:bg-bg-hover hover:text-text-primary" aria-label={t('wm.common.remove') || 'Remove'}><X size={12} /></button>
+              </span>
+            ))}
+            {uploads.map((u) => (
+              <span key={u.key} className={cn('flex max-w-full items-center gap-1.5 rounded-[7px] px-2 py-1 text-[12px]', u.error ? 'wm-warn-bg wm-warn' : 'bg-bg-tertiary text-text-muted')}>
+                {u.error ? <X size={12} /> : <Loader2 size={12} className="animate-spin" />}
+                <span className="truncate">{u.name}</span>
+                <span>{u.error ? u.error.slice(0, 60) : `${Math.round(u.progress * 100)} %`}</span>
+                {u.error && <button type="button" onClick={() => setUploads((x) => x.filter((y) => y.key !== u.key))} aria-label={t('wm.common.remove') || 'Remove'}><X size={12} /></button>}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="flex shrink-0 items-center gap-1 px-3 py-2.5 pb-[max(0.625rem,var(--safe-bottom,0px))]">
+          <PillButton variant="primary" icon={<Send size={14} />} loading={sending} disabled={!drafts || identities.length === 0} onClick={() => { void send(); }}
+            title={`${t('wm.compose.send') || 'Send'} (Ctrl+Enter)`}>
+            {t('wm.compose.send') || 'Send'}
+          </PillButton>
+          <label className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-[7px] text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary coarse:h-10 coarse:w-10" title={t('wm.compose.attach') || 'Attach files'}>
+            <Paperclip size={16} />
+            <span className="sr-only">{t('wm.compose.attach') || 'Attach files'}</span>
+            <input type="file" multiple className="hidden" onChange={(e) => { void addFiles(e.target.files); e.target.value = ''; }} />
+          </label>
+          <IconButton active={rich} label={rich ? (t('wm.compose.plain') || 'Plain text') : (t('wm.compose.rich') || 'Rich text')} onClick={toggleRich}>
+            {rich ? <Type size={16} /> : <FileText size={16} />}
+          </IconButton>
+          {maxBytes > 0 && usedBytes > 0 && <span className="ml-1 font-mono text-[10.5px] text-text-muted">{formatSize(usedBytes)} / {formatSize(Math.floor(maxBytes / MIME_OVERHEAD))}</span>}
+          <span className="ml-auto mr-1 truncate text-[11px] text-text-muted sm:hidden">{saveText}</span>
+          <IconButton tone="danger" className="sm:ml-auto" label={t('wm.compose.discard') || 'Discard'} onClick={() => { void discard(); }}><Trash2 size={16} /></IconButton>
+        </div>
+        {!drafts && <p className="wm-warn px-4 pb-2 text-[12px]">{t('wm.compose.noDrafts') || 'This mailbox has no Drafts folder: messages cannot be sent from the webmail.'}</p>}
       </div>
-      {!drafts && <p className="px-3 pb-2 text-xs text-amber-400">{t('wm.compose.noDrafts') || 'This mailbox has no Drafts folder: messages cannot be sent from the webmail.'}</p>}
-    </div>
+    </>
   );
 }

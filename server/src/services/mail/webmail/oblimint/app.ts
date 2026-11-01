@@ -292,10 +292,10 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
     if (!preLoginCsrfOk(req, res)) return sendError(res, 403, 'csrf', 'Missing or invalid CSRF token');
     const locals = res.locals as Locals;
     try {
-      const { sid, session } = await deps.auth.sso((req.body as { token?: unknown } | undefined)?.token, locals.ip, req.get('user-agent') ?? null);
+      const { sid, session, panelUrl } = await deps.auth.sso((req.body as { token?: unknown } | undefined)?.token, locals.ip, req.get('user-agent') ?? null);
       if (locals.wm) await deps.auth.logout(locals.wm.sidHash).catch(() => undefined);
       setSessionCookie(res, sid);
-      return res.json(await deps.auth.info(session, ''));
+      return res.json(await deps.auth.info(session, '', panelUrl));
     } catch (err) {
       return authError(res, err);
     }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { EmailFull } from '../jmap';
-import { draftFrom, formatAddressList, forwardSubject, parseAddressList, quoteText, replySubject } from './compose';
+import { composerBody, draftFrom, formatAddressList, forwardSubject, parseAddressList, quoteText, replySubject } from './compose';
 import { linkify } from './format';
 
 const labels = {
@@ -73,4 +73,14 @@ test('plain text links become link runs, never markup', () => {
     { text: 'see ' }, { text: 'https://ok.example/a?b=1', href: 'https://ok.example/a?b=1' }, { text: '. and <b>x</b>' },
   ]);
   assert.deepEqual(linkify('javascript:alert(1)'), [{ text: 'javascript:alert(1)' }]);
+});
+
+test('composer body: the live editor, else the stored HTML (minimized composer), plain text as stored', () => {
+  const toText = (h: string) => h.replace(/<[^>]+>/g, '');
+  const live = { html: () => '<p>typed reply</p>', text: () => 'typed reply' };
+  assert.deepEqual(composerBody(true, live, { html: '<p>quote</p>', text: '' }, toText), { html: '<p>typed reply</p>', text: 'typed reply' });
+  // Minimized: the editor is unmounted; the content kept at minimize time is what an autosave / close writes.
+  assert.deepEqual(composerBody(true, null, { html: '<p>typed reply</p>', text: '' }, toText), { html: '<p>typed reply</p>', text: 'typed reply' });
+  assert.deepEqual(composerBody(true, null, { html: null, text: 'x' }, toText), { html: '', text: '' });
+  assert.deepEqual(composerBody(false, live, { html: null, text: 'plain body' }, toText), { html: null, text: 'plain body' });
 });

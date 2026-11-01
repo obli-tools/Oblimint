@@ -256,9 +256,10 @@ test('SSO: token in the body, pre-login CSRF; a second SSO replaces the session'
       body: JSON.stringify({ token: 't1' }),
     });
     assert.equal(r.status, 200);
-    const info = await r.json() as { address: string; method: string };
+    const info = await r.json() as { address: string; method: string; panelUrl: string | null };
     assert.equal(info.address, 'bob@example.test');
     assert.equal(info.method, 'sso');
+    assert.equal(info.panelUrl, null, 'no link in this ticket, no fallback configured');
     const replay = await fetch(`${h.base}/wm-api/sso`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Origin: h.origin, Cookie: `__Host-oblimint-wm-csrf=${pre}`, 'X-Oblimint-CSRF': pre },
       body: JSON.stringify({ token: 't1' }),
@@ -410,6 +411,26 @@ test('PUT /vacation has its own limit per session', async () => {
     for (let i = 0; i < 4; i++) codes.push((await put()).status);
     assert.deepEqual(codes, [200, 200, 200, 429]);
     assert.equal((await fetch(`${h.base}/wm-api/vacation`, { headers: { Cookie: a.cookie } })).status, 200, 'reading is not affected');
+  } finally { await h.close(); }
+});
+
+test('SSO: the answer carries the "Back to Oblimint" link of the ticket, /session the fallback', async () => {
+  const h = await start();
+  try {
+    h.f.ssoTokens.set('t-back', 2);
+    h.f.ssoPanelUrls.set('t-back', 'https://panel.test/mail/mailboxes/2');
+    const s = await fetch(`${h.base}/wm-api/session`);
+    assert.equal(((await s.json()) as { panelUrl: unknown }).panelUrl, null, 'signed out: no link');
+    const pre = cookieValue(cookiesOf(s), '__Host-oblimint-wm-csrf')!;
+    const r = await fetch(`${h.base}/wm-api/sso`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: h.origin, Cookie: `__Host-oblimint-wm-csrf=${pre}`, 'X-Oblimint-CSRF': pre },
+      body: JSON.stringify({ token: 't-back' }),
+    });
+    assert.equal(r.status, 200);
+    assert.equal(((await r.json()) as { panelUrl: unknown }).panelUrl, 'https://panel.test/mail/mailboxes/2');
+    const sid = cookieValue(cookiesOf(r), '__Host-oblimint-wm')!;
+    const again = await fetch(`${h.base}/wm-api/session`, { headers: { Cookie: `__Host-oblimint-wm=${sid}` } });
+    assert.equal(((await again.json()) as { panelUrl: unknown }).panelUrl, null, 'reload: deps.panelUrl (none in this harness)');
   } finally { await h.close(); }
 });
 

@@ -5,6 +5,7 @@ import { db } from '../../../../db';
 import { logger } from '../../../../utils/logger';
 import { resolveClient } from '../../../../utils/clientIp';
 import { banKey } from '../../../firewall/addresses';
+import { cachedPanelHosts } from '../../../panelHosts';
 import { platformSettings } from '../../../platformSettings';
 import { errText } from '../../../setup/docker';
 import { readAdminSecret } from '../../engines/stalwart/secret';
@@ -100,6 +101,18 @@ export async function webmailSendAllowed(mailboxId: number): Promise<boolean> {
   });
 }
 
+/**
+ * "Back to Oblimint" link when the SSO answer carried none (reload, password
+ * login): SSO → the mailbox's page on the panel host; password → the panel's
+ * home, the client space when one is configured (mailbox owners are clients).
+ */
+export async function webmailPanelUrl(s: { mailboxId: number; method: 'password' | 'sso' }): Promise<string | null> {
+  const hosts = await cachedPanelHosts();
+  if (s.method === 'sso') return hosts.admin ? `https://${hosts.admin}/mail/mailboxes/${s.mailboxId}` : null;
+  const host = hosts.client ?? hosts.admin;
+  return host ? `https://${host}/` : null;
+}
+
 /** Largest upload: the mail domain's message size, else the platform's (MiB → bytes). */
 export async function maxUploadBytes(mailboxId: number): Promise<number> {
   const row = await db('mailboxes as m').join('mail_domains as md', 'md.id', 'm.mail_domain_id').where('m.id', mailboxId)
@@ -145,6 +158,7 @@ export function createDefaultWebmailApp() {
         .catch(() => undefined);
     },
     maxUploadBytes,
+    panelUrl: webmailPanelUrl,
   });
   return createWebmailApp({
     auth,

@@ -1,5 +1,10 @@
 {
   "wm": {
+    "account": {
+      "title": "Account",
+      "viaPanel": "Opened from Oblimint",
+      "viaPassword": "Signed in with the mailbox password"
+    },
     "actions": {
       "archive": "Archive",
       "delete": "Delete",
@@ -8,6 +13,7 @@
       "forward": "Forward",
       "markRead": "Mark as read",
       "markUnread": "Mark as unread",
+      "more": "More actions",
       "move": "Move to…",
       "refresh": "Refresh",
       "reply": "Reply",
@@ -15,10 +21,16 @@
       "spam": "Mark as spam",
       "unflag": "Remove the flag"
     },
+    "back": {
+      "short": "Oblimint",
+      "toPanel": "Back to Oblimint",
+      "toPanelHint": "Back to the Oblimint panel"
+    },
     "common": {
       "back": "Back",
       "cancel": "Cancel",
       "close": "Close",
+      "dismiss": "Dismiss",
       "loading": "Loading…",
       "remove": "Remove",
       "save": "Save"
@@ -33,13 +45,17 @@
       "ccBcc": "Cc / Bcc",
       "date": "Date",
       "discard": "Discard",
+      "dock": "Dock",
       "forwarded": "Forwarded message",
       "from": "From",
+      "maximize": "Enlarge",
+      "minimize": "Minimize",
       "new": "New message",
       "noDrafts": "This mailbox has no Drafts folder: messages cannot be sent from the webmail.",
       "noRecipient": "Add at least one recipient.",
       "noSubjectConfirm": "Send without a subject?",
       "plain": "Plain text",
+      "restore": "Restore",
       "rich": "Rich text",
       "saveFailed": "Draft not saved",
       "saved": "Draft saved",
@@ -74,21 +90,54 @@
     "folders": {
       "archive": "Archive",
       "drafts": "Drafts",
+      "hide": "Hide the folders",
       "inbox": "Inbox",
       "junk": "Spam",
+      "mail": "Mail",
       "sent": "Sent",
+      "show": "Show the folders",
       "title": "Folders",
       "trash": "Trash"
+    },
+    "keys": {
+      "archive": "Archive",
+      "close": "Close / clear the selection",
+      "compose": "New message",
+      "delete": "Delete",
+      "flag": "Flag / unflag",
+      "forward": "Forward",
+      "help": "Keyboard shortcuts",
+      "next": "Next conversation",
+      "palette": "Command palette",
+      "previous": "Previous conversation",
+      "reply": "Reply",
+      "replyAll": "Reply all",
+      "search": "Search",
+      "select": "Select the conversation",
+      "send": "Send (in the composer)",
+      "title": "Keyboard shortcuts",
+      "unread": "Mark as read / unread"
     },
     "list": {
       "confirmDestroy": "Delete these messages permanently?",
       "empty": "This folder is empty.",
+      "emptyInbox": "New messages arrive here.",
+      "flagged": "Flagged",
+      "noFlagged": "No flagged message here.",
       "noSender": "(no sender)",
       "noSubject": "(no subject)",
+      "noUnread": "No unread message here.",
+      "quickAll": "All",
+      "quickFlagged": "Flagged",
+      "quickTitle": "Show",
+      "quickUnread": "Unread",
+      "resize": "Resize the list",
       "select": "Select",
       "selectAll": "Select all",
       "selectNone": "Select none",
-      "selected": "{{count}} selected"
+      "selected": "{{count}} selected",
+      "showAll": "Show every message",
+      "unread": "Unread"
     },
     "login": {
       "address": "Email address",
@@ -100,19 +149,33 @@
       "unavailable": "The webmail is not available right now."
     },
     "logout": "Sign out",
+    "palette": {
+      "actions": "Actions",
+      "move": "Move",
+      "none": "No command matches.",
+      "placeholder": "Type a command or a folder…",
+      "run": "Run",
+      "title": "Command palette"
+    },
     "prefs": {
       "dark": "Dark theme",
       "language": "Language",
-      "light": "Light theme"
+      "light": "Light theme",
+      "theme": "Theme",
+      "themeDark": "Dark",
+      "themeDim": "Slate",
+      "themeLight": "Light"
     },
     "read": {
       "attachment": "attachment",
       "bodyTitle": "Message",
+      "count": "{{count}} messages",
       "download": "Download",
       "gone": "This conversation no longer exists.",
       "imagesBlocked": "Remote images are blocked to protect your privacy.",
       "next": "Older",
       "none": "Select a message to read it.",
+      "noneHint": "The conversation opens here. Keyboard: J and K to move, C to write, ? for every shortcut.",
       "previous": "Newer",
       "showImages": "Show images",
       "truncated": "This message is very long: only its beginning is shown."
@@ -124,6 +187,7 @@
       "from": "From",
       "hasAttachment": "Has an attachment",
       "none": "No message matches.",
+      "noneHint": "Try other words, or search every folder from the advanced search.",
       "placeholder": "Search mail",
       "results": "Search results",
       "subject": "Subject",

@@ -172,6 +172,32 @@ test('SSO: a valid one-time token opens a session for ITS mailbox; replay / unkn
   await rejects(auth.sso('tok-alice', IP, null), 'ssoInvalid', 401);
 });
 
+test('"Back to Oblimint" link: the SSO ticket link, else deps.panelUrl, never for a signed-out page', async () => {
+  const seen: Array<{ mailboxId: number; method: string }> = [];
+  const f = fakeAuthDeps({
+    panelUrl: async (s) => { seen.push({ mailboxId: s.mailboxId, method: s.method }); return `https://panel.test/${s.method}/${s.mailboxId}`; },
+  });
+  f.ssoTokens.set('tok-bob', 2);
+  f.ssoPanelUrls.set('tok-bob', 'https://client.panel.test/mail/mailboxes/2');
+  const auth = createWebmailAuth(f.deps);
+  const sso = await auth.sso('tok-bob', IP, null);
+  assert.equal(sso.panelUrl, 'https://client.panel.test/mail/mailboxes/2');
+  assert.equal((await auth.info(sso.session, '', sso.panelUrl)).panelUrl, 'https://client.panel.test/mail/mailboxes/2');
+  assert.deepEqual(seen, [], 'the ticket link wins');
+  // Reload (/session): no ticket any more → the fallback, for THIS session's mailbox.
+  assert.equal((await auth.info(sso.session, '')).panelUrl, 'https://panel.test/sso/2');
+  const pw = await auth.login('alice@example.test', 'alice-password-1', IP, null);
+  assert.equal((await auth.info(pw.session, '')).panelUrl, 'https://panel.test/password/1');
+  assert.equal((await auth.info(null, 'pre')).panelUrl, null);
+  // A failing lookup never breaks /session; no dep = no link.
+  const g = fakeAuthDeps({ panelUrl: async () => { throw new Error('db down'); } });
+  const auth2 = createWebmailAuth(g.deps);
+  const s2 = await auth2.login('alice@example.test', 'alice-password-1', IP, null);
+  assert.equal((await auth2.info(s2.session, '')).panelUrl, null);
+  g.ssoTokens.set('tok-x', 2);
+  assert.equal((await auth2.sso('tok-x', IP, null)).panelUrl, null, 'a ticket without a link');
+});
+
 test('load(): idle timeout, background calls, revoked mailbox, malformed cookie', async () => {
   const f = fakeAuthDeps();
   const auth = createWebmailAuth(f.deps);

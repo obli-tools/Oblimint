@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Languages, Moon, Sun } from 'lucide-react';
+import { CloudMoon, Languages, Moon, Sun } from 'lucide-react';
 import type { WebmailVacation } from '@oblimint/shared';
-import { Button } from '@/components/common/Button';
 import { useCurrentTheme } from '@/hooks/useCurrentTheme';
 import { applyTheme } from '@/utils/theme';
 import { cn } from '@/utils/cn';
@@ -10,34 +9,59 @@ import { wmApi } from '../api';
 import { setWebmailLanguage, WEBMAIL_LANGUAGES } from '../i18n';
 import { useWebmail } from '../store';
 import { Dialog } from './Dialog';
+import { PillButton } from './ui';
 
-/** Language + light / dark theme (kept in this host's local storage). */
-export function LanguageThemeBar({ className }: { className?: string }) {
-  const { t, i18n } = useTranslation();
+const THEMES = [
+  { id: 'obli-operator', icon: Moon, key: 'wm.prefs.themeDark', fallback: 'Dark' },
+  { id: 'obli-daylight', icon: Sun, key: 'wm.prefs.themeLight', fallback: 'Light' },
+  { id: 'obli-dim', icon: CloudMoon, key: 'wm.prefs.themeDim', fallback: 'Slate' },
+] as const;
+
+/** Theme: the three Obli themes as a segmented pill (kept in this host's local storage). */
+export function ThemePicker({ className, labels = true }: { className?: string; labels?: boolean }) {
+  const { t } = useTranslation();
   const theme = useCurrentTheme();
-  const light = theme === 'obli-daylight';
   return (
-    <div className={cn('flex items-center gap-2 text-sm', className)}>
-      <label className="flex items-center gap-1.5 text-text-muted">
-        <Languages size={14} />
-        <span className="sr-only">{t('wm.prefs.language') || 'Language'}</span>
-        <select
-          value={i18n.language}
-          onChange={(e) => setWebmailLanguage(e.target.value)}
-          className="rounded-md bg-bg-tertiary px-2 py-1 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
-        >
-          {WEBMAIL_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.name}</option>)}
-        </select>
-      </label>
-      <button
-        type="button"
-        onClick={() => applyTheme(light ? 'obli-operator' : 'obli-daylight')}
-        className="rounded-md p-1.5 text-text-muted hover:bg-bg-hover hover:text-text-primary coarse:min-h-10 coarse:min-w-10"
-        title={light ? (t('wm.prefs.dark') || 'Dark theme') : (t('wm.prefs.light') || 'Light theme')}
-        aria-label={light ? (t('wm.prefs.dark') || 'Dark theme') : (t('wm.prefs.light') || 'Light theme')}
-      >
-        {light ? <Moon size={15} /> : <Sun size={15} />}
-      </button>
+    <div className={cn('flex items-center gap-0.5 rounded-[7px] bg-bg-tertiary p-0.5', className)} role="radiogroup" aria-label={t('wm.prefs.theme') || 'Theme'}>
+      {THEMES.map(({ id, icon: Icon, key, fallback }) => {
+        const on = theme === id || (id === 'obli-operator' && !THEMES.some((x) => x.id === theme));
+        const label = t(key) || fallback;
+        return (
+          <button key={id} type="button" role="radio" aria-checked={on} title={label} onClick={() => applyTheme(id)}
+            className={cn(
+              'flex h-7 flex-1 items-center justify-center gap-1.5 rounded-[6px] px-2 text-[12px] transition-colors coarse:h-9',
+              on ? 'wm-card bg-bg-secondary font-medium text-text-primary' : 'text-text-muted hover:text-text-primary',
+            )}>
+            <Icon size={13} className={cn(on && 'text-accent')} />
+            {labels && <span>{label}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Language of the webmail (en / fr; kept in this host's local storage). */
+export function LanguagePicker({ className }: { className?: string }) {
+  const { t, i18n } = useTranslation();
+  return (
+    <label className={cn('flex items-center gap-2 rounded-[7px] bg-bg-tertiary py-1 pl-2.5 pr-1 text-[12px] text-text-muted', className)}>
+      <Languages size={13} className="shrink-0" />
+      <span className="sr-only">{t('wm.prefs.language') || 'Language'}</span>
+      <select value={i18n.language} onChange={(e) => setWebmailLanguage(e.target.value)}
+        className="wm-select min-w-0 flex-1 cursor-pointer bg-transparent py-0.5 text-[12px] text-text-primary outline-none">
+        {WEBMAIL_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.name}</option>)}
+      </select>
+    </label>
+  );
+}
+
+/** Language + theme, side by side (login and confirmation screens). */
+export function LanguageThemeBar({ className }: { className?: string }) {
+  return (
+    <div className={cn('flex flex-wrap items-center justify-center gap-2', className)}>
+      <LanguagePicker />
+      <ThemePicker labels={false} />
     </div>
   );
 }
@@ -84,16 +108,17 @@ export function VacationDialog({ open, onClose }: { open: boolean; onClose: () =
     }
   };
 
-  const inputCls = 'w-full rounded-md bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent coarse:min-h-10';
+  const inputCls = 'w-full rounded-[7px] bg-bg-tertiary px-3 py-2 text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent/60 coarse:min-h-10';
   return (
     <Dialog
       open={open}
       onClose={onClose}
       title={t('wm.vacation.title') || 'Vacation responder'}
+      closeLabel={t('wm.common.close') || 'Close'}
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose}>{t('wm.common.cancel') || 'Cancel'}</Button>
-          <Button onClick={() => { void save(); }} loading={busy} disabled={!v}>{t('wm.common.save') || 'Save'}</Button>
+          <PillButton variant="ghost" onClick={onClose}>{t('wm.common.cancel') || 'Cancel'}</PillButton>
+          <PillButton variant="primary" onClick={() => { void save(); }} loading={busy} disabled={!v}>{t('wm.common.save') || 'Save'}</PillButton>
         </>
       )}
     >
@@ -125,7 +150,7 @@ export function VacationDialog({ open, onClose }: { open: boolean; onClose: () =
             <span className="text-sm text-text-secondary">{t('wm.vacation.interval') || 'Answer the same sender at most every (days)'}</span>
             <input type="number" min={1} max={30} value={v.intervalDays} onChange={(e) => setV({ ...v, intervalDays: Math.min(30, Math.max(1, Number(e.target.value) || 1)) })} className={cn(inputCls, 'max-w-[8rem]')} />
           </label>
-          {error && <p className="text-sm text-amber-400">{error}</p>}
+          {error && <p className="wm-warn text-sm">{error}</p>}
         </div>
       )}
     </Dialog>

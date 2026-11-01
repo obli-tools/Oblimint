@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { WebmailSessionInfo } from '@oblimint/shared';
 import { buildFilter, loadMailboxes, queryThreads, type EmailListItem, type Mailbox, type SearchQuery } from './jmap';
 import type { DraftFields } from './lib/compose';
+import { keepOpenRow, withQuickFilter, type QuickFilter } from './lib/view';
 
 // State of the webmail SPA (zustand, like the panel).
 
@@ -39,6 +40,8 @@ interface WebmailState {
   mailboxes: Mailbox[];
   currentMailboxId: string | null;
   search: SearchQuery | null;
+  /** Quick filter of the list (All / Unread / Flagged), ANDed with the folder or the search. */
+  quick: QuickFilter;
   list: ListState;
   selection: string[];
   openThreadId: string | null;
@@ -46,6 +49,8 @@ interface WebmailState {
   drawerOpen: boolean;
   composer: ComposerState | null;
   toasts: Toast[];
+  /** Full-screen layer open over the shell (command palette, shortcuts, vacation responder). */
+  overlay: 'palette' | 'shortcuts' | 'vacation' | null;
 
   setPhase(p: WebmailState['phase']): void;
   setSession(s: WebmailSessionInfo | null): void;
@@ -55,6 +60,8 @@ interface WebmailState {
   refreshMailboxes(background?: boolean): Promise<void>;
   openMailbox(id: string): void;
   setSearch(q: SearchQuery | null): void;
+  setQuick(q: QuickFilter): void;
+  setOverlay(o: WebmailState['overlay']): void;
   reloadList(background?: boolean): Promise<void>;
   loadMore(): Promise<void>;
   setSelection(ids: string[]): void;
@@ -85,12 +92,14 @@ export const useWebmail = create<WebmailState>((set, get) => ({
   mailboxes: [],
   currentMailboxId: null,
   search: null,
+  quick: 'all',
   list: emptyList(),
   selection: [],
   openThreadId: null,
   drawerOpen: false,
   composer: null,
   toasts: [],
+  overlay: null,
 
   setPhase: (phase) => set({ phase }),
   setSession: (session) => set({ session }),
@@ -119,15 +128,25 @@ export const useWebmail = create<WebmailState>((set, get) => ({
     void get().reloadList();
   },
 
+  setQuick(quick) {
+    if (get().quick === quick) return;
+    set({ quick, selection: [], openThreadId: null });
+    void get().reloadList();
+  },
+
+  setOverlay: (overlay) => set({ overlay }),
+
   async reloadList(background = false) {
-    const { currentMailboxId, search, list } = get();
+    const { currentMailboxId, search, quick, list } = get();
     const version = list.version + 1;
     set({ list: { ...list, loading: !background, version } });
     try {
       const keep = background ? Math.max(PAGE_SIZE, list.ids.length) : PAGE_SIZE;
-      const page = await queryThreads(buildFilter(currentMailboxId, search), 0, Math.min(keep, 200), background);
+      const page = await queryThreads(withQuickFilter(buildFilter(currentMailboxId, search), quick), 0, Math.min(keep, 200), background);
       if (get().list.version !== version) return;
-      set({ list: { ids: page.ids, emails: page.emails, threadSizes: page.threadSizes, total: page.total, loading: false, version } });
+      // The open conversation keeps its row even when the filter no longer matches it (view.ts keepOpenRow).
+      const rows = keepOpenRow(get().list, page, get().openThreadId);
+      set({ list: { ids: rows.ids, emails: rows.emails, threadSizes: rows.threadSizes, total: page.total, loading: false, version } });
     } catch (err) {
       if (get().list.version === version) set({ list: { ...get().list, loading: false } });
       if (!background) get().toast('error', (err as Error).message);
@@ -135,12 +154,12 @@ export const useWebmail = create<WebmailState>((set, get) => ({
   },
 
   async loadMore() {
-    const { list, currentMailboxId, search } = get();
+    const { list, currentMailboxId, search, quick } = get();
     if (list.loading || list.ids.length >= list.total) return;
     const version = list.version;
     set({ list: { ...list, loading: true } });
     try {
-      const page = await queryThreads(buildFilter(currentMailboxId, search), list.ids.length, PAGE_SIZE);
+      const page = await queryThreads(withQuickFilter(buildFilter(currentMailboxId, search), quick), list.ids.length, PAGE_SIZE);
       const cur = get().list;
       if (cur.version !== version) return;
       const seen = new Set(cur.ids);
@@ -180,6 +199,6 @@ export const useWebmail = create<WebmailState>((set, get) => ({
     };
   }),
   reset: () => set({
-    session: null, mailboxes: [], currentMailboxId: null, search: null, list: emptyList(), selection: [], openThreadId: null, composer: null, drawerOpen: false,
+    session: null, mailboxes: [], currentMailboxId: null, search: null, quick: 'all', list: emptyList(), selection: [], openThreadId: null, composer: null, drawerOpen: false, overlay: null,
   }),
 }));

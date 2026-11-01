@@ -1,16 +1,16 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Archive, FileText, Folder, Inbox, PenSquare, Send, ShieldAlert, Trash2 } from 'lucide-react';
-import { Button } from '@/components/common/Button';
+import { Archive, CalendarOff, ChevronRight, FileText, Folder, Inbox, Keyboard, PenSquare, Send, ShieldAlert, Trash2 } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import type { Mailbox } from '../jmap';
 import { emptyDraft } from '../lib/compose';
 import { useWebmail } from '../store';
+import { CountPill, SectionLabel } from './ui';
 
 const ROLE_ORDER = ['inbox', 'drafts', 'sent', 'archive', 'junk', 'trash'];
 
 export function roleIcon(role: string | null): ReactNode {
-  const p = { size: 16, className: 'shrink-0' };
+  const p = { size: 15, className: 'shrink-0' };
   switch (role) {
     case 'inbox': return <Inbox {...p} />;
     case 'drafts': return <FileText {...p} />;
@@ -62,57 +62,120 @@ export function flattenTree(mailboxes: Mailbox[]): Node[] {
   return out;
 }
 
+
+const FOLD_KEY = 'wm-folders-folded';
+
+function readFolded(): boolean {
+  try { return localStorage.getItem(FOLD_KEY) === '1'; } catch { return false; }
+}
+
+/**
+ * Folders sidebar (Oblidesk Sidebar): the compose button, the special
+ * folders, then the user's folders as a foldable section; pill rows, the
+ * open folder on an accent wash, unread counts as pills.
+ */
 export function MailboxTree() {
   const { t } = useTranslation();
   const mailboxes = useWebmail((s) => s.mailboxes);
   const current = useWebmail((s) => s.currentMailboxId);
   const search = useWebmail((s) => s.search);
-  const openMailbox = useWebmail((s) => s.openMailbox);
-  const openComposer = useWebmail((s) => s.openComposer);
-  const setDrawer = useWebmail((s) => s.setDrawer);
+  const composer = useWebmail((s) => s.composer);
+  const { openMailbox, openComposer, setDrawer, setOverlay } = useWebmail.getState();
   const nameOf = useMailboxName();
   const nodes = useMemo(() => flattenTree(mailboxes), [mailboxes]);
+  const [folded, setFolded] = useState(readFolded);
+  // Special folders (with their sub-folders) first, the user's tree below.
+  const { special, others } = useMemo(() => {
+    const a: Node[] = [];
+    const b: Node[] = [];
+    let inSpecial = false;
+    for (const n of nodes) {
+      if (n.depth === 0) inSpecial = !!n.m.role && ROLE_ORDER.includes(n.m.role);
+      (inSpecial ? a : b).push(n);
+    }
+    return { special: a, others: b };
+  }, [nodes]);
+  const loading = mailboxes.length === 0;
+
+  const toggleFold = () => {
+    setFolded((v) => {
+      try { localStorage.setItem(FOLD_KEY, v ? '0' : '1'); } catch { /* storage unavailable */ }
+      return !v;
+    });
+  };
+
+  const row = ({ m, depth }: Node) => {
+    const active = m.id === current && !search?.everywhere;
+    const unread = m.role === 'drafts' ? m.totalEmails : m.unreadEmails;
+    return (
+      <li key={m.id}>
+        <button
+          type="button"
+          onClick={() => openMailbox(m.id)}
+          aria-current={active ? 'page' : undefined}
+          title={nameOf(m)}
+          className={cn(
+            'flex w-full items-center gap-2.5 rounded-[7px] py-1.5 pr-2 text-left text-[13px] transition-colors coarse:py-2.5',
+            active ? 'bg-accent/15 font-medium text-accent' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary',
+          )}
+          style={{ paddingLeft: `${0.75 + depth * 0.85}rem` }}
+        >
+          <span className={cn(active ? 'text-accent' : 'opacity-80')}>{roleIcon(m.role)}</span>
+          <span className={cn('min-w-0 flex-1 truncate', unread > 0 && m.role !== 'drafts' && !active && 'font-semibold text-text-primary')}>{nameOf(m)}</span>
+          <CountPill value={unread} tone={m.role === 'drafts' ? 'default' : 'accent'} />
+        </button>
+      </li>
+    );
+  };
 
   return (
-    <nav className="flex h-full flex-col gap-3 px-2 py-3" aria-label={t('wm.folders.title') || 'Folders'}>
-      <Button className="mx-1 justify-start gap-2" onClick={() => { setDrawer(false); openComposer(emptyDraft()); }}>
-        <PenSquare size={16} />{t('wm.compose.new') || 'New message'}
-      </Button>
-      <div className="flex items-center gap-2 px-2 pt-1">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">{t('wm.folders.title') || 'Folders'}</span>
-        <div className="h-px flex-1 bg-border" />
+    <nav className="flex h-full flex-col" aria-label={t('wm.folders.title') || 'Folders'}>
+      <div className="shrink-0 px-3 pb-1 pt-3">
+        <button
+          type="button"
+          disabled={!!composer}
+          onClick={() => { setDrawer(false); openComposer(emptyDraft()); }}
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-[7px] bg-accent px-3 text-[13px] font-semibold text-bg-primary transition-colors hover:bg-accent-hover disabled:opacity-60"
+        >
+          <PenSquare size={15} />{t('wm.compose.new') || 'New message'}
+        </button>
       </div>
-      <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
-        {nodes.map(({ m, depth }) => {
-          const active = m.id === current && !search?.everywhere;
-          const unread = m.role === 'drafts' ? m.totalEmails : m.unreadEmails;
-          return (
-            <li key={m.id}>
-              <button
-                type="button"
-                onClick={() => openMailbox(m.id)}
-                aria-current={active ? 'page' : undefined}
-                className={cn(
-                  'flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-[14px] transition-colors coarse:py-2.5',
-                  active ? 'bg-bg-active text-text-primary' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary',
-                )}
-                style={{ paddingLeft: `${0.75 + depth * 0.9}rem` }}
-              >
-                <span className={cn(active && 'text-accent')}>{roleIcon(m.role)}</span>
-                <span className={cn('flex-1 truncate', unread > 0 && m.role !== 'drafts' && 'font-semibold text-text-primary')}>{nameOf(m)}</span>
-                {unread > 0 && (
-                  <span className={cn(
-                    'shrink-0 min-w-[1.4rem] rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold',
-                    m.role === 'drafts' ? 'bg-bg-tertiary text-text-muted' : 'bg-accent/20 text-accent',
-                  )}>
-                    {unread > 999 ? '999+' : unread}
-                  </span>
-                )}
+
+      <div className="wm-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        <div className="px-3 pb-1 pt-4"><SectionLabel>{t('wm.folders.mail') || 'Mail'}</SectionLabel></div>
+        {loading ? (
+          <div className="space-y-2 px-3 pt-1" aria-hidden>
+            {[70, 55, 62, 48, 58].map((w, i) => <span key={i} className="wm-skel block h-5" style={{ width: `${w}%` }} />)}
+          </div>
+        ) : (
+          <ul className="space-y-0.5">{special.map((n) => row(n))}</ul>
+        )}
+
+        {others.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 pb-1 pt-4">
+              <button type="button" onClick={toggleFold} aria-expanded={!folded}
+                className="flex min-w-0 flex-1 items-center gap-1.5 rounded-[7px] px-3 py-0.5 text-left transition-colors hover:bg-bg-hover">
+                <ChevronRight size={11} className={cn('shrink-0 text-text-muted transition-transform duration-150', !folded && 'rotate-90')} />
+                <SectionLabel>{t('wm.folders.title') || 'Folders'}</SectionLabel>
               </button>
-            </li>
-          );
-        })}
-      </ul>
+            </div>
+            {!folded && <ul className="space-y-0.5">{others.map((n) => row(n))}</ul>}
+          </>
+        )}
+      </div>
+
+      <div className="shrink-0 space-y-0.5 p-2">
+        <div className="mx-1 mb-1.5 h-px bg-border" />
+        <button type="button" onClick={() => { setDrawer(false); setOverlay('vacation'); }}
+          className="flex w-full items-center gap-2.5 rounded-[7px] px-3 py-2 text-[13px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary">
+          <CalendarOff size={15} className="shrink-0 opacity-80" />{t('wm.vacation.title') || 'Vacation responder'}
+        </button>
+        <button type="button" onClick={() => { setDrawer(false); setOverlay('shortcuts'); }}
+          className="flex w-full items-center gap-2.5 rounded-[7px] px-3 py-2 text-[13px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary max-lg:hidden">
+          <Keyboard size={15} className="shrink-0 opacity-80" />{t('wm.keys.title') || 'Keyboard shortcuts'}
+        </button>
+      </div>
     </nav>
   );
 }

@@ -1,5 +1,5 @@
 import i18n from './i18n';
-import { destroyEmails, moveEmails, setKeyword, threadEmailIds } from './jmap';
+import { destroyEmails, moveEmails, setKeyword, threadEmailIds, type Mailbox } from './jmap';
 import { mailboxByRole, useWebmail } from './store';
 
 // List / reader actions on whole threads (the list shows one row per thread:
@@ -57,12 +57,22 @@ export async function moveTo(listIds: string[], targetId: string): Promise<void>
   } catch (err) { fail(err); }
 }
 
-/** Delete: to Trash, or for good when already in Trash (confirmed by the caller). */
+/**
+ * Whether Delete destroys for good here: in Trash, or in a mailbox without a
+ * Trash folder (accounts migrated from IMAP, folder renamed or removed).
+ * Every caller confirms first when it does.
+ */
+export function deletesForGood(s: { mailboxes: Mailbox[]; currentMailboxId: string | null } = useWebmail.getState()): boolean {
+  const trash = mailboxByRole(s.mailboxes, 'trash');
+  return !trash || s.currentMailboxId === trash.id;
+}
+
+/** Delete: to Trash, or for good (deletesForGood, confirmed by the caller). */
 export async function deleteThreads(listIds: string[]): Promise<void> {
   const s = useWebmail.getState();
   const trash = mailboxByRole(s.mailboxes, 'trash');
   try {
-    if (!trash || s.currentMailboxId === trash.id) {
+    if (!trash || deletesForGood(s)) {
       const emails = await threadEmailIds(threadsOf(listIds), s.currentMailboxId);
       await destroyEmails(emails.map((e) => e.id));
       await after(listIds, true, t('wm.toast.deleted', 'Deleted'));
@@ -93,3 +103,51 @@ export async function markSpam(listIds: string[]): Promise<void> {
   const j = mailboxByRole(useWebmail.getState().mailboxes, 'junk');
   if (j) await moveTo(listIds, j.id);
 }
+
+/** What a keyboard / toolbar action applies to: the selection, else the open conversation's listed message. */
+export function currentTargets(): string[] {
+  const s = useWebmail.getState();
+  if (s.selection.length) return s.selection;
+  if (!s.openThreadId) return [];
+  const id = s.list.ids.find((i) => s.list.emails[i]?.threadId === s.openThreadId);
+  return id ? [id] : [];
+}
+
+/** Read ↔ unread of `listIds` (any unread among them: all marked read). */
+export async function toggleSeen(listIds: string[]): Promise<void> {
+  if (!listIds.length) return;
+  const { list } = useWebmail.getState();
+  await markSeen(listIds, listIds.some((id) => !list.emails[id]?.keywords?.$seen));
+}
+
+/** Flag ↔ no flag of `listIds` (all flagged: the flag goes, else it is set). */
+export async function toggleFlag(listIds: string[]): Promise<void> {
+  if (!listIds.length) return;
+  const { list } = useWebmail.getState();
+  await markFlagged(listIds, !listIds.every((id) => list.emails[id]?.keywords?.$flagged));
+}
+
+/** Opens the conversation `delta` rows away from the open one (j / k), the first one when none is open. */
+export function stepThread(delta: number): void {
+  const s = useWebmail.getState();
+  const { ids, emails } = s.list;
+  if (!ids.length) return;
+  const cur = s.openThreadId ? ids.findIndex((i) => emails[i]?.threadId === s.openThreadId) : -1;
+  const next = cur < 0 ? (delta > 0 ? 0 : -1) : cur + delta;
+  if (next < 0 || next >= ids.length) return;
+  const e = emails[ids[next]];
+  if (e) s.openThread(e.threadId);
+  if (next >= ids.length - 5) void s.loadMore();
+}
+
+/**
+ * Closes the open conversation. On a phone the conversation is a history
+ * entry: MailShell pops it whenever the conversation closes, whatever closed
+ * it (this, archive / delete / move of the open thread, the system Back).
+ */
+export function closeThread(): void {
+  useWebmail.getState().openThread(null);
+}
+
+/** Asks the open composer to close (draft saved first): the phone's system Back button. */
+export const COMPOSER_CLOSE_EVENT = 'wm:composer-close';

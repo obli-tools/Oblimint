@@ -92,6 +92,8 @@ export function fakeAuthDeps(over: Partial<WebmailAuthDeps> = {}) {
   const failures: Array<{ ip: string; username: string | null }> = [];
   const banned = new Set<string>();
   const ssoTokens = new Map<string, number>();
+  /** Panel page an SSO token carries (token → url), as webmail.service puts it in the ticket. */
+  const ssoPanelUrls = new Map<string, string>();
   const sleeps: number[] = [];
   let now = 1_700_000_000_000;
   const deps: WebmailAuthDeps = {
@@ -104,7 +106,7 @@ export function fakeAuthDeps(over: Partial<WebmailAuthDeps> = {}) {
       if (typeof token !== 'string' || !ssoTokens.has(token)) return null;
       const mailboxId = ssoTokens.get(token)!;
       ssoTokens.delete(token);
-      return { mailboxId };
+      return { mailboxId, panelUrl: ssoPanelUrls.get(token) ?? null };
     },
     peekSso: async (token) => (typeof token === 'string' && ssoTokens.has(token) ? { mailboxId: ssoTokens.get(token)! } : null),
     isBanned: async (ip) => banned.has(ip),
@@ -113,5 +115,5 @@ export function fakeAuthDeps(over: Partial<WebmailAuthDeps> = {}) {
     sleep: async (ms) => { sleeps.push(ms); },
     ...over,
   };
-  return { deps, boxes, engine, store, failures, banned, ssoTokens, sleeps, advance: (ms: number) => { now += ms; }, now: () => now };
+  return { deps, boxes, engine, store, failures, banned, ssoTokens, ssoPanelUrls, sleeps, advance: (ms: number) => { now += ms; }, now: () => now };
 }

@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WEBMAIL_SSO_FRAGMENT } from '@oblimint/shared';
-import { Button } from '@/components/common/Button';
-import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { Logo } from '@/components/common/Logo';
 import { ApiError, setUnauthenticatedHandler, wmApi } from './api';
 import { LoginScreen } from './components/LoginScreen';
 import { MailShell } from './components/MailShell';
+import { LanguageThemeBar } from './components/Preferences';
+import { PillButton, Spinner } from './components/ui';
 import { Toasts } from './components/Toasts';
 import i18n from './i18n';
+import { rememberPanelLink } from './panelLink';
 import { useWebmail } from './store';
 
 // Root of the webmail SPA: session check, panel single sign-on (token in the
@@ -35,6 +36,7 @@ async function redeem(token: string): Promise<void> {
   const s = useWebmail.getState();
   try {
     const session = await wmApi.sso(token);
+    rememberPanelLink(session);
     s.reset();
     s.setSession(session);
     s.setPhase('ready');
@@ -55,11 +57,14 @@ function SsoConfirm() {
   const current = session?.authenticated ? session.address ?? '' : '';
   const cancel = () => { setSso(null, null); setPhase(current ? 'ready' : 'login'); };
   return (
-    <div className="flex h-full items-center justify-center bg-bg-primary px-4">
-      <div className="w-full max-w-md space-y-4 rounded-xl border border-border bg-bg-secondary p-6 shadow-xl">
-        <Logo className="h-7" />
-        <h1 className="text-lg font-semibold text-text-primary">{t('wm.sso.openTitle') || 'Open this mailbox?'}</h1>
-        <p className="break-all rounded-md border border-border bg-bg-tertiary px-3 py-2 font-mono text-sm text-text-primary">{target}</p>
+    <div className="wm-app flex h-full flex-col items-center justify-center overflow-y-auto bg-bg-primary px-4 py-8">
+      <div className="wm-card w-full max-w-md space-y-4 rounded-[14px] bg-bg-secondary p-6">
+        <div className="flex items-center gap-2.5">
+          <Logo className="h-7" />
+          <span className="flex items-center gap-1.5 rounded-[7px] bg-accent/15 px-2 py-0.5 text-[11px] font-semibold text-accent"><span className="h-1.5 w-1.5 rounded-full bg-obli-mint" />{t('wm.title') || 'Webmail'}</span>
+        </div>
+        <h1 className="text-[19px] font-semibold text-text-primary">{t('wm.sso.openTitle') || 'Open this mailbox?'}</h1>
+        <p className="break-all rounded-[10px] bg-bg-tertiary px-3 py-2.5 font-mono text-[13px] text-text-primary">{target}</p>
         {current ? (
           <p className="text-sm text-text-secondary">
             {t('wm.sso.text', { address: current }) || `A webmail session is already open in this browser (${current}). Continuing closes it and opens the mailbox requested from the Oblimint panel.`}
@@ -68,11 +73,12 @@ function SsoConfirm() {
           <p className="text-sm text-text-secondary">{t('wm.sso.openText') || 'This link opens the mailbox above, requested from the Oblimint panel.'}</p>
         )}
         <p className="text-sm text-text-muted">{t('wm.sso.warningAddress') || 'Continue only if this is YOUR mailbox and you opened this link yourself from the panel: what you write or send would go to this mailbox.'}</p>
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="secondary" onClick={cancel}>{current ? (t('wm.sso.keep') || 'Keep my session') : (t('wm.common.cancel') || 'Cancel')}</Button>
-          <Button loading={busy} onClick={() => { setBusy(true); const tk = token; setSso(null, null); if (tk) void redeem(tk); }}>{t('wm.sso.open') || 'Open this mailbox'}</Button>
+        <div className="flex flex-wrap justify-end gap-2 pt-1">
+          <PillButton variant="ghost" onClick={cancel}>{current ? (t('wm.sso.keep') || 'Keep my session') : (t('wm.common.cancel') || 'Cancel')}</PillButton>
+          <PillButton variant="primary" loading={busy} onClick={() => { setBusy(true); const tk = token; setSso(null, null); if (tk) void redeem(tk); }}>{t('wm.sso.open') || 'Open this mailbox'}</PillButton>
         </div>
       </div>
+      <LanguageThemeBar className="mt-6" />
     </div>
   );
 }
@@ -167,7 +173,12 @@ export function WebmailApp() {
 
   return (
     <>
-      {phase === 'loading' && <div className="flex h-full items-center justify-center"><LoadingSpinner /></div>}
+      {phase === 'loading' && (
+        <div className="flex h-full flex-col items-center justify-center gap-4 bg-bg-primary">
+          <Logo className="h-7 opacity-90" />
+          <Spinner className="h-5 w-5 text-accent" />
+        </div>
+      )}
       {phase === 'login' && <LoginScreen />}
       {phase === 'ssoConfirm' && <SsoConfirm />}
       {phase === 'ready' && <MailShell />}

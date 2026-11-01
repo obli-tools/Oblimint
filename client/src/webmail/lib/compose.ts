@@ -80,6 +80,24 @@ export function plainTextOf(e: EmailFull, htmlToText: (html: string) => string):
   return h ? htmlToText(h) : (e.preview ?? '');
 }
 
+/**
+ * Body of the message being written: the live rich editor when it is mounted,
+ * else the HTML kept in the composer state (the editor unmounts while the
+ * composer is minimized: an autosave or a close then must not write an empty
+ * draft over the real one). Plain text: the stored text.
+ */
+export function composerBody(
+  rich: boolean,
+  editor: { html(): string; text(): string } | null,
+  stored: { html: string | null; text: string },
+  htmlToText: (html: string) => string,
+): { html: string | null; text: string } {
+  if (!rich) return { html: null, text: stored.text };
+  if (editor) return { html: editor.html(), text: editor.text() };
+  const html = stored.html ?? '';
+  return { html, text: html ? htmlToText(html) : '' };
+}
+
 export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
 
 export interface DraftFields {

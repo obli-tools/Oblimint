@@ -52,7 +52,7 @@ export function partValue(e: EmailFull, parts: BodyPart[] | undefined): string |
 
 function PlainBody({ text }: { text: string }) {
   return (
-    <div className="wm-plain px-4 py-3 text-text-primary">
+    <div className="wm-plain px-4 pb-4 pt-1 text-text-primary">
       {linkify(text).map((s, i) => (s.href
         ? <a key={i} href={s.href} target="_blank" rel="noopener noreferrer" className="text-accent underline">{s.text}</a>
         : <span key={i}>{s.text}</span>))}
@@ -111,7 +111,7 @@ export function MessageBody({ email }: { email: EmailFull }) {
   }, [html, allowRemote, cidMap]);
 
   const cut = truncated && (
-    <p className="mx-4 mt-3 rounded-md border border-border bg-bg-tertiary px-3 py-2 text-xs text-text-secondary">
+    <p className="mx-4 mb-2 rounded-[7px] bg-bg-tertiary px-3 py-2 text-xs text-text-secondary">
       {t('wm.read.truncated') || 'This message is very long: only its beginning is shown.'}
     </p>
   );
@@ -120,7 +120,7 @@ export function MessageBody({ email }: { email: EmailFull }) {
     <div className="flex flex-col">
       {cut}
       {rendered.blocked > 0 && !allowRemote && (
-        <div className="mx-4 mt-3 flex flex-wrap items-center gap-2 rounded-md border border-border bg-bg-tertiary px-3 py-2 text-xs text-text-secondary">
+        <div className="mx-4 mb-2 flex flex-wrap items-center gap-2 rounded-[7px] bg-bg-tertiary px-3 py-2 text-xs text-text-secondary">
           <ImageOff size={14} className="shrink-0 text-text-muted" />
           <span className="flex-1">{t('wm.read.imagesBlocked') || 'Remote images are blocked to protect your privacy.'}</span>
           <button type="button" onClick={() => setAllowRemote(true)} className="font-medium text-accent hover:underline">
@@ -133,7 +133,7 @@ export function MessageBody({ email }: { email: EmailFull }) {
         sandbox={IFRAME_SANDBOX}
         srcDoc={rendered.doc}
         referrerPolicy="no-referrer"
-        className="mx-4 my-3 h-[70vh] min-h-[320px] rounded-md border border-border bg-white"
+        className="mx-4 mb-3 h-[70vh] min-h-[320px] rounded-[7px] bg-white"
       />
     </div>
   );

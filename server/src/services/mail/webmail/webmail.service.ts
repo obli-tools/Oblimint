@@ -6,6 +6,7 @@ import { AppError } from '../../../middleware/errorHandler';
 import { logger } from '../../../utils/logger';
 import { auditService } from '../../audit.service';
 import { appConfigService } from '../../appConfig.service';
+import { publicPanelOrigin } from '../../panelHosts';
 import { platformSettings } from '../../platformSettings';
 import { errText } from '../../setup/docker';
 import { registerEdgeContributor, unregisterEdgeContributor } from '../../edge/contributors';
@@ -264,8 +265,11 @@ export const webmailService = {
       // impersonates the mailbox on the engine (JMAP, Stalwart only).
       if (driver.engine !== 'stalwart') throw unavailable('The Oblimint webmail needs the Stalwart mail engine');
       if (!deps.oblimintRunning()) throw unavailable('The webmail is not running');
+      // "Back to Oblimint" of the webmail: this mailbox's page on the panel host the user is on (configured names only).
+      const origin = await publicPanelOrigin(req).catch(() => null);
       const { token, expiresAt: tokenExpiry } = webmailTokens.issue({
         kind: 'oblimint', credentials: null, appPasswordId: null, mailboxId: mb.id, accountId: mb.account_id,
+        panelUrl: origin ? `${origin}/mail/mailboxes/${mb.id}` : null,
       });
       await auditService.logReqAs(req, mb.tenant_id, 'mail.webmail.sso', {
         resourceType: 'mailbox',
@@ -389,13 +393,13 @@ export const webmailService = {
   },
 
   /** Oblimint webmail (in-process): one-time token → mailbox id; null = refused (unknown / expired / replayed / other webmail). */
-  async redeemOblimint(token: unknown): Promise<{ mailboxId: number } | null> {
+  async redeemOblimint(token: unknown): Promise<{ mailboxId: number; panelUrl: string | null } | null> {
     const ticket = webmailTokens.redeem(token);
     if (!ticket || ticket.kind !== 'oblimint') return null;
     const settings = await platformSettings.section('mail');
     if (settings.webmail !== 'oblimint') return null;
     logger.info({ mailboxId: ticket.mailboxId, accountId: ticket.accountId, webmail: ticket.kind }, 'webmail SSO token redeemed');
-    return { mailboxId: ticket.mailboxId };
+    return { mailboxId: ticket.mailboxId, panelUrl: ticket.panelUrl ?? null };
   },
 
   /** Oblimint webmail: mailbox of a live token of kind 'oblimint', the token left unused (confirmation screen). */

@@ -1,5 +1,10 @@
 {
   "wm": {
+    "account": {
+      "title": "Compte",
+      "viaPanel": "Ouverte depuis Oblimint",
+      "viaPassword": "Connexion par le mot de passe de la boîte"
+    },
     "actions": {
       "archive": "Archiver",
       "delete": "Supprimer",
@@ -8,6 +13,7 @@
       "forward": "Transférer",
       "markRead": "Marquer comme lu",
       "markUnread": "Marquer comme non lu",
+      "more": "Plus d’actions",
       "move": "Déplacer vers…",
       "refresh": "Actualiser",
       "reply": "Répondre",
@@ -15,10 +21,16 @@
       "spam": "Signaler comme indésirable",
       "unflag": "Retirer le drapeau"
     },
+    "back": {
+      "short": "Oblimint",
+      "toPanel": "Retour sur Oblimint",
+      "toPanelHint": "Revenir au panneau Oblimint"
+    },
     "common": {
       "back": "Retour",
       "cancel": "Annuler",
       "close": "Fermer",
+      "dismiss": "Fermer",
       "loading": "Chargement…",
       "remove": "Retirer",
       "save": "Enregistrer"
@@ -33,13 +45,17 @@
       "ccBcc": "Cc / Cci",
       "date": "Date",
       "discard": "Abandonner",
+      "dock": "Ancrer",
       "forwarded": "Message transféré",
       "from": "De",
+      "maximize": "Agrandir",
+      "minimize": "Réduire",
       "new": "Nouveau message",
       "noDrafts": "Cette boîte n'a pas de dossier Brouillons : impossible d'envoyer depuis le webmail.",
       "noRecipient": "Ajoutez au moins un destinataire.",
       "noSubjectConfirm": "Envoyer sans objet ?",
       "plain": "Texte brut",
+      "restore": "Rouvrir",
       "rich": "Texte enrichi",
       "saveFailed": "Brouillon non enregistré",
       "saved": "Brouillon enregistré",
@@ -74,21 +90,54 @@
     "folders": {
       "archive": "Archives",
       "drafts": "Brouillons",
+      "hide": "Masquer les dossiers",
       "inbox": "Boîte de réception",
       "junk": "Indésirables",
+      "mail": "Messagerie",
       "sent": "Envoyés",
+      "show": "Afficher les dossiers",
       "title": "Dossiers",
       "trash": "Corbeille"
+    },
+    "keys": {
+      "archive": "Archiver",
+      "close": "Fermer / vider la sélection",
+      "compose": "Nouveau message",
+      "delete": "Supprimer",
+      "flag": "Suivre / ne plus suivre",
+      "forward": "Transférer",
+      "help": "Raccourcis clavier",
+      "next": "Conversation suivante",
+      "palette": "Palette de commandes",
+      "previous": "Conversation précédente",
+      "reply": "Répondre",
+      "replyAll": "Répondre à tous",
+      "search": "Rechercher",
+      "select": "Sélectionner la conversation",
+      "send": "Envoyer (dans la rédaction)",
+      "title": "Raccourcis clavier",
+      "unread": "Marquer comme lu / non lu"
     },
     "list": {
       "confirmDestroy": "Supprimer définitivement ces messages ?",
       "empty": "Ce dossier est vide.",
+      "emptyInbox": "Les nouveaux messages arrivent ici.",
+      "flagged": "Suivi",
+      "noFlagged": "Aucun message suivi ici.",
       "noSender": "(sans expéditeur)",
       "noSubject": "(sans objet)",
+      "noUnread": "Aucun message non lu ici.",
+      "quickAll": "Tous",
+      "quickFlagged": "Suivis",
+      "quickTitle": "Afficher",
+      "quickUnread": "Non lus",
+      "resize": "Redimensionner la liste",
       "select": "Sélectionner",
       "selectAll": "Tout sélectionner",
       "selectNone": "Tout désélectionner",
-      "selected": "{{count}} sélectionné(s)"
+      "selected": "{{count}} sélectionné(s)",
+      "showAll": "Afficher tous les messages",
+      "unread": "Non lu"
     },
     "login": {
       "address": "Adresse e-mail",
@@ -100,19 +149,33 @@
       "unavailable": "Le webmail n'est pas disponible pour le moment."
     },
     "logout": "Se déconnecter",
+    "palette": {
+      "actions": "Actions",
+      "move": "Naviguer",
+      "none": "Aucune commande ne correspond.",
+      "placeholder": "Tapez une commande ou un dossier…",
+      "run": "Exécuter",
+      "title": "Palette de commandes"
+    },
     "prefs": {
       "dark": "Thème sombre",
       "language": "Langue",
-      "light": "Thème clair"
+      "light": "Thème clair",
+      "theme": "Thème",
+      "themeDark": "Sombre",
+      "themeDim": "Ardoise",
+      "themeLight": "Clair"
     },
     "read": {
       "attachment": "pièce jointe",
       "bodyTitle": "Message",
+      "count": "{{count}} messages",
       "download": "Télécharger",
       "gone": "Cette conversation n'existe plus.",
       "imagesBlocked": "Les images distantes sont bloquées pour protéger votre vie privée.",
       "next": "Plus ancien",
       "none": "Sélectionnez un message pour le lire.",
+      "noneHint": "La conversation s’ouvre ici. Au clavier : J et K pour parcourir, C pour écrire, ? pour tous les raccourcis.",
       "previous": "Plus récent",
       "showImages": "Afficher les images",
       "truncated": "Ce message est très long : seul son début est affiché."
@@ -124,6 +187,7 @@
       "from": "De",
       "hasAttachment": "Avec pièce jointe",
       "none": "Aucun message ne correspond.",
+      "noneHint": "Essayez d’autres mots, ou cherchez dans tous les dossiers depuis la recherche avancée.",
       "placeholder": "Rechercher dans les messages",
       "results": "Résultats de la recherche",
       "subject": "Objet",

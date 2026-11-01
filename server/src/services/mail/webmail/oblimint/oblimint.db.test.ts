@@ -157,13 +157,13 @@ test('Oblimint webmail on PostgreSQL', { timeout: 300_000 }, async (t: TestConte
     // …which consumed it (single use).
     assert.equal(await webmailService.redeemOblimint(token), null);
     const again = new URL((await open(alice)).body.data!.url).hash.slice(5);
-    assert.deepEqual(await webmailService.redeemOblimint(again), { mailboxId: alice });
+    assert.deepEqual(await webmailService.redeemOblimint(again), { mailboxId: alice, panelUrl: `https://panel.platform.test/mail/mailboxes/${alice}` }, 'the panel page of the mailbox rides in the ticket');
     assert.equal(await webmailService.redeemOblimint(again), null, 'replay');
     // The confirmation screen asks which mailbox a token opens WITHOUT using it.
     const peeked = new URL((await open(alice)).body.data!.url).hash.slice(5);
     assert.deepEqual(await webmailService.peekOblimint(peeked), { mailboxId: alice });
     assert.deepEqual(await webmailService.peekOblimint(peeked), { mailboxId: alice });
-    assert.deepEqual(await webmailService.redeemOblimint(peeked), { mailboxId: alice }, 'still usable after the peek');
+    assert.deepEqual(await webmailService.redeemOblimint(peeked), { mailboxId: alice, panelUrl: `https://panel.platform.test/mail/mailboxes/${alice}` }, 'still usable after the peek');
     assert.equal(await webmailService.peekOblimint(peeked), null, 'used');
     assert.equal(await webmailService.peekOblimint('x'.repeat(43)), null);
   });

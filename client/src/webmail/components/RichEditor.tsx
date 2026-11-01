@@ -23,12 +23,15 @@ export interface RichEditorHandle {
 /** Theme variables copied into the editor document (the iframe does not inherit the app's CSS). */
 const THEME_VARS = ['--c-text-primary', '--c-text-secondary', '--c-text-muted', '--c-accent', '--c-border-light', '--c-bg-secondary'];
 
-export const RichEditor = forwardRef<RichEditorHandle, { initialHtml: string; onChange: () => void; placeholder: string }>(
-  ({ initialHtml, onChange, placeholder }, ref) => {
+export const RichEditor = forwardRef<RichEditorHandle, { initialHtml: string; onChange: () => void; placeholder: string; onSubmit?: () => void }>(
+  ({ initialHtml, onChange, placeholder, onSubmit }, ref) => {
     const { t } = useTranslation();
     const frame = useRef<HTMLIFrameElement>(null);
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+    /** Ctrl / Cmd + Enter inside the editor document (its key events never reach the composer). */
+    const onSubmitRef = useRef(onSubmit);
+    onSubmitRef.current = onSubmit;
     /** Content until the editor document is ready (then the document owns it). */
     const pending = useRef(sanitizeOutgoing(initialHtml));
     const ready = useRef<Document | null>(null);
@@ -50,6 +53,9 @@ export const RichEditor = forwardRef<RichEditorHandle, { initialHtml: string; on
       d.body.innerHTML = pending.current;
       const changed = () => onChangeRef.current();
       d.addEventListener('input', changed);
+      d.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && onSubmitRef.current) { e.preventDefault(); onSubmitRef.current(); }
+      });
       d.addEventListener('paste', (e) => {
         // Pasted HTML goes through the sanitizer before it enters the document.
         const html = e.clipboardData?.getData('text/html');
@@ -108,11 +114,11 @@ export const RichEditor = forwardRef<RichEditorHandle, { initialHtml: string; on
       if (!/^(https?:\/\/|mailto:)/i.test(url.trim())) return;
       exec('createLink', url.trim());
     };
-    const btn = 'rounded p-1.5 text-text-muted hover:bg-bg-hover hover:text-text-primary coarse:min-h-9 coarse:min-w-9';
+    const btn = 'rounded-[7px] p-1.5 text-text-muted transition-colors hover:bg-bg-hover hover:text-text-primary coarse:min-h-9 coarse:min-w-9';
 
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-border px-2 py-1" role="toolbar">
+        <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-b border-border/60 px-3 py-1" role="toolbar">
           <button type="button" className={btn} title={t('wm.editor.bold') || 'Bold'} onMouseDown={(e) => e.preventDefault()} onClick={() => exec('bold')}><Bold size={15} /></button>
           <button type="button" className={btn} title={t('wm.editor.italic') || 'Italic'} onMouseDown={(e) => e.preventDefault()} onClick={() => exec('italic')}><Italic size={15} /></button>
           <button type="button" className={btn} title={t('wm.editor.underline') || 'Underline'} onMouseDown={(e) => e.preventDefault()} onClick={() => exec('underline')}><Underline size={15} /></button>

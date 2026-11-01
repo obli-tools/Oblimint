@@ -89,8 +89,8 @@ export interface WebmailAuthDeps {
   now(): number;
   findMailboxByAddress(address: string): Promise<MailboxAuthRow | null>;
   findMailboxById(id: number): Promise<MailboxAuthRow | null>;
-  /** One-time SSO token of the panel → mailbox id (null = unknown / expired / replayed / other webmail). */
-  redeemSso(token: unknown): Promise<{ mailboxId: number } | null>;
+  /** One-time SSO token of the panel → mailbox id + its panel page (null = unknown / expired / replayed / other webmail). */
+  redeemSso(token: unknown): Promise<{ mailboxId: number; panelUrl?: string | null } | null>;
   /** Same lookup WITHOUT using the token (confirmation screen before the redemption). */
   peekSso(token: unknown): Promise<{ mailboxId: number } | null>;
   /** Live ban of the client address on the mail ports (mail_bans). Never throws. */
@@ -98,6 +98,12 @@ export interface WebmailAuthDeps {
   /** Mail ban service, service 'webmail'. Never throws. */
   recordFailure(ip: string, username: string | null): void;
   maxUploadBytes(mailboxId: number): Promise<number>;
+  /**
+   * "Back to Oblimint" link of a session when the SSO answer did not carry
+   * one (page reload, password login). Configured panel names only; null =
+   * none. Optional (no link).
+   */
+  panelUrl?(s: Pick<WebmailSession, 'mailboxId' | 'method'>): Promise<string | null>;
   /** Progressive login delay (tests replace it). */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -214,12 +220,12 @@ export function createWebmailAuth(deps: WebmailAuthDeps) {
     },
 
     /** Panel single sign-on token. Throws WebmailAuthError. */
-    async sso(token: unknown, ip: string, userAgent: string | null): Promise<{ sid: string; session: WebmailSession }> {
+    async sso(token: unknown, ip: string, userAgent: string | null): Promise<{ sid: string; session: WebmailSession; panelUrl: string | null }> {
       const ticket = await deps.redeemSso(token);
       if (!ticket) throw new WebmailAuthError('ssoInvalid', 401, 'This link has expired or was already used: open the webmail again from the panel');
       const mb = await deps.findMailboxById(ticket.mailboxId);
       if (!mb || !mailboxLoginAllowed(mb)) throw new WebmailAuthError('ssoInvalid', 401, 'This mailbox cannot log in');
-      return open(mb, 'sso', ip, userAgent);
+      return { ...(await open(mb, 'sso', ip, userAgent)), panelUrl: ticket.panelUrl ?? null };
     },
 
     /**
@@ -265,11 +271,12 @@ export function createWebmailAuth(deps: WebmailAuthDeps) {
       if (ep.accountId !== s.jmapAccountId) throw new WebmailAuthError('notAuthenticated', 401, 'The mailbox account changed: log in again');
     },
 
-    async info(s: WebmailSession | null, preLoginCsrf: string): Promise<WebmailSessionInfo> {
+    /** `panelUrl`: the link the SSO ticket carried (/sso answer), else deps.panelUrl. */
+    async info(s: WebmailSession | null, preLoginCsrf: string, panelUrl: string | null = null): Promise<WebmailSessionInfo> {
       if (!s) {
         return {
           authenticated: false, csrf: preLoginCsrf, address: null, displayName: null, accountId: null, identities: [],
-          maxUploadBytes: 0, idleTimeoutSec: Math.floor(WEBMAIL_IDLE_MS / 1000), method: null,
+          maxUploadBytes: 0, idleTimeoutSec: Math.floor(WEBMAIL_IDLE_MS / 1000), method: null, panelUrl: null,
         };
       }
       return {
@@ -282,6 +289,7 @@ export function createWebmailAuth(deps: WebmailAuthDeps) {
         maxUploadBytes: await deps.maxUploadBytes(s.mailboxId).catch(() => 25 * 1048576),
         idleTimeoutSec: Math.floor(WEBMAIL_IDLE_MS / 1000),
         method: s.method,
+        panelUrl: panelUrl ?? (deps.panelUrl ? await deps.panelUrl(s).catch(() => null) : null),
       };
     },
 

@@ -48,6 +48,13 @@ export interface WebmailSessionInfo {
   idleTimeoutSec: number;
   /** How the session was opened. */
   method: 'password' | 'sso' | null;
+  /**
+   * "Back to Oblimint" link of the webmail header (null: none configured).
+   * SSO: the panel page of this mailbox, on the panel host the link was
+   * opened from (/sso answer) else on the panel host; password: the panel's
+   * home (client space when configured). Built from configured host names only.
+   */
+  panelUrl: string | null;
 }
 
 /** Mailbox a panel SSO link opens, shown (and confirmed) before the token is used. */

@@ -52,6 +52,8 @@ export type WebmailTicket =
     appPasswordId: null;
     mailboxId: number;
     accountId: number;
+    /** Panel page of the mailbox on the host the link was minted from (webmail "Back to Oblimint"). */
+    panelUrl?: string | null;
   };
 
 /** Key shared with the webmail container (env OBLIMINT_WEBMAIL_KEY): HMAC-SHA256(sessionSecret, 'oblimint-webmail'). */
