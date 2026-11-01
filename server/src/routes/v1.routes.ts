@@ -402,6 +402,8 @@ router.get('/sites/:id/errors/:gid', h(async (req, res) => {
 }));
 
 router.get('/domains', h(async (req, res) => ok(res, await keyApi.parentDomains(ctxOf(req)))));
+// Migration 032: public ports of the account (scope network.read, read only).
+router.get('/network/ports', h(async (req, res) => ok(res, await keyApi.networkPorts(ctxOf(req)))));
 router.get('/subdomains', h(async (req, res) => ok(res, await keyApi.subdomains(ctxOf(req)))));
 router.post('/sites/:id/subdomains', h(async (req, res) => {
   const b = parseBody(z.object({ name: z.string().min(4).max(253) }).strict(), req.body);

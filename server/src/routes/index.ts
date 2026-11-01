@@ -70,6 +70,7 @@ import webmailRoutes from './webmail.routes';                  // webmail (/mail
 // P4b — apps + proxy (docs/P4b-PLAN.md §6). One router file per owning module.
 import appsRoutes from './apps.routes';                         // apps-core (/apps: stacks, catalog, registries, policy)
 import networkRoutes, { systemNetworkRoutes } from './network.routes'; // segmentation (/network, /system/network)
+import publicPortsRoutes, { systemPublicPortsRoutes } from './publicPorts.routes'; // migration 032: public ports + dedicated IPs
 import proxyRoutes from './proxy.routes';                       // proxy-hosts (/proxy)
 import edgeUnitsRoutes, { systemEdgeUnitsRoutes } from './edgeUnits.routes'; // edge-robustness (/edge, /system/edge)
 import bansRoutes from './bans.routes';                         // honeypot-bans (/bans)
@@ -102,6 +103,7 @@ router.use('/system/updates', requireAuth, requirePlatformAdminOnMaster, platfor
 router.use('/system/edge', requireAuth, requireRole('admin'), edgeRoutes);   // P1 edge
 router.use('/system/edge', requireAuth, requireRole('admin'), systemEdgeUnitsRoutes); // P4b edge-robustness (units, applies, rollback)
 router.use('/system/network', requireAuth, requireRole('admin'), systemNetworkRoutes); // P4b segmentation
+router.use('/system/network', requireAuth, requirePlatformAdminOnMaster, systemPublicPortsRoutes); // migration 032
 router.use('/system/hosting-settings', requireAuth, requireRole('admin'), hostingSettingsRoutes); // P2 architect
 router.use('/system/backups', requireAuth, requireRole('admin'), systemBackupsRouter);  // external backups
 router.use('/system/health-monitor', requireAuth, requirePlatformAdminOnMaster, healthMonitorRoutes); // /health/deep token + heartbeat
@@ -155,7 +157,8 @@ tenantRouter.use('/domains', domainOwnershipRoutes);  // P2: BEFORE domainsRoute
 tenantRouter.use('/domains', domainsRoutes);
 tenantRouter.use('/domains', certificatesRoutes);
 // P2 hosting complete. Shared prefixes: no catch-all in any of these routers.
-tenantRouter.use('/accounts', accountAccessRoutes);     // /:id/access…
+tenantRouter.use('/accounts', accountAccessRoutes);
+tenantRouter.use('/accounts', publicPortsRoutes);       // migration 032: /:id/network/ports, /:id/network/dedicated-ip     // /:id/access…
 tenantRouter.use('/access', accessRoutes);
 tenantRouter.use('/sites', cronRoutes);                 // /:id/cron…
 tenantRouter.use('/sites', logsRoutes);                 // /:id/logs…

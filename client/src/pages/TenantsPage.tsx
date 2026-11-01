@@ -21,12 +21,12 @@ import { useConfirm } from '@/components/common/ConfirmDialog';
 
 const MIB_PER_GB = 1024;
 
-type LimitField = 'diskGb' | 'trafficGb' | 'maxAccounts' | 'maxSites' | 'maxDomains' | 'maxMailboxes' | 'maxDatabases' | 'cpuCores' | 'memoryGb';
+type LimitField = 'diskGb' | 'trafficGb' | 'maxAccounts' | 'maxSites' | 'maxDomains' | 'maxMailboxes' | 'maxDatabases' | 'cpuCores' | 'memoryGb' | 'maxPublicPorts';
 type LimitForm = Record<LimitField, string> & { allowOversell: boolean };
 
 const EMPTY_LIMITS: TenantLimits = {
   diskMb: null, trafficMbPerMonth: null, maxAccounts: null, maxSites: null, maxDomains: null,
-  maxMailboxes: null, maxDatabases: null, cpuCores: null, memoryMb: null, allowOversell: false,
+  maxMailboxes: null, maxDatabases: null, cpuCores: null, memoryMb: null, maxPublicPorts: 0, allowOversell: false,
 };
 
 function numToField(n: number | null | undefined, divisor = 1): string {
@@ -47,6 +47,8 @@ function limitsToForm(l: TenantLimits | null | undefined): LimitForm {
     maxDatabases: numToField(x.maxDatabases),
     cpuCores: numToField(x.cpuCores),
     memoryGb: numToField(x.memoryMb, MIB_PER_GB),
+    // Migration 032: 0 by default (only the platform admin hands public ports out), empty = unlimited.
+    maxPublicPorts: x.maxPublicPorts === undefined ? '0' : numToField(x.maxPublicPorts),
     allowOversell: !!x.allowOversell,
   };
 }
@@ -72,6 +74,7 @@ function formToLimits(f: LimitForm): TenantLimits | null {
     maxDatabases: fieldToNum(f.maxDatabases),
     cpuCores: fieldToNum(f.cpuCores, 1, false),
     memoryMb: fieldToNum(f.memoryGb, MIB_PER_GB),
+    maxPublicPorts: fieldToNum(f.maxPublicPorts),
     allowOversell: f.allowOversell,
   };
   for (const [k, v] of Object.entries(l)) {
@@ -134,6 +137,7 @@ function TenantForm({
     { key: 'maxDatabases', label: t('tenant.limits.databases') || 'Databases' },
     { key: 'cpuCores', label: t('tenant.limits.cpu') || 'CPU', unit: t('units.cores') || 'cores', step: '0.5' },
     { key: 'memoryGb', label: t('tenant.limits.memory') || 'RAM', unit: t('units.gb') || 'GB' },
+    { key: 'maxPublicPorts', label: t('tenant.limits.publicPorts') || 'Public ports' },
   ];
 
   return (

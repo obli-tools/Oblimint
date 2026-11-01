@@ -77,6 +77,8 @@ export const planLimitsSchema = z.object({
   proxyExternalTargets: z.boolean().default(DEFAULT_PLAN_LIMITS.proxyExternalTargets),
   maxUptimeMonitors: z.number().int().min(0).max(100000).nullable().default(DEFAULT_PLAN_LIMITS.maxUptimeMonitors),
   maxWorkflows: z.number().int().min(0).max(10000).nullable().default(DEFAULT_PLAN_LIMITS.maxWorkflows),
+  // Migration 032: public ports of the shared IP per account (0 = none).
+  publicPorts: z.number().int().min(0).max(10000).default(DEFAULT_PLAN_LIMITS.publicPorts),
 }).strict();
 
 export const planInputSchema = z.object({

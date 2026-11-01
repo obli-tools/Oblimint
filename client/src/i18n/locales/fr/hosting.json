@@ -133,7 +133,8 @@
       "mail": "Mail",
       "databases": "Bases de données",
       "backups": "Sauvegardes",
-      "usage": "Consommation"
+      "usage": "Consommation",
+      "network": "Réseau"
     },
     "title": "Comptes d'hébergement",
     "unsuspend": "Réactiver",
@@ -439,7 +440,8 @@
       "maxMailboxes": "Boîtes mail",
       "maxSites": "Sites",
       "memoryMb": "Mémoire",
-      "trafficMbPerMonth": "Trafic"
+      "trafficMbPerMonth": "Trafic",
+      "maxPublicPorts": "Ports publics"
     },
     "envelope": {
       "violation": "{{dimension}} : {{requested}} demandé(s), l'enveloppe de l'espace autorise {{limit}}."

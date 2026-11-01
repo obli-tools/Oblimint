@@ -5,7 +5,7 @@ import type {
   AppActionRequest, AppContainerAction, AppContainerInspect, AppDeployment, AppDeploymentDetail, AppEnvResponse, AppImageRollbackRequest,
   AppLogsResponse, AppResourceSummary, AppRollbackRequest, AppServiceInfo, AppServiceUpdate, AppSleepPolicy, AppStack, AppStackCreate,
   AppStackDeleteRequest, AppStackDetail, AppStackStatus, AppStackUpdate, AppUpdateApplyRequest, AppUpdateCheck, AppUpdatePolicy,
-  ComposeValidateRequest, ComposeValidationResult, EffectiveService,
+  ComposeValidateRequest, ComposeValidationResult, EffectiveService, PortBinding,
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -30,7 +30,7 @@ import { inspectEnvValue, inspectLabels, secretValues, validateCompose } from '.
 import { accountPlan, composeContext, envMap, openEnv, otherStacksUsage } from './context';
 import { appsDeps } from './deps';
 import {
-  assertAccountSegmented, cancelDeployment, isStackBusy, loadStackRow, releaseStack, reserveStack, runningDeploymentLog, stackRefWith, startAction, wakeEtaSec,
+  assertAccountSegmented, cancelDeployment, freshNewPublishedPorts, isStackBusy, loadStackRow, releaseStack, reserveStack, runningDeploymentLog, stackRefWith, startAction, wakeEtaSec,
 } from './deployments';
 import { stackContainersOf, unsafeBindSources } from './engine';
 import type { SourceInspector } from './compose/validate';
@@ -689,7 +689,7 @@ export const appsService = {
     return { commit: res.commit, changed: res.changed, deployment };
   },
 
-  async action(req: Request, actor: HostingActor, id: number, body: AppActionRequest): Promise<AppDeployment> {
+  async action(req: Request, actor: HostingActor, id: number, body: AppActionRequest, gate: { approvedPorts?: string[] } = {}): Promise<AppDeployment> {
     const stack = await stackFor(actor, id, 'apps.manage');
     const account = await accountPlan(stack.account_id);
     if (body.action !== 'stop' && body.action !== 'down') {
@@ -700,9 +700,35 @@ export const appsService = {
       const policy = await appPolicyService.effective(stack.tenant_id);
       if (!(policy.allowBuild && account.limits.appsBuild)) throw new AppError(403, 'Building images is not allowed for this account', 'buildNotAllowed');
     }
-    const row = await startAction(stack, body.action, 'user', { userId: actor.userId, build: !!body.build || (stack.source_type === 'git' && stack.git_build && body.action === 'redeploy') });
+    const row = await startAction(stack, body.action, 'user', {
+      userId: actor.userId, build: !!body.build || (stack.source_type === 'git' && stack.git_build && body.action === 'redeploy'),
+      approvedPorts: gate.approvedPorts ?? null,
+    });
     await auditStack(req, stack, 'apps.stack.action', { action: body.action, deploymentId: row.id });
     return deploymentFor(actor, row);
+  },
+
+  /** Migration 032: the public bindings of the stack (GET /apps/stacks/:id/bindings). */
+  async bindings(actor: HostingActor, id: number): Promise<PortBinding[]> {
+    await stackFor(actor, id, 'read');
+    const { stackBindings } = await import('../network/publishing.service');
+    return stackBindings(id);
+  },
+
+  /**
+   * Migration 032: ports a deploy of the stack would newly publish (gate app.port_publish), from a FRESH
+   * validation of its compose (or of the compose of the deployment a rollback returns to), with the stack row.
+   * keys go to the job (approvedPorts: anything else it would open is refused while protected).
+   */
+  async newPublishedPorts(actor: HostingActor, id: number, rollbackOf?: number): Promise<{ stack: StackRow; ports: string[]; keys: string[] }> {
+    const stack = await stackFor(actor, id, 'apps.manage');
+    let yaml = stack.compose_yaml;
+    if (rollbackOf !== undefined) {
+      const target = await deploymentRow(id, rollbackOf);
+      yaml = target.compose_snapshot ?? '';
+    }
+    const r = await freshNewPublishedPorts(stack, yaml);
+    return { stack, ports: r.labels, keys: r.keys };
   },
 
   async listDeployments(actor: HostingActor, id: number, q: { limit: number; offset: number }): Promise<{ items: AppDeployment[]; total: number }> {
@@ -738,13 +764,13 @@ export const appsService = {
     return { cancelled };
   },
 
-  async rollback(req: Request, actor: HostingActor, id: number, body: AppRollbackRequest): Promise<AppDeployment> {
+  async rollback(req: Request, actor: HostingActor, id: number, body: AppRollbackRequest, gate: { approvedPorts?: string[] } = {}): Promise<AppDeployment> {
     const stack = await stackFor(actor, id, 'apps.manage');
     const target = await deploymentRow(id, body.deploymentId);
     if (!toDeployment(target).canRollback) throw new AppError(409, 'This deployment cannot be restored', 'nothingToRollback');
     const account = await accountPlan(stack.account_id);
     assertAccountUsable(account.status);
-    const row = await startAction(stack, 'rollback', 'rollback', { userId: actor.userId, rollbackOf: target });
+    const row = await startAction(stack, 'rollback', 'rollback', { userId: actor.userId, rollbackOf: target, approvedPorts: gate.approvedPorts ?? null });
     await auditStack(req, stack, 'apps.stack.rollback', { toDeploymentId: target.id, deploymentId: row.id });
     return deploymentFor(actor, row);
   },

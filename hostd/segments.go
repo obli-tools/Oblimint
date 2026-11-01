@@ -155,6 +155,10 @@ type SegmentState struct {
 	Restricted []string `json:"restricted,omitempty"`
 	// Host: node ports reachable from the platform bridges (nothing else).
 	Host []SegmentHostAccess `json:"host,omitempty"`
+	// InboundGuard (migration 032): a NEW connection routed into an account fabric from an interface that
+	// is not an account fabric passes only when it was DNAT-ed (our public bindings, Docker's published
+	// ports): enforce = drop, monitor = log + accept, off / absent = no guard (older panels).
+	InboundGuard string `json:"inboundGuard,omitempty"`
 }
 
 // SegmentStatus is the body of GET /v1/segments (HostdSegmentStatus).
@@ -198,6 +202,9 @@ type segRules struct {
 	Restricted []netip.Addr
 	Host       []segHost
 	Flows      []segFlow
+	// Guard: enforce / monitor / off (InboundGuard); Fabrics: the account front / back bridges it covers.
+	Guard   string
+	Fabrics []string
 }
 
 // decodeSegmentState reads the body of PUT /v1/segments with its own limit
@@ -213,11 +220,18 @@ func decodeSegmentState(w http.ResponseWriter, r *http.Request) (SegmentState, e
 }
 
 func (s SegmentState) validate() (segRules, error) {
-	r := segRules{Mode: s.Mode}
+	r := segRules{Mode: s.Mode, Guard: segModeOff}
 	switch s.Mode {
 	case segModeEnforce, segModeMonitor, segModeOff:
 	default:
 		return r, badRequest("segments: invalid mode %q (enforce, monitor or off)", s.Mode)
+	}
+	switch s.InboundGuard {
+	case "", segModeOff:
+	case segModeEnforce, segModeMonitor:
+		r.Guard = s.InboundGuard
+	default:
+		return r, badRequest("segments: invalid inboundGuard %q (enforce, monitor or off)", s.InboundGuard)
 	}
 	if len(s.Bridges) > maxSegBridges {
 		return r, badRequest("segments: too many bridges (%d > %d)", len(s.Bridges), maxSegBridges)
@@ -253,6 +267,9 @@ func (s SegmentState) validate() (segRules, error) {
 		}
 		bridges[b.Name] = b.Fabric == segFabricPlat
 		r.Bridges = append(r.Bridges, b.Name)
+		if b.Fabric != segFabricPlat {
+			r.Fabrics = append(r.Fabrics, b.Name)
+		}
 		if b.Fabric == segFabricPlat {
 			r.Platform = append(r.Platform, b.Name)
 			if b.Isolation == segIsolateList {
@@ -336,6 +353,7 @@ func (s SegmentState) validate() (segRules, error) {
 		}
 	}
 	sort.Strings(r.Bridges)
+	sort.Strings(r.Fabrics)
 	sort.Strings(r.Platform)
 	sort.Strings(r.Listed)
 	sort.Slice(r.Restricted, func(i, j int) bool { return r.Restricted[i].Less(r.Restricted[j]) })
@@ -554,7 +572,13 @@ func quoteAll(list []string) string {
 // renderSegHost renders table inet oblimint_seghost: new connections from a
 // platform bridge to the node itself (nothing when no platform bridge).
 func renderSegHost(w *nftWriter, r segRules, hostCarry segCounterValue) {
+	guard := r.Guard != segModeOff && r.Guard != "" && len(r.Fabrics) > 0
 	if len(r.Platform) == 0 && len(r.Restricted) == 0 {
+		if guard {
+			w.line(0, "table inet %s {", segHostTable)
+			renderSegGuard(w, r)
+			w.line(0, "}")
+		}
 		return
 	}
 	var byBridge, bySrc []string
@@ -614,7 +638,37 @@ func renderSegHost(w *nftWriter, r segRules, hostCarry segCounterValue) {
 	w.line(2, "iifname @platform jump host")
 	w.line(2, "ip saddr @restricted4 jump host")
 	w.line(1, "}")
+	if guard {
+		renderSegGuard(w, r)
+	}
 	w.line(0, "}")
+}
+
+// segGuardLog: log prefix of the inbound guard (monitor).
+const (
+	segGuardLog     = "oblimint-seginbound "
+	segGuardCounter = "inbound_dropped"
+)
+
+// renderSegGuard renders the inbound guard (inside table inet oblimint_seghost): only DNAT-ed new
+// connections enter an account fabric from outside the fabrics. Docker ≤ 27 has no protection of its own
+// against a LAN client routing the fabric subnets through the node (Docker 28+ drops it in raw, verified on
+// a test node with Docker 24 and 29). Priority -15: after conntrack / NAT, before inet oblimint (-10).
+func renderSegGuard(w *nftWriter, r segRules) {
+	w.line(1, "set acct_fabrics {")
+	w.line(2, "type ifname")
+	w.line(2, "elements = { %s }", quoteAll(r.Fabrics))
+	w.line(1, "}")
+	w.line(1, "counter %s {", segGuardCounter)
+	w.line(1, "}")
+	verdict := fmt.Sprintf("counter name %q drop", segGuardCounter)
+	if r.Guard == segModeMonitor {
+		verdict = fmt.Sprintf("counter name %q limit rate 10/second burst 20 packets log prefix %q accept", segGuardCounter, segGuardLog)
+	}
+	w.line(1, "chain inbound {")
+	w.line(2, "type filter hook forward priority -15; policy accept;")
+	w.line(2, "ct state new oifname @acct_fabrics iifname != @acct_fabrics ct status & dnat == 0 %s", verdict)
+	w.line(1, "}")
 }
 
 // segCounterReader returns `nft list counter …` output (nil: no counters).
@@ -800,6 +854,41 @@ func (m *segmentManager) Status() SegmentStatus {
 		}
 	}
 	return st
+}
+
+// BridgeNames: every bridge of the applied policy (the publication never DNATs what they send).
+func (m *segmentManager) BridgeNames() []string {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.raw == nil {
+		return nil
+	}
+	out := make([]string, 0, len(m.raw.Bridges))
+	for _, b := range m.raw.Bridges {
+		out = append(out, b.Name)
+	}
+	return out
+}
+
+// FrontOf: is bridge a FRONT bridge of accountID in the applied policy? (R2 of the publication.)
+func (m *segmentManager) FrontOf(bridge string, accountID int64) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.raw == nil {
+		return false
+	}
+	for _, b := range m.raw.Bridges {
+		if b.Name == bridge && b.AccountID == accountID && b.Fabric == segFabricFront {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *segmentManager) persistLocked() {

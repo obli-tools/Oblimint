@@ -101,6 +101,8 @@ router.put('/platform', requirePlatformAdminOnMaster, async (req, res, next) => 
     await appConfigService.set('public_ipv4', v4);
     await appConfigService.set('public_ipv6', v6);
     await appConfigService.set('acme_email', email);
+    // Migration 032: the shared public IP row of the node follows public_ipv4 (its blocks keep their id).
+    await import('../services/network/publicIps').then((m) => m.syncSharedIp(v4)).catch((err) => logger.warn({ err }, 'shared public IP not synchronised'));
     forgetPanelHosts();
     await auditService.logReq(req, 'settings.platform_changed', { resourceType: 'settings', details: { from: before, to: { panel_hostname: host, client_panel_hostname: clientHost === undefined ? before.client_panel_hostname : clientHost || null, public_ipv4: v4, public_ipv6: v6, acme_email: email } } });
     try { edgeService.scheduleSync('panel identity changed'); } catch (err) { logger.warn({ err }, 'edge sync after panel identity change failed'); }

@@ -72,6 +72,23 @@ func main() {
 	if err := p4bManagers.webBans.Restore(context.Background()); err != nil {
 		log.Warn("web bans not applied at start", "err", err)
 	}
+	// Public ports + dedicated IPs (publish.go): after the segments (R2 reads their front bridges). Restore:
+	// managed addresses, then the tables, then the Docker accept rule.
+	pubNet := newRealNetOps()
+	pubManagers.net = pubNet
+	pubManagers.publish = newPublishManager(nft, pubNet, newRealDockerAccept(), path.Join(layout.RunDir(), "hostd-publish.json"))
+	pubManagers.publish.frontOf = p4bManagers.segments.FrontOf
+	pubManagers.publish.bridges = p4bManagers.segments.BridgeNames
+	pubManagers.publish.gwPorts = func() map[int]bool {
+		out := map[int]bool{}
+		for _, s := range gw.Specs() {
+			out[s.Port] = true
+		}
+		return out
+	}
+	if err := pubManagers.publish.Restore(context.Background()); err != nil {
+		log.Warn("publication not applied at start", "err", err)
+	}
 
 	ln, err := listenUnix(socket)
 	if err != nil {
@@ -89,6 +106,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	windows.start(ctx)
+	go pubManagers.publish.Run(ctx)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

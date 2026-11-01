@@ -97,6 +97,15 @@ test('pinEndpoint: same address made static without recreation, aliases kept; re
   assert.ok(refused.includes('oblimint'));
 });
 
+test('pinEndpoint / reconnectWithAlias keep the GwPriority of the endpoint (published service: default route via its front)', async (t) => {
+  const { fake, docker } = setup(t, { 'oblimint-acct-1/oblimint-app-7-web': '10.224.0.41' });
+  const c = fake.addContainer({ name: 'oblimint-app-7-web', networks: new Map([['oblimint-acct-1', { Aliases: ['web'], IPv4: null, GwPriority: 100 }]]) });
+  assert.equal(await pinEndpoint(docker, 'oblimint-acct-1', 'oblimint-app-7-web', '10.224.0.40', { retryDelayMs: 0 }), 'pinned');
+  assert.deepEqual(c.networks.get('oblimint-acct-1'), { Aliases: ['web'], IPv4: '10.224.0.40', GwPriority: 100 });
+  await reconnectWithAlias(docker, 'oblimint-acct-1', 'oblimint-app-7-web', ['web', 'web-alias'], () => {}, { retryDelayMs: 0 });
+  assert.deepEqual(c.networks.get('oblimint-acct-1'), { Aliases: ['web', 'web-alias'], IPv4: '10.224.0.41', GwPriority: 100 });
+});
+
 test('pinEndpoint on a STOPPED container: it starts with the address', async (t) => {
   const { fake, docker } = setup(t);
   const c = fake.addContainer({ name: 'oblimint-site-9', state: 'exited', networks: new Map([['oblimint-acct-1', { Aliases: [], IPv4: null }]]) });

@@ -185,7 +185,10 @@ export type ComposeIssueCode =
   | 'hostnameIgnored' | 'linksIgnored' | 'extraHostsPrivate' | 'dnsIgnored' | 'extendsNotSupported' | 'includeNotSupported'
   | 'envFileOutsideStack' | 'secretsFileOutsideStack' | 'configsFileOutsideStack' | 'unknownKey' | 'unsupportedKey'
   | 'interpolation' | 'missingVariable' | 'dependsCycle' | 'dependsUnknown' | 'restartPolicy' | 'loggingIgnored'
-  | 'labelReserved' | 'stopGraceCapped' | 'readOnlyForced' | 'userRoot';
+  | 'labelReserved' | 'stopGraceCapped' | 'readOnlyForced' | 'userRoot'
+  // Migration 032: published host ports (ports: "<host>:<container>") of an account with public ports / a dedicated IP.
+  | 'hostPortNotAllocated' | 'hostIpNotAvailable' | 'hostIpv6Unsupported' | 'hostPortReserved' | 'hostPortTaken' | 'hostPortNetworkNone'
+  | 'hostPortDuplicate';
 
 export interface ComposeIssue {
   severity: ComposeIssueSeverity;
@@ -231,6 +234,20 @@ export interface EffectiveService {
   dependsOn: Array<{ service: string; condition: 'started' | 'healthy' | 'completed' }>;
   restart: 'no' | 'always' | 'unless-stopped' | 'on-failure';
   envKeys: string[];
+  /**
+   * Migration 032: host ports of `ports:` honoured as public bindings (inside the account's blocks of the
+   * shared IP, or on its dedicated IP). hostd DNATs them to the container; Docker publishes nothing.
+   */
+  publishedPorts?: EffectivePublishedPort[];
+}
+
+export interface EffectivePublishedPort {
+  publicIpId: number;
+  /** Public address (DNS). */
+  address: string;
+  protocol: 'tcp' | 'udp';
+  port: number;
+  targetPort: number;
 }
 
 export interface EffectiveStackConfig {

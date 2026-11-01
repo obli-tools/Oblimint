@@ -106,6 +106,12 @@
           "label": "Live previews",
           "hint": "Start, fetch and stop a preview of a release or of the staging; needs files.read too (staging: releases.publish)"
         }
+      },
+      "network": {
+        "read": {
+          "label": "Read the public ports",
+          "hint": "Public ports of the account (blocks of the shared IP, dedicated IP) and the published ports of every application, whatever the sites of the key. Read only."
+        }
       }
     },
     "guide": "API & AI agent guide",

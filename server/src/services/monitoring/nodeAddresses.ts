@@ -21,8 +21,10 @@ export async function nodePublicAddresses(): Promise<string[]> {
   if (override) return override;
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.addresses;
   try {
+    // Migration 032: the shared + dedicated IPs of the node too (network/publicIps.ts).
+    const { nodeAddresses } = await import('../network/publicIps');
     const rows = await db('app_config').whereIn('key', ['public_ipv4', 'public_ipv6']).select('value') as Array<{ value: string | null }>;
-    const addresses = rows.map((r) => (r.value ?? '').trim()).filter(Boolean);
+    const addresses = [...new Set([...rows.map((r) => (r.value ?? '').trim()).filter(Boolean), ...await nodeAddresses()])];
     cache = { at: Date.now(), addresses };
     return addresses;
   } catch (err) {

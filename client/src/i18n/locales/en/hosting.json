@@ -133,7 +133,8 @@
       "mail": "Mail",
       "databases": "Databases",
       "backups": "Backups",
-      "usage": "Usage"
+      "usage": "Usage",
+      "network": "Network"
     },
     "title": "Hosting accounts",
     "unsuspend": "Resume",
@@ -439,7 +440,8 @@
       "maxMailboxes": "Mailboxes",
       "maxSites": "Sites",
       "memoryMb": "Memory",
-      "trafficMbPerMonth": "Traffic"
+      "trafficMbPerMonth": "Traffic",
+      "maxPublicPorts": "Public ports"
     },
     "envelope": {
       "violation": "{{dimension}}: {{requested}} requested, the workspace envelope allows {{limit}}."

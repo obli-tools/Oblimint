@@ -149,7 +149,10 @@
       "platform_ban_lift": "Lever un bannissement plateforme",
       "platform_update_apply": "Appliquer une mise à jour de la plateforme",
       "platform_migration_cutover": "Basculer / annuler une bascule de migration",
-      "platform_backup_destinations": "Modifier les destinations de sauvegarde"
+      "platform_backup_destinations": "Modifier les destinations de sauvegarde",
+      "app_port_publish": "Publier un port sur Internet (déploiement d’application)",
+      "platform_port_allocation": "Attribuer des ports publics à un compte",
+      "platform_public_ips": "Gérer les IP publiques (déclarer, affecter, reprise, SNAT)"
     }
   }
 }

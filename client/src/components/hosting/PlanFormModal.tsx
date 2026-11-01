@@ -18,7 +18,9 @@ type NumKey = Exclude<keyof PlanLimits, 'allowedBases' | 'dbProfile' | 'dbEngine
   // P4 (ui-mail adds the mail fields): non-nullable, edited outside the numeric fields.
   | 'mailMaxMessageSizeMb'
   // P4b (ui-apps adds the apps / proxy / monitoring fields): non-nullable or boolean, edited outside the numeric fields.
-  | 'appsPidsPerContainer' | 'appsBuild' | 'appsConsole' | 'proxyExternalTargets'>;
+  | 'appsPidsPerContainer' | 'appsBuild' | 'appsConsole' | 'proxyExternalTargets'
+  // Migration 032: non-nullable (0 = none), edited apart.
+  | 'publicPorts'>;
 
 interface FieldDef {
   key: NumKey;
@@ -56,6 +58,8 @@ const CRON_INTERVAL_MAX = 1440;
 // P4b: processes of ONE app container (server zod: 32 … 32768).
 const APPS_PIDS_MIN = 32;
 const APPS_PIDS_MAX = 32768;
+// Migration 032: public ports of the shared IP per account (server zod: 0 … 10000).
+const PUBLIC_PORTS_MAX = 10000;
 
 function toForm(l: PlanLimits, defs: FieldDef[]): FormState {
   const f = {} as FormState;
@@ -140,6 +144,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
   const [appsBuild, setAppsBuild] = useState(DEFAULT_PLAN_LIMITS.appsBuild);
   const [appsConsole, setAppsConsole] = useState(DEFAULT_PLAN_LIMITS.appsConsole);
   const [proxyExternal, setProxyExternal] = useState(DEFAULT_PLAN_LIMITS.proxyExternalTargets);
+  const [publicPorts, setPublicPorts] = useState(String(DEFAULT_PLAN_LIMITS.publicPorts));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -166,6 +171,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     setAppsBuild(full.appsBuild);
     setAppsConsole(full.appsConsole);
     setProxyExternal(full.proxyExternalTargets);
+    setPublicPorts(String(full.publicPorts ?? 0));
     setError('');
   }, [open, plan]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -212,6 +218,11 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
       setError(t('apps.plan.pidsRange', { min: APPS_PIDS_MIN, max: APPS_PIDS_MAX, defaultValue: 'Processes per application container: between {{min}} and {{max}}.' }));
       return;
     }
+    const ports = Number(publicPorts || 0);
+    if (!Number.isInteger(ports) || ports < 0 || ports > PUBLIC_PORTS_MAX) {
+      setError(t('network.plan.publicPortsRange', { max: PUBLIC_PORTS_MAX, defaultValue: 'Public ports: between 0 and {{max}}.' }));
+      return;
+    }
     const engineList = DB_ENGINES.filter((e) => engines.has(e));
     if (!allEngines && engineList.length === 0) { setError(t('platformSettings.plan.noEngine') || 'Allow at least one database engine.'); return; }
     limits.dbProfile = dbProfile;
@@ -224,6 +235,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     limits.appsBuild = appsBuild;
     limits.appsConsole = appsConsole;
     limits.proxyExternalTargets = proxyExternal;
+    limits.publicPorts = ports;
     const input: PlanInput = { name: name.trim(), description: description.trim() || null, limits, isActive };
     setSaving(true);
     setError('');
@@ -446,6 +458,20 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
               />
             </div>
             {proxyDefs.map(numField)}
+            <div className="rounded-lg bg-bg-primary p-2.5">
+              <label className={cn(labelCls, 'truncate')} htmlFor="plan-public-ports">{t('network.plan.publicPorts') || 'Public ports (shared IP)'}</label>
+              <input
+                id="plan-public-ports"
+                type="number"
+                min={0}
+                max={PUBLIC_PORTS_MAX}
+                inputMode="numeric"
+                value={publicPorts}
+                onChange={(e) => setPublicPorts(e.target.value)}
+                className={cn(inputCls, 'font-mono')}
+              />
+              <p className="mt-1.5 text-[11px] text-text-muted">{t('network.plan.publicPortsHint') || 'TCP and UDP each, taken from the pool as one block when possible; 0 = none.'}</p>
+            </div>
           </div>
           <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
             <div className="rounded-lg bg-bg-primary p-3">

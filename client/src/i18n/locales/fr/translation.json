@@ -699,7 +699,8 @@
       "sitesShort": "sites",
       "title": "Enveloppe de ressources",
       "traffic": "Trafic",
-      "unlimited": "Illimité"
+      "unlimited": "Illimité",
+      "publicPorts": "Ports publics"
     },
     "loadFailed": "Impossible de charger les espaces de travail",
     "name": "Nom",

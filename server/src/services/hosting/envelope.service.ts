@@ -1,5 +1,5 @@
 import type { EnvelopeDimension, EnvelopeViolation, PlanLimits, TenantEnvelopeUsage, TenantLimits } from '@oblimint/shared';
-import { DB_PROFILE_MEMORY_MB, DEFAULT_TENANT_LIMITS } from '@oblimint/shared';
+import { DB_PROFILE_MEMORY_MB, DEFAULT_TENANT_LIMITS, MASTER_TENANT_ID } from '@oblimint/shared';
 import type { Knex } from 'knex';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -124,6 +124,25 @@ export function checkAllocation(
 
 const roundDim = (v: number): number => Math.round(v * 1000) / 1000;
 
+/**
+ * Migration 032 — public ports: the targets (override ?? plan.publicPorts) of the accounts of the tenant summed against
+ * TenantLimits.maxPublicPorts (0 by default: only the platform admin hands ports out; null = unlimited). Never for
+ * the master tenant, never with allowOversell. Reported only when the change GROWS the sum.
+ */
+export function checkPublicPorts(tenantId: number, limits: TenantLimits, existing: readonly number[], change: { add?: number[]; remove?: number[] }): EnvelopeViolation[] {
+  if (tenantId === MASTER_TENANT_ID || limits.allowOversell) return [];
+  const max = limits.maxPublicPorts === undefined ? 0 : limits.maxPublicPorts;
+  if (max === null) return [];
+  const sum = (l: readonly number[] | undefined) => (l ?? []).reduce((n, v) => n + Math.max(0, Number(v) || 0), 0);
+  const delta = sum(change.add) - sum(change.remove);
+  if (delta <= 0) return [];
+  const after = sum(existing) + delta;
+  return after > max ? [{ dimension: 'maxPublicPorts', limit: max, requested: after }] : [];
+}
+
+/** Target of an allocated account (override ?? plan). */
+const portsTarget = (a: { limits: PlanLimits; override: number | null }): number => (a.override !== null ? a.override : Math.max(0, Number(a.limits.publicPorts ?? 0) || 0));
+
 /** Throws 409 envelopeExceeded (details: the violations) when there is any. */
 export function assertNoViolation(violations: EnvelopeViolation[]): void {
   if (violations.length > 0) {
@@ -167,19 +186,23 @@ export async function loadTenantLimits(tenantId: number, conn: Conn = db): Promi
     const v = raw[key];
     if (key === 'allowOversell') out.allowOversell = v === true;
     else if (typeof v === 'number' && Number.isFinite(v)) (out as unknown as Record<string, number | null>)[key] = v;
+    else if (key === 'maxPublicPorts' && v === undefined) out.maxPublicPorts = tenantId === MASTER_TENANT_ID ? null : 0;
     else if (v === null) (out as unknown as Record<string, number | null>)[key] = null;
   }
   return out;
 }
 
 /** Plans of the tenant's accounts, one entry per account (accounts being deleted excluded). */
-export async function loadAllocatedPlans(tenantId: number, conn: Conn = db): Promise<Array<{ accountId: number; planId: number; limits: PlanLimits }>> {
+export async function loadAllocatedPlans(tenantId: number, conn: Conn = db): Promise<Array<{ accountId: number; planId: number; limits: PlanLimits; override: number | null }>> {
   const rows = await conn('hosting_accounts as a')
     .join('plans as p', 'p.id', 'a.plan_id')
     .where('a.tenant_id', tenantId)
     .whereNot('a.status', 'deleting')
-    .select('a.id as account_id', 'a.plan_id', 'p.limits') as Array<{ account_id: number; plan_id: number; limits: unknown }>;
-  return rows.map((r) => ({ accountId: Number(r.account_id), planId: Number(r.plan_id), limits: planLimits(r.limits) }));
+    .select('a.id as account_id', 'a.plan_id', 'p.limits', 'a.public_ports_override') as Array<{ account_id: number; plan_id: number; limits: unknown; public_ports_override?: number | null }>;
+  return rows.map((r) => ({
+    accountId: Number(r.account_id), planId: Number(r.plan_id), limits: planLimits(r.limits),
+    override: r.public_ports_override === null || r.public_ports_override === undefined ? null : Number(r.public_ports_override),
+  }));
 }
 
 export const envelopeService = {
@@ -187,7 +210,10 @@ export const envelopeService = {
   async assertAccountFits(tenantId: number, plan: PlanLimits, conn: Conn = db): Promise<void> {
     const limits = await loadTenantLimits(tenantId, conn);
     const allocated = await loadAllocatedPlans(tenantId, conn);
-    assertNoViolation(checkAllocation(limits, allocated.map((a) => a.limits), { add: plan }, 1));
+    assertNoViolation([
+      ...checkAllocation(limits, allocated.map((a) => a.limits), { add: plan }, 1),
+      ...checkPublicPorts(tenantId, limits, allocated.map(portsTarget), { add: [plan.publicPorts ?? 0] }),
+    ]);
   },
 
   /** 409 unless moving `accountId` from its current plan to `next` fits. */
@@ -196,7 +222,9 @@ export const envelopeService = {
     const allocated = await loadAllocatedPlans(tenantId, conn);
     const mine = allocated.find((a) => a.accountId === accountId);
     const existing = allocated.map((a) => a.limits);
-    assertNoViolation(checkAllocation(limits, existing, { add: next, remove: mine?.limits }, 0));
+    // An override (platform admin) stays the target of the account whatever its plan.
+    const ports = mine && mine.override === null ? checkPublicPorts(tenantId, limits, allocated.map(portsTarget), { add: [next.publicPorts ?? 0], remove: [portsTarget(mine)] }) : [];
+    assertNoViolation([...checkAllocation(limits, existing, { add: next, remove: mine?.limits }, 0), ...ports]);
   },
 
   /**
@@ -210,13 +238,19 @@ export const envelopeService = {
     const limits = await loadTenantLimits(tenantId, conn);
     if (limits.allowOversell) return;
     const single = checkAllocation(limits, [], previous ? { add: next, remove: previous } : { add: next }, 0);
-    assertNoViolation(single);
+    const portsSingle = checkPublicPorts(tenantId, limits, [], { add: [next.publicPorts ?? 0], remove: previous ? [previous.publicPorts ?? 0] : [] });
+    assertNoViolation([...single, ...portsSingle]);
     if (planId === null) return;
     const allocated = await loadAllocatedPlans(tenantId, conn);
     const existing = allocated.map((a) => a.limits);
-    const users = allocated.filter((a) => a.planId === planId).map((a) => a.limits);
+    const usersRows = allocated.filter((a) => a.planId === planId);
+    const users = usersRows.map((a) => a.limits);
     if (users.length === 0) return;
-    assertNoViolation(checkAllocation(limits, existing, { remove: users, add: users.map(() => next) }, 0));
+    const followers = usersRows.filter((a) => a.override === null);
+    assertNoViolation([
+      ...checkAllocation(limits, existing, { remove: users, add: users.map(() => next) }, 0),
+      ...checkPublicPorts(tenantId, limits, allocated.map(portsTarget), { add: followers.map(() => next.publicPorts ?? 0), remove: followers.map(portsTarget) }),
+    ]);
   },
 
   /** GET /plans/envelope */

@@ -159,6 +159,31 @@ export interface DnsContext {
   panelHostname: string | null;
   mailEngine: string | null;
   hosts: PlatformHosts;
+  /**
+   * Migration 032: account id → its dedicated IPv4 (public address), for the accounts whose sites the edge
+   * serves on it (no takeover of 80 / 443): the A records of their zones point there. Absent = the shared IP.
+   */
+  accountIpv4?: ReadonlyMap<number, string>;
+}
+
+/** Dedicated IPs of the accounts served by the edge (no takeover): account id → public address. */
+export async function accountDedicatedIpv4(): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  try {
+    const rows = await db('public_ips').where({ kind: 'dedicated', takeover_web: false }).whereNotNull('account_id')
+      .select('account_id', 'address') as Array<{ account_id: number; address: string }>;
+    for (const r of rows) out.set(Number(r.account_id), r.address);
+  } catch { /* before migration 032 */ }
+  return out;
+}
+
+/** IPv4 of the A records of a zone: the dedicated IP of its account (no takeover), else the shared one. */
+export function zoneIpv4(ctx: DnsContext, accountId: number | null | undefined): string | null {
+  if (accountId !== null && accountId !== undefined) {
+    const own = ctx.accountIpv4?.get(Number(accountId));
+    if (own) return own;
+  }
+  return ctx.ipv4;
 }
 
 export async function loadContext(): Promise<DnsContext> {
@@ -166,7 +191,9 @@ export async function loadContext(): Promise<DnsContext> {
   const rows = await db('app_config').whereIn('key', ['public_ipv4', 'public_ipv6', 'panel_hostname', 'client_panel_hostname', 'mail_engine']).select('key', 'value') as Array<{ key: string; value: string }>;
   const map = new Map(rows.map((r) => [r.key, (r.value ?? '').trim() || null]));
   const panelHostname = map.get('panel_hostname')?.toLowerCase() ?? null;
+  const accountIpv4 = await accountDedicatedIpv4();
   return {
+    accountIpv4,
     settings: all.dns,
     ipv4: map.get('public_ipv4') ?? null,
     ipv6: map.get('public_ipv6') ?? null,
@@ -183,8 +210,8 @@ export async function loadContext(): Promise<DnsContext> {
   };
 }
 
-export function templateVars(ctx: DnsContext, zone: string): TemplateVars {
-  return { domain: zone, ipv4: ctx.ipv4, ipv6: ctx.ipv6, panel: ctx.panelHostname };
+export function templateVars(ctx: DnsContext, zone: string, accountId?: number | null): TemplateVars {
+  return { domain: zone, ipv4: zoneIpv4(ctx, accountId), ipv6: ctx.ipv6, panel: ctx.panelHostname };
 }
 
 /** Primary NS of the SOA: first configured name server, else the panel host. */
@@ -224,7 +251,7 @@ export async function domainsOfZone(zone: ZoneRow, conn: Db = db): Promise<AutoD
 }
 
 export function autoContext(ctx: DnsContext, zone: ZoneRow): AutoContext {
-  return { zone: zone.name, ttl: zone.default_ttl, ipv4: ctx.ipv4, ipv6: ctx.ipv6, panelHostname: ctx.panelHostname, mailEngine: ctx.mailEngine };
+  return { zone: zone.name, ttl: zone.default_ttl, ipv4: zoneIpv4(ctx, zone.account_id), ipv6: ctx.ipv6, panelHostname: ctx.panelHostname, mailEngine: ctx.mailEngine };
 }
 
 /**
@@ -276,7 +303,7 @@ export async function defaultTemplate(tenantId: number, conn: Db = db): Promise<
  * Returns the number of records written.
  */
 export async function applyTemplateRecords(conn: Db, zone: ZoneRow, template: TemplateRow, ctx: DnsContext): Promise<number> {
-  const vars = templateVars(ctx, zone.name);
+  const vars = templateVars(ctx, zone.name, zone.account_id);
   const existing = await conn('dns_records').where({ zone_id: zone.id }).select('id', 'name', 'type', 'content', 'priority', 'origin') as RecordRow[];
   const accepted: Array<Pick<RecordRow, 'name' | 'type' | 'content' | 'priority' | 'origin'>> = [...existing];
   const rows: Array<Record<string, unknown>> = [];

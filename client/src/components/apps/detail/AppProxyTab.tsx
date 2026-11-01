@@ -1,8 +1,11 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink, Globe, Share2 } from 'lucide-react';
-import type { AppStackDetail } from '@oblimint/shared';
+import type { AppStackDetail, PortBinding } from '@oblimint/shared';
 import { Card, EmptyState, Pill, headerBtnCls } from '@/components/hosting/hostingUi';
+import { publicPortsApi } from '@/api/publicPorts.api';
+import { BindingsCard } from '@/components/network/AccountNetworkTab';
 
 /**
  * Proxy hosts targeting the stack (module proxy-hosts) and the exposed ports
@@ -13,6 +16,13 @@ export function AppProxyTab({ stack, canManage }: { stack: AppStackDetail; canMa
   const { t } = useTranslation();
   const exposed = stack.services.flatMap((s) => s.exposedPorts.filter((p) => p.protocol === 'tcp').map((p) => ({ service: s.name, port: p.port })));
   const isUsed = (service: string, port: number) => stack.proxyHosts.some((h) => h.service === service && h.port === port);
+  // Migration 032: public ports of the stack (ports: "<public>:<container>" honoured inside the account's blocks).
+  const [bindings, setBindings] = useState<PortBinding[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    publicPortsApi.stackBindings(stack.id).then((b) => { if (!cancelled) setBindings(b); }).catch(() => { if (!cancelled) setBindings([]); });
+    return () => { cancelled = true; };
+  }, [stack.id, stack.updatedAt]);
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
@@ -59,8 +69,11 @@ export function AppProxyTab({ stack, canManage }: { stack: AppStackDetail; canMa
             ))}
           </ul>
         )}
-        <p className="mt-3 text-xs text-text-muted">{t('apps.proxy.hint') || 'Ports are never published on the server: a proxy host (HTTPS, domain of the account) is the only way in.'}</p>
+        <p className="mt-3 text-xs text-text-muted">{t('apps.proxy.hintPublic') || 'A proxy host (HTTPS, domain of the account) is the way in for the web; raw TCP / UDP ports are published only inside the public ports of the account (Account → Network).'}</p>
       </Card>
+      {bindings && bindings.length > 0 && (
+        <div className="xl:col-span-2"><BindingsCard bindings={bindings} title={t('apps.proxy.publishedPorts') || 'Published ports'} /></div>
+      )}
     </div>
   );
 }

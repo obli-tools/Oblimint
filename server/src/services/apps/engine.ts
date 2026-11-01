@@ -320,11 +320,11 @@ export async function converge(input: ConvergeInput): Promise<ConvergeResult> {
         log.add(info ? `Recréation de ${svc.name}…` : `Création de ${svc.name}…`);
         await removeContainer(docker, plan.name);
         await createContainer(docker, plan.create);
-        for (const extra of plan.extraNetworks) await connectNetwork(docker, extra.network, plan.name, extra.aliases);
+        for (const extra of plan.extraNetworks) await connectNetwork(docker, extra.network, plan.name, extra.aliases, extra.gwPriority ? { gwPriority: extra.gwPriority } : {});
         await startContainer(docker, plan.name);
       } else {
         const nets = info.NetworkSettings?.Networks ?? {};
-        for (const extra of plan.extraNetworks) if (!nets[extra.network]) await connectNetwork(docker, extra.network, plan.name, extra.aliases);
+        for (const extra of plan.extraNetworks) if (!nets[extra.network]) await connectNetwork(docker, extra.network, plan.name, extra.aliases, extra.gwPriority ? { gwPriority: extra.gwPriority } : {});
         if (info.State?.Paused) await unpauseContainer(docker, plan.name);
         if (!info.State?.Running) {
           log.add(`Démarrage de ${svc.name}…`);

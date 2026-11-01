@@ -312,6 +312,12 @@ export interface PlanLimits {
   maxUptimeMonitors: number | null;
   /** Workflows per account (null = unlimited, 0 = none). */
   maxWorkflows: number | null;
+  // ── Public ports (migration 032) ──
+  /**
+   * Public ports of the shared IP handed out to each account of the plan (TCP and UDP each), taken from
+   * the platform pool as one block when possible. 0 = none. An account override (platform admin) wins.
+   */
+  publicPorts: number;
 }
 
 export const DEFAULT_PLAN_LIMITS: PlanLimits = {
@@ -351,6 +357,7 @@ export const DEFAULT_PLAN_LIMITS: PlanLimits = {
   proxyExternalTargets: false,
   maxUptimeMonitors: 10,
   maxWorkflows: 5,
+  publicPorts: 0,
 };
 
 export interface Plan {
@@ -390,7 +397,8 @@ export interface TenantEnvelopeUsage {
 
 /** 409 `envelopeExceeded` details. */
 export interface EnvelopeViolation {
-  dimension: EnvelopeDimension;
+  /** maxPublicPorts (migration 032): sum of the public ports targets of the accounts of the tenant. */
+  dimension: EnvelopeDimension | 'maxPublicPorts';
   limit: number;
   requested: number | null;
 }
@@ -428,6 +436,8 @@ export interface HostingAccount {
   accessMode: AccessMode;
   /** P2: quota enforcement state (usage module). */
   overQuota: OverQuotaState;
+  /** Migration 032: public ports of the shared IP (target = override ?? plan) and the dedicated IP, if any. */
+  publicPorts?: { target: number; allocated: number; used: number; dedicatedIp: string | null };
   createdAt: string;
   updatedAt: string;
 }

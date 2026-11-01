@@ -48,6 +48,7 @@ import { DbInstanceCreateModal } from '@/components/databases/DbInstanceCreateMo
 import { AccountMailTab } from '@/components/mail/AccountMailTab';
 import { MailDomainCreateModal } from '@/components/mail/MailDomainCreateModal';
 import { AppStacksPanel } from '@/components/apps/AppStacksPanel';
+import { AccountNetworkTab } from '@/components/network/AccountNetworkTab';
 import { FileExplorer } from '@/components/files/FileExplorer';
 import {
   AccountStatusBadge, Card, DiskBar, EmptyState, InfoRow, Pill,
@@ -212,6 +213,7 @@ export function AccountDetailPage() {
     { id: 'files', label: t('accounts.tabs.files') || 'Files', icon: <FolderOpen size={14} /> },
     { id: 'backups', label: t('accounts.tabs.backups') || 'Backups', icon: <Archive size={14} /> },
     { id: 'access', label: t('accounts.tabs.access') || 'Access & security', icon: <ShieldCheck size={14} /> },
+    { id: 'network', label: t('accounts.tabs.network') || 'Network', icon: <Network size={14} /> },
     { id: 'usage', label: t('accounts.tabs.usage') || 'Usage', icon: <BarChart3 size={14} /> },
   ];
 
@@ -284,6 +286,7 @@ export function AccountDetailPage() {
         />
       )}
       {tab === 'access' && <AccountAccessTab account={account} />}
+      {tab === 'network' && <AccountNetworkTab accountId={account.id} />}
       {tab === 'usage' && <AccountUsageTab accountId={account.id} />}
 
       <ChangePlanModal

@@ -42,11 +42,13 @@ export interface AppContainerPlan {
   /** Create options (NetworkingConfig carries the primary network only; the hash covers every network). */
   create: Docker.ContainerCreateOptions;
   hash: string;
-  /** Networks connected after creation, with their aliases. */
-  extraNetworks: Array<{ network: string; aliases: string[] }>;
+  /** Networks connected after creation, with their aliases (gwPriority: Docker ≥ 28 EndpointSettings.GwPriority). */
+  extraNetworks: Array<{ network: string; aliases: string[]; gwPriority?: number }>;
 }
 
 const MIN_MEMORY_BYTES = 6 * 1048576;
+/** GwPriority of the front endpoint of a service with published ports (the other endpoints: 0). */
+export const PUBLISHED_GW_PRIORITY = 100;
 
 function healthConfig(s: ResolvedService): Docker.HealthConfig | undefined {
   if (!s.health) return undefined;
@@ -80,14 +82,17 @@ export function appContainerPlan(input: AppContainerInput): AppContainerPlan {
   };
 
   // Endpoints: private networks first (in the service's order), then the fabrics.
-  const endpoints: Array<{ network: string; aliases: string[] }> = [];
+  const endpoints: Array<{ network: string; aliases: string[]; gwPriority?: number }> = [];
   if (!s.networkNone) {
     for (const n of s.networks) {
       const docker = input.privateNetworks.get(n);
       if (!docker) continue;
       endpoints.push({ network: docker, aliases: [...new Set([s.name, ...(s.networkAliases[n] ?? [])])] });
     }
-    if (input.front) endpoints.push({ network: input.front, aliases: [alias] });
+    // Migration 032: a service with published ports answers its DNAT-ed clients through the FRONT fabric, whose
+    // gateway must be its default route (Docker ≥ 28 GwPriority; older Docker sorts by network name, and
+    // oblimint-acct-* < oblimint-app-* already wins). The spec hash changes for these services only.
+    if (input.front) endpoints.push({ network: input.front, aliases: [alias], ...(s.publishedPorts?.length ? { gwPriority: PUBLISHED_GW_PRIORITY } : {}) });
     if (input.back && input.back !== input.front) endpoints.push({ network: input.back, aliases: [alias] });
   }
 
@@ -138,14 +143,14 @@ export function appContainerPlan(input: AppContainerInput): AppContainerPlan {
     ExposedPorts: Object.fromEntries(s.exposedPorts.map((p) => [`${p.port}/${p.protocol}`, {}])),
     ...(healthConfig(s) ? { Healthcheck: healthConfig(s) } : {}),
     HostConfig: hostConfig,
-    NetworkingConfig: { EndpointsConfig: Object.fromEntries(endpoints.map((e) => [e.network, { Aliases: e.aliases }])) },
+    NetworkingConfig: { EndpointsConfig: Object.fromEntries(endpoints.map((e) => [e.network, { Aliases: e.aliases, ...(e.gwPriority ? { GwPriority: e.gwPriority } : {}) }])) },
   };
   const hashed = withSpecHash(full);
   const hash = hashed.Labels![LABELS.specHash];
   const primary = endpoints[0];
   const create: Docker.ContainerCreateOptions = {
     ...hashed,
-    NetworkingConfig: { EndpointsConfig: primary && !s.networkNone ? { [primary.network]: { Aliases: primary.aliases } } : {} },
+    NetworkingConfig: { EndpointsConfig: primary && !s.networkNone ? { [primary.network]: { Aliases: primary.aliases, ...(primary.gwPriority ? { GwPriority: primary.gwPriority } : {}) } } : {} },
   };
   return { name, create, hash, extraNetworks: s.networkNone ? [] : endpoints.slice(1) };
 }

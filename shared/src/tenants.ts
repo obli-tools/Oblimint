@@ -30,5 +30,6 @@ export const DEFAULT_TENANT_LIMITS: TenantLimits = {
   maxDatabases: null,
   cpuCores: null,
   memoryMb: null,
+  maxPublicPorts: 0,
   allowOversell: false,
 };

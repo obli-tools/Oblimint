@@ -941,6 +941,14 @@ const TOOLS: ToolDef[] = [
     args: z.object({ site_id: zSite, error_id: zId }),
     run: (ctx, _r, a) => keyApi.error(ctx, a.site_id, a.error_id),
   },
+  // ── public ports (migration 032) ──
+  {
+    name: 'get_published_ports', title: 'Public ports of the account', readOnly: true,
+    description: 'Public ports of the account (scope network.read): its blocks of ports on the shared IP (sharedIp), its dedicated IP if any, and the bindings of every app / stack (address:port/protocol → service container port, status pending | active | inactive | error). Read only: a port is published by deploying an app whose compose has "ports: [\"<public port>:<container port>/<tcp|udp>\"]" with a port of the blocks (or of the dedicated IP).',
+    inputSchema: obj({}, []),
+    args: z.object({}),
+    run: (ctx) => keyApi.networkPorts(ctx),
+  },
   // ── protected actions: follow-up of this key's pending actions (read-only; a key never confirms nor approves) ──
   {
     name: 'get_pending_action', title: 'A pending action', readOnly: true,

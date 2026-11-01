@@ -3,11 +3,12 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { AlertTriangle, Boxes, Building2, HeartPulse, Network } from 'lucide-react';
 import {
-  APP_CAP_ADD_ALLOWED, type AppsSettings, type HostingSettings, type HostingSettingsUpdate, type MonitoringSettings, type NetworkSettings,
+  APP_CAP_ADD_ALLOWED, type AppsSettings, type HostingSettings, type HostingSettingsUpdate, type MonitoringSettings, type NetworkSettings, type PortPoolStatus,
   type TenantAppPolicy,
 } from '@oblimint/shared';
 import { hostingSettingsApi } from '@/api/hostingSettings.api';
 import { appsApi } from '@/api/apps.api';
+import { systemPublicPortsApi } from '@/api/publicPorts.api';
 import { isStepUpHandled } from '@/api/client';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
@@ -67,6 +68,7 @@ export function AppsSettingsSections() {
       {isMaster && <TenantPolicyBlock />}
       <MonitoringBlock value={settings.monitoring} save={save} />
       <NetworkBlock value={settings.network} save={save} />
+      {isMaster && <PublicPortsBlock value={settings.network} save={save} />}
     </>
   );
 }
@@ -374,6 +376,102 @@ function MonitoringBlock({ value, save }: { value: MonitoringSettings; save: Sav
         <ToggleSwitch checked={d.statusPagesEnabled} onChange={(c) => set({ statusPagesEnabled: c })} label={t('apps.settingsPage.statusPages') || 'Public status pages'} />
         <ToggleSwitch checked={d.workflowsEnabled} onChange={(c) => set({ workflowsEnabled: c })} label={t('apps.settingsPage.workflows') || 'Workflows'} />
         <ToggleSwitch checked={d.allowPrivateTargets} onChange={(c) => set({ allowPrivateTargets: c })} label={t('apps.settingsPage.privateTargets') || 'Private targets (platform objects)'} description={t('apps.settingsPage.privateTargetsHint') || 'Monitors and SFTP targets of the platform staff may use private addresses. Never for a client.'} />
+      </div>
+    </SettingsBlock>
+  );
+}
+
+// ── public ports (migration 032) ────────────────────────────────────────────
+
+const PORT_ITEM_RE = /^(\d{1,5})(?:-(\d{1,5}))?$/;
+
+function portItems(list: NetworkSettings['reservedPorts'] | undefined): string[] {
+  return (list ?? []).map((e) => (typeof e === 'number' ? String(e) : e.from === e.to ? String(e.from) : `${e.from}-${e.to}`));
+}
+
+function parsePortItems(list: string[]): NetworkSettings['reservedPorts'] {
+  return list.map((s) => {
+    const m = PORT_ITEM_RE.exec(s.trim());
+    const a = Number(m?.[1]);
+    const b = m?.[2] ? Number(m[2]) : a;
+    return a === b ? a : { from: a, to: b };
+  });
+}
+
+function PublicPortsBlock({ value, save }: { value: NetworkSettings; save: SaveFn }) {
+  const { t } = useTranslation();
+  const pool0 = value.publicPortPool ?? { from: 20000, to: 40000 };
+  const [from, setFrom] = useState(String(pool0.from));
+  const [to, setTo] = useState(String(pool0.to));
+  const [extra, setExtra] = useState<string[]>(portItems(value.reservedPorts));
+  const [guard, setGuard] = useState<NetworkSettings['inboundGuard']>(value.inboundGuard ?? 'monitor');
+  const [status, setStatus] = useState<PortPoolStatus | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reset = () => {
+    const p = value.publicPortPool ?? { from: 20000, to: 40000 };
+    setFrom(String(p.from)); setTo(String(p.to)); setExtra(portItems(value.reservedPorts)); setGuard(value.inboundGuard ?? 'monitor'); setError(null);
+  };
+  useEffect(reset, [value.publicPortPool?.from, value.publicPortPool?.to, JSON.stringify(value.reservedPorts ?? []), value.inboundGuard]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { systemPublicPortsApi.pool().then(setStatus).catch(() => setStatus(null)); }, [value.publicPortPool?.from, value.publicPortPool?.to, JSON.stringify(value.reservedPorts ?? [])]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dirty = from !== String(pool0.from) || to !== String(pool0.to) || JSON.stringify(extra) !== JSON.stringify(portItems(value.reservedPorts)) || guard !== (value.inboundGuard ?? 'monitor');
+  const submit = async () => {
+    setSaving(true);
+    setError(await save({ network: { publicPortPool: { from: Number(from), to: Number(to) }, reservedPorts: parsePortItems(extra), inboundGuard: guard } }));
+    setSaving(false);
+  };
+  const guards: Array<{ id: NetworkSettings['inboundGuard']; label: string; hint: string }> = [
+    { id: 'monitor', label: t('network.guard.monitorLabel') || 'Monitor', hint: t('network.guard.monitorHint') || 'Connections routed into an account network without a published port are logged, not dropped (default: observe first).' },
+    { id: 'follow', label: t('network.guard.followLabel') || 'Follow the isolation mode', hint: t('network.guard.followHint') || 'Dropped when the isolation is enforced: only the published ports and the ports Docker publishes enter the account networks from outside.' },
+    { id: 'off', label: t('network.guard.offLabel') || 'Off', hint: t('network.guard.offHint') || 'No inbound guard (Docker 28 or later already drops the direct routing to the containers; Docker 27 or older does not).' },
+  ];
+  const auto = (status?.reserved ?? []).filter((r) => r.reason !== 'extra');
+  return (
+    <SettingsBlock
+      id="settings-public-ports"
+      icon={<Network />}
+      title={t('network.pool.settingsTitle') || 'Public ports'}
+      description={t('network.pool.settingsDescription') || 'Port pool of the shared IP handed out to the accounts (TCP and UDP), ports never handed out, inbound guard of the account networks.'}
+      dirty={dirty}
+      saving={saving}
+      onSave={() => { void submit(); }}
+      onReset={reset}
+      error={error}
+    >
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <Field label={t('network.pool.from') || 'Pool: first port'} htmlFor="pool-from">
+          <input id="pool-from" type="number" min={1024} max={65535} className={settingsInputCls} value={from} onChange={(e) => setFrom(e.target.value)} />
+        </Field>
+        <Field label={t('network.pool.to') || 'Pool: last port'} htmlFor="pool-to">
+          <input id="pool-to" type="number" min={1024} max={65535} className={settingsInputCls} value={to} onChange={(e) => setTo(e.target.value)} />
+        </Field>
+        <Field label={t('network.pool.capacity') || 'Usable ports'}>
+          <div className="py-2 font-mono text-sm text-text-primary">{status ? `${status.capacity} · ${t('network.pool.freeShort', { count: status.free, defaultValue: '{{count}} free' })}` : '—'}</div>
+        </Field>
+      </div>
+      <Field label={t('network.pool.extra') || 'Reserved ports (never handed out)'} hint={t('network.pool.extraHint') || 'A port or a range (25565, 27000-27100), on every IP of the node.'}>
+        <ChipsInput value={extra} onChange={setExtra} validate={(v) => { const m = PORT_ITEM_RE.exec(v); return !!m && Number(m[1]) >= 1 && Number(m[2] ?? m[1]) <= 65535 && Number(m[1]) <= Number(m[2] ?? m[1]); }} max={256} inputMode="numeric" />
+      </Field>
+      {auto.length > 0 && (
+        <div className="text-xs text-text-muted">
+          <span className="font-semibold text-text-secondary">{t('network.pool.automatic') || 'Reserved automatically:'}</span>{' '}
+          {auto.map((r) => `${r.from === r.to ? r.from : `${r.from}-${r.to}`} (${t(`network.reserved.${r.reason}`) || r.reason})`).join(' · ')}
+        </div>
+      )}
+      <div className="space-y-2 pt-2">
+        <div className="text-xs font-semibold text-text-primary">{t('network.guard.title') || 'Inbound guard of the account networks'}</div>
+        <div role="radiogroup" aria-label={t('network.guard.title') || 'Inbound guard of the account networks'} className="grid grid-cols-1 gap-2 md:grid-cols-3">
+          {guards.map((g) => {
+            const selected = guard === g.id;
+            return (
+              <button key={g.id} type="button" role="radio" aria-checked={selected} onClick={() => setGuard(g.id)}
+                className={cn('rounded-lg border-2 p-3 text-left transition-all', selected ? 'border-accent bg-accent/5' : 'border-transparent bg-bg-primary hover:border-accent/30')}>
+                <div className="text-sm font-semibold text-text-primary">{g.label}</div>
+                <p className="mt-1 text-xs text-text-secondary">{g.hint}</p>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </SettingsBlock>
   );

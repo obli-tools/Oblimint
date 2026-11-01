@@ -150,6 +150,11 @@ async function nodeAddresses(): Promise<string[]> {
     const v = (await appConfigService.get(k))?.trim();
     if (v) out.push(v);
   }
+  // Migration 032: the dedicated IPs of the node (and their local addresses) are the node too.
+  try {
+    const { nodeAddresses: all } = await import('../network/publicIps');
+    for (const a of await all()) if (!out.includes(a)) out.push(a);
+  } catch { /* the app_config addresses are enough to go on */ }
   return out;
 }
 

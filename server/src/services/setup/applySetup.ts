@@ -386,7 +386,11 @@ export async function runPostDeploySteps(req: SetupApplyRequest): Promise<void> 
   await runStep('settings', async () => {
     const { appConfigService } = await import('../appConfig.service');
     await appConfigService.set('panel_hostname', req.panelHostname);
-    if (req.publicIpv4) await appConfigService.set('public_ipv4', req.publicIpv4);
+    if (req.publicIpv4) {
+      await appConfigService.set('public_ipv4', req.publicIpv4);
+      // Migration 032: the shared public IP row of the node (port blocks of the accounts).
+      await import('../network/publicIps').then((m) => m.syncSharedIp(req.publicIpv4 ?? null)).catch(() => undefined);
+    }
     if (req.publicIpv6) await appConfigService.set('public_ipv6', req.publicIpv6);
     await appConfigService.set('nameservers', JSON.stringify(req.nameservers));
     await appConfigService.set('acme_email', req.acmeEmail);

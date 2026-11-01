@@ -28,6 +28,8 @@ export interface FakeEndpoint {
   IPv4?: string | null;
   /** Address Docker chose (dynamic, running containers only). */
   addr?: string | null;
+  /** Docker >= 28 EndpointSettings.GwPriority (kept only when set). */
+  GwPriority?: number;
 }
 
 const STATIC_REFUSED = 'user specified IP address is supported only when connecting to networks with user configured subnets';
@@ -146,6 +148,7 @@ export class FakeDocker {
           nets[n] = {
             Aliases: ep.Aliases, DNSNames: null, IPAMConfig: ep.IPv4 ? { IPv4Address: ep.IPv4 } : null,
             IPAddress: c.state === 'running' ? (ep.IPv4 ?? ep.addr ?? '') : '',
+            ...(ep.GwPriority ? { GwPriority: ep.GwPriority } : {}),
           };
         }
         return {
@@ -296,7 +299,7 @@ export class FakeDocker {
           IPAM: { Config: n.subnet ? [{ Subnet: n.subnet, ...(n.ipRange ? { IPRange: n.ipRange } : {}) }] : [] },
         };
       },
-      async connect(opts: { Container: string; EndpointConfig?: { Aliases?: string[]; IPAMConfig?: { IPv4Address?: string } } }) {
+      async connect(opts: { Container: string; EndpointConfig?: { Aliases?: string[]; IPAMConfig?: { IPv4Address?: string }; GwPriority?: number } }) {
         need();
         const c = self.find(opts.Container);
         if (!c) throw dockerError(404, `No such container: ${opts.Container}`);
@@ -316,7 +319,8 @@ export class FakeDocker {
           self.calls.push(`connect-inuse ${c.name} ${name} ip=${ip}`);
           throw dockerError(403, `Address already in use`);
         }
-        c.networks.set(name, { Aliases: opts.EndpointConfig?.Aliases ?? [], ...(ip ? { IPv4: ip } : {}) });
+        const gwp = Number(opts.EndpointConfig?.GwPriority) || 0;
+        c.networks.set(name, { Aliases: opts.EndpointConfig?.Aliases ?? [], ...(ip ? { IPv4: ip } : {}), ...(gwp ? { GwPriority: gwp } : {}) });
         self.calls.push(`connect ${c.name} ${name}${opts.EndpointConfig?.Aliases?.length ? ` alias=${opts.EndpointConfig.Aliases.join(',')}` : ''}${ip ? ` ip=${ip}` : ''}`);
       },
       async disconnect(opts: { Container: string }) {

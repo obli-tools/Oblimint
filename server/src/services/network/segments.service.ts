@@ -22,7 +22,7 @@ import { segmentBackends } from './deps';
 import { fabricNetworkName, fabricNetworkOptions } from './fabric';
 import { migrateAccount } from './migration';
 import { observeNode, stackExposedPorts, type LinkRow } from './model';
-import { buildPolicy, classifyEndpoint, dbEnginePort, type FabricWhich, type SegmentModel } from './policy';
+import { buildPolicy, classifyEndpoint, dbEnginePort, type AnnotatedFlow, type FabricWhich, type SegmentModel } from './policy';
 import { pushStatus, requestPolicySync, startEvents, stopEvents, syncPolicyNow } from './sync';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -538,7 +538,17 @@ export const segmentService = {
     } catch (err) {
       throw new AppError(502, `Docker unavailable: ${errText(err)}`, 'dockerUnavailable');
     }
-    return buildPolicy(observed.model).flows.map((f) => ({
+    // Migration 032: the published ports (DNAT by hostd) shown next to the bridge flows (troubleshooting only).
+    let published: AnnotatedFlow[] = [];
+    try {
+      const { loadPublishInputs } = await import('./publishing.service');
+      const { buildPublishState } = await import('./publish');
+      published = buildPublishState(await loadPublishInputs(nodeId, observed.model)).flows
+        .filter((f) => !(accountId > 0) || f.accountId === accountId);
+    } catch (err) {
+      logger.debug({ err: errText(err) }, 'segments: published flows unavailable');
+    }
+    return [...buildPolicy(observed.model).flows, ...published].map((f) => ({
       bridge: f.bridge, src: f.src, dst: f.dst, protocol: f.protocol, port: f.port, reason: f.reason, linkId: f.linkId,
     }));
   },
@@ -643,6 +653,9 @@ export const segmentService = {
       periodicTimer = setInterval(() => tick('periodic'), PERIODIC_MS);
       periodicTimer.unref?.();
       startEvents();
+      // Migration 032: the public ports of every account converge to their target at boot (a plan edited while the
+      // panel was down, a pool widened…). Queued, never fails the start.
+      void import('./ports.service').then((m) => m.requestAllAccountsPorts('boot')).catch(() => undefined);
     } catch (err) {
       logger.warn({ err: errText(err) }, 'segments worker start failed');
     }

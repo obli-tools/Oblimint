@@ -77,6 +77,14 @@ const ISSUES = /* i18n:apps.compose.issues */ {
   stopGraceCapped: 'stop_grace_period is capped at 120 s.',
   readOnlyForced: 'The root file system is read-only.',
   userRoot: 'The image runs as root inside the container.',
+  // Migration 032: published host ports.
+  hostPortNotAllocated: 'Port {{port}}/{{protocol}} is not among the public ports of the account ({{ranges}}).',
+  hostIpNotAvailable: '{{address}} is not a public IP of the account.',
+  hostIpv6Unsupported: 'Ports are published on IPv4 only: this IPv6 address is ignored.',
+  hostPortReserved: 'Port {{port}} is reserved by the platform ({{reason}}).',
+  hostPortTaken: 'Port {{port}}/{{protocol}} is already published by the application {{stack}}.',
+  hostPortNetworkNone: 'A service without network (network_mode: none) cannot publish a port.',
+  hostPortDuplicate: 'Port {{port}}/{{protocol}} is published twice (service {{service}}).',
 } as const;
 
 export function composeIssueMessage(t: TFunction, i: ComposeIssue): string {

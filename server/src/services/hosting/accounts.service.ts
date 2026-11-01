@@ -39,7 +39,11 @@ export function selectAccounts() {
     .select('a.*', 't.name as tenant_name', 'p.name as plan_name', 'p.limits as plan_limits',
       db.raw('(SELECT COUNT(*) FROM sites s WHERE s.account_id = a.id) AS site_count'),
       db.raw('(SELECT COUNT(*) FROM domains d WHERE d.account_id = a.id) AS domain_count'),
-      db.raw("(SELECT d.name FROM domains d WHERE d.account_id = a.id AND d.kind = 'primary' ORDER BY d.id LIMIT 1) AS primary_domain"));
+      db.raw("(SELECT d.name FROM domains d WHERE d.account_id = a.id AND d.kind = 'primary' ORDER BY d.id LIMIT 1) AS primary_domain"),
+      // Migration 032: public ports of the shared IP, the dedicated IP.
+      db.raw("(SELECT COALESCE(SUM(pa.port_to - pa.port_from + 1), 0) FROM port_allocations pa JOIN public_ips pi ON pi.id = pa.public_ip_id AND pi.kind = 'shared' WHERE pa.account_id = a.id AND pa.released_at IS NULL) AS ports_allocated"),
+      db.raw("(SELECT COUNT(DISTINCT pb.public_port) FROM port_bindings pb JOIN public_ips pi ON pi.id = pb.public_ip_id AND pi.kind = 'shared' WHERE pb.account_id = a.id) AS ports_used"),
+      db.raw("(SELECT pi.address FROM public_ips pi WHERE pi.account_id = a.id LIMIT 1) AS dedicated_ip"));
 }
 
 /** One account mapped with its joins (after an access check by the caller). */
@@ -122,6 +126,11 @@ function dnsAccountChanged(accountId: number, reason: string): void {
 
 function dnsSyncAll(reason: string): void {
   try { dnsService.requestSyncAll(reason); } catch (err) { logger.warn({ err, reason }, 'dnsService.requestSyncAll failed'); }
+}
+
+/** Migration 032: the public ports of the account follow its plan (network/ports.service.ts). Never throws. */
+function requestPorts(accountId: number, reason: string): void {
+  void import('../network/ports.service').then((m) => m.requestAccountPorts(accountId, reason)).catch((err) => logger.warn({ err, accountId }, 'requestAccountPorts failed'));
 }
 
 function requestAccount(accountId: number, reason: string): void {
@@ -215,6 +224,7 @@ export const accountsService = {
     });
     emitAccount({ id: created.id, tenant_id: tenantId }, 'created');
     requestAccount(created.id, 'created');
+    requestPorts(created.id, 'created');
     return fetchAccount(created.id);
   },
 
@@ -256,6 +266,7 @@ export const accountsService = {
       emitAccount(row, 'updated');
       // New quota / limits / bases: the reconcile applies them.
       if (planChanged) requestAccount(row.id, 'plan-changed');
+      if (planChanged) requestPorts(row.id, 'plan-changed');
     }
     return fetchAccount(row.id);
   },

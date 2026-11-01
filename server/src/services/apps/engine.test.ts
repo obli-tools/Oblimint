@@ -430,3 +430,15 @@ test('snapshots: a symbolic link aborts the copy, retention keeps the referenced
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('spec builder (migration 032): GwPriority on the front endpoint of a service with published ports only', () => {
+  const web = resolve().services.find((s) => s.name === 'web')!;
+  const base = { stackId: 7, accountId: 3, image: 'x', privateNetworks: new Map([['back', 'oblimint-app-7-back']]), front: 'oblimint-acct-3', back: null, hostStackDir: '/h' };
+  const plain = appContainerPlan({ ...base, service: web });
+  assert.deepEqual(plain.extraNetworks, [{ network: 'oblimint-acct-3', aliases: ['app-7-web'] }], 'unchanged without published ports');
+  const pub = appContainerPlan({ ...base, service: { ...web, publishedPorts: [{ publicIpId: 1, address: '198.51.100.1', protocol: 'udp', port: 20000, targetPort: 80 }] } });
+  assert.equal(pub.create.HostConfig!.PortBindings, undefined, 'Docker still publishes nothing');
+  assert.deepEqual(pub.extraNetworks, [{ network: 'oblimint-acct-3', aliases: ['app-7-web'], gwPriority: 100 }]);
+  assert.notEqual(pub.hash, plain.hash, 'the spec hash changes for that service only');
+  assert.equal(appContainerPlan({ ...base, service: web }).hash, plain.hash);
+});

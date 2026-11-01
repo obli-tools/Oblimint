@@ -95,6 +95,7 @@ Consequences:
 | \`routes.manage\` | Domain routes: choose which site (or runtime) serves a path, e.g. \`example.com/uploads/\`, towards the key's sites; on the domains given to it in the panel (even one serving nothing yet) or serving only its sites |
 | \`domains.subdomain\` | Attach to the sites **subdomains** of a domain **already in** the account (given to the key in the panel, or serving only its sites), remove the ones the key created |
 | \`logs.read\` | Read access, error (web server / PHP) and application logs, and the PHP errors grouped by release |
+| \`network.read\` | Read the public ports of the account: its blocks of the shared IP, its dedicated IP (public address) and the bindings of **every** app / stack of the account (whatever the site selection). Read only |
 
 **Databases**: a key valid for every site sees every database of the account; a key limited to some sites sees only the databases and users **it created**, plus the databases **owned by or shared with its sites**. A key deletes only what it created, and never stops nor deletes a database server.
 
@@ -167,6 +168,7 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`read_logs\` | \`error\` (default), \`access\` or \`app\` logs; \`query\` filter, \`limit\` (≤ 2000), \`since?\` / \`until?\` (ISO 8601), \`status?\` (access only: \`404\`, \`5xx\`) | \`logs.read\` |
 | \`list_errors\` | PHP errors, warnings and fatals **grouped** (level + message + \`file:line\` relative to the release) and **attributed to the release** that served them: \`count\`, \`firstSeen\` / \`lastSeen\`, \`newInRelease\`, \`errorClass\` + \`hint\`; \`releases\` sums up per release. Filters \`release_id?\`, \`since_release_id?\`, \`new_only?\`, \`level?\` (\`fatal,parse\`…), \`limit?\` (≤ 200) | \`logs.read\` |
 | \`get_error\` | One group (\`error_id\`): last occurrence with its stack trace (arguments and secrets masked), its release, the same error in the other releases | \`logs.read\` |
+| \`get_published_ports\` | Public ports of the account: blocks of the shared IP, dedicated IP, bindings (\`address:port/protocol\` → service, container port, status) of every app | \`network.read\` |
 | \`get_pending_action\` | One request this key filed for a protected action (\`pending_action_id\` from the error): status, the description the human reads, \`expiresAt\`, \`consumeBy\`, \`executionError\`, \`next\` | — |
 | \`wait_for_pending_action\` | Wait until a human decides (\`timeout_s\` ≤ 60, default 30), then as \`get_pending_action\`; \`timedOut\`: call it again. One of the key's 3 wait slots | — |
 | \`list_pending_actions\` | This key's requests, newest first (\`status?\`) | — |
@@ -335,6 +337,15 @@ The longest route wins: \`/uploads/\` comes before \`/\`. Removing the route giv
 - Laravel: \`create_site\` with \`app_profile: "laravel"\` (document root \`public\`).
 - Secrets (API keys, passwords): **never** in the code. Put them in the site's environment variables (\`set_env\` with \`secret: true\`) and read them with \`getenv()\`.
 
+### Public ports and dedicated IP
+
+Sites are only reached through the platform's web proxy (HTTP / HTTPS). An **application** (app / stack) may also be reached on a raw **TCP / UDP port** (a game server, a VoIP service…) when the platform administrator gave the account **public ports** (a block of ports of the shared IP, e.g. \`20000-20009\`) or a **dedicated IP**. Read them with \`get_published_ports\` (\`network.read\`).
+
+- Publishing is done **only by deploying the app**: in its compose, \`ports: ["20000:27015/udp"]\` (public port : container port), a range \`"20000-20004:27015-27019"\` (same length), or the long syntax \`{ target: 27015, published: 20000, protocol: udp, host_ip: <the dedicated IP> }\`. Without \`host_ip\`, a port of the blocks goes on the shared IP, any other port on the dedicated IP when the account has one.
+- Refused at validation: \`hostPortNotAllocated\` (port outside the blocks), \`hostPortReserved\` (platform port: 22, 25, 53, 80, 443, mail, panel, SFTP / SQL ranges…), \`hostPortTaken\` (another app of the account publishes it), \`hostIpNotAvailable\` (an address that is not the account's). \`127.0.0.1:…\` and an account without public ports: the host port is ignored (warning \`hostPortIgnored\`), nothing is published.
+- The client's source address is preserved. IPv4 only. From inside a container, the public address of a published port is not reachable (no hairpin): use the service name.
+- An app that publishes ports never goes to sleep.
+
 ### Protected actions
 
 The humans of the account may protect some operations (dropping a database, an SQL write, a deletion, publishing, a cron job…; by default only the deletions — a site, a database, a domain, a DNS zone, a mailbox…; writing to a database stays free unless the humans protect it). A protected call runs nothing and answers **428** with a request waiting for a human:
@@ -431,6 +442,7 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/sites/:id/logs\` | \`?source=error\\|access\\|app&q=&limit=&since=&until=&status=\` | \`logs.read\` |
 | GET | \`/sites/:id/errors\` | PHP errors grouped by release: \`?release_id=&since_release_id=&new_only=1&level=fatal,parse&limit=\` | \`logs.read\` |
 | GET | \`/sites/:id/errors/:gid\` | one group: last occurrence with its stack, the other releases | \`logs.read\` |
+| GET | \`/network/ports\` | \`{ target, allocated, blocks, sharedIp, dedicatedIp, bindings }\` (public addresses only) | \`network.read\` |
 | GET | \`/domains\` · \`/subdomains\` | possible parent domains · subdomains of the key | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.example.com" }\` | \`domains.subdomain\` |
 | DELETE | \`/subdomains/:name\` | | \`domains.subdomain\` |
@@ -620,6 +632,7 @@ Conséquences :
 | \`routes.manage\` | Routes des domaines : choisir quel site (ou runtime) sert un chemin, ex. \`exemple.com/uploads/\`, vers les sites de la clé ; sur les domaines qui lui sont donnés dans le panel (même un domaine qui ne sert encore rien) ou qui ne servent que ses sites |
 | \`domains.subdomain\` | Rattacher aux sites des **sous-domaines** d'un domaine **déjà présent** sur le compte (donné à la clé dans le panel, ou qui ne sert que ses sites), retirer ceux créés par la clé |
 | \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs, et les erreurs PHP regroupées par release |
+| \`network.read\` | Lire les ports publics du compte : ses plages de l'IP partagée, son IP dédiée (adresse publique) et les liaisons de **toutes** les applications / stacks du compte (quelle que soit la sélection de sites). Lecture seule |
 
 **Bases de données** : une clé valable pour tous les sites voit toutes les bases du compte ; une clé limitée à certains sites ne voit que les bases et utilisateurs **qu'elle a créés**, ainsi que les bases **appartenant à ses sites ou partagées avec eux**. Une clé ne supprime que ce qu'elle a créé, et n'arrête ni ne supprime jamais un serveur de bases.
 
@@ -692,6 +705,7 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`read_logs\` | Journaux \`error\` (par défaut), \`access\` ou \`app\` ; filtre \`query\`, \`limit\` (≤ 2000), \`since?\` / \`until?\` (ISO 8601), \`status?\` (access seulement : \`404\`, \`5xx\`) | \`logs.read\` |
 | \`list_errors\` | Erreurs, avertissements et fatales PHP **regroupés** (niveau + message + \`fichier:ligne\` relatif à la release) et **rattachés à la release** qui les a servis : \`count\`, \`firstSeen\` / \`lastSeen\`, \`newInRelease\`, \`errorClass\` + \`hint\` ; \`releases\` résume par release. Filtres \`release_id?\`, \`since_release_id?\`, \`new_only?\`, \`level?\` (\`fatal,parse\`…), \`limit?\` (≤ 200) | \`logs.read\` |
 | \`get_error\` | Un groupe (\`error_id\`) : dernière occurrence avec sa pile d'appels (arguments et secrets masqués), sa release, la même erreur dans les autres releases | \`logs.read\` |
+| \`get_published_ports\` | Ports publics du compte : plages de l'IP partagée, IP dédiée, liaisons (\`adresse:port/protocole\` → service, port du conteneur, statut) de toutes les applications | \`network.read\` |
 | \`get_pending_action\` | Une demande déposée par cette clé pour une action protégée (\`pending_action_id\` de l'erreur) : statut, la description que lit l'humain, \`expiresAt\`, \`consumeBy\`, \`executionError\`, \`next\` | — |
 | \`wait_for_pending_action\` | Attendre la décision d'un humain (\`timeout_s\` ≤ 60, 30 par défaut), puis comme \`get_pending_action\` ; \`timedOut\` : rappelle-le. Compte parmi les 3 attentes de la clé | — |
 | \`list_pending_actions\` | Les demandes de cette clé, des plus récentes aux plus anciennes (\`status?\`) | — |
@@ -860,6 +874,15 @@ La route la plus longue gagne : \`/uploads/\` passe avant \`/\`. Supprimer la ro
 - Laravel : \`create_site\` avec \`app_profile: "laravel"\` (racine web \`public\`).
 - Les secrets (clés d'API, mots de passe) : **jamais** dans le code. Mets-les dans les variables d'environnement du site (\`set_env\` avec \`secret: true\`) et lis-les avec \`getenv()\`.
 
+### Ports publics et IP dédiée
+
+Les sites ne sont joints que par le proxy web de la plateforme (HTTP / HTTPS). Une **application** (app / stack) peut aussi être jointe sur un **port TCP / UDP** brut (serveur de jeu, service VoIP…) quand l'administrateur de la plateforme a donné au compte des **ports publics** (une plage de ports de l'IP partagée, ex. \`20000-20009\`) ou une **IP dédiée**. Lisez-les avec \`get_published_ports\` (\`network.read\`).
+
+- La publication se fait **uniquement en déployant l'application** : dans son compose, \`ports: ["20000:27015/udp"]\` (port public : port du conteneur), une plage \`"20000-20004:27015-27019"\` (même longueur), ou la syntaxe longue \`{ target: 27015, published: 20000, protocol: udp, host_ip: <l'IP dédiée> }\`. Sans \`host_ip\`, un port des plages va sur l'IP partagée, tout autre port sur l'IP dédiée si le compte en a une.
+- Refusé à la validation : \`hostPortNotAllocated\` (port hors des plages), \`hostPortReserved\` (port de la plateforme : 22, 25, 53, 80, 443, mail, panel, plages SFTP / SQL…), \`hostPortTaken\` (une autre application du compte le publie), \`hostIpNotAvailable\` (une adresse qui n'est pas celle du compte). \`127.0.0.1:…\` et un compte sans ports publics : le port hôte est ignoré (avertissement \`hostPortIgnored\`), rien n'est publié.
+- L'adresse source du client est préservée. IPv4 seulement. Depuis un conteneur, l'adresse publique d'un port publié n'est pas joignable (pas de hairpin) : utilisez le nom du service.
+- Une application qui publie des ports n'est jamais mise en veille.
+
 ### Actions protégées
 
 Les humains du compte peuvent protéger certaines opérations (supprimer une base, une requête SQL en écriture, une suppression, une publication, une tâche planifiée… ; par défaut seulement les suppressions — un site, une base, un domaine, une zone DNS, une boîte mail… ; écrire dans une base reste libre sauf si les humains la protègent). Un appel protégé n'exécute rien et répond **428** avec une demande qui attend un humain :
@@ -956,6 +979,7 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET | \`/sites/:id/logs\` | \`?source=error\\|access\\|app&q=&limit=&since=&until=&status=\` | \`logs.read\` |
 | GET | \`/sites/:id/errors\` | erreurs PHP regroupées par release : \`?release_id=&since_release_id=&new_only=1&level=fatal,parse&limit=\` | \`logs.read\` |
 | GET | \`/sites/:id/errors/:gid\` | un groupe : dernière occurrence avec sa pile d'appels, les autres releases | \`logs.read\` |
+| GET | \`/network/ports\` | \`{ target, allocated, blocks, sharedIp, dedicatedIp, bindings }\` (adresses publiques seulement) | \`network.read\` |
 | GET | \`/domains\` · \`/subdomains\` | domaines parents possibles · sous-domaines de la clé | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.exemple.com" }\` | \`domains.subdomain\` |
 | DELETE | \`/subdomains/:name\` | | \`domains.subdomain\` |

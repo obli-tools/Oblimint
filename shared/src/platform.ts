@@ -280,6 +280,21 @@ export interface NetworkSettings {
    * taken by a dynamic container at the next daemon restart and its owner then never starts.
    */
   addressPinning: 'auto' | 'manual';
+  /**
+   * Public port pool of the shared IP (migration 032, TCP and UDP): the blocks of the accounts are taken
+   * from it, minus the reserved ports (platform ports, SFTP / external SQL ranges, edge streams, the
+   * extra list below, the listening sockets of the node). 1024 ≤ from ≤ to ≤ 65535.
+   */
+  publicPortPool: { from: number; to: number };
+  /** Extra ports never handed out (on every IP), on top of the automatic ones. */
+  reservedPorts: Array<number | { from: number; to: number }>;
+  /**
+   * Inbound guard of the account fabrics (hostd, table inet oblimint_seghost): a new connection routed into a
+   * fabric from outside passes only when it was DNAT-ed (public bindings, Docker's published ports) — closes
+   * the direct routing to the container addresses Docker ≤ 27 lets through. 'monitor' (default): log + accept
+   * while observing; 'follow': the segmentation mode (enforce = drop); 'off': none. Inactive when mode is off.
+   */
+  inboundGuard: 'follow' | 'monitor' | 'off';
 }
 
 /**
@@ -476,7 +491,7 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     workflowsEnabled: true,
     certExpiryWarningDays: 14,
   },
-  network: { mode: 'enforce', addressPinning: 'auto' },
+  network: { mode: 'enforce', addressPinning: 'auto', publicPortPool: { from: 20000, to: 40000 }, reservedPorts: [], inboundGuard: 'monitor' },
   restrictions: { floor: {}, pendingTtlMinutes: PENDING_ACTION_TTL_MINUTES },
   keySecurity: { ...DEFAULT_KEY_SECURITY_SETTINGS, trustedIps: [], connectorSourceRanges: [...DEFAULT_KEY_SECURITY_SETTINGS.connectorSourceRanges] },
 };

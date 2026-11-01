@@ -88,7 +88,10 @@ export class SleepManager {
     try {
       const now = appsDeps().now();
       const rows = await db('app_stacks as s').join('hosting_accounts as a', 'a.id', 's.account_id')
-        .where('a.status', 'active').where('s.status', 'running').where('s.desired_state', 'running').select('s.*') as StackRow[];
+        .where('a.status', 'active').where('s.status', 'running').where('s.desired_state', 'running')
+        // Migration 032: a stack publishing ports never sleeps (nothing wakes it on a raw TCP / UDP port).
+        .whereNotExists(function published() { this.select(db.raw('1')).from('port_bindings as b').whereRaw('b.stack_id = s.id'); })
+        .select('s.*') as StackRow[];
       for (const stack of rows) {
         const policy = sleepPolicyOf(stack);
         if (!policy.enabled || isStackBusy(stack.id)) continue;

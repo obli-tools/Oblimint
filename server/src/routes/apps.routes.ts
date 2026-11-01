@@ -9,6 +9,8 @@ import { appPolicyService } from '../services/apps/policy.service';
 import { registryCredentialService } from '../services/apps/registry.service';
 import { parseBody } from '../services/docker/parseBody';
 import { idParam, resolveActor } from '../services/hosting/access';
+import { gateAction } from '../services/restrictions/gate';
+import { accountTarget } from '../services/restrictions/targets';
 
 // /api/apps — OWNED BY MODULE `apps-core` (docs/P4b-PLAN.md §6.1). Contract below FROZEN (validation zod +
 // access in the module). Tenant router (requireAuth + requireTenant). Needs: read = account member / staff
@@ -298,7 +300,22 @@ router.post('/stacks/:id/actions', heavyOpLimiter, async (req, res, next) => {
     const actor = await resolveActor(req);
     const id = idParam(req);
     const body = parseBody(actionSchema, req.body);
-    res.status(202).json({ success: true, data: await appsService.action(req, actor, id, body) });
+    // Migration 032: a deploy that opens new public ports on the Internet is the protectable action app.port_publish.
+    // The ports come from a fresh validation; the job refuses any other port it would open (deployments.ts).
+    let approvedPorts: string[] = [];
+    if (body.action === 'deploy' || body.action === 'redeploy' || body.action === 'recreate') {
+      const { stack, ports, keys } = await appsService.newPublishedPorts(actor, id);
+      if (ports.length) await gateAction(req, { action: 'app.port_publish', target: accountTarget({ tenant_id: stack.tenant_id, id: stack.account_id }), params: { stackId: id, ports } });
+      approvedPorts = keys;
+    }
+    res.status(202).json({ success: true, data: await appsService.action(req, actor, id, body, { approvedPorts }) });
+  } catch (err) { next(err); }
+});
+
+// Migration 032: public bindings of the stack (read).
+router.get('/stacks/:id/bindings', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await appsService.bindings(await resolveActor(req), idParam(req)) });
   } catch (err) { next(err); }
 });
 
@@ -327,7 +344,12 @@ router.post('/stacks/:id/deployments/:depId/cancel', async (req, res, next) => {
 router.post('/stacks/:id/rollback', heavyOpLimiter, async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
-    res.status(202).json({ success: true, data: await appsService.rollback(req, actor, idParam(req), parseBody(rollbackSchema, req.body)) });
+    const id = idParam(req);
+    const body = parseBody(rollbackSchema, req.body);
+    // Migration 032: a rollback that opens public ports goes through app.port_publish too.
+    const { stack, ports, keys } = await appsService.newPublishedPorts(actor, id, body.deploymentId);
+    if (ports.length) await gateAction(req, { action: 'app.port_publish', target: accountTarget({ tenant_id: stack.tenant_id, id: stack.account_id }), params: { stackId: id, ports, rollbackOf: body.deploymentId } });
+    res.status(202).json({ success: true, data: await appsService.rollback(req, actor, id, body, { approvedPorts: keys }) });
   } catch (err) { next(err); }
 });
 

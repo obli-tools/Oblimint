@@ -35,6 +35,7 @@ export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'cron.manage': ['Cron jobs', 'Schedule commands of its sites (create, change, run, read the output).'],
   'routes.manage': ['Routes', 'Choose which of its sites (or runtime of a site) serves a path of a domain, e.g. example.com/uploads/; only on the domains given to the key or, for a key limited to some sites, on domains serving its sites alone. A route towards a site outside the key is never changed or removed.'],
   'databases.manage': ['Databases', 'Database servers of the account, databases and users (all of them for a key on every site, only its own otherwise); deletes only what it created.'],
+  'network.read': ['Read the public ports', 'Public ports of the account (blocks of the shared IP, dedicated IP) and the published ports of every application, whatever the sites of the key. Read only.'],
 };
 
 // Presets of the key form (API_KEY_PRESETS, shared/src/apiKeys.ts): label, what it gives and leaves out.

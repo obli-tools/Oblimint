@@ -30,6 +30,8 @@ export interface AccountRow {
   created_at: Date | string; updated_at: Date | string;
   /** joined */ tenant_name?: string | null; plan_name?: string | null; plan_limits?: unknown;
   site_count?: number | string | null; domain_count?: number | string | null; primary_domain?: string | null;
+  /** Migration 032 (joined by selectAccounts): override, allocated / used ports of the shared IP, the dedicated IP. */
+  public_ports_override?: number | null; ports_allocated?: number | string | null; ports_used?: number | string | null; dedicated_ip?: string | null;
 }
 
 export interface SiteRow {
@@ -177,6 +179,14 @@ export function toHostingAccount(r: AccountRow): HostingAccount {
     primaryDomain: r.primary_domain ?? null,
     accessMode: r.access_mode ?? 'open',
     overQuota: r.over_quota_state ?? 'ok',
+    ...(r.ports_allocated !== undefined ? {
+      publicPorts: {
+        target: r.public_ports_override !== null && r.public_ports_override !== undefined ? Number(r.public_ports_override) : Math.max(0, Number(limits?.publicPorts ?? 0) || 0),
+        allocated: num(r.ports_allocated),
+        used: num(r.ports_used),
+        dedicatedIp: r.dedicated_ip ?? null,
+      },
+    } : {}),
     createdAt: isoReq(r.created_at),
     updatedAt: isoReq(r.updated_at),
   };

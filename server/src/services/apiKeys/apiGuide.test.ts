@@ -38,6 +38,7 @@ const OTHER_SNAKE = new Set([
   'awaiting_approval', // a release status
   'unix_socket', // PDO DSN parameter
   'id_rsa', 'node_modules', 'pg_advisory_lock', // file and folder names, PostgreSQL function
+  'host_ip', // compose key of a published port (§5 « Public ports »)
 ]);
 
 /** Sections "## n." of a guide. */

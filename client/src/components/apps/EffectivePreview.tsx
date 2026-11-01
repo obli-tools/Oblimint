@@ -71,6 +71,11 @@ export function EffectivePreview({ effective, effectiveYaml }: { effective: Effe
                     </td>
                     <td className="px-4 py-2.5 font-mono text-text-secondary">
                       {s.exposedPorts.length ? s.exposedPorts.map((p) => `${p.port}/${p.protocol}`).join(', ') : '—'}
+                      {(s.publishedPorts ?? []).length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1" title={t('apps.effective.publishedHint') || 'Published on the Internet (public ports of the account).'}>
+                          {(s.publishedPorts ?? []).map((p) => <Pill key={`${p.publicIpId}-${p.protocol}-${p.port}`} tone="amber">{p.address}:{p.port}/{p.protocol} → {p.targetPort}</Pill>)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 font-mono text-text-secondary">{s.capAdd.length ? s.capAdd.join(', ') : '—'}</td>
                   </tr>

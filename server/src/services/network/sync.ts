@@ -12,7 +12,9 @@ import { ensureDefaultDbLinks, segmentedAccountsOfNode } from './defaultLinks';
 import { segmentBackends } from './deps';
 import { setLastPushProvider } from './addresses';
 import { observeNode } from './model';
-import { buildPolicy } from './policy';
+import { buildPolicy, type SegmentModel } from './policy';
+import { setLastPublishPushProvider } from './ports.service';
+import { publishNeeded, publishPushStatus, pushPublish } from './publishing.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Policy push loop (docs/P4b-PLAN.md §4.5, SG6). requestPolicySync() never
@@ -56,6 +58,8 @@ export function lastSuccessfulPushAt(): Date | null {
   return lastSuccessfulPush;
 }
 setLastPushProvider(lastSuccessfulPushAt);
+// Migration 032: a released port block is reusable once a publish push followed its release.
+setLastPublishPushProvider(() => publishPushStatus().lastPushAt);
 
 // ── policy hold (network/pinning.ts) ────────────────────────────────────────
 // While a container is re-pinned (disconnect + connect with the same address, ~250 ms), a push would observe it
@@ -100,12 +104,16 @@ export function pushStatus(): Readonly<PushStatus> {
   return status;
 }
 
-async function currentMode(): Promise<NetworkPolicyMode> {
+async function currentMode(): Promise<{ mode: NetworkPolicyMode; guard: 'enforce' | 'monitor' | 'off' }> {
   try {
-    return (await platformSettings.section('network')).mode;
+    const s = await platformSettings.section('network');
+    const g = (s as { inboundGuard?: string }).inboundGuard ?? 'monitor';
+    // Migration 032: inbound guard of the fabrics (only DNAT-ed new connections enter them from outside).
+    const guard = s.mode === 'off' || g === 'off' ? 'off' : g === 'follow' ? s.mode : 'monitor';
+    return { mode: s.mode, guard };
   } catch (err) {
     logger.warn({ err: errText(err) }, 'segments: network settings unreadable (enforce assumed)');
-    return 'enforce';
+    return { mode: 'enforce', guard: 'monitor' };
   }
 }
 
@@ -148,8 +156,9 @@ async function pushOnce(reason: string): Promise<boolean> {
   let changedAccounts = new Map<number, number>();
   try {
     const nodeId = await backends.localNode();
-    const mode = await currentMode();
+    const { mode, guard } = await currentMode();
     let built: ReturnType<typeof buildPolicy>;
+    let model: SegmentModel | null = null;
     if (mode === 'off') {
       built = buildPolicy({ mode, accounts: [], sites: new Map(), dbInstances: new Map(), stacks: new Map(), adapterRuns: new Map(), panelRefs: [], links: [], proxyTargets: [], internalPort: 0 });
     } else {
@@ -165,8 +174,11 @@ async function pushOnce(reason: string): Promise<boolean> {
       if (observed.proxyTargetsError) logger.debug({ err: observed.proxyTargetsError }, 'segments: proxy targets unavailable (no edge → app flow)');
       if (observed.missingFabrics.length) logger.debug({ missing: observed.missingFabrics }, 'segments: fabrics not created yet');
       built = buildPolicy(observed.model);
+      model = observed.model;
+      if (guard !== 'off' && built.state.bridges.some((b) => b.fabric !== 'platform')) built.state.inboundGuard = guard;
     }
-    await backends.hostd(nodeId).setSegments(built.state);
+    const hostd = backends.hostd(nodeId);
+    await hostd.setSegments(built.state);
     status.lastPushAt = backends.now();
     lastSuccessfulPush = status.lastPushAt;
     status.lastPushError = null;
@@ -174,6 +186,19 @@ async function pushOnce(reason: string): Promise<boolean> {
     status.lastReason = reason;
     changedAccounts = await updateLinkStatuses(nodeId, built.activeLinks, mode);
     logger.debug({ reason, bridges: built.state.bridges.length, rules: built.state.allow.length, mode }, 'segments: policy pushed');
+    // Migration 032: the publication (public ports, dedicated IPs) in the same pass, same observation. A client
+    // without publish support (fakes of older tests) or a node with nothing to publish skips it.
+    if (typeof (hostd as { setPublish?: unknown }).setPublish === 'function' && await publishNeeded(nodeId)) {
+      try {
+        if (!model) model = (await observeNode(nodeId, { mode })).model;
+        const pub = await pushPublish(nodeId, hostd, model, backends.now());
+        for (const [a, t] of pub.changedAccounts) changedAccounts.set(a, t);
+        logger.debug({ reason, rules: pub.built.state.rules.length }, 'publish: state pushed');
+      } catch (err) {
+        status.lastPushError = `publish: ${errText(err)}`.slice(0, 500);
+        logger.warn({ reason, err: status.lastPushError }, 'publish: state not pushed (hostd keeps the last tables)');
+      }
+    }
   } catch (err) {
     status.lastPushError = errText(err).slice(0, 500);
     status.lastReason = reason;

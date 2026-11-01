@@ -90,6 +90,8 @@ export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed> = {
   'cron.manage': 'sites.manage',
   'databases.manage': 'databases.manage',
   'routes.manage': 'domains.manage',
+  // Migration 032: read the public ports of the account (membership is enough).
+  'network.read': 'read',
 };
 
 /** Client capability each scope gives the key's actor. */
@@ -106,6 +108,7 @@ const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
   'cron.manage': 'sites.manage',
   'databases.manage': 'databases.manage',
   'routes.manage': 'domains.manage',
+  'network.read': null,
 };
 
 /** Feature B (B9): stops the previews started through a key (never throws). */

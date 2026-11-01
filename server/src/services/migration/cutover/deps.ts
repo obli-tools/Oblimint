@@ -39,7 +39,8 @@ export interface CutoverDeps {
   mailRecords(fqdn: string): Promise<Array<{ fqdn: string; type: import('@oblimint/shared').DnsRecordType; content: string; priority: number | null; kind: string; zone: boolean }>>;
   /** Mail host of the node (MX target), null when not configured. */
   mailHost(): Promise<string | null>;
-  platformDns(): Promise<{ nameservers: string[]; ipv4: string | null; ipv6: string | null }>;
+  /** Name servers + the IPs the names must point to; accountId: its dedicated IP (migration 032, no takeover) instead of the shared one. */
+  platformDns(accountId?: number | null): Promise<{ nameservers: string[]; ipv4: string | null; ipv6: string | null }>;
   /** TTL of our hosted zone `name` (default + manual / template records); null = no such hosted zone. */
   setZoneTtl(req: Request, name: string, ttl: number): Promise<{ zoneId: number; recordsRetimed: number } | null>;
 }
@@ -136,12 +137,17 @@ const real: CutoverDeps = {
     const { dnsService } = await import('../../dns/dns.service');
     return dnsService.setZoneTtlByName(req, name, ttl);
   },
-  async platformDns() {
+  async platformDns(accountId) {
     const { db } = await import('../../../db');
     const { platformSettings } = await import('../../platformSettings');
     const rows = await db('app_config').whereIn('key', ['public_ipv4', 'public_ipv6']).select('key', 'value') as Array<{ key: string; value: string | null }>;
     const get = (k: string) => rows.find((r) => r.key === k)?.value?.trim() || null;
-    return { nameservers: (await platformSettings.section('dns')).nameservers.map(clean), ipv4: get('public_ipv4'), ipv6: get('public_ipv6') };
+    let ipv4 = get('public_ipv4');
+    if (accountId) {
+      const { accountDedicatedIpv4 } = await import('../../dns/store');
+      ipv4 = (await accountDedicatedIpv4()).get(Number(accountId)) ?? ipv4;
+    }
+    return { nameservers: (await platformSettings.section('dns')).nameservers.map(clean), ipv4, ipv6: get('public_ipv6') };
   },
 };
 

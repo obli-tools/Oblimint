@@ -149,7 +149,10 @@
       "platform_ban_lift": "Lift a platform ban",
       "platform_update_apply": "Apply a platform update",
       "platform_migration_cutover": "Switch / roll back a migration cutover",
-      "platform_backup_destinations": "Change the backup destinations"
+      "platform_backup_destinations": "Change the backup destinations",
+      "app_port_publish": "Publish a port on the Internet (application deploy)",
+      "platform_port_allocation": "Allocate public ports to an account",
+      "platform_public_ips": "Manage the public IPs (declare, assign, takeover, SNAT)"
     }
   }
 }

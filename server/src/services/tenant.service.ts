@@ -46,6 +46,8 @@ export const tenantLimitsSchema = z.object({
   maxDatabases: limitInt(1_000_000),
   cpuCores: z.number().min(0).max(4096).nullable(),
   memoryMb: limitInt(64 * 1024 * 1024),
+  // Migration 032: public ports of the shared IP its accounts may hold together (0 = none, null = unlimited).
+  maxPublicPorts: limitInt(65535),
   allowOversell: z.boolean(),
 }).strict();
 
@@ -75,6 +77,8 @@ function normaliseLimits(raw: unknown): TenantLimits {
     const v = (obj as Record<string, unknown>)[key];
     if (key === 'allowOversell') out.allowOversell = v === true;
     else if (typeof v === 'number' && Number.isFinite(v)) (out as any)[key] = v;
+    // maxPublicPorts: null = unlimited (its default is 0, unlike the other keys).
+    else if (key === 'maxPublicPorts' && v === null) out.maxPublicPorts = null;
   }
   return out;
 }

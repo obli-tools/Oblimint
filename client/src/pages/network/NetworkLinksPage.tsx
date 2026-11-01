@@ -7,6 +7,7 @@ import { AccountScopeBar, scopeSubtitle, useAccountScope } from '@/components/co
 import { useP4bAccess } from '@/components/apps/appsAccess';
 import { NetworkLinksPanel } from '@/components/network/NetworkLinksPanel';
 import { NetworkSystemPanel } from '@/components/network/NetworkSystemPanel';
+import { PublicIpsPanel } from '@/components/network/PublicIpsPanel';
 import { SettingsLink } from '@/components/common/SettingsLink';
 
 /**
@@ -43,6 +44,8 @@ export function NetworkLinksPage() {
       <AccountScopeBar scope={scope} />
 
       {isPlatformAdmin && <NetworkSystemPanel key={`sys-${tick}`} accountId={scope.accountId} />}
+      {/* Migration 032: public IPs of the node, publication by hostd, port pool. */}
+      {isPlatformAdmin && scope.accountId == null && <PublicIpsPanel key={`ips-${tick}`} />}
 
       <NetworkLinksPanel
         key={`links-${scope.accountId ?? 'all'}-${scope.tenantId ?? ''}-${tick}`}

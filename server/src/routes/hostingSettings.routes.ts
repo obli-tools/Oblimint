@@ -73,6 +73,8 @@ async function settingsChanged(sections: string[]): Promise<void> {
     if (sections.includes('bans')) (await import('../services/security/bans.service')).webBanService.settingsChanged();
     if (sections.includes('monitoring')) (await import('../services/monitoring/uptime.service')).uptimeService.settingsChanged();
     if (sections.includes('network')) (await import('../services/network/segments.service')).segmentService.settingsChanged();
+    // Migration 032: a new pool / reserved list may serve the accounts short of ports (and changes the published state).
+    if (sections.includes('network')) void import('../services/network/ports.service').then((m) => m.requestAllAccountsPorts('settings')).catch(() => undefined);
   } catch (err) {
     logger.warn({ err }, 'hosting settings change hooks failed');
   }

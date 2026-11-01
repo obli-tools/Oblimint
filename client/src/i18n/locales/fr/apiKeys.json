@@ -106,6 +106,12 @@
           "label": "Aperçus en direct",
           "hint": "Démarrer, consulter et arrêter un aperçu d'une release ou du staging ; nécessite aussi files.read (staging : releases.publish)"
         }
+      },
+      "network": {
+        "read": {
+          "label": "Lire les ports publics",
+          "hint": "Ports publics du compte (plages de l’IP partagée, IP dédiée) et ports publiés de toutes les applications, quels que soient les sites de la clé. Lecture seule."
+        }
       }
     },
     "guide": "Guide API & agents IA",

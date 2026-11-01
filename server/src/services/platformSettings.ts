@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  APP_CAP_ADD_ALLOWED, DEFAULT_HOSTING_SETTINGS, PROTECTED_SETTINGS_SECTIONS, type HostingSettings, type HostingSettingsSection, type HostingSettingsUpdate,
+  APP_CAP_ADD_ALLOWED, DEFAULT_HOSTING_SETTINGS, PLATFORM_RESERVED_PORTS, PROTECTED_SETTINGS_SECTIONS, type HostingSettings, type HostingSettingsSection, type HostingSettingsUpdate,
 } from '@oblimint/shared';
 import type { Knex } from 'knex';
 import { db } from '../db';
@@ -178,6 +178,14 @@ const sectionSchemas = {
   network: z.object({
     mode: z.enum(['enforce', 'monitor', 'off']),
     addressPinning: z.enum(['auto', 'manual']),
+    // Migration 032: public port pool of the shared IP, extra reserved ports, inbound guard of the fabrics.
+    publicPortPool: z.object({ from: z.number().int().min(1024).max(65535), to: z.number().int().min(1024).max(65535) }).strict()
+      .refine((p) => p.from <= p.to, 'from must be ≤ to'),
+    reservedPorts: z.array(z.union([
+      z.number().int().min(1).max(65535),
+      z.object({ from: z.number().int().min(1).max(65535), to: z.number().int().min(1).max(65535) }).strict().refine((p) => p.from <= p.to, 'from must be ≤ to'),
+    ])).max(256),
+    inboundGuard: z.enum(['follow', 'monitor', 'off']),
   }).strict(),
   // Sensitive actions (services/restrictions): written by PUT /api/restrictions/floor only.
   restrictions: z.object({
@@ -196,8 +204,8 @@ const sectionSchemas = {
   }).strict(),
 } as const;
 
-/** Host ports a stream may never take (edge, panel, SSH, DNS, mail). */
-export const RESERVED_STREAM_PORTS: ReadonlySet<number> = new Set([22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 4190, 8081, 8443]);
+/** Host ports a stream may never take (edge, panel, SSH, DNS, mail): the platform-reserved ports (shared, migration 032). */
+export const RESERVED_STREAM_PORTS: ReadonlySet<number> = new Set(PLATFORM_RESERVED_PORTS);
 
 const SECTIONS = Object.keys(sectionSchemas) as HostingSettingsSection[];
 
@@ -296,6 +304,15 @@ export const platformSettings = {
         if (bad) throw new AppError(400, `Validation failed — edge: port ${bad.port} is reserved`, 'validation');
         const keys = v.streamPorts.map((p) => `${p.port}/${p.protocol}`);
         if (new Set(keys).size !== keys.length) throw new AppError(400, 'Validation failed — edge: duplicate stream port', 'validation');
+        // Migration 032: a stream port never takes a port handed to an account / published.
+        const { assertStreamPortsFree } = await import('./network/ports.service');
+        await assertStreamPortsFree(v.streamPorts.map((p) => p.port));
+      }
+      if (parsed.success && s === 'network') {
+        // Migration 032: the new pool / extra reserved ports must keep every allocated port (409 poolExcludesAllocations).
+        const { assertPoolKeepsAllocations } = await import('./network/ports.service');
+        const v = parsed.data as unknown as HostingSettings['network'];
+        await assertPoolKeepsAllocations(v.publicPortPool, v.reservedPorts);
       }
       if (!parsed.success) {
         throw new AppError(400, `Validation failed — ${s}: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ')}`, 'validation');

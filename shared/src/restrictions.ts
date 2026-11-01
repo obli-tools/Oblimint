@@ -144,6 +144,8 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'dns.record_write', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: P },
   { key: 'mail.dns_fix', category: 'domains', need: 'mail.manage', alsoNeed: 'dns.manage', scopable: 'account', surfaces: P },
   { key: 'proxy.host_delete', category: 'domains', need: 'proxy.manage', scopable: 'account', surfaces: P },
+  // Migration 032: a deploy that opens a port on the Internet (new published binding of an app / stack).
+  { key: 'app.port_publish', category: 'domains', need: 'apps.manage', scopable: 'account', surfaces: P },
   { key: 'firewall.mode_change', category: 'domains', need: 'files.manage', scopable: 'account', surfaces: P },
   { key: 'firewall.rules_write', category: 'domains', need: 'files.manage', scopable: 'account', surfaces: P },
   // ── Mail ──
@@ -181,6 +183,9 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'platform.update_apply', category: 'platform', need: 'platform', scopable: 'none', surfaces: P, staffOnly: true, platform: true },
   { key: 'platform.migration_cutover', category: 'platform', need: 'platform', scopable: 'none', surfaces: P, staffOnly: true, platform: true },
   { key: 'platform.backup_destinations', category: 'platform', need: 'platform', scopable: 'none', surfaces: P, staffOnly: true, platform: true, secret: true },
+  // Migration 032: public ports of the shared IP handed to an account; dedicated IPs (declare, delete, assign, takeover, SNAT).
+  { key: 'platform.port_allocation', category: 'platform', need: 'platform', scopable: 'none', surfaces: P, staffOnly: true, platform: true },
+  { key: 'platform.public_ips', category: 'platform', need: 'platform', scopable: 'none', surfaces: P, staffOnly: true, platform: true },
 ] as const;
 
 export type RestrictableActionKey = string;

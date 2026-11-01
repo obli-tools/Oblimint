@@ -3,7 +3,8 @@ import type { AccountTeardownHook } from '../docker/extensions';
 import { errText } from '../setup/docker';
 import { releaseAddresses } from './addresses';
 import { releaseSubnets } from './allocator';
-import { requestPolicySync } from './sync';
+import { releaseAccountPorts } from './ports.service';
+import { requestPolicySync, syncPolicyNow } from './sync';
 
 // Account teardown (docs/P4b-PLAN.md §4.6): releases the account's subnets (fabrics + stacks, kept an hour
 // before reuse) and requests a policy push — the next observation no longer finds the account's fabrics, so
@@ -25,6 +26,14 @@ export const segmentTeardownHook: AccountTeardownHook = {
     } catch (err) {
       logger.warn({ accountId, err: errText(err) }, 'segments: addresses of the deleted account not released (GC later)');
     }
-    requestPolicySync(`teardown:${accountId}`);
+    // Migration 032: its port blocks released, its dedicated IP detached (kept declared), its bindings gone; the
+    // publish push runs now (bounded wait) so no DNAT outlives the account.
+    await releaseAccountPorts(accountId);
+    try {
+      await Promise.race([syncPolicyNow(`teardown:${accountId}`), new Promise((r) => setTimeout(r, 15_000).unref?.())]);
+    } catch (err) {
+      logger.warn({ accountId, err: errText(err) }, 'segments: push after the teardown failed (retried)');
+      requestPolicySync(`teardown:${accountId}`);
+    }
   },
 };

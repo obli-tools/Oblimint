@@ -703,6 +703,44 @@ volumes:
   assert.ok(!fs.existsSync(tomb.path));
   assert.ok(fs.existsSync(path.join(outside, 'keep.txt')), 'a link inside the volume dir is never followed');
 
+  // ── app.port_publish enforced in the deploy job (migration 032) ────────────
+  // Protected on the KEY surface only: the panel route passes its gate freely and hands the ports to the job;
+  // the automatic deploy of a creation (no gate of its own) is refused, its bindings never written.
+  {
+    const pubAcct = await mkAccount('pubp');
+    let sharedIp = await db('public_ips').where({ node_id: localNode.id, kind: 'shared' }).first('id') as { id: number } | undefined;
+    if (!sharedIp) {
+      [sharedIp] = await db('public_ips').insert({ node_id: localNode.id, address: '198.51.100.1', kind: 'shared', management: 'external', status: 'active' }).returning('id') as Array<{ id: number }>;
+    }
+    await db('port_allocations').insert({ tenant_id: tA, account_id: pubAcct, node_id: localNode.id, public_ip_id: sharedIp.id, port_from: 20100, port_to: 20109 });
+    const mapBefore = (await db('tenants').where({ id: tA }).first('action_restrictions')).action_restrictions;
+    await db('tenants').where({ id: tA }).update({ action_restrictions: JSON.stringify({ 'app.port_publish': { level: 'sensitive', via: 'keys', scope: { mode: 'all' } } }) });
+    const pubCompose = 'services:\n  game:\n    image: nginx:1.27\n    ports:\n      - "20105:80"\n';
+    r = await call('POST', '/apps/stacks', asStaffA, { accountId: pubAcct, name: 'pub-game', sourceType: 'editor', composeYaml: pubCompose, env: '' });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const pubStack = r.body.data.id as number;
+    await whenStackIdle(pubStack);
+    let dep = await db('app_deployments').where({ stack_id: pubStack }).orderBy('id', 'desc').first('status', 'error');
+    assert.equal(dep.status, 'failed', 'the automatic deploy of the creation opens a port: refused while protected');
+    assert.match(String(dep.error), /portPublishNeedsApproval: 20105\/tcp/);
+    assert.equal(Number((await db('port_bindings').where({ stack_id: pubStack }).count({ n: '*' }).first())?.n), 0, 'no binding left behind');
+    // Deploy through the actions route: its gate passes (panel, level none there) and the job gets the ports.
+    r = await call('POST', `/apps/stacks/${pubStack}/actions`, asStaffA, { action: 'deploy' });
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    await whenStackIdle(pubStack);
+    dep = await db('app_deployments').where({ stack_id: pubStack }).orderBy('id', 'desc').first('status', 'error');
+    assert.equal(dep.status, 'succeeded', String(dep.error));
+    assert.deepEqual((await db('port_bindings').where({ stack_id: pubStack }).select('protocol', 'public_port')).map((x: { protocol: string; public_port: number }) => `${x.public_port}/${x.protocol}`), ['20105/tcp']);
+    // Already open: a later automatic deploy that opens nothing new passes.
+    r = await call('POST', `/apps/stacks/${pubStack}/actions`, asStaffA, { action: 'recreate' });
+    await whenStackIdle(pubStack);
+    dep = await db('app_deployments').where({ stack_id: pubStack }).orderBy('id', 'desc').first('status', 'error');
+    assert.equal(dep.status, 'succeeded', String(dep.error));
+    await db('tenants').where({ id: tA }).update({ action_restrictions: mapBefore === null || mapBefore === undefined ? null : JSON.stringify(mapBefore) });
+    r = await call('DELETE', `/apps/stacks/${pubStack}`, asStaffA, { confirm: 'pub-game' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  }
+
   // ── account teardown hook ──────────────────────────────────────────────────
   docker.volumes.set(`oblimint-app-${vault}-data`, { Name: `oblimint-app-${vault}-data`, Labels: { 'oblimint.app': String(vault) } });
   docker.networks.set(`oblimint-app-${vault}-default`, { name: `oblimint-app-${vault}-default`, labels: { 'oblimint.app-network': String(vault) } });

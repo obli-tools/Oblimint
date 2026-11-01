@@ -93,7 +93,11 @@ function sameIp(a: string, b: string | null): boolean {
 async function liveFacts(row: CutoverRow, mailMigrated: boolean): Promise<CutoverFacts> {
   const deps = cutoverDeps();
   const lookup = await deps.dns();
-  const platform = await deps.platformDns();
+  // Migration 032: the names of an account with a dedicated IP must point to it.
+  const target = row.target_domain_id
+    ? await db('domains').where({ id: row.target_domain_id }).first('account_id') as { account_id: number } | undefined
+    : undefined;
+  const platform = await deps.platformDns(target ? Number(target.account_id) : null);
   const fqdn = row.fqdn;
   const facts: CutoverFacts = {};
 
@@ -172,7 +176,6 @@ async function syncAccountRows(planId: number, cwpUsername: string, run: Migrati
   if (!plan) return [];
   const { sourceId, account } = plan;
   const deps = cutoverDeps();
-  const platform = await deps.platformDns();
   const initial = await initialDone(planId, cwpUsername);
   const finalSyncDone = run?.kind === 'final-sync' && run.status === 'done';
   const out: CutoverRow[] = [];
@@ -182,6 +185,7 @@ async function syncAccountRows(planId: number, cwpUsername: string, run: Migrati
   const lastRun = await db('migration_runs').where({ plan_id: planId, cwp_username: cwpUsername }).whereNotNull('target_account_id')
     .orderBy('id', 'desc').first('target_account_id') as { target_account_id: number } | undefined;
   const owner = { cwpUsername, accountId: lastRun ? Number(lastRun.target_account_id) : null };
+  const platform = await deps.platformDns(owner.accountId);
 
   for (const d of cutoverDomainsOf(account)) {
     const fqdn = lower(d.fqdn);

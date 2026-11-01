@@ -84,6 +84,21 @@ export interface ComposeContext {
   node: { memoryMb: number; cpus: number };
   /** Resources of the account's OTHER stacks. */
   others: { cpus: number; memoryMb: number; containers: number };
+  /**
+   * Migration 032: public ports of the account (network/publishing.service.ts publishContextFor). Absent / null:
+   * no block, no dedicated IP — a published host port is ignored (hostPortIgnored, today's behaviour).
+   */
+  publishing?: ComposePublishing | null;
+}
+
+/** What a published host port is checked against (pure: loaded by network/publishing.service.ts). */
+export interface ComposePublishing {
+  shared: { id: number; address: string; local: string; blocks: ReadonlyArray<{ from: number; to: number }> } | null;
+  dedicated: { id: number; address: string; local: string; takeoverWeb: boolean } | null;
+  /** Reason the port is reserved on that IP kind (null = free). */
+  reserved: (kind: 'shared' | 'dedicated', port: number) => string | null;
+  /** `${ipId}/${proto}/${port}` → the other stack holding it. */
+  taken: ReadonlyMap<string, { stackId: number; stackName: string; service: string }>;
 }
 
 export interface HealthSpec {
@@ -285,40 +300,79 @@ function parseMount(entry: unknown): ParsedMount | null {
   return null;
 }
 
-function parsePortSpec(entry: unknown): { ports: Array<{ port: number; protocol: 'tcp' | 'udp' }>; published: boolean } | null {
+export interface ParsedPortSpec {
+  ports: Array<{ port: number; protocol: 'tcp' | 'udp' }>;
+  /** A host side was given (`host:container`, long syntax `published`), even empty (`ip::80`: a random port). */
+  published: boolean;
+  /** Host ports, 1:1 with `ports` (null: none / random). */
+  hostPorts: number[] | null;
+  /** host_ip / the IP part ('' = none). */
+  hostIp: string;
+}
+
+/** compose `ports:` entry: [HOST_IP:][HOST_PORT[-END]:]CONTAINER_PORT[-END][/PROTO] or the long syntax. null = invalid. */
+export function parsePortSpec(entry: unknown): ParsedPortSpec | null {
   const proto = (s: string | null): 'tcp' | 'udp' | null => (s === null || s === 'tcp' ? 'tcp' : s === 'udp' ? 'udp' : null);
-  const range = (s: string, protocol: 'tcp' | 'udp') => {
+  const span = (s: string): [number, number] | null => {
     const m = /^(\d{1,5})(?:-(\d{1,5}))?$/.exec(s.trim());
     if (!m) return null;
     const a = Number(m[1]);
     const b = m[2] ? Number(m[2]) : a;
     if (a < 1 || b > 65535 || b < a || b - a >= MAX_PORTS_PER_SERVICE) return null;
+    return [a, b];
+  };
+  const list = ([a, b]: [number, number], protocol: 'tcp' | 'udp') => {
     const out: Array<{ port: number; protocol: 'tcp' | 'udp' }> = [];
     for (let p = a; p <= b; p++) out.push({ port: p, protocol });
     return out;
   };
-  if (typeof entry === 'number') return Number.isInteger(entry) && entry >= 1 && entry <= 65535 ? { ports: [{ port: entry, protocol: 'tcp' }], published: false } : null;
+  /** Host ports 1:1 with the targets (a host range must have the length of the target range); null = random; false = invalid. */
+  const hostSide = (h: string, t: [number, number]): number[] | null | false => {
+    if (h.trim() === '') return null;
+    const hs = span(h);
+    if (!hs || hs[1] - hs[0] !== t[1] - t[0]) return false;
+    const out: number[] = [];
+    for (let p = hs[0]; p <= hs[1]; p++) out.push(p);
+    return out;
+  };
+  if (typeof entry === 'number') {
+    return Number.isInteger(entry) && entry >= 1 && entry <= 65535 ? { ports: [{ port: entry, protocol: 'tcp' }], published: false, hostPorts: null, hostIp: '' } : null;
+  }
   if (typeof entry === 'string') {
     let s = entry.trim();
     let protocol: 'tcp' | 'udp' | null = 'tcp';
     const slash = s.lastIndexOf('/');
     if (slash >= 0) { protocol = proto(s.slice(slash + 1)); s = s.slice(0, slash); }
     if (!protocol) return null;
-    s = s.replace(/^\[[^\]]*\]:/, 'ip:');
+    let hostIp = '';
+    const v6 = /^\[([^\]]*)\]:(.*)$/.exec(s);
+    if (v6) { hostIp = v6[1]; s = v6[2]; }
     const parts = s.split(':');
-    const target = parts[parts.length - 1];
-    const ports = range(target, protocol);
-    return ports ? { ports, published: parts.length > 1 } : null;
+    const t = span(parts[parts.length - 1]);
+    if (!t) return null;
+    if (parts.length > 3 || (v6 && parts.length > 2)) return { ports: list(t, protocol), published: true, hostPorts: null, hostIp: '' };
+    if (parts.length === 3) hostIp = parts[0];
+    if (parts.length === 1 && !v6) return { ports: list(t, protocol), published: false, hostPorts: null, hostIp: '' };
+    const host = hostSide(parts.length === 1 ? '' : parts[parts.length - 2], t);
+    // A host side the panel cannot honour 1:1 (8000-8010:80, a name…): kept as "ignored" (warning), as before 032.
+    if (host === false) return { ports: list(t, protocol), published: true, hostPorts: null, hostIp: '' };
+    return { ports: list(t, protocol), published: true, hostPorts: host, hostIp: hostIp.trim() };
   }
   if (isObj(entry)) {
     const protocol = proto(asStr(entry.protocol));
-    const t = asStr(entry.target);
+    const t = span(asStr(entry.target) ?? '');
     if (!protocol || !t) return null;
-    const ports = range(t, protocol);
-    return ports ? { ports, published: entry.published !== undefined && entry.published !== null && entry.published !== '' } : null;
+    const pub = entry.published;
+    const published = pub !== undefined && pub !== null && pub !== '';
+    const host = published ? hostSide(String(asStr(pub) ?? ''), t) : null;
+    // A host side the panel cannot honour 1:1 (8000-8010:80, a name…): kept as "ignored" (warning), as before 032.
+    if (host === false) return { ports: list(t, protocol), published: true, hostPorts: null, hostIp: '' };
+    return { ports: list(t, protocol), published, hostPorts: host, hostIp: (asStr(entry.host_ip) ?? '').trim() };
   }
   return null;
 }
+
+const isLoopbackHost = (ip: string): boolean => /^127\./.test(ip) || ip === '::1' || ip.toLowerCase() === 'localhost';
 
 function listOrMap(v: unknown): Array<[string, string | null]> | null {
   if (Array.isArray(v)) {
@@ -455,6 +509,8 @@ export function validateCompose(yamlText: string, ctx: ComposeContext): Validati
 
   const capAllowed = new Set(ctx.policy.capAddAllowed.filter((cap) => (APP_CAP_ADD_ALLOWED as readonly string[]).includes(cap) && !NEVER_CAPS.has(cap)));
   const resolved: ResolvedService[] = [];
+  /** Migration 032: published (ip/proto/port) → service, across the whole compose. */
+  const publishedSeen = new Map<string, string>();
   const usedNetworks = new Set<string>();
   const usedVolumes = new Set<string>();
   const anonVolumes: string[] = [];
@@ -600,16 +656,66 @@ export function validateCompose(yamlText: string, ctx: ComposeContext): Validati
     const addPort = (pp: { port: number; protocol: 'tcp' | 'udp' }) => {
       if (!exposed.some((e) => e.port === pp.port && e.protocol === pp.protocol)) exposed.push(pp);
     };
+    const publishedPorts: NonNullable<EffectiveService['publishedPorts']> = [];
     if (s.ports !== undefined) {
       if (!Array.isArray(s.ports)) c.error('notAnObject', name, [...p, 'ports'], 'ports must be a list');
       else {
         let warned = false;
+        const pubCtx = ctx.publishing ?? null;
         s.ports.forEach((entry, i) => {
           const parsed = parsePortSpec(entry);
-          if (!parsed) { c.error('invalidName', name, [...p, 'ports', i], `Invalid port "${String(asStr(entry) ?? '?').slice(0, 40)}"`); return; }
-          if (parsed.published) c.warn('hostPortIgnored', name, [...p, 'ports', i], 'The host port is ignored: nothing is published on the host; use a proxy host to expose the service');
-          else if (!warned) { c.warn('portsNotPublished', name, [...p, 'ports'], 'Ports are never published on the host: they are reachable by proxy hosts and declared links only'); warned = true; }
+          const at = [...p, 'ports', i];
+          if (!parsed) { c.error('invalidName', name, at, `Invalid port "${String(asStr(entry) ?? '?').slice(0, 40)}"`); return; }
           parsed.ports.forEach(addPort);
+          if (!parsed.published) {
+            if (!warned && !pubCtx) { c.warn('portsNotPublished', name, [...p, 'ports'], 'Ports are never published on the host: they are reachable by proxy hosts and declared links only'); warned = true; }
+            return;
+          }
+          // Migration 032: a host port is honoured inside the account's blocks / on its dedicated IP.
+          const hostIp = parsed.hostIp;
+          if (!pubCtx || !parsed.hostPorts || isLoopbackHost(hostIp)) {
+            c.warn('hostPortIgnored', name, at, 'The host port is ignored: nothing is published on the host; use a proxy host to expose the service');
+            return;
+          }
+          if (hostIp && hostIp.includes(':') && hostIp !== '::') {
+            c.warn('hostIpv6Unsupported', name, at, 'Ports are published on IPv4 only: this IPv6 host address is ignored', { address: hostIp });
+            return;
+          }
+          if (networkNone) { c.error('hostPortNetworkNone', name, at, 'A service without network (network_mode: none) cannot publish a port'); return; }
+          const hostPorts = parsed.hostPorts;
+          parsed.ports.forEach((target, k) => {
+            const port = hostPorts[k];
+            const proto = target.protocol;
+            const sh = pubCtx.shared;
+            const ded = pubCtx.dedicated;
+            const inBlocks = !!sh && sh.blocks.some((b) => port >= b.from && port <= b.to);
+            let ip: { id: number; address: string; kind: 'shared' | 'dedicated' } | null = null;
+            if (!hostIp || hostIp === '0.0.0.0' || hostIp === '::') {
+              if (inBlocks) ip = { id: sh!.id, address: sh!.address, kind: 'shared' };
+              else if (ded) ip = { id: ded.id, address: ded.address, kind: 'dedicated' };
+            } else if (sh && (hostIp === sh.address || hostIp === sh.local)) {
+              ip = { id: sh.id, address: sh.address, kind: 'shared' };
+            } else if (ded && (hostIp === ded.address || hostIp === ded.local)) {
+              ip = { id: ded.id, address: ded.address, kind: 'dedicated' };
+            } else {
+              c.error('hostIpNotAvailable', name, at, `${hostIp} is not a public IP of the account`, { address: hostIp });
+              return;
+            }
+            if (!ip || (ip.kind === 'shared' && !inBlocks)) {
+              const ranges = (sh?.blocks ?? []).map((b) => (b.from === b.to ? String(b.from) : `${b.from}-${b.to}`)).join(', ');
+              c.error('hostPortNotAllocated', name, at, `Port ${port}/${proto} is not among the public ports of the account${ranges ? ` (${ranges})` : ''}`, { port, protocol: proto, ranges: ranges || '-' });
+              return;
+            }
+            const reason = pubCtx.reserved(ip.kind, port);
+            if (reason) { c.error('hostPortReserved', name, at, `Port ${port} is reserved by the platform (${reason})`, { port, reason }); return; }
+            const key = `${ip.id}/${proto}/${port}`;
+            const holder = pubCtx.taken.get(key);
+            if (holder) { c.error('hostPortTaken', name, at, `Port ${port}/${proto} is already published by ${holder.stackName}`, { port, protocol: proto, stack: holder.stackName }); return; }
+            const mine = publishedSeen.get(key);
+            if (mine) { c.error('hostPortDuplicate', name, at, `Port ${port}/${proto} is published twice (${mine})`, { port, protocol: proto, service: mine }); return; }
+            publishedSeen.set(key, name);
+            publishedPorts.push({ publicIpId: ip.id, address: ip.address, protocol: proto, port, targetPort: target.port });
+          });
         });
       }
     }
@@ -910,6 +1016,7 @@ export function validateCompose(yamlText: string, ctx: ComposeContext): Validati
       command: toArgv(s.command),
       entrypoint: toArgv(s.entrypoint),
       exposedPorts: exposed,
+      ...(publishedPorts.length ? { publishedPorts } : {}),
       volumes,
       networks: svcNetworks,
       fabric: { front: exposed.length > 0 && !networkNone, back: false },
@@ -1052,6 +1159,8 @@ export function toEffectiveService(r: ResolvedService): EffectiveService {
     name: r.name, image: r.image, build: r.build, command: r.command, entrypoint: r.entrypoint, exposedPorts: r.exposedPorts,
     volumes: r.volumes, networks: r.networks, fabric: { ...r.fabric }, capAdd: r.capAdd, user: r.user, readOnlyRootfs: r.readOnlyRootfs,
     limits: { ...r.limits }, healthcheck: r.healthcheck, dependsOn: r.dependsOn, restart: r.restart, envKeys: r.envKeys,
+    // Absent when nothing is published: the effective hash of the existing stacks does not change.
+    ...(r.publishedPorts?.length ? { publishedPorts: r.publishedPorts.map((x) => ({ ...x })) } : {}),
   };
 }
 

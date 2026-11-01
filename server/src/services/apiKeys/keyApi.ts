@@ -1146,5 +1146,12 @@ export const keyApi = {
     return siteErrorsService.get(ctx.actor, site.id, groupId);
   },
 
+  // ── public ports (migration 032): read only, every stack of the account whatever the site selection ──
+  async networkPorts(ctx: ApiKeyContext) {
+    requireScope(ctx, 'network.read');
+    const { keyNetworkView } = await import('../network/publishing.service');
+    return keyNetworkView(ctx.actor, ctx.accountId);
+  },
+
   accountRow,
 };

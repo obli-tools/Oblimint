@@ -70,6 +70,8 @@ func newMux(ops Ops, l Layout, fw *firewallManager, gw *gateway, p3 P3Ops) *http
 	registerP3(mux, a)
 	// P4b — segment policy, web bans (api_p4b.go).
 	registerP4b(mux)
+	// Public ports + dedicated IPs (api_pub.go).
+	registerPub(mux)
 	// Web file explorer (api_files.go).
 	registerFiles(mux, a)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

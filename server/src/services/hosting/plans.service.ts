@@ -134,6 +134,10 @@ export const plansService = {
     if (limitsChanged) {
       const accounts = await db('hosting_accounts').where({ plan_id: row.id, tenant_id: row.tenant_id }).select('id') as Array<{ id: number }>;
       for (const a of accounts) reconcileService.requestAccount(a.id, 'plan-updated');
+      // Migration 032: public ports of the shared IP (bounded queue, never fails the plan update).
+      if ((next.publicPorts ?? 0) !== (before.publicPorts ?? 0)) {
+        void import('../network/ports.service').then((m) => m.requestPlanAccountsPorts(row.id, 'plan-updated')).catch(() => undefined);
+      }
     }
     return this.get(actor, row.id);
   },

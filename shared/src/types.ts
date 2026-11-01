@@ -66,6 +66,12 @@ export interface TenantLimits {
   cpuCores: number | null;
   /** Site containers of the accounts PLUS their database instances (plan maxDbInstances × DB_PROFILE_MEMORY_MB[dbProfile]). */
   memoryMb: number | null;
+  /**
+   * Migration 032: public ports of the shared IP its accounts may hold together (sum of the targets
+   * override ?? plan.publicPorts). 0 (default) = only the platform admin hands ports out; null = unlimited.
+   * Not checked for the master tenant.
+   */
+  maxPublicPorts?: number | null;
   /** Allow the tenant to allocate more than its envelope through plans. */
   allowOversell: boolean;
 }

@@ -45,10 +45,16 @@ export type ApiKeyScope =
    * Path routes of the account's domains (which site serves exampl.com/uploads/…):
    * on a domain whose routes all lead to sites of the key, towards a site of the key.
    */
-  | 'routes.manage';
+  | 'routes.manage'
+  /**
+   * Read the public ports of the account (migration 032): its blocks of the shared IP, its dedicated IP
+   * (public address only) and the bindings of every app stack of the account, whatever the site selection
+   * of the key. Read only: a port is published by deploying an app / stack (`ports:`).
+   */
+  | 'network.read';
 
 export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
-  'files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain', 'logs.read',
+  'files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain', 'logs.read', 'network.read',
 ];
 
 export type ApiKeySiteScope = 'all' | 'selected';

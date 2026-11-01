@@ -86,6 +86,7 @@ export const ACTION_VERBS_FR: Readonly<Record<string, string>> = {
   'dns.record_write': 'Modifier un enregistrement DNS',
   'mail.dns_fix': 'Corriger les enregistrements DNS du mail',
   'proxy.host_delete': 'Supprimer un hôte du proxy',
+  'app.port_publish': 'Publier un port sur Internet',
   'firewall.mode_change': 'Changer le mode du pare-feu du compte',
   'firewall.rules_write': 'Modifier les règles du pare-feu du compte',
   'mail.domain_delete': 'Supprimer le domaine mail',
@@ -118,6 +119,8 @@ export const ACTION_VERBS_FR: Readonly<Record<string, string>> = {
   'platform.update_apply': 'Appliquer une mise à jour de la plateforme',
   'platform.migration_cutover': 'Basculer (ou annuler la bascule) d’une migration',
   'platform.backup_destinations': 'Modifier les destinations de sauvegarde',
+  'platform.port_allocation': 'Attribuer des ports publics à un compte',
+  'platform.public_ips': 'Gérer les adresses IP publiques',
 };
 
 /** Parameter names that name the object of the action, in order of preference. */

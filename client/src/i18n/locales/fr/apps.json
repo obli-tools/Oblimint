@@ -137,7 +137,14 @@
         "volumeDriver": "Seul le pilote de volume local est autorisé.",
         "yamlSyntax": "Erreur de syntaxe YAML.",
         "bindReadOnly": "Les montages de la source de l’application sont toujours en lecture seule : utilisez un volume nommé pour les données modifiables.",
-        "unsupportedKeyNamed": "Clé non prise en charge : {{key}}."
+        "unsupportedKeyNamed": "Clé non prise en charge : {{key}}.",
+        "hostPortNotAllocated": "Le port {{port}}/{{protocol}} ne fait pas partie des ports publics du compte ({{ranges}}).",
+        "hostIpNotAvailable": "{{address}} n’est pas une IP publique du compte.",
+        "hostIpv6Unsupported": "Les ports ne sont publiés qu’en IPv4 : cette adresse IPv6 est ignorée.",
+        "hostPortReserved": "Le port {{port}} est réservé à la plateforme ({{reason}}).",
+        "hostPortTaken": "Le port {{port}}/{{protocol}} est déjà publié par l’application {{stack}}.",
+        "hostPortNetworkNone": "Un service sans réseau (network_mode: none) ne peut pas publier de port.",
+        "hostPortDuplicate": "Le port {{port}}/{{protocol}} est publié deux fois (service {{service}})."
       },
       "line": "ligne {{line}}",
       "notValidated": "Pas encore validé.",
@@ -325,7 +332,8 @@
       "totalCpu": "{{value}} CPU",
       "totalMemory": "{{value}} de mémoire",
       "volumes": "volumes : {{value}}",
-      "yaml": "Compose réécrit (déployé par le panel)"
+      "yaml": "Compose réécrit (déployé par le panel)",
+      "publishedHint": "Publié sur Internet (ports publics du compte)."
     },
     "env": {
       "badLines": ".env : ligne(s) invalide(s) {{lines}} (CLÉ=valeur attendu).",
@@ -517,7 +525,9 @@
       "hint": "Les ports ne sont jamais publiés sur le serveur : un hôte proxy (HTTPS, domaine du compte) est la seule entrée.",
       "hosts": "Hôtes proxy",
       "noPorts": "Aucun service n’expose de port TCP (ports: ou expose: dans le fichier compose).",
-      "none": "Aucun hôte proxy ne cible cette application : elle n’est pas joignable depuis Internet."
+      "none": "Aucun hôte proxy ne cible cette application : elle n’est pas joignable depuis Internet.",
+      "hintPublic": "Un hôte du proxy (HTTPS, domaine du compte) est l’entrée web ; les ports TCP / UDP bruts ne sont publiés que dans les ports publics du compte (Compte → Réseau).",
+      "publishedPorts": "Ports publiés"
     },
     "registries": {
       "add": "Ajouter des identifiants",
@@ -1042,6 +1052,195 @@
       "autoHint": "Chaque balayage (au démarrage, puis toutes les 5 minutes) fige tout conteneur en marche encore en adresse dynamique : environ 250 ms de coupure réseau par conteneur, une seule fois (les connexions TCP ouvertes survivent). Recommandé.",
       "autoConfirmTitle": "Figer automatiquement les conteneurs en marche",
       "autoConfirm": "Au prochain balayage (sous 5 minutes), chaque conteneur en marche dont l'adresse est encore dynamique la reçoit en adresse fixe : environ 250 ms de coupure réseau par conteneur, un toutes les demi-secondes, les connexions TCP ouvertes survivent. Continuer ?"
+    },
+    "ports": {
+      "title": "Ports publics",
+      "allocate": "Attribuer",
+      "target": "Cible",
+      "sourceOverride": "compte",
+      "sourcePlan": "offre",
+      "allocated": "Attribués",
+      "used": "Utilisés",
+      "stateLabel": "État",
+      "state": {
+        "ok": "attribués",
+        "shortfall": "ports manquants",
+        "excess": "au-dessus de la cible",
+        "none": "aucun"
+      },
+      "sharedIp": "IP partagée",
+      "manualBlock": "Plage explicite",
+      "noBlock": "Aucun port public : les applications de ce compte ne sont jointes que par les hôtes du proxy.",
+      "shortfallHint": "Le pool n’a pas assez de ports libres pour la cible : élargissez le pool (Paramètres → Réseau) ou baissez la cible.",
+      "excessHint": "Plus de ports que la cible : les ports utilisés sont gardés jusqu’à ce que les applications les retirent.",
+      "howTo": "Une application publie un de ces ports avec ports: [\"<port public>:<port du conteneur>/udp\"] dans son compose (TCP et UDP chacun).",
+      "loadFailed": "Impossible de charger les ports publics",
+      "saved": "Attribution enregistrée",
+      "saveFailed": "L’attribution n’a pas pu être modifiée",
+      "errors": {
+        "portPoolExhausted": "Pas assez de ports libres dans le pool.",
+        "portPoolNoContiguousBlock": "Aucun bloc de ports contigus libre assez long.",
+        "portsInUse": "Plus de ports portent une liaison que le nouveau nombre : retirez-les d’abord des applications.",
+        "portRangeUnavailable": "Cette plage est hors du pool, réservée ou déjà attribuée.",
+        "noSharedIp": "Le nœud n’a pas d’IPv4 publique partagée (Paramètres → Plateforme)."
+      },
+      "allocateTitle": "Ports publics du compte",
+      "byCount": "Nombre de ports",
+      "byRange": "Plage explicite",
+      "followPlan": "Suivre l’offre ({{count}} ports)",
+      "count": "Ports (TCP et UDP chacun)",
+      "requireContiguous": "Exiger un bloc contigu",
+      "requireContiguousHint": "Sinon, faute de bloc assez long, les premiers ports libres sont pris en plusieurs blocs.",
+      "from": "Du port",
+      "to": "Au port",
+      "rangeHint": "Ajoutée aux blocs du compte (dans le pool, libre, non réservée) ; la cible devient le nouveau total.",
+      "previewPending": "Aperçu…",
+      "previewTotal": "{{count}} port(s) après la modification"
+    },
+    "dedicated": {
+      "title": "IP dédiée",
+      "saved": "IP dédiée mise à jour",
+      "saveFailed": "L’IP dédiée n’a pas pu être modifiée",
+      "address": "Adresse",
+      "none": "Aucune (IP partagée)",
+      "noneFree": "Aucune IP dédiée libre : déclarez-en une dans Système → Réseau.",
+      "declare": "IP publiques",
+      "takeover": "Le compte reprend 80 / 443",
+      "takeoverHint": "Ses applications peuvent publier 80 et 443 de cette IP ; ses sites restent alors sur l’IP partagée (edge, certificats) : leurs enregistrements DNS y pointent.",
+      "snat": "Trafic sortant par cette IP",
+      "snatHint": "Les conteneurs du compte sortent du nœud avec cette adresse (seulement si elle est sur l’interface de la route par défaut). Le mail part toujours par le relais de la plateforme.",
+      "dnsShared": "DNS : les enregistrements A des domaines du compte pointent vers l’IP partagée.",
+      "dnsDedicated": "DNS : les enregistrements A des domaines du compte pointent vers {{address}} (DNS externe : pointez-les vers elle)."
+    },
+    "ipStatus": {
+      "pending": "en attente",
+      "active": "active",
+      "missing": "absente",
+      "error": "erreur"
+    },
+    "ipWarning": {
+      "snatInterfaceNotDefaultRoute": "SNAT sortant omis : l’IP n’est pas sur l’interface de la route par défaut.",
+      "snatNoInterface": "SNAT sortant omis : aucune interface connue pour cette IP.",
+      "addressDuplicate": "Cette adresse locale est déclarée deux fois : cette IP est écartée de la publication jusqu’à correction de l’une d’elles."
+    },
+    "bindings": {
+      "title": "Ports publiés",
+      "empty": "Aucun port publié",
+      "emptyHint": "Une application publie un port du compte en déployant son compose avec ports: [\"<public>:<conteneur>\"].",
+      "public": "Public",
+      "target": "Application",
+      "containerPort": "Port du conteneur",
+      "status": "Statut",
+      "dedicated": "dédiée",
+      "statuses": {
+        "pending": "en attente",
+        "active": "actif",
+        "inactive": "inactif",
+        "error": "erreur"
+      }
+    },
+    "binding": {
+      "accountUnknown": "Compte inconnu.",
+      "accountNotSegmented": "Le réseau du compte n’est pas encore segmenté (migration).",
+      "accountSuspended": "Le compte est suspendu.",
+      "accountDeleting": "Le compte est en cours de suppression.",
+      "ipUnknown": "IP publique inconnue.",
+      "portNotAllocated": "Le port n’est plus attribué au compte : redéployez sans lui.",
+      "ipNotAssigned": "L’IP n’est plus affectée au compte.",
+      "portReserved": "Le port est réservé à la plateforme.",
+      "targetUnsupported": "Cible non prise en charge.",
+      "notObserved": "Le nœud n’a pas pu être observé (prochaine poussée).",
+      "fabricMissing": "Le réseau du compte n’existe pas encore.",
+      "containerNotRunning": "Le conteneur ne tourne pas.",
+      "addressUnknown": "L’adresse du conteneur est inconnue.",
+      "addressConflict": "Le conteneur utilise une adresse attribuée à un autre.",
+      "targetNotRecognised": "Le conteneur n’est pas le service attendu.",
+      "addressNotPinned": "L’adresse du conteneur n’est pas encore la fixe (Système → Réseau).",
+      "targetOutsideFront": "hostd a refusé la cible (hors du réseau du compte).",
+      "portInUseOnHost": "Un programme du serveur écoute déjà sur ce port.",
+      "addressDuplicate": "L’adresse locale de l’IP est déclarée deux fois (Système → Réseau).",
+      "addressRefused": "hostd a refusé l’IP publique (interface ou adresse interne)."
+    },
+    "publicIps": {
+      "title": "IP publiques et ports publiés",
+      "declare": "Déclarer une IP",
+      "checkFailed": "La vérification a échoué",
+      "deleteTitle": "Supprimer cette IP publique",
+      "deleteMessage": "{{address}} n’est plus publiée ; une adresse gérée est retirée de son interface.",
+      "deleted": "IP publique supprimée",
+      "deleteFailed": "L’IP n’a pas pu être supprimée",
+      "address": "Adresse",
+      "interface": "Interface",
+      "mode": "Mode",
+      "status": "Statut",
+      "account": "Compte",
+      "shared": "partagée",
+      "managed": "gérée",
+      "external": "externe",
+      "bindings": "{{count}} liaison(s)",
+      "check": "Vérifier",
+      "none": "Aucune IP publique : renseignez l’IPv4 publique du nœud (Paramètres → Plateforme).",
+      "declareTitle": "Déclarer une IP dédiée",
+      "publicAddress": "Adresse IPv4 publique",
+      "defaultRoute": "route par défaut",
+      "prefix": "Préfixe",
+      "managedHint": "Gérée : hostd ajoute l’adresse sur l’interface (à chaque démarrage aussi)",
+      "externalHint": "Externe : configurée dans le système, hostd ne fait que la vérifier",
+      "localAddress": "Adresse locale (NAT 1:1, facultatif)",
+      "description": "Description",
+      "created": "IP publique déclarée",
+      "createFailed": "L’IP n’a pas pu être déclarée"
+    },
+    "publish": {
+      "title": "Publication (hostd)",
+      "accept": {
+        "ok": "Docker accepte",
+        "missing": "règle Docker absente",
+        "fwmarkMissing": "bridge-accept-fwmark absent",
+        "unknown": "inconnu"
+      },
+      "rules": "{{count}} règle(s)",
+      "counter": "{{count}} connexion(s) publiée(s)",
+      "lastPush": "dernière poussée : {{date}}",
+      "unavailable": "hostd ne rapporte pas la publication (hostd plus ancien ou injoignable)."
+    },
+    "pool": {
+      "usage": "Pool de ports {{from}}–{{to}}",
+      "capacity": "Ports utilisables",
+      "free": "Libres",
+      "largest": "Plus grand bloc libre",
+      "accounts": "Comptes",
+      "settingsTitle": "Ports publics",
+      "settingsDescription": "Pool de ports de l’IP partagée attribués aux comptes (TCP et UDP), ports jamais attribués, garde entrante des réseaux des comptes.",
+      "from": "Pool : premier port",
+      "to": "Pool : dernier port",
+      "freeShort": "{{count}} libres",
+      "extra": "Ports réservés (jamais attribués)",
+      "extraHint": "Un port ou une plage (25565, 27000-27100), sur toutes les IP du nœud.",
+      "automatic": "Réservés automatiquement :"
+    },
+    "reserved": {
+      "fixed": "plateforme",
+      "panel": "panel",
+      "sftp": "SFTP",
+      "sql": "SQL externe",
+      "stream": "flux de l’edge",
+      "extra": "supplémentaire",
+      "host": "socket du serveur"
+    },
+    "guard": {
+      "title": "Garde entrante des réseaux des comptes",
+      "monitorLabel": "Surveillance",
+      "monitorHint": "Les connexions routées vers un réseau de compte sans port publié sont journalisées, pas jetées (défaut : observer d’abord).",
+      "followLabel": "Suivre le mode d’isolation",
+      "followHint": "Jetées quand l’isolation est appliquée : seuls les ports publiés et ceux que Docker publie entrent dans les réseaux des comptes depuis l’extérieur.",
+      "offLabel": "Désactivée",
+      "offHint": "Pas de garde entrante (Docker 28 et plus jette déjà le routage direct vers les conteneurs ; Docker 27 et moins ne le fait pas)."
+    },
+    "plan": {
+      "publicPorts": "Ports publics (IP partagée)",
+      "publicPortsHint": "TCP et UDP chacun, pris dans le pool en un bloc si possible ; 0 = aucun.",
+      "publicPortsRange": "Ports publics : entre 0 et {{max}}."
     }
   },
   "statusPage": {

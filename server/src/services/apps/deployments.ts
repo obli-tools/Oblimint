@@ -23,6 +23,7 @@ import { emitAppUpdated, emitDeployOutput, ERROR_LINE_PREFIX } from './events';
 import { stackRegistryAuths } from './registry.service';
 import { isSourceBusy } from './sources';
 import { effectiveOf, sleepPolicyOf, type DeploymentRow, type EffectiveSnapshot, type ServiceRow, type StackRow } from './rows';
+import type { BindingSnapshot } from '../network/publishing.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deployments of a stack (docs/P4b-PLAN.md §5.1, §5.5, §5.7): one action at a
@@ -73,6 +74,12 @@ export interface ActionOptions {
   keepDesired?: boolean;
   /** Message stored on the stack after a system stop (e.g. suspension). */
   statusMessage?: string | null;
+  /**
+   * Migration 032: new public bindings (`<ipId>/<proto>/<port>`) the caller passed through the gate
+   * app.port_publish for this job. Any other binding the job would open is refused while the action is
+   * protected (git / webhook / key / rollback / start without a gate of its own): portPublishNeedsApproval.
+   */
+  approvedPorts?: string[] | null;
 }
 
 export function isStackBusy(stackId: number): boolean {
@@ -370,6 +377,44 @@ export async function cancelAndWaitStack(stackId: number): Promise<void> {
   await job.done.catch(() => undefined);
 }
 
+/** Is app.port_publish above none on any surface for the account of the stack? Fails closed. */
+async function portPublishProtected(stack: Pick<StackRow, 'tenant_id' | 'account_id'>): Promise<boolean> {
+  try {
+    const { restrictableAction } = await import('@oblimint/shared');
+    const def = restrictableAction('app.port_publish');
+    if (!def) return false;
+    const { restrictionService } = await import('../restrictions/restriction.service');
+    return await restrictionService.levelAnySurface(def, { tenantId: Number(stack.tenant_id), accountId: Number(stack.account_id), siteId: null }) !== 'none';
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Migration 032: the public bindings a deploy of `composeYaml` would newly open, from a FRESH validation (the
+ * account's blocks / dedicated IP as they are now, not the validation stored with the stack). Keys
+ * `<ipId>/<proto>/<port>` + labels `<port>/<proto>`. An invalid compose → none (the deploy fails at prepare;
+ * whatever it would still open is refused by the job, see approvedPorts).
+ */
+export async function freshNewPublishedPorts(stack: StackRow, composeYaml: string): Promise<{ keys: string[]; labels: string[] }> {
+  const { desiredBindings, takenKey } = await import('../network/publishing.service');
+  let want: ReturnType<typeof desiredBindings> = [];
+  try {
+    const { ctx } = await composeContext({
+      stackId: stack.id, accountId: stack.account_id, sourceType: stack.source_type, gitComposePath: stack.git_compose_path,
+      env: envMap(openEnv(stack.env_sealed)), inspect: false,
+    });
+    want = desiredBindings(validateCompose(composeYaml, ctx).resolved?.effective ?? null);
+  } catch {
+    want = [];
+  }
+  if (!want.length) return { keys: [], labels: [] };
+  const have = new Set((await db('port_bindings').where({ stack_id: stack.id }).select('public_ip_id', 'protocol', 'public_port') as Array<{ public_ip_id: number; protocol: string; public_port: number }>)
+    .map((r) => takenKey(Number(r.public_ip_id), r.protocol, Number(r.public_port))));
+  const added = want.filter((d) => !have.has(takenKey(d.publicIpId, d.protocol, d.port)));
+  return { keys: added.map((d) => takenKey(d.publicIpId, d.protocol, d.port)), labels: added.map((d) => `${d.port}/${d.protocol}`) };
+}
+
 /** Starts an action on a stack: 409 stackBusy when one is running. Returns the queued deployment. */
 export async function startAction(stack: StackRow, action: AppDeploymentAction, trigger: AppDeploymentTrigger, opts: ActionOptions): Promise<DeploymentRow> {
   // Reserved synchronously: two requests never both pass the busy check.
@@ -456,6 +501,9 @@ async function runJob(job: Job, stack: StackRow, trigger: AppDeploymentTrigger, 
   let statusMessage: string | null = opts.statusMessage ?? null;
   /** Services that did not stay up during the post-deploy window (crash loop, unhealthy). */
   let unstable: string[] = [];
+  /** Migration 032: the stack's bindings before this action (restored when it fails) and the change made. */
+  let bindingsBefore: BindingSnapshot | null = null;
+  const portsChange: { added: string[]; removed: string[] } = { added: [], removed: [] };
   try {
     await db('app_deployments').where({ id: job.deploymentId }).update({ status: 'running', started_at: db.fn.now() });
     log.add(`Action ${job.action} (${trigger}) sur ${stack.display_name}`);
@@ -495,6 +543,28 @@ async function runJob(job: Job, stack: StackRow, trigger: AppDeploymentTrigger, 
       for (const i of prep.result.issues) if (i.severity === 'warning') log.add(`Avertissement ${i.path || ''} — ${i.message}`);
       checkpoint();
       await reserveResources(stack, prep.resolved.effective);
+      // Migration 032: the bindings follow the validated compose BEFORE the containers (UNIQUE arbitrates stacks).
+      try {
+        const { reserveBindings } = await import('../network/publishing.service');
+        const r = await reserveBindings(stack, prep.resolved.effective);
+        if (bindingsBefore === null) bindingsBefore = r.previous;
+        portsChange.added.push(...r.added);
+        portsChange.removed.push(...r.removed);
+        if (r.added.length) log.add(`Ports publiés : ${r.added.map((k) => k.split('/').slice(1).reverse().join('/')).join(', ')}`);
+        if (r.removed.length) log.add(`Ports retirés : ${r.removed.map((k) => k.split('/').slice(1).reverse().join('/')).join(', ')}`);
+      } catch (err) {
+        if (err instanceof AppError) throw new DeployFailure('Ports publics refusés', err.message);
+        throw err;
+      }
+      // Migration 032: app.port_publish is enforced HERE, where the ports really open (every path: the actions
+      // route, git / webhook deploys, rollback, start, keys, MCP). A port the caller did not get through the gate
+      // fails the job while the action is protected (the previous bindings are restored by the final step).
+      const approved = new Set(opts.approvedPorts ?? []);
+      const unapproved = portsChange.added.filter((k) => !approved.has(k));
+      if (unapproved.length && await portPublishProtected(stack)) {
+        throw new DeployFailure('Ouverture de ports publics soumise à confirmation (app.port_publish)',
+          `portPublishNeedsApproval: ${unapproved.map((k) => k.split('/').slice(1).reverse().join('/')).join(', ')} — lancez le déploiement depuis le panel (action Déployer) pour le confirmer`);
+      }
       const res = await converge({
         docker, deps, stack: ref, resolved: prep.resolved, log, checkpoint, signal: job.ctrl.signal, deploymentId: job.deploymentId,
         auths, images: imageStoreOf(stack.account_id), alwaysPull: mode.alwaysPull, pins: mode.pins(prep.resolved), builtTags: mode.tags ?? builtTags,
@@ -705,6 +775,17 @@ async function runJob(job: Job, stack: StackRow, trigger: AppDeploymentTrigger, 
           stackStatus = 'error';
           message = `Moteur de conteneurs injoignable : ${errText(err)}`;
         }
+      }
+      // Migration 032: a failed / cancelled deploy puts the previous bindings back.
+      if (bindingsBefore && status !== 'succeeded') {
+        const { restoreBindings } = await import('../network/publishing.service');
+        await restoreBindings(stack.id, bindingsBefore);
+      } else if (portsChange.added.length || portsChange.removed.length) {
+        const { auditService } = await import('../audit.service');
+        await auditService.log({
+          tenantId: stack.tenant_id, userId: opts.userId ?? undefined, action: 'app.ports_published', resourceType: 'app', resourcePath: String(stack.id),
+          details: { stack: stack.display_name, added: portsChange.added, removed: portsChange.removed, deploymentId: job.deploymentId },
+        });
       }
       await setStack(stack.id, { ...finalPatch, desired_state: desired, status: stackStatus, status_message: message });
       await db('app_deployments').where({ id: job.deploymentId }).update({

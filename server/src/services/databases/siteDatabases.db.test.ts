@@ -161,7 +161,8 @@ test('databases ↔ sites on PostgreSQL', { timeout: 300_000 }, async (t: TestCo
 
   // ── 030: objects, and the default links that already carry a choice get pinned ──
   // Re-run 030 on links edited before it: disabled, another port, edited description.
-  // 031 (network_addresses) sits above 030: rolled back first, then 030 itself.
+  // 032 (public ports) and 031 (network_addresses) sit above 030: rolled back first, then 030 itself.
+  await db.migrate.down();
   await db.migrate.down();
   await db.migrate.down();
   assert.equal(await db.schema.hasTable('site_databases'), false);

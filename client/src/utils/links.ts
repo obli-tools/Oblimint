@@ -3,8 +3,8 @@
 // list. One place, so a tab id that changes (with its alias) changes here.
 
 /** Tabs of /accounts/:id (AccountDetailPage) — coherence plan 1.2. */
-export type AccountTab = 'overview' | 'sites' | 'apps' | 'domains' | 'mail' | 'databases' | 'files' | 'backups' | 'access' | 'usage';
-export const ACCOUNT_TABS: readonly AccountTab[] = ['overview', 'sites', 'apps', 'domains', 'mail', 'databases', 'files', 'backups', 'access', 'usage'];
+export type AccountTab = 'overview' | 'sites' | 'apps' | 'domains' | 'mail' | 'databases' | 'files' | 'backups' | 'access' | 'network' | 'usage';
+export const ACCOUNT_TABS: readonly AccountTab[] = ['overview', 'sites', 'apps', 'domains', 'mail', 'databases', 'files', 'backups', 'access', 'network', 'usage'];
 /** Sections of the « Access & security » tab (`&section=`). */
 export type AccountAccessSection = 'users' | 'keys' | 'firewall';
 

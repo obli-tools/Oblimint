@@ -302,3 +302,10 @@ test('tenant tmpfs mounts are world-writable sticky (mode=1777) for the non-root
   });
   assert.ok((fs.HostConfig?.Tmpfs?.['/tmp'] ?? '').split(',').includes('mode=1777'));
 });
+
+test('edge spec (migration 032 invariant): its ports are published without HostIp (it answers on the dedicated IPs too)', () => {
+  const spec = edgeContainerSpec({ hostDataDir: ROOT, streamPorts: [{ port: 25565, protocol: 'tcp' }] });
+  for (const [port, bindings] of Object.entries(spec.HostConfig!.PortBindings ?? {})) {
+    for (const b of bindings as Array<{ HostIp?: string }>) assert.ok(!b.HostIp, `${port}: no HostIp`);
+  }
+});

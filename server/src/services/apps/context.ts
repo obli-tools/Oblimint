@@ -120,6 +120,8 @@ export async function composeContext(input: StackContextInput, conn: Knex | Knex
     },
     node: { memoryMb: config.hosting.siteMaxMemoryMb, cpus: config.hosting.siteMaxCpus },
     others: { cpus: others.cpus, memoryMb: others.memoryMb, containers: others.containers },
+    // Migration 032: the account's public ports (null: none → published host ports stay ignored).
+    publishing: await import('../network/publishing.service').then((m) => m.publishContextFor(input.accountId, input.stackId, conn)).catch(() => null),
   };
   return { ctx, plan, policy };
 }

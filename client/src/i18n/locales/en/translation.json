@@ -699,7 +699,8 @@
       "sitesShort": "sites",
       "title": "Resource envelope",
       "traffic": "Traffic",
-      "unlimited": "Unlimited"
+      "unlimited": "Unlimited",
+      "publicPorts": "Public ports"
     },
     "loadFailed": "Failed to load workspaces",
     "name": "Name",

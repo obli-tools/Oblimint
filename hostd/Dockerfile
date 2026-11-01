@@ -22,7 +22,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /out/hostd .
 # typed-path watcher uses inotify (fs.inotify.max_user_watches raised through
 # /proc/sys, writable because privileged). Standard library only: no package.
 FROM alpine:3.22
-RUN apk add --no-cache xfsprogs-extra nftables
+# Migration 032 (publish.go, dockeraccept.go): iptables (iptables-nft) + iptables-legacy for the ONE
+# DOCKER-USER rule of the published ports (never written with nft: it would break Docker's iptables), iproute2
+# for the managed dedicated addresses (ip addr); the gratuitous ARP uses busybox arping.
+RUN apk add --no-cache xfsprogs-extra nftables iptables iptables-legacy iproute2
 COPY --from=build /out/hostd /usr/local/bin/hostd
 ENV OBLIMINT_ROOT=/srv/oblimint \
     OBLIMINT_HOSTD_SOCKET=/srv/oblimint/run/hostd.sock

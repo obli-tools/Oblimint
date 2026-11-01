@@ -209,16 +209,17 @@ export function envelopeViolations(err: unknown): EnvelopeViolation[] {
   return (d.details as EnvelopeViolation[]).filter((v) => v && typeof v.dimension === 'string');
 }
 
-export function dimensionLabel(t: TFunction, d: EnvelopeDimension): string {
-  const fallback: Record<EnvelopeDimension, string> = {
+export function dimensionLabel(t: TFunction, d: EnvelopeDimension | 'maxPublicPorts'): string {
+  const fallback: Record<EnvelopeDimension | 'maxPublicPorts', string> = {
     diskMb: 'Disk', trafficMbPerMonth: 'Traffic', maxAccounts: 'Hosting accounts', maxSites: 'Sites',
     maxDomains: 'Domains', maxMailboxes: 'Mailboxes', maxDatabases: 'Databases', cpuCores: 'CPU', memoryMb: 'Memory',
+    maxPublicPorts: 'Public ports',
   };
   return t(`hostingCommon.dimensions.${d}`) || fallback[d];
 }
 
 /** Value of an envelope dimension with its unit ("5 GB", "2 cores", "12"). */
-export function dimensionValue(t: TFunction, d: EnvelopeDimension, v: number | null): string {
+export function dimensionValue(t: TFunction, d: EnvelopeDimension | 'maxPublicPorts', v: number | null): string {
   if (v == null) return t('hostingCommon.unlimited') || 'unlimited';
   const units = { mb: t('units.mb') || 'MB', gb: t('units.gb') || 'GB' };
   if (d === 'diskMb' || d === 'memoryMb') return formatMb(v, units);

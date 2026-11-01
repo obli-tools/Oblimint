@@ -258,20 +258,30 @@ export async function createNetwork(docker: Docker, name: string, labels: Record
 export interface ConnectOptions {
   /** Static IPv4 to request (null = none); absent = the address resolver decides. */
   ipv4?: string | null;
+  /** Docker ≥ 28 EndpointSettings.GwPriority (default route through this network); ignored by older engines. */
+  gwPriority?: number;
 }
 
 function isAlreadyConnected(err: unknown): boolean {
   return /already exists|already attached|endpoint with name .* already exists/i.test(errText(err));
 }
 
-async function rawConnect(docker: Docker, network: string, container: string, aliases: string[] | undefined, ipv4: string | null): Promise<void> {
-  const ep: Docker.EndpointSettings = {};
+async function rawConnect(docker: Docker, network: string, container: string, aliases: string[] | undefined, ipv4: string | null, gwPriority?: number): Promise<void> {
+  const ep: Docker.EndpointSettings & { GwPriority?: number } = {};
   if (aliases?.length) ep.Aliases = aliases;
   if (ipv4) ep.IPAMConfig = { IPv4Address: ipv4 };
+  if (gwPriority) ep.GwPriority = gwPriority;
   await withTimeout(docker.getNetwork(network).connect({
     Container: container,
     ...(Object.keys(ep).length ? { EndpointConfig: ep } : {}),
   }), CALL_TIMEOUT_MS, `connect ${container} to ${network}`);
+}
+
+/** GwPriority of the container's endpoint on network (0 when none / older engine / not attached). */
+async function currentEndpointGwPriority(docker: Docker, network: string, container: string): Promise<number> {
+  const info = await inspectContainer(docker, container);
+  const ep = info?.NetworkSettings?.Networks?.[network] as { GwPriority?: number } | undefined;
+  return Number(ep?.GwPriority) || 0;
 }
 
 /**
@@ -283,7 +293,7 @@ async function rawConnect(docker: Docker, network: string, container: string, al
 export async function connectNetwork(docker: Docker, network: string, container: string, aliases?: string[], opts: ConnectOptions = {}): Promise<boolean> {
   const ipv4 = opts.ipv4 !== undefined ? opts.ipv4 : addressResolver ? await addressResolver.resolve({ docker, network, container, phase: 'connect' }) : null;
   try {
-    await rawConnect(docker, network, container, aliases, ipv4);
+    await rawConnect(docker, network, container, aliases, ipv4, opts.gwPriority);
     return true;
   } catch (err) {
     if (isAlreadyConnected(err)) return false;
@@ -291,7 +301,7 @@ export async function connectNetwork(docker: Docker, network: string, container:
       addressResolver?.refused?.(docker, network);
       logger.warn({ network, container, ip: ipv4 }, `Docker refuses static addresses on ${network}: ${container} connected with a dynamic one`);
       try {
-        await rawConnect(docker, network, container, aliases, null);
+        await rawConnect(docker, network, container, aliases, null, opts.gwPriority);
         return true;
       } catch (err2) {
         if (isAlreadyConnected(err2)) return false;
@@ -395,11 +405,15 @@ export async function reconnectWithAlias(
       log(`no fixed address for ${container} on ${network} (${errText(err)}): ${ipv4 ? `current address ${ipv4} kept` : 'reconnected with a dynamic one'}`);
     }
   }
+  // The GwPriority of the endpoint survives the reconnection (Docker >= 28: a service with published ports
+  // routes through its front network whatever the order of its networks).
+  const gwPriority = await currentEndpointGwPriority(docker, network, container).catch(() => 0);
+  const gw = gwPriority ? { gwPriority } : {};
   await disconnectNetwork(docker, network, container);
   let lastErr: unknown;
   for (let attempt = 1; attempt <= RECONNECT_ATTEMPTS; attempt++) {
     try {
-      await connectNetwork(docker, network, container, aliases, { ipv4 });
+      await connectNetwork(docker, network, container, aliases, { ipv4, ...gw });
       return;
     } catch (err) {
       lastErr = err;
@@ -415,7 +429,7 @@ export async function reconnectWithAlias(
   for (const fb of fallbacks) {
     let connected = false;
     try {
-      await connectNetwork(docker, network, container, undefined, { ipv4: fb.ipv4 });
+      await connectNetwork(docker, network, container, undefined, { ipv4: fb.ipv4, ...gw });
       connected = true;
     } catch (err) {
       log(`fallback reconnection of ${container} to ${network} failed: ${errText(err)}`);
@@ -485,15 +499,17 @@ export async function pinEndpoint(
   const info = await inspectContainer(docker, container);
   if (!info) throw Object.assign(new Error(`No such container: ${container}`), { statusCode: 404 });
   const name = cleanName(info.Name) || container;
-  const ep = info.NetworkSettings?.Networks?.[network] as { Aliases?: string[] | null; IPAMConfig?: { IPv4Address?: string } | null } | undefined;
+  const ep = info.NetworkSettings?.Networks?.[network] as { Aliases?: string[] | null; IPAMConfig?: { IPv4Address?: string } | null; GwPriority?: number } | undefined;
   if (ep?.IPAMConfig?.IPv4Address === ip) return 'already';
+  // Kept across the reconnection (Docker >= 28; absent / 0 on older engines).
+  const gwPriority = Number(ep?.GwPriority) || undefined;
   const aliases = opts.aliases ?? userAliases(ep?.Aliases, info.Id, name);
   const delay = opts.retryDelayMs ?? 500;
   if (ep) await disconnectNetwork(docker, network, info.Id);
   let lastErr: unknown;
   for (let attempt = 1; attempt <= RECONNECT_ATTEMPTS; attempt++) {
     try {
-      await rawConnect(docker, network, info.Id, aliases, ip);
+      await rawConnect(docker, network, info.Id, aliases, ip, gwPriority);
       log(`${name} pinned to ${ip} on ${network}`);
       return ep ? 'pinned' : 'connected';
     } catch (err) {
@@ -510,7 +526,7 @@ export async function pinEndpoint(
     for (const a of [aliases, undefined]) {
       let connected = false;
       try {
-        await rawConnect(docker, network, info.Id, a, null);
+        await rawConnect(docker, network, info.Id, a, null, gwPriority);
         connected = true;
       } catch (err) {
         if (isAlreadyConnected(err)) connected = true;

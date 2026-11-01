@@ -136,6 +136,66 @@ export interface HostdSegmentState {
    * node is dropped). src: one container only (absent: every container of the bridge).
    */
   host?: Array<{ bridge: string; src?: string; protocol: 'tcp' | 'udp'; port: number }>;
+  /**
+   * Migration 032 — inbound guard (table inet oblimint_seghost, chain inbound): a NEW connection routed into an
+   * account fabric from an interface that is not an account fabric passes only when it was DNAT-ed (public
+   * bindings, Docker's published ports). Absent / off: no guard (hostd before 032 ignores the field).
+   */
+  inboundGuard?: 'enforce' | 'monitor' | 'off';
+}
+
+/**
+ * Migration 032 — publication of the public ports (hostd/publish.go). hostd renders `table ip oblimint_pub`
+ * (DNAT public ip:port/proto → container fixed IPv4:port, source preserved, ct mark M accepted by Docker through
+ * one DOCKER-USER rule) and `table ip oblimint_snat` (outbound SNAT of the accounts with a dedicated IP), and
+ * puts the managed dedicated addresses on their interface. Replaces the whole state.
+ */
+export interface HostdPublishState {
+  /** ct mark of the published connections (0 = hostd's own, OBLIMINT_PUBLISH_MARK). */
+  mark: number;
+  /** Public addresses of the node: managed ones are added to iface by hostd, external ones are only checked. */
+  addresses: Array<{ address: string; prefix: number; iface: string; managed: boolean }>;
+  /** Local addresses of the dedicated IPs (dst of their rules; everything else local is the shared IP). */
+  dedicated: string[];
+  /** FRONT bridges of the accounts (a rule of account A targets the subnet of a front bridge of A only). */
+  fronts: Array<{ bridge: string; accountId: number }>;
+  /** dst '*' = the shared IP (any local address that is not dedicated). */
+  rules: Array<{ id: number; accountId: number; dst: string; protocol: 'tcp' | 'udp'; port: number; toAddr: string; toPort: number }>;
+  snat: Array<{ accountId: number; sources: string[]; iface: string; to: string }>;
+}
+
+export interface HostdPublishReply {
+  ok: boolean;
+  addresses: Array<{ address: string; state: 'present' | 'added' | 'missing' | 'otherInterface' | 'error'; message?: string }>;
+  /** Rules not rendered: targetOutsideFront (container not on the account's front subnet), portInUseOnHost. */
+  skipped: Array<{ id: number; reason: string }>;
+}
+
+export interface HostdPublishStatus {
+  backend: 'iptables-nft' | 'iptables-legacy' | 'docker-nftables' | 'none';
+  dockerAccept: 'ok' | 'missing' | 'fwmarkMissing';
+  remediation: string | null;
+  rules: number;
+  snat: number;
+  published: number | null;
+  mark: number;
+  addresses: HostdPublishReply['addresses'];
+  skipped: HostdPublishReply['skipped'];
+  lastApplyAt: string | null;
+  lastApplyError: string | null;
+}
+
+export interface HostdNetInterface {
+  name: string;
+  addresses: string[];
+  up: boolean;
+  defaultRoute: boolean;
+}
+
+export interface HostdListener {
+  protocol: 'tcp' | 'udp';
+  address: string;
+  port: number;
 }
 
 export interface HostdSegmentStatus {
@@ -423,6 +483,16 @@ export interface HostdClient {
   /** PUT /v1/firewall/web — replaces the platform web bans (idempotent). */
   setWebFirewall(state: HostdWebFirewallState): Promise<void>;
 
+  // ── Migration 032 — public ports + dedicated IPs (hostd/publish.go) ──
+  /** PUT /v1/publish — replaces the whole publication state (idempotent). */
+  setPublish(state: HostdPublishState): Promise<HostdPublishReply>;
+  /** GET /v1/publish */
+  publishStatus(): Promise<HostdPublishStatus>;
+  /** GET /v1/net/interfaces */
+  netInterfaces(): Promise<HostdNetInterface[]>;
+  /** GET /v1/net/listeners — listening sockets of the node (TCP LISTEN, unconnected UDP). */
+  netListeners(): Promise<HostdListener[]>;
+
   // ── P3 — windows, workspaces, staging reflection, typed watcher, quarantine (module overlay-hostd) ──
   /** Idempotent: mounts (or switches the mode of) the window overlay over releases/<releaseNumber>. 409 conflict: another window / release mounted. */
   ensureWindow(spec: HostdWindowSpec): Promise<HostdWindowStatus>;
@@ -660,6 +730,16 @@ export function createHostdClient(opts: HostdClientOptions): HostdClient {
     setWebFirewall: async (state) => {
       await call('PUT', '/v1/firewall/web', state);
     },
+    setPublish: (state) => call<HostdPublishReply>('PUT', '/v1/publish', state),
+    publishStatus: () => call<HostdPublishStatus>('GET', '/v1/publish'),
+    netInterfaces: async () => {
+      const r = await call<{ interfaces: HostdNetInterface[] }>('GET', '/v1/net/interfaces');
+      return Array.isArray(r.interfaces) ? r.interfaces : [];
+    },
+    netListeners: async () => {
+      const r = await call<{ listeners: HostdListener[] }>('GET', '/v1/net/listeners');
+      return Array.isArray(r.listeners) ? r.listeners : [];
+    },
 
     setGateway: async (spec) => {
       await call('PUT', `/v1/gateway/accounts/${id(spec.accountId, 'account id')}`, spec);
@@ -848,6 +928,10 @@ export function hostdFor(nodeId: number): HostdClient {
     setSegments: async (state) => (await target()).setSegments(state),
     segmentsStatus: async () => (await target()).segmentsStatus(),
     setWebFirewall: async (state) => (await target()).setWebFirewall(state),
+    setPublish: async (state) => (await target()).setPublish(state),
+    publishStatus: async () => (await target()).publishStatus(),
+    netInterfaces: async () => (await target()).netInterfaces(),
+    netListeners: async () => (await target()).netListeners(),
     setGateway: async (spec) => (await target()).setGateway(spec),
     removeGateway: async (accountId) => (await target()).removeGateway(accountId),
     gatewayEvents: async (waitSec) => (await target()).gatewayEvents(waitSec),

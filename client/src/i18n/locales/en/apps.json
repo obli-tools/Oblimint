@@ -137,7 +137,14 @@
         "volumeDriver": "Only the local volume driver is allowed.",
         "yamlSyntax": "YAML syntax error.",
         "bindReadOnly": "Bind mounts of the application source are always read-only: use a named volume for writable data.",
-        "unsupportedKeyNamed": "Unsupported key: {{key}}."
+        "unsupportedKeyNamed": "Unsupported key: {{key}}.",
+        "hostPortNotAllocated": "Port {{port}}/{{protocol}} is not among the public ports of the account ({{ranges}}).",
+        "hostIpNotAvailable": "{{address}} is not a public IP of the account.",
+        "hostIpv6Unsupported": "Ports are published on IPv4 only: this IPv6 address is ignored.",
+        "hostPortReserved": "Port {{port}} is reserved by the platform ({{reason}}).",
+        "hostPortTaken": "Port {{port}}/{{protocol}} is already published by the application {{stack}}.",
+        "hostPortNetworkNone": "A service without network (network_mode: none) cannot publish a port.",
+        "hostPortDuplicate": "Port {{port}}/{{protocol}} is published twice (service {{service}})."
       },
       "line": "line {{line}}",
       "notValidated": "Not validated yet.",
@@ -325,7 +332,8 @@
       "totalCpu": "{{value}} CPU",
       "totalMemory": "{{value}} of memory",
       "volumes": "volumes: {{value}}",
-      "yaml": "Rewritten compose (deployed by the panel)"
+      "yaml": "Rewritten compose (deployed by the panel)",
+      "publishedHint": "Published on the Internet (public ports of the account)."
     },
     "env": {
       "badLines": ".env: invalid line(s) {{lines}} (KEY=value expected).",
@@ -517,7 +525,9 @@
       "hint": "Ports are never published on the server: a proxy host (HTTPS, domain of the account) is the only way in.",
       "hosts": "Proxy hosts",
       "noPorts": "No service exposes a TCP port (ports: or expose: in the compose file).",
-      "none": "No proxy host targets this application: it is not reachable from the Internet."
+      "none": "No proxy host targets this application: it is not reachable from the Internet.",
+      "hintPublic": "A proxy host (HTTPS, domain of the account) is the way in for the web; raw TCP / UDP ports are published only inside the public ports of the account (Account → Network).",
+      "publishedPorts": "Published ports"
     },
     "registries": {
       "add": "Add credentials",
@@ -1042,6 +1052,195 @@
       "autoHint": "Every sweep (boot, then every 5 minutes) pins every running container still dynamic: about 250 ms of network interruption per container, once (open TCP connections survive). Recommended.",
       "autoConfirmTitle": "Pin the running containers automatically",
       "autoConfirm": "At the next sweep (within 5 minutes), every running container whose address is still dynamic gets it as a fixed one: about 250 ms of network interruption per container, one every half second, open TCP connections survive. Continue?"
+    },
+    "ports": {
+      "title": "Public ports",
+      "allocate": "Allocate",
+      "target": "Target",
+      "sourceOverride": "account",
+      "sourcePlan": "plan",
+      "allocated": "Allocated",
+      "used": "Used",
+      "stateLabel": "State",
+      "state": {
+        "ok": "allocated",
+        "shortfall": "short of ports",
+        "excess": "above the target",
+        "none": "none"
+      },
+      "sharedIp": "Shared IP",
+      "manualBlock": "Explicit range",
+      "noBlock": "No public port: the applications of this account are reached through proxy hosts only.",
+      "shortfallHint": "The pool has not enough free ports for the target: widen the pool (Settings → Network) or lower the target.",
+      "excessHint": "More ports than the target: the ports in use are kept until the applications drop them.",
+      "howTo": "An application publishes one of these ports with ports: [\"<public port>:<container port>/udp\"] in its compose (TCP and UDP each).",
+      "loadFailed": "Failed to load the public ports",
+      "saved": "Allocation saved",
+      "saveFailed": "The allocation could not be changed",
+      "errors": {
+        "portPoolExhausted": "Not enough free ports in the pool.",
+        "portPoolNoContiguousBlock": "No free block of contiguous ports long enough.",
+        "portsInUse": "More ports carry a binding than the new count: remove them from the applications first.",
+        "portRangeUnavailable": "This range is outside the pool, reserved or already allocated.",
+        "noSharedIp": "The node has no shared public IPv4 (Settings → Platform)."
+      },
+      "allocateTitle": "Public ports of the account",
+      "byCount": "Number of ports",
+      "byRange": "Explicit range",
+      "followPlan": "Follow the plan ({{count}} ports)",
+      "count": "Ports (TCP and UDP each)",
+      "requireContiguous": "Require one contiguous block",
+      "requireContiguousHint": "Otherwise, without a block long enough, the first free ports are taken in several blocks.",
+      "from": "From",
+      "to": "To",
+      "rangeHint": "Added to the blocks of the account (inside the pool, free, not reserved); the target becomes the new total.",
+      "previewPending": "Preview…",
+      "previewTotal": "{{count}} port(s) after the change"
+    },
+    "dedicated": {
+      "title": "Dedicated IP",
+      "saved": "Dedicated IP updated",
+      "saveFailed": "The dedicated IP could not be changed",
+      "address": "Address",
+      "none": "None (shared IP)",
+      "noneFree": "No free dedicated IP: declare one in System → Network.",
+      "declare": "Public IPs",
+      "takeover": "The account takes over 80 / 443",
+      "takeoverHint": "Its applications may publish 80 and 443 of this IP; its sites then stay on the shared IP (edge, certificates): their DNS records point there.",
+      "snat": "Outbound traffic through this IP",
+      "snatHint": "The containers of the account leave the node with this address (only when it sits on the interface of the default route). Mail still leaves through the relay of the platform.",
+      "dnsShared": "DNS: the A records of the domains of the account point to the shared IP.",
+      "dnsDedicated": "DNS: the A records of the domains of the account point to {{address}} (external DNS: point them there)."
+    },
+    "ipStatus": {
+      "pending": "pending",
+      "active": "active",
+      "missing": "missing",
+      "error": "error"
+    },
+    "ipWarning": {
+      "snatInterfaceNotDefaultRoute": "Outbound SNAT left out: the IP is not on the interface of the default route.",
+      "snatNoInterface": "Outbound SNAT left out: no interface known for this IP.",
+      "addressDuplicate": "This local address is declared twice: this IP is left out of the publication until one of them is corrected."
+    },
+    "bindings": {
+      "title": "Published ports",
+      "empty": "No published port",
+      "emptyHint": "An application publishes a port of the account by deploying its compose with ports: [\"<public>:<container>\"].",
+      "public": "Public",
+      "target": "Application",
+      "containerPort": "Container port",
+      "status": "Status",
+      "dedicated": "dedicated",
+      "statuses": {
+        "pending": "pending",
+        "active": "active",
+        "inactive": "inactive",
+        "error": "error"
+      }
+    },
+    "binding": {
+      "accountUnknown": "Unknown account.",
+      "accountNotSegmented": "The network of the account is not segmented yet (migration).",
+      "accountSuspended": "The account is suspended.",
+      "accountDeleting": "The account is being deleted.",
+      "ipUnknown": "Unknown public IP.",
+      "portNotAllocated": "The port is no longer allocated to the account: redeploy without it.",
+      "ipNotAssigned": "The IP is no longer assigned to the account.",
+      "portReserved": "The port is reserved by the platform.",
+      "targetUnsupported": "Unsupported target.",
+      "notObserved": "The node could not be observed (next push).",
+      "fabricMissing": "The network of the account does not exist yet.",
+      "containerNotRunning": "The container is not running.",
+      "addressUnknown": "The address of the container is not known.",
+      "addressConflict": "The container uses an address allocated to another one.",
+      "targetNotRecognised": "The container is not the expected service.",
+      "addressNotPinned": "The address of the container is not its fixed one yet (System → Network).",
+      "targetOutsideFront": "hostd refused the target (outside the network of the account).",
+      "portInUseOnHost": "A program of the server already listens on this port.",
+      "addressDuplicate": "The local address of the IP is declared twice (System → Network).",
+      "addressRefused": "hostd refused the public IP (internal interface or address)."
+    },
+    "publicIps": {
+      "title": "Public IPs and published ports",
+      "declare": "Declare an IP",
+      "checkFailed": "The check failed",
+      "deleteTitle": "Delete this public IP",
+      "deleteMessage": "{{address}} is no longer published; a managed address is removed from its interface.",
+      "deleted": "Public IP deleted",
+      "deleteFailed": "The IP could not be deleted",
+      "address": "Address",
+      "interface": "Interface",
+      "mode": "Mode",
+      "status": "Status",
+      "account": "Account",
+      "shared": "shared",
+      "managed": "managed",
+      "external": "external",
+      "bindings": "{{count}} binding(s)",
+      "check": "Check",
+      "none": "No public IP: set the public IPv4 of the node (Settings → Platform).",
+      "declareTitle": "Declare a dedicated IP",
+      "publicAddress": "Public IPv4 address",
+      "defaultRoute": "default route",
+      "prefix": "Prefix",
+      "managedHint": "Managed: hostd adds the address to the interface (at every boot too)",
+      "externalHint": "External: configured in the OS, hostd only checks it",
+      "localAddress": "Local address (1:1 NAT, optional)",
+      "description": "Description",
+      "created": "Public IP declared",
+      "createFailed": "The IP could not be declared"
+    },
+    "publish": {
+      "title": "Publication (hostd)",
+      "accept": {
+        "ok": "Docker accepts",
+        "missing": "Docker rule missing",
+        "fwmarkMissing": "bridge-accept-fwmark missing",
+        "unknown": "unknown"
+      },
+      "rules": "{{count}} rule(s)",
+      "counter": "{{count}} connection(s) published",
+      "lastPush": "last push: {{date}}",
+      "unavailable": "hostd does not report the publication (older hostd or unreachable)."
+    },
+    "pool": {
+      "usage": "Port pool {{from}}–{{to}}",
+      "capacity": "Usable ports",
+      "free": "Free",
+      "largest": "Largest free block",
+      "accounts": "Accounts",
+      "settingsTitle": "Public ports",
+      "settingsDescription": "Port pool of the shared IP handed out to the accounts (TCP and UDP), ports never handed out, inbound guard of the account networks.",
+      "from": "Pool: first port",
+      "to": "Pool: last port",
+      "freeShort": "{{count}} free",
+      "extra": "Reserved ports (never handed out)",
+      "extraHint": "A port or a range (25565, 27000-27100), on every IP of the node.",
+      "automatic": "Reserved automatically:"
+    },
+    "reserved": {
+      "fixed": "platform",
+      "panel": "panel",
+      "sftp": "SFTP",
+      "sql": "external SQL",
+      "stream": "edge stream",
+      "extra": "extra",
+      "host": "socket of the server"
+    },
+    "guard": {
+      "title": "Inbound guard of the account networks",
+      "monitorLabel": "Monitor",
+      "monitorHint": "Connections routed into an account network without a published port are logged, not dropped (default: observe first).",
+      "followLabel": "Follow the isolation mode",
+      "followHint": "Dropped when the isolation is enforced: only the published ports and the ports Docker publishes enter the account networks from outside.",
+      "offLabel": "Off",
+      "offHint": "No inbound guard (Docker 28 or later already drops the direct routing to the containers; Docker 27 or older does not)."
+    },
+    "plan": {
+      "publicPorts": "Public ports (shared IP)",
+      "publicPortsHint": "TCP and UDP each, taken from the pool as one block when possible; 0 = none.",
+      "publicPortsRange": "Public ports: between 0 and {{max}}."
     }
   },
   "statusPage": {
