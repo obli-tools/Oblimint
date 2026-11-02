@@ -29,7 +29,9 @@
       "manualHint": "Créé à la main : jamais modifié par le panel.",
       "autoHint": "Généré à partir des domaines et des paramètres, réécrit à chaque changement. Le modifier le transforme en enregistrement manuel.",
       "templateHint": "Copié depuis un modèle DNS, puis géré comme un enregistrement manuel.",
-      "systemHint": "Défi de courte durée (certificat, propriété) : géré par le panel, en lecture seule."
+      "systemHint": "Défi de courte durée (certificat, propriété) : géré par le panel, en lecture seule.",
+      "byKey": "Clé d'accès",
+      "byKeyHint": "Écrit par une clé d'accès : il ne remplace jamais un enregistrement automatique, et il est désactivé si son nom devient servi par un site. Le modifier ici en refait un enregistrement du panel."
     },
     "createDomain": {
       "zone": "Zone DNS",

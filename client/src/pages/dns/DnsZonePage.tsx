@@ -322,7 +322,7 @@ export function DnsZonePage() {
                   {r.priority != null && <span className="text-text-muted">{r.priority} </span>}{r.content}
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-                  <RecordOriginBadge origin={r.origin} />
+                  <RecordOriginBadge origin={r.origin} byKey={r.writtenByKey} />
                   <span className="font-mono">TTL {r.ttl}</span>
                   {r.disabled && <Pill>{t('dns.records.disabled') || 'Disabled'}</Pill>}
                   {r.comment && <span className="truncate">{r.comment}</span>}
@@ -353,7 +353,7 @@ export function DnsZonePage() {
                 ),
               },
               { id: 'ttl', header: 'TTL', thClassName: 'text-right', tdClassName: 'text-right font-mono text-xs tabular-nums', sort: (r) => r.ttl, cell: (r) => r.ttl },
-              { id: 'origin', header: t('dns.records.fields.origin') || 'Origin', sort: (r) => r.origin, cell: (r) => <RecordOriginBadge origin={r.origin} /> },
+              { id: 'origin', header: t('dns.records.fields.origin') || 'Origin', sort: (r) => r.origin, cell: (r) => <RecordOriginBadge origin={r.origin} byKey={r.writtenByKey} /> },
               { id: 'actions', header: <span className="sr-only">{t('common.edit') || 'Edit'}</span>, thClassName: 'w-20', tdClassName: 'text-right', cell: (r) => recordActions(r) },
             ]}
           />

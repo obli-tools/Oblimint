@@ -4,13 +4,13 @@ import type {
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
-import { dnsService } from '../dns/dns.service';
-import { inZone, recordConflict, RecordValidationError, validateRecord, type GeneratedRecord, type NormalizedRecord } from '../dns/records';
+import { assertRecordFits, dnsService, validatedRecord } from '../dns/dns.service';
+import { inZone, txtKind, validateRecord, type GeneratedRecord, type NormalizedRecord } from '../dns/records';
 import { generatedAuto, loadContext, zoneQuery, type RecordRow, type ZoneRow } from '../dns/store';
 import type { GateSpec } from '../restrictions/gate';
 import { asKeyRequest, keyGated } from '../restrictions/targets';
 import { keyAllowsDomain, requireScope, type ApiKeyContext } from './apiKeys.service';
-import { keyWriteGuard, protectedRecordError, storedReadOnly } from './keyDnsRules';
+import { keyWriteGuard, platformNamesIn, protectedRecordError, storedReadOnly, type KeyZoneFacts } from './keyDnsRules';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DNS records through an access key (scopes dns.read / dns.write; routes/v1
@@ -26,8 +26,10 @@ import { keyWriteGuard, protectedRecordError, storedReadOnly } from './keyDnsRul
 // domain management right of its user). A zone of the account outside it:
 // 403 keyDomainNotManageable; anything else: 404.
 // What a key writes: keyDnsRules.ts (the platform's records stay read-only).
-// Order of the checks: scope, zone, record, validation, protection, conflict —
-// then the gate, so nobody confirms something that would be refused anyway.
+// Order of the checks: scope, zone, record, validation, protection, record limit,
+// conflict — then the gate, so nobody confirms something that would be refused
+// anyway. A record a key writes keeps its provenance (dns_records.api_key_id):
+// it never takes the place of a generated record later (dns/store).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const NOT_GIVEN = 'This DNS zone belongs to a domain that is not given to this key: give the domain to the key in the panel (Access keys › Domains)';
@@ -76,31 +78,47 @@ function zoneView(ctx: ApiKeyContext, z: KeyZone): ApiV1DnsZone {
   };
 }
 
-function recordView(zone: string, r: DnsRecord, generated: readonly GeneratedRecord[]): ApiV1DnsRecord {
-  const readOnlyReason = storedReadOnly(r, generated);
+/** What the key rules know of a zone: its generated records and its other facts (keyDnsRules). */
+interface ZoneRules {
+  generated: GeneratedRecord[];
+  facts: KeyZoneFacts;
+}
+
+/**
+ * Generated records of the zone before overrides (what a key never touches), the names it publishes besides
+ * (records of the panel, templates, auto — the keys' own, disabled and challenge ones aside, as dns/store
+ * regenerateAuto sees them; `selfId`: the record being changed aside) and the platform host names in it.
+ */
+async function zoneRules(zone: ZoneRow, selfId?: number): Promise<ZoneRules> {
+  const ctx = await loadContext();
+  const generated = await generatedAuto(zone, ctx);
+  const rows = await db('dns_records').where({ zone_id: zone.id, disabled: false }).whereNot({ origin: 'system' }).whereNull('api_key_id')
+    .select('id', 'name') as Array<{ id: number; name: string }>;
+  return {
+    generated,
+    facts: {
+      existing: rows.filter((r) => r.id !== selfId).map((r) => r.name),
+      platformNames: platformNamesIn(zone.name, ctx.hosts),
+    },
+  };
+}
+
+function readOnlyOf(r: Pick<DnsRecord, 'name' | 'type' | 'content' | 'origin' | 'writtenByKey'>, rules: ZoneRules) {
+  return storedReadOnly({ name: r.name, type: r.type, content: r.content, origin: r.origin, byKey: !!r.writtenByKey }, rules.generated, rules.facts);
+}
+
+const rowReadOnly = (r: RecordRow, rules: ZoneRules) => readOnlyOf({ ...r, writtenByKey: !!r.api_key_id }, rules);
+
+function recordView(zone: string, r: DnsRecord, rules: ZoneRules): ApiV1DnsRecord {
+  const readOnlyReason = readOnlyOf(r, rules);
   return {
     id: r.id, name: r.name, fqdn: r.name === '@' ? zone : `${r.name}.${zone}`, type: r.type, content: r.content, ttl: r.ttl, priority: r.priority,
     disabled: r.disabled, comment: r.comment, origin: r.origin, readOnly: readOnlyReason !== null, readOnlyReason,
   };
 }
 
-/** Records generated for the zone, before overrides (what a key never touches). */
-async function generatedOf(zone: ZoneRow): Promise<GeneratedRecord[]> {
-  return generatedAuto(zone, await loadContext());
-}
-
 function assertHosted(zone: ZoneRow): void {
   if (zone.kind !== 'hosted') throw new AppError(409, 'This zone is hosted elsewhere: edit it at your DNS provider', 'zoneNotHosted');
-}
-
-/** Same validation as the panel (dnsService re-validates): 400 recordInvalid. */
-function normalized(zone: ZoneRow, input: DnsRecordInput): NormalizedRecord {
-  try {
-    return validateRecord(input, { zone: zone.name, defaultTtl: zone.default_ttl });
-  } catch (err) {
-    if (err instanceof RecordValidationError) throw new AppError(400, err.message, 'recordInvalid', { field: err.field });
-    throw err;
-  }
 }
 
 /** Records of the zone a key may look up (challenge records aside). */
@@ -114,13 +132,6 @@ async function recordOf(zone: ZoneRow, recordId: number): Promise<RecordRow> {
     : undefined;
   if (!row) throw new AppError(404, 'DNS record not found', 'notFound');
   return row;
-}
-
-/** The conflict the service would answer after the gate, answered before it (same rule, dns/records recordConflict). */
-async function assertNoConflict(zone: ZoneRow, rec: NormalizedRecord, selfId?: number): Promise<void> {
-  const existing = await db('dns_records').where({ zone_id: zone.id }).select('id', 'name', 'type', 'content', 'priority', 'origin') as RecordRow[];
-  const conflict = recordConflict(rec, existing, selfId);
-  if (conflict) throw new AppError(409, conflict, 'recordConflict', { field: rec.type === 'CNAME' ? 'type' : 'content' });
 }
 
 const fqdnOf = (zone: string, name: string) => (name === '@' ? zone : `${name}.${zone}`);
@@ -137,14 +148,18 @@ const recordParams = (rec: Pick<NormalizedRecord, 'type' | 'content' | 'ttl' | '
   type: rec.type, content: rec.content, ttl: rec.ttl, priority: rec.priority, disabled: rec.disabled, comment: rec.comment,
 });
 
-/** Checks of a write (protection, conflict): the normalized record and the generated set. */
-async function prepareWrite(zone: ZoneRow, input: DnsRecordInput, selfId?: number, known?: GeneratedRecord[]): Promise<{ rec: NormalizedRecord; generated: GeneratedRecord[] }> {
-  const rec = normalized(zone, input);
-  const generated = known ?? await generatedOf(zone);
-  const reason = keyWriteGuard(rec, generated);
+/**
+ * Every check of a write before the gate, so nobody confirms what would be refused anyway: the panel's
+ * validation (dnsService), the protection of the platform's records, then the zone's record limit and the
+ * conflicts (dnsService again, re-checked by the write itself).
+ */
+async function prepareWrite(zone: ZoneRow, input: DnsRecordInput, selfId?: number): Promise<{ rec: NormalizedRecord; rules: ZoneRules }> {
+  const rec = validatedRecord(zone, input);
+  const rules = await zoneRules(zone, selfId);
+  const reason = keyWriteGuard(rec, rules.generated, rules.facts);
   if (reason) throw protectedRecordError(reason, rec);
-  await assertNoConflict(zone, rec, selfId);
-  return { rec, generated };
+  await assertRecordFits(zone, rec, selfId);
+  return { rec, rules };
 }
 
 async function writableZone(ctx: ApiKeyContext, zoneName: string): Promise<ZoneRow> {
@@ -155,28 +170,31 @@ async function writableZone(ctx: ApiKeyContext, zoneName: string): Promise<ZoneR
 }
 
 async function create(ctx: ApiKeyContext, req: Request, zone: ZoneRow, input: DnsRecordInput): Promise<ApiV1DnsRecord> {
-  const { rec, generated } = await prepareWrite(zone, input);
+  const { rec, rules } = await prepareWrite(zone, input);
   const row = await keyGated(ctx, req, gateSpec(zone, 'dns.record_write', { op: 'create', name: fqdnOf(zone.name, rec.name), record: recordParams(rec) }),
-    () => dnsService.createRecord(asKeyRequest(req, ctx), ctx.actor, zone.id, input));
-  return recordView(zone.name, row, generated);
+    () => dnsService.createRecord(asKeyRequest(req, ctx), ctx.actor, zone.id, input, { apiKeyId: ctx.id }));
+  return recordView(zone.name, row, rules);
 }
 
 async function update(ctx: ApiKeyContext, req: Request, zone: ZoneRow, recordId: number, input: DnsRecordInput): Promise<ApiV1DnsRecord> {
   const current = await recordOf(zone, recordId);
-  const before = await generatedOf(zone);
-  const was = storedReadOnly(current, before);
+  const was = rowReadOnly(current, await zoneRules(zone));
   if (was) throw protectedRecordError(was, current);
-  const { rec, generated } = await prepareWrite(zone, input, current.id, before);
+  const { rec, rules } = await prepareWrite(zone, input, current.id);
   const row = await keyGated(ctx, req, gateSpec(zone, 'dns.record_write', {
     op: 'update', recordId: current.id, name: fqdnOf(zone.name, rec.name), record: recordParams(rec),
-  }), () => dnsService.updateRecord(asKeyRequest(req, ctx), ctx.actor, zone.id, current.id, input));
-  return recordView(zone.name, row, generated);
+  }), () => dnsService.updateRecord(asKeyRequest(req, ctx), ctx.actor, zone.id, current.id, input, { apiKeyId: ctx.id }));
+  return recordView(zone.name, row, rules);
 }
 
-/** The single record of the zone matching name + type (+ content): 404 none, 409 recordAmbiguous several. */
-async function matching(zone: ZoneRow, name: string, type: DnsRecordType, content?: string | null): Promise<RecordRow[]> {
+/**
+ * The records of the zone with this name and type (+ content), split into the ones a key may change and the
+ * platform's (read-only for a key: they never make a lookup ambiguous). TXT with `kindOf`: only the records of
+ * the same use (a site verification never matches the SPF record, as for the panel's overrides).
+ */
+async function matching(zone: ZoneRow, name: string, type: DnsRecordType, content?: string | null, kindOf?: string): Promise<{ free: RecordRow[]; locked: RecordRow[] }> {
   // The name normalized as stored (relative, lower case, punycode); the content too when it is valid for the type.
-  const probe = normalized(zone, { name, type: 'TXT', content: 'x' });
+  const probe = validatedRecord(zone, { name, type: 'TXT', content: 'x' });
   let wanted: string | null = null;
   if (content !== undefined && content !== null) {
     try {
@@ -185,7 +203,13 @@ async function matching(zone: ZoneRow, name: string, type: DnsRecordType, conten
       wanted = String(content).trim();
     }
   }
-  return (await zoneRows(zone.id)).filter((r) => r.name === probe.name && r.type === type && (wanted === null || r.content === wanted));
+  const rows = (await zoneRows(zone.id)).filter((r) => r.name === probe.name && r.type === type && (wanted === null || r.content === wanted)
+    && (kindOf === undefined || type !== 'TXT' || txtKind(r.name, r.content) === kindOf));
+  const rules = await zoneRules(zone);
+  const free: RecordRow[] = [];
+  const locked: RecordRow[] = [];
+  for (const r of rows) (rowReadOnly(r, rules) === null ? free : locked).push(r);
+  return { free, locked };
 }
 
 function ambiguous(rows: RecordRow[]): AppError {
@@ -206,8 +230,8 @@ export const keyDns = {
     const z = await keyZone(ctx, zoneName);
     // The panel's read (loadZone with the key's actor: its account, its tenant).
     const detail = await dnsService.getZone(ctx.actor, z.zone.id);
-    const generated = await generatedOf(z.zone);
-    return { zone: zoneView(ctx, z), records: detail.records.map((r) => recordView(z.zone.name, r, generated)) };
+    const rules = await zoneRules(z.zone);
+    return { zone: zoneView(ctx, z), records: detail.records.map((r) => recordView(z.zone.name, r, rules)) };
   },
 
   async create(ctx: ApiKeyContext, req: Request, zoneName: string, input: DnsRecordInput): Promise<ApiV1DnsRecord> {
@@ -219,17 +243,18 @@ export const keyDns = {
   },
 
   /**
-   * MCP upsert_dns_record: recordId → that record; add → a new record; otherwise the record with this
-   * name and type is changed (created when there is none; 409 recordAmbiguous when there are several).
+   * MCP upsert_dns_record: recordId → that record; add → a new record; otherwise the free record with this
+   * name and type (TXT: and the same use) is changed — created when there is none (the platform's records
+   * never match: a write on them is refused by the creation's checks); 409 recordAmbiguous when there are several.
    */
   async upsert(ctx: ApiKeyContext, req: Request, zoneName: string, input: DnsRecordInput, opts: { recordId?: number | null; add?: boolean } = {}): Promise<ApiV1DnsUpsertResult> {
     const zone = await writableZone(ctx, zoneName);
     if (opts.recordId) return { action: 'updated', record: await update(ctx, req, zone, opts.recordId, input) };
     if (opts.add) return { action: 'created', record: await create(ctx, req, zone, input) };
-    const rec = normalized(zone, input);
-    const rows = await matching(zone, rec.name, rec.type);
-    if (rows.length > 1) throw ambiguous(rows);
-    if (rows.length === 1) return { action: 'updated', record: await update(ctx, req, zone, rows[0].id, input) };
+    const rec = validatedRecord(zone, input);
+    const { free } = await matching(zone, rec.name, rec.type, undefined, rec.type === 'TXT' ? txtKind(rec.name, rec.content) : undefined);
+    if (free.length > 1) throw ambiguous(free);
+    if (free.length === 1) return { action: 'updated', record: await update(ctx, req, zone, free[0].id, input) };
     return { action: 'created', record: await create(ctx, req, zone, input) };
   },
 
@@ -237,20 +262,24 @@ export const keyDns = {
   async remove(ctx: ApiKeyContext, req: Request, zoneName: string, recordId: number): Promise<void> {
     const zone = await writableZone(ctx, zoneName);
     const current = await recordOf(zone, recordId);
-    const reason = storedReadOnly(current, await generatedOf(zone));
+    const reason = rowReadOnly(current, await zoneRules(zone));
     if (reason) throw protectedRecordError(reason, current);
     await keyGated(ctx, req, gateSpec(zone, 'dns.record_delete', {
       op: 'delete', recordId: current.id, name: fqdnOf(zone.name, current.name), record: { type: current.type, content: current.content, priority: current.priority },
     }), () => dnsService.deleteRecord(asKeyRequest(req, ctx), ctx.actor, zone.id, current.id));
   },
 
-  /** MCP delete_dns_record by name + type (+ content) instead of an id: exactly one record must match. */
+  /**
+   * MCP delete_dns_record by name + type (+ content) instead of an id: exactly one free record must match
+   * (the platform's records never make it ambiguous; when only they match, the refusal says why).
+   */
   async removeMatching(ctx: ApiKeyContext, req: Request, zoneName: string, name: string, type: DnsRecordType, content?: string | null): Promise<{ deleted: true; id: number }> {
     const zone = await writableZone(ctx, zoneName);
-    const rows = await matching(zone, name, type, content);
-    if (!rows.length) throw new AppError(404, 'DNS record not found', 'notFound');
-    if (rows.length > 1) throw ambiguous(rows);
-    await keyDns.remove(ctx, req, zoneName, rows[0].id);
-    return { deleted: true, id: rows[0].id };
+    const { free, locked } = await matching(zone, name, type, content);
+    if (!free.length && locked.length) throw protectedRecordError(rowReadOnly(locked[0], await zoneRules(zone)) ?? 'generated', locked[0]);
+    if (!free.length) throw new AppError(404, 'DNS record not found', 'notFound');
+    if (free.length > 1) throw ambiguous(free);
+    await keyDns.remove(ctx, req, zoneName, free[0].id);
+    return { deleted: true, id: free[0].id };
   },
 };

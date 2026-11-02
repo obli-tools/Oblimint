@@ -9,8 +9,11 @@ const KEY = 'dns.record_delete';
  * factor by default like the other deletions (DEFAULT_RESTRICTIONS). Every
  * tenant whose map does not name it yet gets the default; a tenant that
  * protected the record changes more strictly (dns.record_write 'restricted',
- * which covered the deletions until now) keeps that entry for the deletions,
- * so no deletion becomes less protected than before.
+ * which covered the deletions until now) gets that level for every deletion —
+ * every account, panel and keys (the default's scope and channels): a write
+ * entry limited to some accounts or to the panel would otherwise leave the
+ * other deletions without the default second factor. No deletion becomes less
+ * protected than before or than the default.
  */
 export async function up(knex: Knex): Promise<void> {
   const tenants = await knex('tenants').select('id', 'action_restrictions') as Array<{ id: number; action_restrictions: unknown }>;
@@ -25,7 +28,7 @@ export async function up(knex: Knex): Promise<void> {
     const def = DEFAULT_RESTRICTIONS[KEY];
     const stricter = write && RESTRICTION_LEVEL_RANK[write.level] > RESTRICTION_LEVEL_RANK[def.level];
     const entry: RestrictionEntry = stricter
-      ? { level: write.level, scope: { ...write.scope }, via: write.via }
+      ? { level: write.level, scope: { ...def.scope }, via: def.via }
       : { level: def.level, scope: { ...def.scope }, via: def.via };
     await knex('tenants').where({ id: t.id }).update({ action_restrictions: JSON.stringify({ ...map, [KEY]: entry }) });
   }

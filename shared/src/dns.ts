@@ -42,6 +42,11 @@ export interface DnsRecord {
   origin: DnsRecordOrigin;
   disabled: boolean;
   comment: string | null;
+  /**
+   * Last written by an access key (dns_records.api_key_id, migration 036): it never replaces a generated
+   * record, and is disabled when its name becomes served by a site. A change in the panel clears it.
+   */
+  writtenByKey?: boolean;
   createdAt: string;
   updatedAt: string;
 }

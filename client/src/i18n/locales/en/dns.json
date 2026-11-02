@@ -29,7 +29,9 @@
       "manualHint": "Created by hand: never touched by the panel.",
       "autoHint": "Generated from the domains and the settings, rewritten at each change. Editing it turns it into a manual record.",
       "templateHint": "Copied from a DNS template, then managed like a manual record.",
-      "systemHint": "Short-lived challenge (certificate, ownership): managed by the panel, read-only."
+      "systemHint": "Short-lived challenge (certificate, ownership): managed by the panel, read-only.",
+      "byKey": "Access key",
+      "byKeyHint": "Written by an access key: it never replaces an automatic record, and is disabled if its name becomes served by a site. Editing it here makes it a panel record again."
     },
     "createDomain": {
       "zone": "DNS zone",

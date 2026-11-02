@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { BadgeCheck, Clock, Server, ExternalLink as ExternalIcon } from 'lucide-react';
+import { BadgeCheck, Clock, KeyRound, Server, ExternalLink as ExternalIcon } from 'lucide-react';
 import type {
   DnsRecordOrigin, DnsZoneKind, DnsZoneStatus, DomainVerificationError, DomainVerificationMethod, DomainVerificationSummary,
 } from '@oblimint/shared';
@@ -40,8 +40,23 @@ export function recordOriginLabel(t: TFunction, o: DnsRecordOrigin): string {
   return t(`dns.origin.${o}`) || fb[o];
 }
 
-export function RecordOriginBadge({ origin }: { origin: DnsRecordOrigin }) {
+/** Written by an access key (DnsRecord.writtenByKey). */
+export function RecordByKeyBadge() {
   const { t } = useTranslation();
+  return (
+    <Tip content={t('dns.origin.byKeyHint') || 'Written by an access key: it never replaces an automatic record, and is disabled if its name becomes served by a site. Editing it here makes it a panel record again.'}>
+      <span className="cursor-help"><Pill tone="muted"><KeyRound size={10} />{t('dns.origin.byKey') || 'Access key'}</Pill></span>
+    </Tip>
+  );
+}
+
+export function RecordOriginBadge({ origin, byKey }: { origin: DnsRecordOrigin; byKey?: boolean }) {
+  const { t } = useTranslation();
+  if (byKey) return <span className="inline-flex items-center gap-1"><RecordOriginBadgeOnly origin={origin} t={t} /><RecordByKeyBadge /></span>;
+  return <RecordOriginBadgeOnly origin={origin} t={t} />;
+}
+
+function RecordOriginBadgeOnly({ origin, t }: { origin: DnsRecordOrigin; t: TFunction }) {
   const tone = ({ manual: 'muted', auto: 'blue', template: 'accent', system: 'amber' } as const)[origin];
   const hints: Record<DnsRecordOrigin, string> = {
     manual: t('dns.origin.manualHint') || 'Created by hand: never touched by the panel.',

@@ -434,11 +434,13 @@ export interface ApiV1DnsZone {
 }
 
 /**
- * Why a record is read-only for a key: 'generated' (written by the platform for a site, a subdomain
- * or the hosted mail), 'override' (a human replaced a generated record in the panel), 'type' (a type
- * a key never writes: NS), 'reserved' (ACME / ownership challenge names).
+ * Why a record is read-only for a key: 'generated' (written by the platform for a site, a subdomain,
+ * a platform host or the hosted mail, or a name a generated wildcard answers), 'override' (a human's record
+ * in the panel on such a name or use), 'type' (a type a key never writes: NS), 'reserved' (ACME /
+ * ownership challenge names, wildcard names), 'caa' (a CAA record that does not authorize the platform's
+ * certificate authority).
  */
-export type ApiV1DnsReadOnlyReason = 'generated' | 'override' | 'type' | 'reserved';
+export type ApiV1DnsReadOnlyReason = 'generated' | 'override' | 'type' | 'reserved' | 'caa';
 
 /** A record as the key API shows it. */
 export interface ApiV1DnsRecord {

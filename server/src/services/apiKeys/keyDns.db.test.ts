@@ -51,7 +51,7 @@ test('DNS records through an access key (REST + MCP)', { timeout: 300_000 }, asy
   const { actorForUser } = await import('../hosting/access');
   const { apiKeysService } = await import('./apiKeys.service');
   const { keyDns } = await import('./keyDns');
-  const { insertZone, loadContext } = await import('../dns/store');
+  const { insertZone, loadContext, regenerateAuto, zoneById } = await import('../dns/store');
   const { restrictionService } = await import('../restrictions/restriction.service');
   const { twoFactorService } = await import('../twoFactor.service');
   const migration035 = await import('../../db/migrations/035_dns_record_delete');
@@ -198,7 +198,7 @@ test('DNS records through an access key (REST + MCP)', { timeout: 300_000 }, asy
   assert.equal(r.status, 201, JSON.stringify(r.body));
   assert.deepEqual([r.body.data.name, r.body.data.fqdn, r.body.data.type, r.body.data.readOnly], ['spawn', `spawn.${main}`, 'A', false]);
   const spawnId = r.body.data.id as number;
-  assert.equal((await db('dns_records').where({ id: spawnId }).first('origin')).origin, 'manual');
+  assert.deepEqual(await db('dns_records').where({ id: spawnId }).first('origin', 'api_key_id'), { origin: 'manual', api_key_id: kDns.id }, 'the provenance of the key');
   const created = await lastAudit('dns.record.create');
   assert.equal(created?.apiKey?.id, kDns.id, 'audit details.apiKey');
   assert.equal(created?.name, 'spawn');
@@ -214,6 +214,10 @@ test('DNS records through an access key (REST + MCP)', { timeout: 300_000 }, asy
     [{ name: '@', type: 'TXT', content: 'v=spf1 include:elsewhere.example -all' }, 'generated'],
     [{ name: 'deleg', type: 'NS', content: 'ns1.elsewhere.example.' }, 'type'],
     [{ name: '_acme-challenge', type: 'TXT', content: 'x' }, 'reserved'],
+    [{ name: '*', type: 'TXT', content: 'x' }, 'reserved'],
+    [{ name: 'www', type: 'AAAA', content: '2001:db8::9' }, 'generated'],
+    [{ name: 'k2._domainkey', type: 'TXT', content: 'v=DKIM1; p=abc' }, 'generated'],
+    [{ name: '@', type: 'CAA', content: '0 issue ";"' }, 'caa'],
   ];
   // Over HTTP once (the 4xx answers count against the key surface's failure limiter), the others through keyDns.
   r = await rest(kDns, 'POST', `/zones/${main}/records`, refused[0][0]);
@@ -267,6 +271,50 @@ test('DNS records through an access key (REST + MCP)', { timeout: 300_000 }, asy
   const view = JSON.parse(m.text) as { records: Array<{ name: string; type: string; readOnly: boolean }> };
   assert.deepEqual(view.records.filter((x) => x.name === 'spawn').map((x) => x.readOnly), [false, false]);
 
+  // ── upsert / delete by name + type beside the hosted mail's SPF record: the platform's records never match ──
+  m = await tool(kDns, 'upsert_dns_record', { zone: main, name: '@', type: 'TXT', content: 'google-site-verification=one' });
+  assert.equal(m.isError, false, m.text);
+  up = JSON.parse(m.text);
+  assert.equal(up.action, 'created', 'never the SPF record');
+  const verifId = up.record.id as number;
+  m = await tool(kDns, 'upsert_dns_record', { zone: main, name: '@', type: 'TXT', content: 'google-site-verification=two' });
+  assert.equal(m.isError, false, m.text);
+  assert.deepEqual([JSON.parse(m.text).action, JSON.parse(m.text).record.id], ['updated', verifId], 'the verification TXT, the SPF one aside');
+  assert.ok((await recordsOf(mainZ.zone.id)).some((x) => x.name === '@' && x.type === 'TXT' && x.content === 'v=spf1 mx -all' && x.origin === 'auto'), 'SPF untouched');
+  m = await tool(kDns, 'delete_dns_record', { zone: main, name: '@', type: 'TXT' });
+  assert.equal(m.isError, false, m.text);
+  assert.equal(JSON.parse(m.text).id, verifId);
+  m = await tool(kDns, 'delete_dns_record', { zone: main, name: '@', type: 'TXT' });
+  assert.ok(m.isError);
+  assert.match(m.text, /\(dnsRecordProtected\)/, 'only the SPF record left: refused with the reason');
+
+  // ── a key's record never takes the place of a generated one later ──
+  r = await rest(kDns, 'POST', `/zones/${main}/records`, { name: 'shop', type: 'A', content: '203.0.113.70' });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  const shopId = r.body.data.id as number;
+  await db('domains').insert({
+    tenant_id: tA, account_id: acme, name: `shop.${main}`, kind: 'subdomain', include_www: false, tls_mode: 'none', force_https: false, wildcard: false,
+    verification_status: 'verified', verification_method: 'inherited', verified_at: db.fn.now(),
+  });
+  assert.equal(await regenerateAuto((await zoneById(mainZ.zone.id))!, await loadContext()), true);
+  const shopRows = (await db('dns_records').where({ zone_id: mainZ.zone.id, name: 'shop', type: 'A' }).select('id', 'content', 'origin', 'disabled')) as Array<{ id: number; content: string; origin: string; disabled: boolean }>;
+  assert.deepEqual(shopRows.find((x) => x.id === shopId)?.disabled, true, 'the key\'s record disabled once the name is served');
+  assert.ok(shopRows.some((x) => x.origin === 'auto' && x.content === '198.51.100.1' && !x.disabled), 'the site\'s address published');
+  const shopView = (await keyDns.records(cDns, main)).records.find((x) => x.id === shopId);
+  assert.deepEqual([shopView?.readOnly, shopView?.readOnlyReason], [true, 'generated']);
+  await rejectsWith(keyDns.update(cDns, fakeReq(), main, shopId, { name: 'shop', type: 'A', content: '203.0.113.71' }), 403, 'dnsRecordProtected');
+
+  // ── the record limit answered before the gate ──
+  await restrictionService.setMap(tA, { 'dns.record_write': 'sensitive' } as never);
+  const { MAX_RECORDS_PER_ZONE } = await import('../dns/records');
+  const have = Number((await db('dns_records').where({ zone_id: mainZ.zone.id }).whereNot({ origin: 'system' }).count('* as c').first() as { c: string }).c);
+  await db('dns_records').insert(Array.from({ length: MAX_RECORDS_PER_ZONE - have }, (_, i) => ({
+    zone_id: mainZ.zone.id, name: `fill${i}`, type: 'TXT', content: 'x', ttl: 3600, origin: 'manual',
+  })));
+  await rejectsWith(keyDns.create(cDns, fakeReq(), main, { name: 'more', type: 'TXT', content: 'x' }), 409, 'recordLimit');
+  await db('dns_records').where({ zone_id: mainZ.zone.id }).andWhere('name', 'like', 'fill%').delete();
+  await restrictionService.setMap(tA, {} as never);
+
   // ── deletion: dns.record_delete (a second factor of the owner when protected) ──
   await restrictionService.setMap(tA, { 'dns.record_delete': 'sensitive' } as never);
   m = await tool(kDns, 'delete_dns_record', { zone: main, name: 'spawn', type: 'A', content: '203.0.113.61' });
@@ -299,7 +347,8 @@ test('DNS records through an access key (REST + MCP)', { timeout: 300_000 }, asy
     const row = await db('tenants').where({ id }).first('action_restrictions');
     return (typeof row.action_restrictions === 'string' ? JSON.parse(row.action_restrictions) : row.action_restrictions) as Record<string, unknown>;
   };
-  assert.deepEqual((await mapOf(tA))['dns.record_delete'], strict, 'no deletion less protected than before');
+  assert.deepEqual((await mapOf(tA))['dns.record_delete'], { level: 'restricted', scope: { mode: 'all' }, via: 'all' },
+    'the stricter level of the writes, for every deletion: none less protected than before nor than the default');
   assert.deepEqual((await mapOf(tB))['dns.record_delete'], { level: 'sensitive', scope: { mode: 'all' }, via: 'all' });
   assert.ok((await mapOf(tB))['db.drop'], 'the rest of the map kept');
   await db('tenants').where({ id: tB }).update({ action_restrictions: JSON.stringify({ 'dns.record_delete': { level: 'restricted', scope: { mode: 'all' }, via: 'keys' } }) });

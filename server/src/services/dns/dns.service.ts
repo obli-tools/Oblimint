@@ -179,7 +179,8 @@ async function recordCount(zoneId: number): Promise<number> {
   return Number(r.c);
 }
 
-function validated(zone: ZoneRow, input: DnsRecordInput) {
+/** The panel's validation of a record (400 recordInvalid): the normalized record. */
+export function validatedRecord(zone: ZoneRow, input: DnsRecordInput) {
   try {
     return validateRecord(input, { zone: zone.name, defaultTtl: zone.default_ttl });
   } catch (err) {
@@ -188,7 +189,14 @@ function validated(zone: ZoneRow, input: DnsRecordInput) {
   }
 }
 
-async function assertNoConflict(zone: ZoneRow, rec: ReturnType<typeof validated>, selfId?: number): Promise<void> {
+/**
+ * Whether a valid record fits in the zone (409): the record limit on a creation (no `selfId`), then the conflicts
+ * (CNAME rules, duplicates). Exported for the checks made before a gate (apiKeys/keyDns).
+ */
+export async function assertRecordFits(zone: ZoneRow, rec: ReturnType<typeof validatedRecord>, selfId?: number): Promise<void> {
+  if (selfId === undefined && await recordCount(zone.id) >= MAX_RECORDS_PER_ZONE) {
+    throw new AppError(409, `A zone holds ${MAX_RECORDS_PER_ZONE} records at most`, 'recordLimit', { max: MAX_RECORDS_PER_ZONE });
+  }
   const existing = await db('dns_records').where({ zone_id: zone.id }).select('id', 'name', 'type', 'content', 'priority', 'origin') as RecordRow[];
   const conflict = recordConflict(rec, existing, selfId);
   if (conflict) throw new AppError(409, conflict, 'recordConflict', { field: rec.type === 'CNAME' || rec.type === 'NS' ? 'type' : 'content' });
@@ -456,17 +464,15 @@ export const dnsService = {
   },
 
   // ── records ──
-  async createRecord(req: Request, actor: HostingActor, zoneId: number, input: DnsRecordInput): Promise<DnsRecord> {
+  /** `opts.apiKeyId`: written by that access key (apiKeys/keyDns), recorded as its provenance (migration 036). */
+  async createRecord(req: Request, actor: HostingActor, zoneId: number, input: DnsRecordInput, opts: { apiKeyId?: number | null } = {}): Promise<DnsRecord> {
     const zone = await loadZone(actor, zoneId, 'dns.manage');
     assertHosted(zone);
-    const rec = validated(zone, input);
-    if (await recordCount(zone.id) >= MAX_RECORDS_PER_ZONE) {
-      throw new AppError(409, `A zone holds ${MAX_RECORDS_PER_ZONE} records at most`, 'recordLimit', { max: MAX_RECORDS_PER_ZONE });
-    }
-    await assertNoConflict(zone, rec);
+    const rec = validatedRecord(zone, input);
+    await assertRecordFits(zone, rec);
     const [row] = await db('dns_records').insert({
       zone_id: zone.id, name: rec.name, type: rec.type, content: rec.content, ttl: rec.ttl, priority: rec.priority,
-      origin: 'manual', disabled: rec.disabled, comment: rec.comment,
+      origin: 'manual', disabled: rec.disabled, comment: rec.comment, api_key_id: opts.apiKeyId ?? null,
     }).returning('*') as RecordRow[];
     await regenerateAuto(zone, await loadContext());
     await audit(req, zone, 'dns.record.create', { recordId: row.id, name: rec.name, type: rec.type, content: rec.content });
@@ -474,18 +480,19 @@ export const dnsService = {
     return toRecord(row);
   },
 
-  async updateRecord(req: Request, actor: HostingActor, zoneId: number, recordId: number, input: DnsRecordInput): Promise<DnsRecord> {
+  /** `opts.apiKeyId`: changed by that access key; a change made in the panel clears the provenance. */
+  async updateRecord(req: Request, actor: HostingActor, zoneId: number, recordId: number, input: DnsRecordInput, opts: { apiKeyId?: number | null } = {}): Promise<DnsRecord> {
     const zone = await loadZone(actor, zoneId, 'dns.manage');
     assertHosted(zone);
     const current = await db('dns_records').where({ id: recordId, zone_id: zone.id }).first() as RecordRow | undefined;
     if (!current) throw new AppError(404, 'DNS record not found', 'notFound');
     if (current.origin === 'system') throw new AppError(403, 'This record is managed by the platform', 'systemRecord');
-    const rec = validated(zone, input);
-    await assertNoConflict(zone, rec, current.id);
+    const rec = validatedRecord(zone, input);
+    await assertRecordFits(zone, rec, current.id);
     // An edited auto / template record becomes manual: it overrides the generated one.
     const [row] = await db('dns_records').where({ id: current.id }).update({
       name: rec.name, type: rec.type, content: rec.content, ttl: rec.ttl, priority: rec.priority, disabled: rec.disabled,
-      comment: rec.comment, origin: 'manual', updated_at: db.fn.now(),
+      comment: rec.comment, origin: 'manual', api_key_id: opts.apiKeyId ?? null, updated_at: db.fn.now(),
     }).returning('*') as RecordRow[];
     await regenerateAuto(zone, await loadContext());
     await audit(req, zone, 'dns.record.update', {

@@ -8,6 +8,7 @@ import { logger } from '../../utils/logger';
 import { platformSettings } from '../platformSettings';
 import { iso, json } from '../hosting/rows';
 import { applyZoneContributors } from './contributors';
+import { keyWriteGuard, platformNamesIn } from '../apiKeys/keyDnsRules';
 import {
   applyOverrides, autoRecords, inZone, platformAutoRecords, recordConflict, RecordValidationError, sameRecordSet, substitute,
   validateRecord, type AutoContext, type AutoDomain, type GeneratedRecord, type PlatformHosts, type TemplateVars,
@@ -37,6 +38,8 @@ export interface RecordRow {
   id: number; zone_id: number; name: string; type: DnsRecordType; content: string; ttl: number; priority: number | null;
   origin: DnsRecordOrigin; disabled: boolean; comment: string | null; system_purpose: string | null;
   expires_at: Date | string | null; created_at: Date | string; updated_at: Date | string;
+  /** Access key that last wrote the record (migration 036; null = the panel, a template or the platform). */
+  api_key_id?: number | null;
 }
 
 export interface TemplateRow {
@@ -93,6 +96,7 @@ export function toRecord(r: RecordRow): DnsRecord {
     origin: r.origin,
     disabled: !!r.disabled,
     comment: r.comment,
+    ...(r.api_key_id ? { writtenByKey: true } : {}),
     createdAt: iso(r.created_at) as string,
     updatedAt: iso(r.updated_at) as string,
   };
@@ -274,12 +278,35 @@ export async function generatedAuto(zone: ZoneRow, ctx: DnsContext, conn: Db = d
  * domains / settings give (manual, template and system rows untouched; auto
  * records overridden by them are not written). Returns true when changed.
  */
+/**
+ * The records an access key wrote that a key could not write any more (their name became served by a site,
+ * a subdomain, a wildcard or the platform, or the mail became hosted — apiKeys/keyDnsRules keyWriteGuard): disabled,
+ * so the name follows the platform again instead of the key's target. Returns true when some were.
+ */
+async function disableShadowingKeyRecords(zone: ZoneRow, ctx: DnsContext, rows: RecordRow[], generated: GeneratedRecord[], conn: Db): Promise<boolean> {
+  const keyRows = rows.filter((r) => r.api_key_id && !r.disabled && r.origin !== 'auto' && r.origin !== 'system');
+  if (!keyRows.length || zone.account_id === null) return false;
+  // The names the zone publishes without the keys' records: a key's record alone never keeps a wildcard hidden.
+  const existing = rows.filter((r) => !r.api_key_id && !r.disabled && r.origin !== 'system').map((r) => r.name);
+  const facts = { existing, platformNames: platformNamesIn(zone.name, ctx.hosts) };
+  const off = keyRows.filter((r) => keyWriteGuard(r, generated, facts) !== null);
+  if (!off.length) return false;
+  await conn('dns_records').whereIn('id', off.map((r) => r.id)).update({ disabled: true, updated_at: conn.fn.now() });
+  logger.warn({ zone: zone.name, records: off.map((r) => ({ id: r.id, name: r.name, type: r.type, apiKeyId: r.api_key_id })) },
+    'dns: records written by an access key disabled, their name is now managed by the platform');
+  return true;
+}
+
 export async function regenerateAuto(zone: ZoneRow, ctx: DnsContext, conn: Db = db): Promise<boolean> {
-  const rows = await conn('dns_records').where({ zone_id: zone.id }).select('id', 'name', 'type', 'content', 'ttl', 'priority', 'origin') as RecordRow[];
-  const others = rows.filter((r) => r.origin !== 'auto');
-  const desired = applyOverrides(await generatedAuto(zone, ctx, conn), others);
+  const rows = await conn('dns_records').where({ zone_id: zone.id })
+    .select('id', 'name', 'type', 'content', 'ttl', 'priority', 'origin', 'disabled', 'api_key_id') as RecordRow[];
+  const generated = await generatedAuto(zone, ctx, conn);
+  // A record written by an access key never overrides a generated one (apiKeys/keyDnsRules).
+  const others = rows.filter((r) => r.origin !== 'auto' && !r.api_key_id);
+  const desired = applyOverrides(generated, others);
+  const keyDisabled = await disableShadowingKeyRecords(zone, ctx, rows, generated, conn);
   const current = rows.filter((r) => r.origin === 'auto').map((r) => ({ name: r.name, type: r.type, content: r.content, ttl: r.ttl, priority: r.priority }));
-  if (sameRecordSet(current, desired)) return false;
+  if (sameRecordSet(current, desired)) return keyDisabled;
   await conn('dns_records').where({ zone_id: zone.id, origin: 'auto' }).delete();
   if (desired.length) {
     await conn('dns_records').insert(desired.map((r) => ({
