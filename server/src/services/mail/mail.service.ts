@@ -862,6 +862,10 @@ export const mailService = {
         }
         await appConfigService.set('mail_engine', engine);
         await clearMailSyncApplied();
+        // The Oblimint webmail needs Stalwart: another engine falls back to Roundcube.
+        await import('./webmail/webmailDefault').then(async (m) => {
+          if (await m.alignWebmailWithEngine()) (await import('./webmail/webmail.service')).webmailService.settingsChanged();
+        }).catch(() => undefined);
       } finally {
         await db('app_config').where({ key: ENGINE_CHANGE_KEY }).del().catch(() => undefined);
       }

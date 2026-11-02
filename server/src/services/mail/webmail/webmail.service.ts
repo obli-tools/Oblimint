@@ -26,6 +26,7 @@ import { webmailTokens, type WebmailCredentials } from './ssoTokens';
 import { removeWebmail, webmailInfraComponent, webmailRunning, wantedWebmailKind } from './webmailInfra';
 import { oblimintWebmailListening, resetOblimintWebmailCache } from './oblimint/server';
 import { dbWebmailSessionStore } from './oblimint/session';
+import { alignWebmailWithEngine } from './webmailDefault';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Webmail + single sign-on (docs/P4-PLAN.md §9.7, MA4 / MA6 / MA13, B3).
@@ -466,6 +467,8 @@ export const webmailService = {
       logger.warn({ err: errText(err) }, 'webmail: edge contributor not registered');
     }
     if (timer) return;
+    // Default Oblimint webmail on an engine without JMAP: Roundcube instead (webmailDefault.ts).
+    void alignWebmailWithEngine().then((changed) => { if (changed) webmailService.settingsChanged(); });
     void wantedWebmailKind().then((k) => { if (lastKind === null) lastKind = k; }).catch(() => undefined);
     timer = setInterval(() => { void expireWebmailSessions(); }, EXPIRY_INTERVAL_MS);
     timer.unref?.();

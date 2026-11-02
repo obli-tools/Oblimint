@@ -368,9 +368,9 @@ function MailServiceBlock({ value, panelHost, panelUnknown, save }: { value: Mai
         </Field>
         <Field label={t('mailSettings.service.webmail') || 'Webmail'} htmlFor="ms-webmail" hint={t('mailSettings.service.webmailHint') || 'Shared webmail container, opened from the panel without a password (single sign-on). Changing it redeploys the container.'}>
           <select id="ms-webmail" value={draft.webmail} onChange={(e) => set({ webmail: e.target.value as WebmailKind })} className={selectSettingsCls}>
+            <option value="oblimint">{t('mailSettings.service.oblimintWebmail') || 'Oblimint (recommended, built in, Stalwart engine)'}</option>
             <option value="roundcube">Roundcube</option>
             <option value="snappymail">SnappyMail</option>
-            <option value="oblimint">{t('mailSettings.service.oblimintWebmail') || 'Oblimint (built in, Stalwart engine)'}</option>
             <option value="none">{t('mailSettings.service.noWebmail') || 'No webmail'}</option>
           </select>
           {draft.webmail === 'oblimint' && (

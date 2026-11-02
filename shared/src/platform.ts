@@ -415,7 +415,7 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
   },
   mail: {
     hostname: null,
-    webmail: 'roundcube',
+    webmail: 'oblimint',
     webmailHostname: null,
     webmailPerDomain: true,
     autoconfig: true,
