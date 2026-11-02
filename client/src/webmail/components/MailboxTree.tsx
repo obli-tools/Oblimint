@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Archive, CalendarOff, ChevronRight, FileText, Folder, Inbox, Keyboard, PenSquare, Send, ShieldAlert, Trash2 } from 'lucide-react';
+import { Archive, ChevronRight, CornerUpRight, FileText, Folder, Inbox, Keyboard, PenSquare, Send, Settings2, ShieldAlert, Trash2 } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import type { Mailbox } from '../jmap';
 import { emptyDraft } from '../lib/compose';
@@ -80,6 +80,7 @@ export function MailboxTree() {
   const current = useWebmail((s) => s.currentMailboxId);
   const search = useWebmail((s) => s.search);
   const composer = useWebmail((s) => s.composer);
+  const forwardingActive = useWebmail((s) => !!s.forwarding?.active);
   const { openMailbox, openComposer, setDrawer, setOverlay } = useWebmail.getState();
   const nameOf = useMailboxName();
   const nodes = useMemo(() => flattenTree(mailboxes), [mailboxes]);
@@ -167,9 +168,10 @@ export function MailboxTree() {
 
       <div className="shrink-0 space-y-0.5 p-2">
         <div className="mx-1 mb-1.5 h-px bg-border" />
-        <button type="button" onClick={() => { setDrawer(false); setOverlay('vacation'); }}
+        <button type="button" onClick={() => { setDrawer(false); useWebmail.getState().openSettings('vacation'); }}
           className="flex w-full items-center gap-2.5 rounded-[7px] px-3 py-2 text-[13px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary">
-          <CalendarOff size={15} className="shrink-0 opacity-80" />{t('wm.vacation.title') || 'Vacation responder'}
+          <Settings2 size={15} className="shrink-0 opacity-80" /><span className="min-w-0 flex-1 truncate text-left">{t('wm.settings.title') || 'Mail settings'}</span>
+          {forwardingActive && <span className="flex items-center gap-1 rounded-[7px] bg-accent/15 px-1.5 py-0.5 text-[10.5px] font-medium text-accent" title={t('wm.forwarding.title') || 'Forwarding'}><CornerUpRight size={10} />{t('wm.forwarding.on') || 'on'}</span>}
         </button>
         <button type="button" onClick={() => { setDrawer(false); setOverlay('shortcuts'); }}
           className="flex w-full items-center gap-2.5 rounded-[7px] px-3 py-2 text-[13px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary max-lg:hidden">

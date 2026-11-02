@@ -453,3 +453,81 @@ test('SSO target: tells the mailbox of a token without using it (pre-login CSRF)
     assert.equal((await post('/sso/target')).status, 401, 'used');
   } finally { await h.close(); }
 });
+
+test('forwarding and rules: per-session mailbox, CSRF, strict bodies, panel refusals mapped (forwardingNotAllowed)', async () => {
+  const { AppError } = await import('../../../../middleware/errorHandler');
+  const seen: Array<[string, number, unknown, string | null]> = [];
+  const policy = { external: false, internalDomains: ['example.test'], maxRedirects: 20 };
+  const h = await start({
+    vacationRatePerMinute: 100,
+    rulesRatePerMinute: 5,
+    forwarding: {
+      get: async (id) => ({ enabled: false, targets: [], keepCopy: true, active: false, changedByPanelAt: null, ruleForwards: [], policy, ...(id === 1 ? {} : { targets: ['x@y.fr'] }) }),
+      set: async (id, v, ip) => {
+        seen.push(['fwd', id, v, ip]);
+        if (v.targets.includes('out@ext.org')) throw new AppError(403, 'Forwarding outside your own domains is not allowed', 'forwardingNotAllowed');
+        if (v.targets.includes('loop@example.test')) throw new AppError(400, 'Forwarding loop', 'forwardingLoop', { path: ['alice@example.test', 'loop@example.test'] });
+        if (v.targets.includes('nobody@example.test')) throw new AppError(400, 'nobody@example.test is not a mailbox', 'invalidTarget', { field: 'targets', target: 'nobody@example.test' });
+        return { ...v, active: v.enabled && v.targets.length > 0, changedByPanelAt: null, ruleForwards: [], policy };
+      },
+    },
+    rules: {
+      get: async () => ({ rules: [], supported: true, policy }),
+      set: async (id, rules, ip) => {
+        seen.push(['rules', id, rules, ip]);
+        if (!Array.isArray(rules) || rules.length > 1) throw new AppError(409, 'Inbox rules need the Stalwart mail engine', 'rulesUnsupported');
+        return { rules: rules as never, supported: true, policy };
+      },
+    },
+  });
+  try {
+    const a = await login(h, 'alice@example.test', 'alice-password-1');
+    const put = (p: string, body: unknown, csrf = a.csrf) => fetch(`${h.base}/wm-api${p}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Origin: h.origin, Cookie: a.cookie, 'X-Oblimint-CSRF': csrf }, body: JSON.stringify(body),
+    });
+    const got = await fetch(`${h.base}/wm-api/forwarding`, { headers: { Cookie: a.cookie } });
+    assert.equal(got.status, 200);
+    assert.deepEqual(((await got.json()) as { targets: string[] }).targets, [], "the session's own mailbox (id 1)");
+    assert.equal((await fetch(`${h.base}/wm-api/forwarding`)).status, 401);
+    assert.equal((await put('/forwarding', { enabled: true, targets: ['a@example.test'], keepCopy: true }, 'bad')).status, 403, 'CSRF');
+    assert.equal((await put('/forwarding', { enabled: true, targets: ['a@example.test'] })).status, 400, 'keepCopy missing');
+    assert.equal((await put('/forwarding', { enabled: true, targets: ['a@example.test'], keepCopy: true, script: 'x' })).status, 400, 'unknown field');
+    assert.equal((await put('/forwarding', { enabled: true, targets: Array.from({ length: 21 }, (_, i) => `t${i}@example.test`), keepCopy: true })).status, 400);
+    assert.equal(seen.length, 0, 'nothing reached the service');
+    const ok = await put('/forwarding', { enabled: true, targets: ['a@example.test'], keepCopy: false });
+    assert.equal(ok.status, 200);
+    assert.equal(((await ok.json()) as { active: boolean }).active, true);
+    assert.deepEqual(seen[0], ['fwd', 1, { enabled: true, targets: ['a@example.test'], keepCopy: false }, '203.0.113.50']);
+    const refused = await put('/forwarding', { enabled: true, targets: ['out@ext.org'], keepCopy: true });
+    assert.equal(refused.status, 403);
+    assert.equal(((await refused.json()) as { error: string }).error, 'forwardingNotAllowed');
+    const loop = await put('/forwarding', { enabled: true, targets: ['loop@example.test'], keepCopy: true });
+    // The panel's code travels as `reason` (translated by the webmail); only whitelisted details (never the loop path).
+    assert.deepEqual([loop.status, await loop.json()], [400, { error: 'invalidRequest', message: 'Forwarding loop', reason: 'forwardingLoop' }]);
+    const missing = await put('/forwarding', { enabled: true, targets: ['nobody@example.test'], keepCopy: true });
+    assert.deepEqual(((await missing.json()) as { reason: string; details: unknown }), {
+      error: 'invalidRequest', message: 'nobody@example.test is not a mailbox', reason: 'invalidTarget', details: { target: 'nobody@example.test' },
+    });
+
+    assert.equal((await fetch(`${h.base}/wm-api/rules`, { headers: { Cookie: a.cookie } })).status, 200);
+    assert.equal((await put('/rules', [])).status, 400, 'an object with rules');
+    assert.equal((await put('/rules', { rules: [], other: 1 })).status, 400);
+    assert.equal((await put('/rules', { rules: [{ id: 'r' }] })).status, 200);
+    const unsupported = await put('/rules', { rules: [{ id: 'a' }, { id: 'b' }] });
+    const u = (await unsupported.json()) as { error: string; reason: string };
+    assert.deepEqual([unsupported.status, u.error, u.reason], [409, 'unavailable', 'rulesUnsupported']);
+    // The rules have their own write budget (5 here: 4 used, refused bodies count), the forwarding's is untouched.
+    assert.equal((await put('/rules', { rules: [] })).status, 200);
+    assert.equal((await put('/rules', { rules: [] })).status, 429);
+    assert.equal((await put('/forwarding', { enabled: false, targets: [], keepCopy: true })).status, 200);
+  } finally { await h.close(); }
+});
+
+test('forwarding and rules: absent from the deps = 404 (no settings surface)', async () => {
+  const h = await start();
+  try {
+    const a = await login(h, 'alice@example.test', 'alice-password-1');
+    assert.equal((await fetch(`${h.base}/wm-api/forwarding`, { headers: { Cookie: a.cookie } })).status, 404);
+    assert.equal((await fetch(`${h.base}/wm-api/rules`, { headers: { Cookie: a.cookie } })).status, 404);
+  } finally { await h.close(); }
+});

@@ -5,7 +5,7 @@ import { MAIL_PUBLIC_PORTS } from '@oblimint/shared';
 import { iso } from '../hosting/rows';
 import { clientStatusMessage } from '../hosting/statusMessage';
 import type { HostingActor } from '../hosting/access';
-import { bigOrNull, parseAutoresponder, parseTargets, type MailAliasRow, type MailboxRow, type MailDomainRow } from './rows';
+import { bigOrNull, parseAutoresponder, parseMailRules, parseTargets, type MailAliasRow, type MailboxRow, type MailDomainRow } from './rows';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Row → API mappers of mail-core (shared/src/mail.ts). Never map
@@ -96,7 +96,10 @@ export function toMailbox(r: MailboxRow & { domain_name?: string }): Mailbox {
     enabled: !!r.enabled,
     sendEnabled: !!r.send_enabled,
     receiveEnabled: !!r.receive_enabled,
-    forwarding: targets.length > 0 ? { targets, keepCopy: !!r.forward_keep_copy } : null,
+    forwarding: targets.length > 0 ? { targets, keepCopy: !!r.forward_keep_copy, enabled: r.forward_enabled !== false } : null,
+    activeRuleCount: parseMailRules(r.mail_rules).filter((x) => x.enabled).length,
+    ruleForwardTargets: [...new Set(parseMailRules(r.mail_rules).filter((x) => x.enabled)
+      .flatMap((x) => x.actions.flatMap((a) => (a.kind === 'forward' || a.kind === 'redirect' ? a.to : []))))],
     autoresponderActive: autoresponderActive(ar, new Date()),
     passwordScheme: r.password_scheme as MailPasswordScheme,
     passwordSetAt: iso(r.password_set_at),
@@ -128,11 +131,13 @@ export function mailClientSettings(address: string, hostname: string, webmailUrl
 
 export function toMailboxDetail(
   r: MailboxRow & { domain_name?: string },
-  extras: { aliases: Array<{ id: number; address: string }>; clientSettings: MailClientSettings },
+  extras: { aliases: Array<{ id: number; address: string }>; clientSettings: MailClientSettings; rulesSupported?: boolean },
 ): MailboxDetail {
   return {
     ...toMailbox(r),
     autoresponder: parseAutoresponder(r.autoresponder),
+    rules: parseMailRules(r.mail_rules),
+    rulesSupported: !!extras.rulesSupported,
     aliases: extras.aliases,
     clientSettings: extras.clientSettings,
   };

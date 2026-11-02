@@ -424,12 +424,26 @@ export class StalwartApi {
       return out;
     };
     const got = await call([['SieveScript/get', { accountId, ids: null, properties: ['id', 'name', 'isActive'] }, 'g']]);
-    const list = ((got[0]?.[1]?.list ?? []) as Array<{ id?: string; name?: string }>);
-    const existing = list.find((s) => s.name === name)?.id ?? null;
+    const list = ((got[0]?.[1]?.list ?? []) as Array<{ id?: string; name?: string; isActive?: boolean }>);
+    const found = list.find((s) => s.name === name) ?? null;
+    const existing = found?.id ?? null;
+    // A script that is not the panel's (uploaded over ManageSieve before it was closed, config.ts
+    // MA-SIEVE) never stays the active one: installing ours activates ours (only one script is
+    // active), removing ours deactivates whatever is active. Foreign scripts are kept, inactive
+    // (the user's data; nothing can activate them again).
+    const foreignActive = list.some((s) => s.name !== name && s.isActive);
 
     if (script === null) {
+      if (!existing && !foreignActive) return;
+      // Stalwart refuses to destroy the ACTIVE script (scriptIsActive), even with
+      // onSuccessDeactivateScript in the same call (checked against the pinned
+      // release, e2e.rules.stalwart.ts): deactivate first, then destroy.
+      if (found?.isActive || foreignActive) {
+        const off = await call([['SieveScript/set', { accountId, onSuccessDeactivateScript: true }, 'd']]);
+        assertSetOk(off[0]?.[1], 'update');
+      }
       if (!existing) return;
-      const res = await call([['SieveScript/set', { accountId, onSuccessDeactivateScript: true, destroy: [existing] }, 's']]);
+      const res = await call([['SieveScript/set', { accountId, destroy: [existing] }, 's']]);
       assertSetOk(res[0]?.[1], 'destroy');
       return;
     }

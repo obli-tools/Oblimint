@@ -123,6 +123,7 @@ const sectionSchemas = {
     authBanWindowMinutes: z.number().int().min(1).max(1440),
     authBanDurationMinutes: z.number().int().min(1).max(43200),
     logRetentionDays: z.number().int().min(1).max(366),
+    ownerExternalForwarding: z.boolean(),
   }).strict(),
   // P4b (docs/P4b-PLAN.md §Réglages)
   apps: z.object({

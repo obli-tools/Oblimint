@@ -178,6 +178,14 @@ export function createDefaultWebmailApp() {
         return mailService.setAutoresponderAsMailbox(mailboxId, value, ip);
       },
     },
+    forwarding: {
+      async get(mailboxId) { return (await import('../../mail.service')).mailService.ownerForwarding(mailboxId); },
+      async set(mailboxId, value, ip) { return (await import('../../mail.service')).mailService.setForwardingAsMailbox(mailboxId, value, ip); },
+    },
+    rules: {
+      async get(mailboxId) { return (await import('../../mail.service')).mailService.ownerRules(mailboxId); },
+      async set(mailboxId, rules, ip) { return (await import('../../mail.service')).mailService.setRulesAsMailbox(mailboxId, rules, ip); },
+    },
     clientDist: config.clientDist,
     now: Date.now,
   });

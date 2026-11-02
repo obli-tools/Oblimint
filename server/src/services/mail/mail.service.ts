@@ -3,9 +3,10 @@ import type { Knex } from 'knex';
 import type {
   MailAccountUsage, MailAlias, MailAliasInput, MailAliasUpdate, MailAutoresponder, MailAutoresponderInput, Mailbox, MailboxCreate,
   MailboxCreated, MailboxDetail, MailboxUpdate, MailDomain, MailDomainCreate, MailDomainDetail, MailDomainUpdate, MailEngine,
-  MailForwardingInput, MailOverview, MailPasswordChange, MailPasswordResult, MailPasswordScheme, MailSystemStatus, PlanLimits,
+  MailForwardingInput, MailOverview, MailPasswordChange, MailPasswordResult, MailPasswordScheme, MailRule, MailSystemStatus, PlanLimits,
+  WebmailForwarding, WebmailForwardingInput, WebmailForwardingPolicy, WebmailRuleForward, WebmailRules,
 } from '@oblimint/shared';
-import { isMailEngineSupported, MASTER_TENANT_ID, mailEngineHasMailboxes } from '@oblimint/shared';
+import { isMailEngineSupported, MAIL_RULE_LIMITS, MASTER_TENANT_ID, mailEngineHasMailboxes, mailEngineSupportsRules } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
@@ -38,7 +39,8 @@ import {
 } from './passwords';
 import { purgeForeignTombstones } from './purge';
 import { activeMailDriver, activeMailDriverIn, activeMailEngine, mailDriverFor } from './registry';
-import { parseAutoresponder, parseDnsSettings, parseExternalConfig, parseTargets, type MailAliasRow, type MailboxRow } from './rows';
+import { parseAutoresponder, parseDnsSettings, parseExternalConfig, parseMailRules, parseTargets, type MailAliasRow, type MailboxRow } from './rows';
+import { assertOwnerTargets, assertRedirectBudget, folderPaths, parseMailRulesInput, ruleTargets } from './rules';
 import {
   clearMailSyncApplied, mailSyncInfo, recordMailSyncError, requestMailSync, runMailExclusive, runSyncNow, startMailSync, stopMailSync,
 } from './sync';
@@ -73,7 +75,8 @@ type Conn = Knex | Knex.Transaction;
 const MAILBOX_COLS = [
   'm.id', 'm.tenant_id', 'm.account_id', 'm.mail_domain_id', 'm.local_part', 'm.address', 'm.display_name', 'm.password_scheme',
   'm.password_set_at', 'm.imported', 'm.quota_mb', 'm.enabled', 'm.send_enabled', 'm.receive_enabled', 'm.forward_targets',
-  'm.forward_keep_copy', 'm.autoresponder', 'm.used_bytes', 'm.usage_checked_at', 'm.quota_warned_at', 'm.created_at', 'm.updated_at',
+  'm.forward_keep_copy', 'm.forward_enabled', 'm.mail_rules', 'm.autoresponder', 'm.used_bytes', 'm.usage_checked_at', 'm.quota_warned_at',
+  'm.created_at', 'm.updated_at',
 ];
 
 const likeEscape = (s: string): string => s.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -124,10 +127,14 @@ async function accountUsage(conn: Conn, accountId: number, excludeMailboxId: num
 /** Delivery graph + own domains / addresses of an account (loop and target checks). */
 async function accountAddressBook(conn: Conn, accountId: number): Promise<{ graph: Map<string, string[]>; ownDomains: Set<string>; existing: Set<string> }> {
   const domains = await conn('mail_domains').where({ account_id: accountId }).select('name') as Array<{ name: string }>;
-  const boxes = await conn('mailboxes').where({ account_id: accountId }).select('address', 'forward_targets') as Array<{ address: string; forward_targets: unknown }>;
+  const boxes = await conn('mailboxes').where({ account_id: accountId }).select('address', 'forward_targets', 'forward_enabled', 'mail_rules') as
+    Array<{ address: string; forward_targets: unknown; forward_enabled: boolean | null; mail_rules: unknown }>;
   const aliases = await conn('mail_aliases').where({ account_id: accountId }).select('address', 'targets') as Array<{ address: string; targets: unknown }>;
   const graph = new Map<string, string[]>();
-  for (const b of boxes) graph.set(b.address, parseTargets(b.forward_targets));
+  // A paused forwarding sends nothing; the enabled rules' forward / redirect targets are edges too.
+  for (const b of boxes) {
+    graph.set(b.address, [...(b.forward_enabled === false ? [] : parseTargets(b.forward_targets)), ...ruleTargets(parseMailRules(b.mail_rules), true)]);
+  }
   for (const a of aliases) graph.set(a.address, parseTargets(a.targets));
   return {
     graph,
@@ -274,6 +281,8 @@ async function domainDetail(actor: HostingActor, id: number): Promise<MailDomain
 
 async function mailboxDetail(row: MailboxLoaded | (MailboxRow & { domain_name: string })): Promise<MailboxDetail> {
   const deps = mailCoreDeps();
+  let rulesSupported = false;
+  try { rulesSupported = mailEngineSupportsRules(await activeMailEngine()); } catch { rulesSupported = false; }
   const domain = row.domain_name;
   const aliases = await db('mail_aliases').where({ account_id: row.account_id })
     .whereRaw('targets @> ?::jsonb', [JSON.stringify([row.address])]).orderBy('address').select('id', 'address') as Array<{ id: number; address: string }>;
@@ -284,7 +293,213 @@ async function mailboxDetail(row: MailboxLoaded | (MailboxRow & { domain_name: s
   return toMailboxDetail(row as MailboxRow & { domain_name: string }, {
     aliases: aliases.map((a) => ({ id: a.id, address: a.address })),
     clientSettings: mailClientSettings(row.address, host ?? `mail.${domain}`, webmailUrl),
+    rulesSupported,
   });
+}
+
+// ── forwarding and inbox rules (panel + the mailbox's own webmail) ──────────
+
+interface ForwardingValue { targets: string[]; keepCopy: boolean; enabled: boolean }
+
+const forwardingOf = (r: Pick<MailboxRow, 'forward_targets' | 'forward_keep_copy' | 'forward_enabled'>): ForwardingValue => ({
+  targets: parseTargets(r.forward_targets),
+  keepCopy: !!r.forward_keep_copy,
+  enabled: r.forward_enabled !== false,
+});
+/** Targets the forwarding sends to now ([] when paused / none). */
+const effectiveTargets = (f: ForwardingValue): string[] => (f.enabled ? f.targets : []);
+
+/**
+ * What a mailbox owner (webmail) or a client user of the account (panel) may
+ * forward to: the platform switch + the account's own mail domains (the
+ * whole list, server-side only: see publicPolicy).
+ */
+async function ownerPolicy(accountId: number): Promise<WebmailForwardingPolicy> {
+  const s = await platformSettings.section('mail');
+  const domains = await db('mail_domains').where({ account_id: accountId }).orderBy('name').pluck('name') as string[];
+  return { external: s.ownerExternalForwarding !== false, internalDomains: domains.map((d) => d.toLowerCase()), maxRedirects: MAIL_RULE_LIMITS.redirects };
+}
+
+/**
+ * The policy as the webmail sees it: the account's other domains are only
+ * named when they matter (external forwarding refused: the owner is told
+ * where it may forward); otherwise a mailbox user learns nothing of them.
+ */
+const publicPolicy = (p: WebmailForwardingPolicy): WebmailForwardingPolicy => (p.external ? { ...p, internalDomains: [] } : p);
+
+/**
+ * The owner policy applied to new forward / redirect targets (403
+ * forwardingNotAllowed). `alreadyThere`: targets already set (by staff), kept.
+ */
+async function assertPolicyTargets(accountId: number, targets: readonly string[], alreadyThere: Iterable<string>): Promise<void> {
+  if (!targets.length) return;
+  const policy = await ownerPolicy(accountId);
+  assertOwnerTargets(targets, { external: policy.external, internalDomains: new Set(policy.internalDomains), alreadyThere: new Set(alreadyThere) });
+}
+
+/** Every forward / redirect target a mailbox row already has (forwarding, paused or not, and every rule). */
+const storedTargets = (r: Pick<MailboxRow, 'forward_targets' | 'mail_rules'>): string[] =>
+  [...parseTargets(r.forward_targets), ...ruleTargets(parseMailRules(r.mail_rules))];
+
+/** Forward / redirect targets of the enabled rules, by rule (banner / notice): name, unique targets, kept or not. */
+function ruleForwards(rules: readonly MailRule[]): WebmailRuleForward[] {
+  const out: WebmailRuleForward[] = [];
+  for (const r of rules) {
+    if (!r.enabled) continue;
+    const to = [...new Set(ruleTargets([r]))];
+    if (to.length) out.push({ rule: r.name, to, kept: !r.actions.some((a) => a.kind === 'redirect') });
+  }
+  return out;
+}
+
+/** 409 rulesUnsupported when the active engine does not run inbox rules. */
+async function assertRulesEngine(): Promise<void> {
+  if (!mailEngineSupportsRules(await activeMailEngine())) {
+    throw new AppError(409, 'Inbox rules need the Stalwart mail engine', 'rulesUnsupported');
+  }
+}
+
+/**
+ * Internal targets exist (only the `fresh` ones: an address already in use
+ * that has since disappeared never blocks turning something off or
+ * re-ordering) and the delivery graph has no loop once `edges` (everything
+ * the mailbox forwards to after the change) replace the mailbox's own edges.
+ */
+async function assertTargetChange(conn: Conn, accountId: number, address: string, fresh: readonly string[], edges: readonly string[], field: string): Promise<void> {
+  const check = fresh.filter((t) => t !== address);
+  if (!check.length && !edges.length) return;
+  const book = await accountAddressBook(conn, accountId);
+  if (check.length) assertTargetsExist(check, { ownDomains: book.ownDomains, existing: book.existing, field });
+  if (edges.length) assertNoForwardingLoop(address, [...edges], book.graph as ForwardGraph);
+}
+
+const minus = (list: readonly string[], known: Iterable<string>): string[] => {
+  const k = new Set(known);
+  return [...new Set(list)].filter((t) => !k.has(t));
+};
+
+/**
+ * Writes the forwarding under the account lock: new internal targets exist,
+ * no loop (the rules' targets count), redirect budget with the rules. The
+ * caller checked the access (panel need / webmail session = the mailbox).
+ * Turning the forwarding off (or pausing it) never re-checks the targets.
+ */
+async function writeForwarding(row: { id: number; tenant_id: number; account_id: number; address: string }, next: ForwardingValue, byPanel: boolean): Promise<void> {
+  await db.transaction(async (trx) => {
+    await lockMailAccount(trx, row.account_id);
+    const cur = await trx('mailboxes').where({ id: row.id }).first('mail_rules', 'forward_targets', 'forward_keep_copy', 'forward_enabled') as
+      Pick<MailboxRow, 'mail_rules' | 'forward_targets' | 'forward_keep_copy' | 'forward_enabled'> | undefined;
+    if (!cur) throw new AppError(404, 'Mailbox not found', 'notFound');
+    const rules = parseMailRules(cur.mail_rules);
+    const was = forwardingOf(cur);
+    if (next.enabled) {
+      // Re-enabling a paused forwarding checks its targets again (they forward nothing until now).
+      await assertTargetChange(trx, row.account_id, row.address, minus(next.targets, effectiveTargets(was)),
+        next.targets.length ? [...next.targets, ...ruleTargets(rules, true)] : [], 'targets');
+    } else {
+      await assertTargetChange(trx, row.account_id, row.address, minus(next.targets, was.targets), [], 'targets');
+    }
+    assertRedirectBudget(effectiveTargets(next), rules);
+    await trx('mailboxes').where({ id: row.id, tenant_id: row.tenant_id }).update({
+      forward_targets: JSON.stringify(next.targets),
+      forward_keep_copy: next.targets.length === 0 ? true : next.keepCopy,
+      forward_enabled: next.targets.length === 0 ? true : next.enabled,
+      forward_changed_at: new Date(),
+      forward_changed_by_panel: byPanel,
+      updated_at: new Date(),
+    });
+  });
+}
+
+/**
+ * Writes the rules under the account lock (same target / loop / budget checks
+ * as the forwarding). Only the targets a change ADDS are checked for
+ * existence: a target of an enabled rule that was not enabled before, a
+ * target of a disabled rule that no stored rule had (it may be turned on
+ * later from the webmail); the forwarding's own targets are never re-checked.
+ */
+async function writeRules(row: { id: number; tenant_id: number; account_id: number; address: string }, rules: MailRule[]): Promise<void> {
+  await db.transaction(async (trx) => {
+    await lockMailAccount(trx, row.account_id);
+    const cur = await trx('mailboxes').where({ id: row.id }).first('forward_targets', 'forward_keep_copy', 'forward_enabled', 'mail_rules') as
+      Pick<MailboxRow, 'forward_targets' | 'forward_keep_copy' | 'forward_enabled' | 'mail_rules'> | undefined;
+    if (!cur) throw new AppError(404, 'Mailbox not found', 'notFound');
+    const fwd = effectiveTargets(forwardingOf(cur));
+    const stored = parseMailRules(cur.mail_rules);
+    const targets = ruleTargets(rules, true);
+    const fresh = [
+      ...minus(targets, ruleTargets(stored, true)),
+      ...minus(ruleTargets(rules.filter((r) => !r.enabled)), ruleTargets(stored)),
+    ];
+    await assertTargetChange(trx, row.account_id, row.address, fresh, targets.length ? [...fwd, ...targets] : [], 'rules');
+    assertRedirectBudget(fwd, rules);
+    await trx('mailboxes').where({ id: row.id, tenant_id: row.tenant_id }).update({ mail_rules: JSON.stringify(rules), updated_at: new Date() });
+  });
+}
+
+/** Normalized forwarding input (lower case, unique, ≤ 20). 400 invalidTarget. */
+function forwardingInput(body: { targets: unknown; keepCopy?: unknown; enabled?: unknown }): ForwardingValue {
+  if (!Array.isArray(body.targets)) throw new AppError(400, 'targets: a list expected', 'invalidTarget', { field: 'targets' });
+  const targets = [...new Set(body.targets.map((t) => (typeof t === 'string' ? t.trim().toLowerCase() : '')))];
+  if (targets.length > 20) throw new AppError(400, 'At most 20 forwarding targets', 'invalidTarget', { field: 'targets' });
+  for (const t of targets) {
+    if (!/^(?!.*\.\.)[a-z0-9._+-]{1,64}@(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(t)) {
+      throw new AppError(400, `Invalid address ${t.slice(0, 80) || '(empty)'}`, 'invalidTarget', { field: 'targets' });
+    }
+  }
+  return { targets, keepCopy: body.keepCopy === undefined ? true : !!body.keepCopy, enabled: body.enabled === undefined ? true : !!body.enabled };
+}
+
+const sameForwarding = (a: ForwardingValue, b: ForwardingValue): boolean =>
+  effectiveTargets(a).slice().sort().join(',') === effectiveTargets(b).slice().sort().join(',') && (!effectiveTargets(a).length || a.keepCopy === b.keepCopy);
+
+/**
+ * Informational e-mail to the mailbox when the panel turned its forwarding on
+ * or changed where it goes (Outlook-like notice). Bilingual, no secret.
+ * Delivered straight into the Inbox when the engine allows it (deps
+ * mailboxNotice: never through the mailbox's own forwarding / rules); by SMTP
+ * only when that reaches the mailbox (a forwarding without a copy would hand
+ * the notice to the forwarding target instead).
+ */
+function forwardingNotice(address: string, before: ForwardingValue, after: ForwardingValue): void {
+  const now = effectiveTargets(after);
+  if (!now.length || sameForwarding(before, after)) return;
+  const list = now.join(', ');
+  const copyFr = after.keepCopy ? 'Une copie reste dans votre boîte.' : 'Aucune copie ne reste dans votre boîte.';
+  const copyEn = after.keepCopy ? 'A copy stays in your mailbox.' : 'No copy stays in your mailbox.';
+  mailCoreDeps().mailboxNotice(address, '[Oblimint] Transfert de vos e-mails activé / Your e-mail is being forwarded', [
+    `Le transfert des e-mails de ${address} a été activé ou modifié depuis le panel d'hébergement.`,
+    `Vos e-mails sont transférés vers : ${list}. ${copyFr}`,
+    "Si vous n'êtes pas à l'origine de ce changement, contactez votre hébergeur ou désactivez le transfert depuis le webmail (Paramètres → Transfert).",
+    '',
+    `The forwarding of ${address} was turned on or changed from the hosting panel.`,
+    `Your e-mail is forwarded to: ${list}. ${copyEn}`,
+    'If you did not make this change, contact your host or turn the forwarding off from the webmail (Settings → Forwarding).',
+    '',
+    '— Oblimint',
+  ].join('\n'), { smtpReachesMailbox: after.keepCopy });
+}
+
+/**
+ * Same notice when the panel's rules now forward / redirect to an address
+ * no enabled rule sent to before (a rule without a condition does exactly
+ * what a forwarding does).
+ */
+function rulesNotice(address: string, before: readonly MailRule[], after: readonly MailRule[], fwd: ForwardingValue): void {
+  const added = minus(ruleTargets(after, true), ruleTargets(before, true));
+  if (!added.length) return;
+  const list = added.join(', ');
+  mailCoreDeps().mailboxNotice(address, '[Oblimint] Une règle transfère vos e-mails / A rule forwards your e-mail', [
+    `Les règles de réception de ${address} ont été modifiées depuis le panel d'hébergement.`,
+    `Une règle transfère désormais des e-mails vers : ${list}.`,
+    "Si vous n'êtes pas à l'origine de ce changement, contactez votre hébergeur ou désactivez la règle depuis le webmail (Paramètres → Règles).",
+    '',
+    `The inbox rules of ${address} were changed from the hosting panel.`,
+    `A rule now forwards e-mail to: ${list}.`,
+    'If you did not make this change, contact your host or turn the rule off from the webmail (Settings → Rules).',
+    '',
+    '— Oblimint',
+  ].join('\n'), { smtpReachesMailbox: !(effectiveTargets(fwd).length && !fwd.keepCopy) });
 }
 
 async function reloadMailbox(id: number): Promise<MailboxRow & { domain_name: string }> {
@@ -622,23 +837,126 @@ export const mailService = {
     return { password: pw.generated };
   },
 
-  async setForwarding(req: Request, actor: HostingActor, id: number, body: MailForwardingInput): Promise<MailboxDetail> {
+  /**
+   * Forwarding from the panel (mail.manage). Targets kept while paused
+   * (enabled false); [] = off. The mailbox gets an informational e-mail when
+   * its forwarding is turned on / sent elsewhere (opts.notify, default on;
+   * the CWP import passes false).
+   */
+  async setForwarding(req: Request, actor: HostingActor, id: number, body: MailForwardingInput, opts: { notify?: boolean } = {}): Promise<MailboxDetail> {
     const mb = await loadMailbox(actor, id, 'mail.manage');
-    const targets = [...new Set(body.targets.map((t) => t.trim().toLowerCase()))];
-    if (targets.length > 20) throw new AppError(400, 'At most 20 forwarding targets', 'invalidTarget', { field: 'targets' });
-    await db.transaction(async (trx) => {
-      await lockMailAccount(trx, mb.account_id);
-      await assertTargets(trx, mb.account_id, mb.address, targets, 'targets');
-      await trx('mailboxes').where({ id: mb.id, tenant_id: mb.tenant_id }).update({
-        forward_targets: JSON.stringify(targets), forward_keep_copy: targets.length === 0 ? true : !!body.keepCopy, updated_at: new Date(),
-      });
-    });
+    const before = forwardingOf(mb);
+    const next = forwardingInput(body);
+    // A client user of the account is bound by the platform's external-forwarding switch like the
+    // mailbox owner; staff is not (it may set an external target, which then stays allowed).
+    if (actor.kind === 'client') await assertPolicyTargets(mb.account_id, next.targets, storedTargets(mb));
+    await writeForwarding(mb, next, true);
     const row = await reloadMailbox(mb.id);
     changed('mailbox', row, 'updated', `mailbox ${mb.address} forwarding`);
     await auditService.logReqAs(req, mb.tenant_id, 'mail.mailbox.forwarding', {
-      resourceType: 'mailbox', resourcePath: String(mb.id), details: { address: mb.address, targets: targets.length, keepCopy: !!body.keepCopy },
+      resourceType: 'mailbox', resourcePath: String(mb.id),
+      details: { address: mb.address, targets: next.targets.length, keepCopy: next.keepCopy, enabled: next.enabled },
     });
+    if (opts.notify !== false) forwardingNotice(mb.address, before, forwardingOf(row));
     return mailboxDetail(row);
+  },
+
+  /** Inbox rules from the panel (mail.manage), the whole ordered list. Stalwart only (409 rulesUnsupported). */
+  async setRules(req: Request, actor: HostingActor, id: number, input: unknown): Promise<MailboxDetail> {
+    const mb = await loadMailbox(actor, id, 'mail.manage');
+    await assertRulesEngine();
+    const rules = parseMailRulesInput(input, mb.address);
+    const before = parseMailRules(mb.mail_rules);
+    if (actor.kind === 'client') await assertPolicyTargets(mb.account_id, ruleTargets(rules), storedTargets(mb));
+    await writeRules(mb, rules);
+    const row = await reloadMailbox(mb.id);
+    changed('mailbox', row, 'updated', `mailbox ${mb.address} rules`);
+    // Counts only: the words of the conditions are the user's content (MA4).
+    await auditService.logReqAs(req, mb.tenant_id, 'mail.mailbox.rules', {
+      resourceType: 'mailbox', resourcePath: String(mb.id),
+      details: { address: mb.address, rules: rules.length, enabled: rules.filter((r) => r.enabled).length, forwardTargets: ruleTargets(rules).length },
+    });
+    rulesNotice(mb.address, before, parseMailRules(row.mail_rules), forwardingOf(row));
+    return mailboxDetail(row);
+  },
+
+  /**
+   * Folders of the mailbox (rule "move to" picker): '/'-joined paths, from the
+   * engine; [] when it cannot say. Folder names are the user's content: the
+   * right that edits the rules (mail.manage), not a mere read.
+   */
+  async mailboxFolders(actor: HostingActor, id: number): Promise<string[]> {
+    const mb = await loadMailbox(actor, id, 'mail.manage');
+    if (!mailEngineSupportsRules(await activeMailEngine())) return [];
+    try {
+      const { webmailEngine } = await import('./webmail/oblimint/server');
+      const ep = await webmailEngine.endpoints(mb.address);
+      const out = await webmailEngine.call(mb.address, [['Mailbox/get', { accountId: ep.accountId, ids: null, properties: ['id', 'name', 'parentId', 'role'] }, 'm']]);
+      const list = ((out.methodResponses?.[0]?.[1] as { list?: unknown[] } | undefined)?.list ?? []) as Array<{ id: string; name: string; parentId: string | null; role: string | null }>;
+      return folderPaths(list);
+    } catch (err) {
+      logger.debug({ err: errText(err), mailbox: mb.id }, 'mail: folders of the mailbox not listed');
+      return [];
+    }
+  },
+
+  // ── the mailbox's own settings (Oblimint webmail: the session IS the mailbox) ──
+
+  async ownerForwarding(mailboxId: number): Promise<WebmailForwarding> {
+    const row = await reloadMailbox(mailboxId);
+    const f = forwardingOf(row);
+    return {
+      ...f,
+      active: f.enabled && f.targets.length > 0,
+      changedByPanelAt: row.forward_changed_by_panel && row.forward_changed_at ? new Date(row.forward_changed_at as string).toISOString() : null,
+      // Rules that forward / redirect (a rule without a condition does what a forwarding does): in the banner too.
+      ruleForwards: ruleForwards(parseMailRules(row.mail_rules)),
+      policy: publicPolicy(await ownerPolicy(row.account_id)),
+    };
+  },
+
+  /**
+   * The owner's forwarding (webmail). Same rows / checks / sync / audit as
+   * the panel; external targets only when the platform allows it, except
+   * those already there (set by the panel). 403 forwardingNotAllowed.
+   */
+  async setForwardingAsMailbox(mailboxId: number, input: WebmailForwardingInput, ip: string | null): Promise<WebmailForwarding> {
+    const row0 = await reloadMailbox(mailboxId);
+    const next = forwardingInput(input as unknown as { targets: unknown; keepCopy?: unknown; enabled?: unknown });
+    await assertPolicyTargets(row0.account_id, next.targets, storedTargets(row0));
+    await writeForwarding(row0, next, false);
+    const row = await reloadMailbox(mailboxId);
+    changed('mailbox', row, 'updated', `mailbox ${row.address} forwarding (webmail)`);
+    await auditService.log({
+      tenantId: row.tenant_id, action: 'mail.mailbox.forwarding', resourceType: 'mailbox', resourcePath: String(row.id), ipAddress: ip ?? undefined,
+      details: { address: row.address, origin: 'webmail', targets: next.targets.length, keepCopy: next.keepCopy, enabled: next.enabled },
+    });
+    return this.ownerForwarding(mailboxId);
+  },
+
+  async ownerRules(mailboxId: number): Promise<WebmailRules> {
+    const row = await reloadMailbox(mailboxId);
+    return {
+      rules: parseMailRules(row.mail_rules),
+      supported: mailEngineSupportsRules(await activeMailEngine()),
+      policy: publicPolicy(await ownerPolicy(row.account_id)),
+    };
+  },
+
+  /** The owner's rules (webmail): forward / redirect targets bounded like the forwarding. */
+  async setRulesAsMailbox(mailboxId: number, input: unknown, ip: string | null): Promise<WebmailRules> {
+    await assertRulesEngine();
+    const row0 = await reloadMailbox(mailboxId);
+    const rules = parseMailRulesInput(input, row0.address);
+    await assertPolicyTargets(row0.account_id, ruleTargets(rules), storedTargets(row0));
+    await writeRules(row0, rules);
+    const row = await reloadMailbox(mailboxId);
+    changed('mailbox', row, 'updated', `mailbox ${row.address} rules (webmail)`);
+    await auditService.log({
+      tenantId: row.tenant_id, action: 'mail.mailbox.rules', resourceType: 'mailbox', resourcePath: String(row.id), ipAddress: ip ?? undefined,
+      details: { address: row.address, origin: 'webmail', rules: rules.length, enabled: rules.filter((r) => r.enabled).length, forwardTargets: ruleTargets(rules).length },
+    });
+    return this.ownerRules(mailboxId);
   },
 
   async setAutoresponder(req: Request, actor: HostingActor, id: number, body: MailAutoresponderInput): Promise<MailboxDetail> {

@@ -545,6 +545,7 @@ function MailAbuseBlock({ value, save }: { value: MailSettings; save: SaveFn }) 
   const { t } = useTranslation();
   const [draft, set, dirty, reset] = useDraft({
     siteRelay: value.siteRelay,
+    ownerExternalForwarding: value.ownerExternalForwarding !== false,
     abuseBounceRatePct: String(value.abuseBounceRatePct),
     abuseMinMessages: String(value.abuseMinMessages),
     abuseAction: value.abuseAction,
@@ -565,7 +566,7 @@ function MailAbuseBlock({ value, save }: { value: MailSettings; save: SaveFn }) 
     if (!valid) return;
     setSaving(true);
     const err = await save({
-      siteRelay: draft.siteRelay, abuseBounceRatePct: rate!, abuseMinMessages: minMsg!, abuseAction: draft.abuseAction,
+      siteRelay: draft.siteRelay, ownerExternalForwarding: draft.ownerExternalForwarding, abuseBounceRatePct: rate!, abuseMinMessages: minMsg!, abuseAction: draft.abuseAction,
       authBanThreshold: threshold!, authBanWindowMinutes: windowMin!, authBanDurationMinutes: duration!,
     });
     setSaving(false);
@@ -584,6 +585,12 @@ function MailAbuseBlock({ value, save }: { value: MailSettings; save: SaveFn }) 
         onChange={(v) => set({ siteRelay: v })}
         label={t('mailSettings.abuse.siteRelay') || 'Sites send through the relay (PHP mail())'}
         description={t('mailSettings.abuse.siteRelayHint') || 'msmtp in every site → authenticated relay, sender forced on an address of the account, limit per site. Off: mail() of the sites returns false.'}
+      />
+      <ToggleSwitch
+        checked={draft.ownerExternalForwarding}
+        onChange={(v) => set({ ownerExternalForwarding: v })}
+        label={t('mailSettings.abuse.ownerForwarding') || 'Mailbox owners may forward outside their domains'}
+        description={t('mailSettings.abuse.ownerForwardingHint') || 'Forwarding and inbox rules (forward / redirect) to an address outside the hosting account, set by the mailbox owner (webmail) or a client user of the account (panel). Off: only to the account\'s own domains; what the staff set stays. The staff is not bound (protect the panel actions in the restrictions: mail.mailbox_forwarding / mail.mailbox_rules).'}
       />
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <NumberField id="mab-rate" label={t('mailSettings.abuse.rate') || 'Bounce + spam rate (%)'} value={draft.abuseBounceRatePct} onChange={(v) => set({ abuseBounceRatePct: v })} min={1} max={100} />

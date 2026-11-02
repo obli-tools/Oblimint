@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { WebmailSessionInfo } from '@oblimint/shared';
+import type { MailRule, WebmailForwarding, WebmailSessionInfo } from '@oblimint/shared';
+import { wmApi } from './api';
 import { buildFilter, loadMailboxes, queryThreads, type EmailListItem, type Mailbox, type SearchQuery } from './jmap';
 import type { DraftFields } from './lib/compose';
 import { keepOpenRow, withQuickFilter, type QuickFilter } from './lib/view';
@@ -7,6 +8,8 @@ import { keepOpenRow, withQuickFilter, type QuickFilter } from './lib/view';
 // State of the webmail SPA (zustand, like the panel).
 
 export const PAGE_SIZE = 50;
+
+export type SettingsTab = 'vacation' | 'forwarding' | 'rules';
 
 export interface Toast {
   id: number;
@@ -49,8 +52,14 @@ interface WebmailState {
   drawerOpen: boolean;
   composer: ComposerState | null;
   toasts: Toast[];
-  /** Full-screen layer open over the shell (command palette, shortcuts, vacation responder). */
-  overlay: 'palette' | 'shortcuts' | 'vacation' | null;
+  /** Full-screen layer open over the shell (command palette, shortcuts, mail settings). */
+  overlay: 'palette' | 'shortcuts' | 'settings' | null;
+  /** Section of the mail settings (Outlook: Settings → Mail → …). */
+  settingsTab: SettingsTab;
+  /** A rule to open in the editor when the settings open on Rules ("Create a rule" from a sender). */
+  ruleDraft: MailRule | null;
+  /** The mailbox's forwarding (banner), null until read / when the webmail has no such surface. */
+  forwarding: WebmailForwarding | null;
 
   setPhase(p: WebmailState['phase']): void;
   setSession(s: WebmailSessionInfo | null): void;
@@ -62,6 +71,9 @@ interface WebmailState {
   setSearch(q: SearchQuery | null): void;
   setQuick(q: QuickFilter): void;
   setOverlay(o: WebmailState['overlay']): void;
+  openSettings(tab: SettingsTab, ruleDraft?: MailRule | null): void;
+  loadForwarding(background?: boolean): Promise<void>;
+  setForwarding(f: WebmailForwarding | null): void;
   reloadList(background?: boolean): Promise<void>;
   loadMore(): Promise<void>;
   setSelection(ids: string[]): void;
@@ -100,6 +112,9 @@ export const useWebmail = create<WebmailState>((set, get) => ({
   composer: null,
   toasts: [],
   overlay: null,
+  settingsTab: 'vacation',
+  ruleDraft: null,
+  forwarding: null,
 
   setPhase: (phase) => set({ phase }),
   setSession: (session) => set({ session }),
@@ -135,6 +150,15 @@ export const useWebmail = create<WebmailState>((set, get) => ({
   },
 
   setOverlay: (overlay) => set({ overlay }),
+  openSettings: (settingsTab, ruleDraft = null) => set({ overlay: 'settings', settingsTab, ruleDraft }),
+  async loadForwarding(background = false) {
+    try {
+      set({ forwarding: await wmApi.forwarding(background) });
+    } catch {
+      // Not available (older panel, engine down): no banner rather than an error.
+    }
+  },
+  setForwarding: (forwarding) => set({ forwarding }),
 
   async reloadList(background = false) {
     const { currentMailboxId, search, quick, list } = get();
@@ -200,5 +224,6 @@ export const useWebmail = create<WebmailState>((set, get) => ({
   }),
   reset: () => set({
     session: null, mailboxes: [], currentMailboxId: null, search: null, quick: 'all', list: emptyList(), selection: [], openThreadId: null, composer: null, drawerOpen: false, overlay: null,
+    settingsTab: 'vacation', ruleDraft: null, forwarding: null,
   }),
 }));

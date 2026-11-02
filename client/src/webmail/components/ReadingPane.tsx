@@ -15,6 +15,7 @@ import { useWebmail } from '../store';
 import { MessageBody, partValue } from './MessageBody';
 import { MoveMenu } from './MessageList';
 import { useMailboxName } from './MailboxTree';
+import { SenderButton } from './SenderCard';
 import { Avatar, EmptyState, IconButton, MenuItem, PillButton, Popover } from './ui';
 
 function Attachments({ email }: { email: EmailFull }) {
@@ -51,10 +52,12 @@ function MessageCard({ email, expanded, last, onToggle, onCompose }: {
       <header className="flex cursor-pointer items-start gap-3 rounded-[10px] px-4 py-3" onClick={onToggle}
         role="button" tabIndex={0} aria-expanded={expanded}
         onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onToggle(); } }}>
-        <Avatar name={from?.name} email={from?.email} size={36} />
+        <SenderButton person={from ?? null} label={t('wm.card.open') || 'Contact card'} className="shrink-0 rounded-full">
+          <Avatar name={from?.name} email={from?.email} size={36} />
+        </SenderButton>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className={cn('min-w-0 truncate text-[13.5px] text-text-primary', unread ? 'font-semibold' : 'font-medium')} title={from ? formatAddress(from) : ''}>{name}</span>
+            <SenderButton person={from ?? null} label={from ? formatAddress(from) : ''} className={cn('min-w-0 truncate text-[13.5px] text-text-primary', unread ? 'font-semibold' : 'font-medium')}>{name}</SenderButton>
             {expanded && from && from.name && <span className="hidden min-w-0 shrink-[4] truncate text-[12px] text-text-muted sm:inline">&lt;{from.email}&gt;</span>}
             <span className="flex-1" />
             {email.hasAttachment && !expanded && <Paperclip size={12} className="shrink-0 self-center text-text-muted" />}

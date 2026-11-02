@@ -33,6 +33,12 @@ test('catalogue: unique valid keys, defaults only on catalogue actions, platform
   assert.deepEqual(def('db.admin_open'), { key: 'db.admin_open', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: ['panel'] });
   assert.equal(DEFAULT_RESTRICTIONS['db.admin_open'], undefined);
   assert.equal(defaultRestrictionsFor(true)['db.admin_open'], undefined);
+  // Where a mailbox's mail goes (forwarding, inbox rules): protectable, panel only, OPEN by default.
+  for (const key of ['mail.mailbox_forwarding', 'mail.mailbox_rules']) {
+    assert.deepEqual(def(key), { key, category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: ['panel'] });
+    assert.equal(DEFAULT_RESTRICTIONS[key], undefined);
+    assert.equal(defaultRestrictionsFor(true)[key], undefined);
+  }
 });
 
 test('normalizeEntry: short and long forms, junk and none refused', () => {

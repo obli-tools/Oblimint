@@ -88,12 +88,24 @@ const CONFIG_FILE = 'config.toml';
 const DKIM_DIR = 'dkim';
 const DKIM_FILE_RE = /^k[0-9a-f]{16}\.pem$/;
 
+/**
+ * Version of what a sieve pass enforces on a mailbox (part of its sieve
+ * fingerprint): bumping it makes the next sync visit every mailbox once.
+ * v2: ManageSieve closed, a foreign active script is deactivated (api.ts
+ * setSieveScript) — mailboxes without a script are checked once too.
+ */
+const SIEVE_FP_VERSION = 'v2';
+
 /** Sync bookkeeping (fingerprints only) in the panel-only configuration directory (constants.ts). */
 interface SyncState {
   version: 1;
   /** principal name → sha256 of its secrets as last pushed. */
   secrets: Record<string, string>;
-  /** mailbox → sha256 of its sieve script as last installed ('' = none). */
+  /**
+   * mailbox → '<SIEVE_FP_VERSION>:<sha256 of its sieve script>' as last
+   * installed, or 'none:<SIEVE_FP_VERSION>' once its absence was enforced
+   * (absent = never checked: the next pass visits it).
+   */
   sieve: Record<string, string>;
   /**
    * Fingerprint of config.toml (its structure: no mailbox, no domain setting,
@@ -648,14 +660,15 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
             domainErrors[domain] ??= err instanceof Error ? err.message : String(err);
             continue;
           }
-          const fp = script === null ? '' : sha256(script);
+          // Versioned fingerprint ('none' recorded too): a new SIEVE_FP_VERSION visits every mailbox
+          // once more, a mailbox without a script included (foreign active script deactivated).
+          const fp = script === null ? `none:${SIEVE_FP_VERSION}` : `${SIEVE_FP_VERSION}:${sha256(script)}`;
           if ((syncState.sieve[name] ?? '') === fp) continue;
           try {
             await withImpersonation(api, name, !mb.loginEnabled, () =>
               api.setSieveScript(name, MASTER_USER, creds.secret, SIEVE_SCRIPT_NAME, script));
             sieveWrites++;
-            if (fp) syncState.sieve[name] = fp;
-            else delete syncState.sieve[name];
+            syncState.sieve[name] = fp;
           } catch (err) {
             const e = toDriverError(err, `sieve script of ${name}`);
             if (e.code === 'unavailable') throw e;
@@ -771,7 +784,9 @@ export function createStalwartDriver(deps: StalwartDriverDeps): MailDriver {
     // mail network (certificate name not verifiable for 'oblimint-mail').
     imapEndpoint() { return { host: MAIL_CONTAINER, port: 143, tls: 'starttls' }; },
     submissionEndpoint() { return { host: MAIL_CONTAINER, port: 587, tls: 'starttls' }; },
-    sieveEndpoint() { return { host: MAIL_CONTAINER, port: 4190, tls: 'starttls' }; },
+    // No ManageSieve (config.ts MA-SIEVE): the webmails get no filter plugin, the panel / the
+    // Oblimint webmail edit the forwarding, autoresponder and inbox rules.
+    sieveEndpoint() { return null; },
     relayTarget() { return { host: MAIL_CONTAINER, port: STALWART_RELAY_PORT, tls: 'none' }; },
   };
 

@@ -1,6 +1,6 @@
 import type {
   DkimAlgorithm, DkimKeyStatus, MailAutoresponder, MailDomainDnsSettings, MailExternalConfig, MailLogDirection, MailLogEventKind,
-  MailPasswordScheme,
+  MailPasswordScheme, MailRule,
 } from '@oblimint/shared';
 import { DEFAULT_MAIL_DOMAIN_DNS_SETTINGS } from '@oblimint/shared';
 import { json } from '../hosting/rows';
@@ -52,6 +52,12 @@ export interface MailboxRow {
   receive_enabled: boolean;
   forward_targets: unknown;
   forward_keep_copy: boolean;
+  /** Migration 034 (absent in old fixtures = true). */
+  forward_enabled?: boolean;
+  forward_changed_at?: Ts | null;
+  forward_changed_by_panel?: boolean;
+  /** Migration 034: MailRule[] (jsonb). */
+  mail_rules?: unknown;
   autoresponder: unknown;
   used_bytes: number | string | null;
   usage_checked_at: Ts | null;
@@ -177,6 +183,20 @@ export interface MailPurgeRow {
 export function parseTargets(v: unknown): string[] {
   const arr = json<unknown[]>(v, []);
   return Array.isArray(arr) ? arr.filter((t): t is string => typeof t === 'string' && t.length > 0).map((t) => t.toLowerCase()) : [];
+}
+
+/**
+ * mailboxes.mail_rules → MailRule[] (validated when written: rules.ts). A row
+ * that does not have the expected shape is dropped, never half-rendered.
+ */
+export function parseMailRules(v: unknown): MailRule[] {
+  const arr = json<unknown[]>(v, []);
+  if (!Array.isArray(arr)) return [];
+  return arr.filter((r): r is MailRule => {
+    const x = r as Partial<MailRule> | null;
+    return !!x && typeof x === 'object' && typeof x.id === 'string' && typeof x.name === 'string' && typeof x.enabled === 'boolean'
+      && (x.match === 'all' || x.match === 'any') && Array.isArray(x.conditions) && Array.isArray(x.actions) && x.actions.length > 0;
+  }).map((r) => ({ ...r, stop: !!r.stop }));
 }
 
 /** mailboxes.autoresponder → MailAutoresponder | null. */

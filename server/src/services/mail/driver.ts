@@ -1,6 +1,6 @@
 import type {
   DkimAlgorithm, InfraComponentStatus, MailBanService, MailEngine, MailLogDirection, MailLogEventKind, MailPasswordScheme,
-  MailQueueItemStatus,
+  MailQueueItemStatus, MailRule,
 } from '@oblimint/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +111,12 @@ export interface DesiredMailbox {
   forward: { targets: string[]; keepCopy: boolean } | null;
   /** Active autoresponder (enabled flag already applied), null = none. */
   autoresponder: DesiredAutoresponder | null;
+  /**
+   * Enabled inbox rules, in order (forward / redirect targets already cut to
+   * what the mailbox may reach, MA9). Rendered by engines that run them
+   * (mailEngineSupportsRules); absent = none.
+   */
+  rules?: MailRule[];
 }
 
 export interface DesiredAlias {

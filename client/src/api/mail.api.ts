@@ -4,7 +4,7 @@ import type {
   MailboxCreated, MailboxDetail, MailboxUpdate, MailDnsFixPlan, MailDnsFixResult, MailDnsStatus, MailDomain, MailDomainCreate, MailDomainDetail, MailDomainDnsUpdate,
   MailDomainUpdate, MailEngine, MailForwardingInput, MailLogDirection, MailLogEntry, MailLogEventKind, MailOutboundState, MailOverview,
   MailPasswordChange, MailPasswordResult, MailQueueItem, MailSystemStatus, OpenRelayTestResult, SiteMailRelay, SiteMailRelayUpdate,
-  WebmailSsoTicket,
+  WebmailSsoTicket, MailRule,
 } from '@oblimint/shared';
 
 // /api/mail, /api/system/mail, /api/sites/:id/mail-relay — docs/P4-PLAN.md §6.
@@ -83,6 +83,16 @@ export const mailApi = {
   async setForwarding(id: number, data: MailForwardingInput): Promise<MailboxDetail> {
     const res = await apiClient.put<ApiResponse<MailboxDetail>>(`/mail/mailboxes/${id}/forwarding`, data);
     return res.data.data!;
+  },
+  /** The whole ordered list of inbox rules (Stalwart). */
+  async setRules(id: number, rules: MailRule[]): Promise<MailboxDetail> {
+    const res = await apiClient.put<ApiResponse<MailboxDetail>>(`/mail/mailboxes/${id}/rules`, { rules });
+    return res.data.data!;
+  },
+  /** Folders of the mailbox ('/'-joined sieve paths), [] when the engine cannot say. */
+  async mailboxFolders(id: number): Promise<string[]> {
+    const res = await apiClient.get<ApiResponse<string[]>>(`/mail/mailboxes/${id}/folders`);
+    return res.data.data ?? [];
   },
   async setAutoresponder(id: number, data: MailAutoresponderInput): Promise<MailboxDetail> {
     const res = await apiClient.put<ApiResponse<MailboxDetail>>(`/mail/mailboxes/${id}/autoresponder`, data);

@@ -3,8 +3,9 @@ import path from 'path';
 import { Readable, Transform } from 'stream';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
-import type { MailAutoresponder, WebmailErrorCode } from '@oblimint/shared';
+import type { MailAutoresponder, WebmailError, WebmailErrorCode, WebmailForwarding, WebmailForwardingInput, WebmailRules } from '@oblimint/shared';
 import { WEBMAIL_BACKGROUND_HEADER, WEBMAIL_CSRF_HEADER } from '@oblimint/shared';
+import { AppError } from '../../../../middleware/errorHandler';
 import { logger } from '../../../../utils/logger';
 import { WebmailAuthError, type LoadedSession, type WebmailAuth } from './auth';
 import { WebmailEngineError, type WebmailEngine } from './engine';
@@ -35,7 +36,8 @@ import { parseVacationInput, VacationInputError } from './vacation';
 // cookie that maps to no session counts as its client address); JMAP calls
 // bounded in flight per session, per mailbox and overall (each buffers one
 // engine answer, itself capped in engine.ts); event streams per session, per
-// mailbox and overall; the autoresponder write rate-limited per session.
+// mailbox and overall; the autoresponder, forwarding and rules writes
+// rate-limited per session (each re-renders the mailbox's sieve script).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface WebmailAppDeps {
@@ -57,6 +59,19 @@ export interface WebmailAppDeps {
     get(mailboxId: number): Promise<MailAutoresponder | null>;
     set(mailboxId: number, value: MailAutoresponder, ip: string | null): Promise<MailAutoresponder | null>;
   };
+  /**
+   * The panel's forwarding and inbox rules of the session's mailbox
+   * (mail.service owner functions: same rows, checks, sync and audit as the
+   * panel, bounded by settings mail.ownerExternalForwarding). Absent: 404.
+   */
+  forwarding?: {
+    get(mailboxId: number): Promise<WebmailForwarding>;
+    set(mailboxId: number, value: WebmailForwardingInput, ip: string | null): Promise<WebmailForwarding>;
+  };
+  rules?: {
+    get(mailboxId: number): Promise<WebmailRules>;
+    set(mailboxId: number, rules: unknown, ip: string | null): Promise<WebmailRules>;
+  };
   /** Directory holding webmail.html + assets/ (null: API only). */
   clientDist: string | null;
   now(): number;
@@ -64,8 +79,10 @@ export interface WebmailAppDeps {
   apiRatePerMinute?: number;
   /** Requests per minute per client address, whatever the session (before any database read). */
   apiIpRatePerMinute?: number;
-  /** PUT /vacation per minute and session. */
+  /** PUT /vacation and PUT /forwarding per minute and session. */
   vacationRatePerMinute?: number;
+  /** PUT /rules per minute and session (its own budget: re-ordering takes several writes). */
+  rulesRatePerMinute?: number;
   /** JMAP calls in flight (each buffers one engine answer). */
   maxJmapPerSession?: number;
   maxJmapPerMailbox?: number;
@@ -99,9 +116,20 @@ type Locals = { wm: LoadedSession | null; ip: string };
 
 const ROOT_FILES = new Set(['favicon.svg', 'logo.svg', 'logo-daylight.svg']);
 
-function sendError(res: Response, status: number, error: WebmailErrorCode, message: string): void {
+function sendError(res: Response, status: number, error: WebmailErrorCode, message: string, extra?: Pick<WebmailError, 'reason' | 'details'>): void {
   if (res.headersSent) { res.end(); return; }
-  res.status(status).json({ error, message });
+  res.status(status).json({ error, message, ...extra });
+}
+
+/** The details of a panel refusal the webmail may show (whitelist: never a loop path, a field list…). */
+function safeDetails(details: unknown): WebmailError['details'] | undefined {
+  if (!details || typeof details !== 'object') return undefined;
+  const d = details as Record<string, unknown>;
+  const out: NonNullable<WebmailError['details']> = {};
+  if (typeof d.target === 'string' && d.target.length <= 254) out.target = d.target;
+  if (typeof d.max === 'number' && Number.isInteger(d.max)) out.max = d.max;
+  if (typeof d.rule === 'number' && Number.isInteger(d.rule)) out.rule = d.rule;
+  return Object.keys(out).length ? out : undefined;
 }
 
 export function createWebmailApp(deps: WebmailAppDeps): Express {
@@ -493,6 +521,82 @@ export function createWebmailApp(deps: WebmailAppDeps): Express {
     } catch (err) {
       if (err instanceof VacationInputError) return sendError(res, 400, 'invalidRequest', err.message);
       await callError(res, err, (res.locals as Locals).wm);
+    }
+  });
+
+  /** A refusal of the panel's rules (validation, policy, engine) → the webmail's error shape. */
+  const settingsError = async (res: Response, err: unknown) => {
+    if (err instanceof AppError && err.statusCode < 500) {
+      const code: WebmailErrorCode = err.code === 'forwardingNotAllowed' ? 'forwardingNotAllowed'
+        : err.statusCode === 403 ? 'forbidden' : err.statusCode === 404 ? 'notFound' : err.statusCode === 409 ? 'unavailable' : 'invalidRequest';
+      // reason = the panel's code (invalidTarget, forwardingLoop, tooManyRedirects, invalidRule, rulesUnsupported…): translated by the webmail.
+      return sendError(res, err.statusCode, code, err.message, { ...(err.code ? { reason: err.code } : {}), ...(safeDetails(err.details) ? { details: safeDetails(err.details) } : {}) });
+    }
+    return callError(res, err, (res.locals as Locals).wm);
+  };
+
+  api.get('/forwarding', async (req, res) => {
+    const s = needSession(req, res);
+    if (!s) return;
+    if (!deps.forwarding) return sendError(res, 404, 'notFound', 'Not found');
+    try {
+      res.json(await deps.forwarding.get(s.mailboxId));
+    } catch (err) {
+      await settingsError(res, err);
+    }
+  });
+
+  api.put('/forwarding', vacationLimiter, jsonOnly, smallJson, async (req, res) => {
+    const s = needCsrfSession(req, res);
+    if (!s) return;
+    if (!deps.forwarding) return sendError(res, 404, 'notFound', 'Not found');
+    const b = req.body as Record<string, unknown> | null;
+    if (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => !['enabled', 'targets', 'keepCopy'].includes(k))
+      || typeof b.enabled !== 'boolean' || typeof b.keepCopy !== 'boolean' || !Array.isArray(b.targets) || b.targets.length > 20
+      || b.targets.some((t) => typeof t !== 'string' || t.length > 254)) {
+      return sendError(res, 400, 'invalidRequest', 'enabled, targets (at most 20 addresses) and keepCopy expected');
+    }
+    try {
+      res.json(await deps.forwarding.set(s.mailboxId, { enabled: b.enabled, targets: b.targets as string[], keepCopy: b.keepCopy }, (res.locals as Locals).ip || null));
+    } catch (err) {
+      await settingsError(res, err);
+    }
+  });
+
+  api.get('/rules', async (req, res) => {
+    const s = needSession(req, res);
+    if (!s) return;
+    if (!deps.rules) return sendError(res, 404, 'notFound', 'Not found');
+    try {
+      res.json(await deps.rules.get(s.mailboxId));
+    } catch (err) {
+      await settingsError(res, err);
+    }
+  });
+
+  // 50 rules of 10 conditions of 10 words: well below 256 KiB.
+  const rulesJson = express.json({ limit: '256kb', strict: true });
+  // Its own budget: every switch / ↑ ↓ of the rules list is a full PUT (a re-order takes a few).
+  const rulesLimiter = rateLimit({
+    windowMs: 60_000, limit: deps.rulesRatePerMinute ?? 30, standardHeaders: false, legacyHeaders: false, validate: false,
+    keyGenerator: (_req, res) => {
+      const locals = res.locals as Locals;
+      return locals.wm ? `r:${locals.wm.sidHash}` : `r:ip:${locals.ip}`;
+    },
+    handler: (_req, res) => sendError(res, 429, 'tooManyAttempts', 'Too many changes: try again in a minute'),
+  });
+  api.put('/rules', rulesLimiter, jsonOnly, rulesJson, async (req, res) => {
+    const s = needCsrfSession(req, res);
+    if (!s) return;
+    if (!deps.rules) return sendError(res, 404, 'notFound', 'Not found');
+    const b = req.body as Record<string, unknown> | null;
+    if (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some((k) => k !== 'rules') || !Array.isArray(b.rules)) {
+      return sendError(res, 400, 'invalidRequest', 'rules expected');
+    }
+    try {
+      res.json(await deps.rules.set(s.mailboxId, b.rules, (res.locals as Locals).ip || null));
+    } catch (err) {
+      await settingsError(res, err);
     }
   });
 

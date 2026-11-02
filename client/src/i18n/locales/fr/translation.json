@@ -97,7 +97,8 @@
     "searchEllipsis": "Rechercher…",
     "expandAll": "Tout déplier",
     "collapseAll": "Tout replier",
-    "platformGroup": "Plateforme"
+    "platformGroup": "Plateforme",
+    "remove": "Retirer"
   },
   "dashboard": {
     "accounts": "Comptes d'hébergement",

@@ -45,8 +45,8 @@ export const STALWART_API_PORT = 8080;
 /** Internal SMTP port the site relay hands its messages to (trusted by exact address, never published). */
 export const STALWART_RELAY_PORT = 10025;
 
-/** Public mail ports published on config.hosting.mailBind. */
-export const STALWART_PUBLIC_PORTS = [25, 465, 587, 143, 993, 110, 995, 4190] as const;
+/** Public mail ports published on config.hosting.mailBind (no ManageSieve 4190: config.ts MA-SIEVE). */
+export const STALWART_PUBLIC_PORTS = [25, 465, 587, 143, 993, 110, 995] as const;
 
 export const STALWART_API_URL = `http://${MAIL_CONTAINER}:${STALWART_API_PORT}`;
 

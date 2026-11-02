@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeftToLine, CalendarOff, ChevronDown, Command, Keyboard, LogOut, Menu, PanelLeft, PenSquare } from 'lucide-react';
+import { ArrowLeftToLine, CalendarOff, ChevronDown, Command, CornerUpRight, Keyboard, ListFilter, LogOut, Menu, PanelLeft, PenSquare } from 'lucide-react';
 import { Logo } from '@/components/common/Logo';
 import { cn } from '@/utils/cn';
 import { archive, canArchive, closeThread, COMPOSER_CLOSE_EVENT, currentTargets, deleteThreads, deletesForGood, stepThread, toggleFlag, toggleSeen } from '../actions';
@@ -15,9 +15,11 @@ import { Composer } from './Composer';
 import { Dialog } from './Dialog';
 import { MailboxTree } from './MailboxTree';
 import { MessageList } from './MessageList';
-import { LanguagePicker, ThemePicker, VacationDialog } from './Preferences';
+import { ForwardingBanner } from './ForwardingBanner';
+import { LanguagePicker, ThemePicker } from './Preferences';
 import { ReadingPane } from './ReadingPane';
 import { SearchBox, SEARCH_INPUT_ID } from './SearchBox';
+import { SettingsDialog } from './Settings';
 import { Avatar, IconButton, Kbd, MenuItem, MenuSeparator, Popover, Splitter } from './ui';
 
 /**
@@ -55,6 +57,8 @@ function AccountMenu({ panelUrl, onLogout }: { panelUrl: string | null; onLogout
   const { t } = useTranslation();
   const session = useWebmail((s) => s.session);
   const setOverlay = useWebmail((s) => s.setOverlay);
+  const openSettings = useWebmail((s) => s.openSettings);
+  const forwardingActive = useWebmail((s) => !!s.forwarding?.active);
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
   const address = session?.address ?? '';
@@ -82,7 +86,10 @@ function AccountMenu({ panelUrl, onLogout }: { panelUrl: string | null; onLogout
         </div>
         <MenuSeparator />
         {panelUrl && <MenuItem icon={<ArrowLeftToLine size={14} />} onClick={() => { close(); window.location.assign(panelUrl); }}>{t('wm.back.toPanel') || 'Back to Oblimint'}</MenuItem>}
-        <MenuItem icon={<CalendarOff size={14} />} onClick={() => { close(); setOverlay('vacation'); }}>{t('wm.vacation.title') || 'Vacation responder'}</MenuItem>
+        <MenuItem icon={<CalendarOff size={14} />} onClick={() => { close(); openSettings('vacation'); }}>{t('wm.vacation.title') || 'Automatic replies'}</MenuItem>
+        <MenuItem icon={<CornerUpRight size={14} />} hint={forwardingActive ? <span className="font-medium text-accent">{t('wm.forwarding.on') || 'on'}</span> : undefined}
+          onClick={() => { close(); openSettings('forwarding'); }}>{t('wm.forwarding.title') || 'Forwarding'}</MenuItem>
+        <MenuItem icon={<ListFilter size={14} />} onClick={() => { close(); openSettings('rules'); }}>{t('wm.rules.title') || 'Rules'}</MenuItem>
         <MenuItem icon={<Keyboard size={14} />} hint={<Kbd>?</Kbd>} onClick={() => { close(); setOverlay('shortcuts'); }}>{t('wm.keys.title') || 'Keyboard shortcuts'}</MenuItem>
         <MenuSeparator />
         <div className="space-y-2 px-3 py-2">
@@ -130,7 +137,6 @@ export function MailShell() {
   const dragMax = useRef<number>(LIST_BOUNDS.max);
   const listRef = useRef<HTMLDivElement>(null);
   const readingRef = useRef<HTMLElement>(null);
-  const closeOverlay = useCallback(() => setOverlay(null), [setOverlay]);
 
   const logout = useCallback(async () => {
     await wmApi.logout();
@@ -249,6 +255,8 @@ export function MailShell() {
         <AccountMenu panelUrl={panelUrl} onLogout={() => { void logout(); }} />
       </header>
 
+      <ForwardingBanner />
+
       <div className="flex min-h-0 flex-1">
         {/* Folders: column from lg (unless hidden), drawer below. */}
         {!sidebarHidden && (
@@ -308,7 +316,7 @@ export function MailShell() {
         </button>
       )}
       {composer && <Composer key={composer.key} c={composer} />}
-      <VacationDialog open={overlay === 'vacation'} onClose={closeOverlay} />
+      <SettingsDialog />
       <ShortcutsDialog />
       <CommandPalette panelUrl={panelUrl} onLogout={() => { void logout(); }} />
     </div>

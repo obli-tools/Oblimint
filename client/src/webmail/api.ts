@@ -1,4 +1,4 @@
-import type { WebmailErrorCode, WebmailSessionInfo, WebmailSsoTarget, WebmailVacation } from '@oblimint/shared';
+import type { MailRule, WebmailError, WebmailErrorCode, WebmailForwarding, WebmailForwardingInput, WebmailRules, WebmailSessionInfo, WebmailSsoTarget, WebmailVacation } from '@oblimint/shared';
 import { WEBMAIL_API_PREFIX, WEBMAIL_BACKGROUND_HEADER, WEBMAIL_CSRF_HEADER } from '@oblimint/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11,7 +11,14 @@ import { WEBMAIL_API_PREFIX, WEBMAIL_BACKGROUND_HEADER, WEBMAIL_CSRF_HEADER } fr
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, public readonly code: WebmailErrorCode | 'network', message: string) {
+  constructor(
+    public readonly status: number,
+    public readonly code: WebmailErrorCode | 'network',
+    message: string,
+    /** Business reason of a refused settings change (WebmailError.reason), for translation. */
+    public readonly reason: string | null = null,
+    public readonly details: WebmailError['details'] | null = null,
+  ) {
     super(message);
     this.name = 'ApiError';
   }
@@ -50,9 +57,10 @@ async function call<T>(method: string, path: string, body?: unknown, opts: Optio
   let json: unknown = null;
   try { json = await res.json(); } catch { json = null; }
   if (!res.ok) {
-    const e = (json ?? {}) as { error?: WebmailErrorCode; message?: string };
+    const e = (json ?? {}) as Partial<WebmailError>;
     if (res.status === 401 && !opts.quiet401 && onUnauthenticated) onUnauthenticated();
-    throw new ApiError(res.status, e.error ?? 'upstream', e.message ?? `HTTP ${res.status}`);
+    throw new ApiError(res.status, e.error ?? 'upstream', e.message ?? `HTTP ${res.status}`,
+      typeof e.reason === 'string' ? e.reason : null, e.details && typeof e.details === 'object' ? e.details : null);
   }
   return json as T;
 }
@@ -123,6 +131,19 @@ export const wmApi = {
   },
   saveVacation(v: WebmailVacation): Promise<WebmailVacation> {
     return call<WebmailVacation>('PUT', '/vacation', v);
+  },
+  /** The mailbox's forwarding (the panel's setting, bounded by the platform's owner policy). */
+  forwarding(background = false): Promise<WebmailForwarding> {
+    return call<WebmailForwarding>('GET', '/forwarding', undefined, { background });
+  },
+  saveForwarding(v: WebmailForwardingInput): Promise<WebmailForwarding> {
+    return call<WebmailForwarding>('PUT', '/forwarding', v);
+  },
+  rules(): Promise<WebmailRules> {
+    return call<WebmailRules>('GET', '/rules');
+  },
+  saveRules(rules: MailRule[]): Promise<WebmailRules> {
+    return call<WebmailRules>('PUT', '/rules', { rules });
   },
   /** Upload with progress (XHR: fetch has no upload progress). */
   upload(file: Blob, onProgress?: (fraction: number) => void): Promise<{ blobId: string; type: string; size: number }> {

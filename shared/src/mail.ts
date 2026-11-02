@@ -33,6 +33,15 @@ export function mailEngineHasMailboxes(engine: string | null | undefined): boole
   return !!engine && engine !== 'external' && engine !== 'none';
 }
 
+/**
+ * Inbox rules (Sieve, rendered into the mailbox's managed script) are served
+ * by the Stalwart engine only (JMAP SieveScript): postfix-dovecot keeps the
+ * user's own ManageSieve script for that.
+ */
+export function mailEngineSupportsRules(engine: string | null | undefined): boolean {
+  return engine === 'stalwart';
+}
+
 /** Public ports of the shared mail service (published by the engine container). */
 export const MAIL_PUBLIC_PORTS = {
   smtp: 25,
@@ -207,6 +216,78 @@ export interface MailForwarding {
   targets: string[];
   /** Also deliver into the mailbox. */
   keepCopy: boolean;
+  /** false = the targets are kept but nothing is forwarded (Outlook's "Enable forwarding" unticked). */
+  enabled: boolean;
+}
+
+// ─── INBOX RULES (Outlook-like, rendered into the managed sieve script) ─────
+
+/**
+ * Conditions of a rule. Text conditions match when the field CONTAINS one of
+ * the values (case-insensitive): 'from' = the From header (name or address),
+ * 'toCc' = To or Cc, 'subject', 'body' (text of the message).
+ */
+export type MailRuleTextField = 'from' | 'toCc' | 'subject' | 'body';
+
+export type MailRuleCondition =
+  | { kind: MailRuleTextField; values: string[] }
+  | { kind: 'hasAttachment' }
+  /** Size in KiB (1 … 1 048 576). */
+  | { kind: 'sizeOver' | 'sizeUnder'; kb: number };
+
+/**
+ * Actions, applied in this order whatever the order given: flags first
+ * (they ride with the message), then forward / redirect, then the folder
+ * (move / delete / discard).
+ *   move      file into a folder (path with '/', e.g. "Projects/Clients");
+ *   markRead / flag;
+ *   forward   send a copy on (the original sender kept), the message stays;
+ *   redirect  send it on, NOT kept in the mailbox;
+ *   delete    into Deleted Items;  discard  dropped for good.
+ */
+export type MailRuleAction =
+  | { kind: 'move'; folder: string }
+  | { kind: 'markRead' }
+  | { kind: 'flag' }
+  | { kind: 'forward'; to: string[] }
+  | { kind: 'redirect'; to: string[] }
+  | { kind: 'delete' }
+  | { kind: 'discard' };
+
+export interface MailRule {
+  /** Client-chosen id ([A-Za-z0-9_-], 1 … 40), stable across edits. */
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** 'all' = every condition must match, 'any' = one is enough. No condition = every message. */
+  match: 'all' | 'any';
+  conditions: MailRuleCondition[];
+  actions: MailRuleAction[];
+  /** Do not run the rules below on a message this rule matched. */
+  stop: boolean;
+}
+
+/** Bounds of the rules of one mailbox (server-checked, rendered script ≤ 64 KiB). */
+export const MAIL_RULE_LIMITS = {
+  rules: 50,
+  conditionsPerRule: 10,
+  valuesPerCondition: 10,
+  valueLength: 200,
+  actionsPerRule: 6,
+  targetsPerAction: 5,
+  nameLength: 80,
+  folderLength: 200,
+  /**
+   * Redirections of one message at most (Stalwart sieve.untrusted.limits.
+   * redirects): forwarding targets + every forward / redirect target of the
+   * rules together.
+   */
+  redirects: 20,
+} as const;
+
+/** PUT /mail/mailboxes/:id/rules (and the webmail's PUT /wm-api/rules): the whole ordered list. */
+export interface MailRulesInput {
+  rules: MailRule[];
 }
 
 export interface MailAutoresponder {
@@ -238,8 +319,12 @@ export interface Mailbox {
   enabled: boolean;
   sendEnabled: boolean;
   receiveEnabled: boolean;
-  /** null = no forwarding. */
+  /** null = no forwarding target; targets with enabled false = kept but paused. */
   forwarding: MailForwarding | null;
+  /** Inbox rules turned on (MailboxDetail.rules has them all). */
+  activeRuleCount: number;
+  /** Where the enabled rules forward / redirect messages (unique addresses; [] = none). */
+  ruleForwardTargets: string[];
   autoresponderActive: boolean;
   passwordScheme: MailPasswordScheme;
   passwordSetAt: string | null;
@@ -267,6 +352,10 @@ export interface MailClientSettings {
 
 export interface MailboxDetail extends Mailbox {
   autoresponder: MailAutoresponder | null;
+  /** Ordered inbox rules (Stalwart engine). */
+  rules: MailRule[];
+  /** The active engine runs inbox rules (mailEngineSupportsRules). */
+  rulesSupported: boolean;
   /** Aliases that deliver to this mailbox. */
   aliases: Array<{ id: number; address: string }>;
   clientSettings: MailClientSettings;
@@ -313,9 +402,11 @@ export interface MailPasswordResult {
 }
 
 export interface MailForwardingInput {
-  /** Empty = forwarding off. */
+  /** Empty = forwarding off (and the targets forgotten). */
   targets: string[];
   keepCopy: boolean;
+  /** false = targets kept, forwarding paused. Default true. */
+  enabled?: boolean;
 }
 
 export interface MailAutoresponderInput {

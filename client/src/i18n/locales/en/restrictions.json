@@ -125,6 +125,8 @@
       "mail_mailbox_delete": "Delete a mailbox",
       "mail_mailbox_password": "Change a mailbox password",
       "mail_dkim_rotate": "Rotate the DKIM key",
+      "mail_mailbox_forwarding": "Change the forwarding of a mailbox",
+      "mail_mailbox_rules": "Change the inbox rules of a mailbox",
       "cron_write": "Create or change a cron job",
       "cron_delete": "Delete a cron job",
       "cron_run": "Run a cron job now",

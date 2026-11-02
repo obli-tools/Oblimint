@@ -57,7 +57,7 @@ test('stalwart config: valid TOML, deterministic, listeners and admin API', () =
   const ports = Object.fromEntries(Object.entries(listeners).map(([id, l]) => [id, (l.bind as string[])[0]]));
   assert.deepEqual(ports, {
     smtp: '[::]:25', submission: '[::]:587', submissions: '[::]:465', relay: '[::]:10025', imap: '[::]:143',
-    imaptls: '[::]:993', pop3: '[::]:110', pop3s: '[::]:995', sieve: '[::]:4190', http: '[::]:8080',
+    imaptls: '[::]:993', pop3: '[::]:110', pop3s: '[::]:995', http: '[::]:8080',
   });
   assert.equal(listeners.submissions.tls && (listeners.submissions.tls as Record<string, TomlValue>).implicit, true);
   assert.equal(listeners.http.protocol, 'http');
@@ -240,7 +240,7 @@ test('sieve: forwarding with / without copy, dated autoresponder, escaping', () 
   assert.match(fwd, /require \["copy"\];/);
   assert.equal((fwd.match(/redirect :copy "b@y\.fr";/g) ?? []).length, 1, 'deduplicated, never to itself');
   const move = renderSieveScript({ address: 'a@x.fr', forward: { targets: ['b@y.fr'], keepCopy: false }, autoresponder: null })!;
-  assert.match(move, /\r\nredirect "b@y\.fr";\r\n/);
+  assert.match(move, /\r\nredirect "b@y\.fr";\r\ndiscard;\r\n$/, 'no copy = an explicit discard (Stalwart keeps a bare redirect in the Inbox)');
   assert.ok(!move.includes('copy'));
 
   const ar = renderSieveScript({

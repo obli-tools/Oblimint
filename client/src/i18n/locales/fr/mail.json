@@ -311,7 +311,13 @@
       "forwarding": "redirection",
       "autoresponder": "répondeur",
       "imported": "importée",
-      "importedHint": "Empreinte du mot de passe importée d'un autre serveur"
+      "importedHint": "Empreinte du mot de passe importée d'un autre serveur",
+      "forwardingTo": "Transférée vers {{targets}}",
+      "forwardingPaused": "transfert suspendu",
+      "rules": "{{count}} règles",
+      "rulesHint": "Règles de réception actives",
+      "ruleForwarding": "règle de transfert",
+      "ruleForwardingTo": "Des règles transfèrent des messages vers {{targets}}"
     },
     "mailboxes": {
       "add": "Nouvelle boîte",
@@ -380,7 +386,14 @@
       "keepCopy": "Garder une copie dans la boîte",
       "saved": "Redirection enregistrée",
       "off": "Redirection coupée",
-      "saveFailed": "Impossible d'enregistrer la redirection"
+      "saveFailed": "Impossible d'enregistrer la redirection",
+      "paused": "suspendu",
+      "enable": "Transfert activé",
+      "enableHint": "Désactivé : les adresses sont conservées, rien n'est transféré. Le titulaire de la boîte voit le transfert dans le webmail.",
+      "notice": "Le courrier de cette boîte est transféré vers {{targets}}.",
+      "noticeCopy": "Une copie reste dans la boîte.",
+      "noticeNoCopy": "Aucune copie ne reste dans la boîte.",
+      "turnOff": "Désactiver"
     },
     "autoresponder": {
       "title": "Répondeur",
@@ -629,7 +642,82 @@
       "noPublicAddress": "L'adresse publique du serveur est inconnue (installation : IPv4 / IPv6 publiques).",
       "fixPlanChanged": "La zone a changé depuis cet aperçu : revoyez les changements.",
       "fixIncomplete": "Les enregistrements attendus ne seraient toujours pas servis : rien n'a été modifié.",
-      "zoneNotHosted": "La zone de ce domaine est hébergée ailleurs : modifiez les enregistrements chez votre fournisseur DNS."
+      "zoneNotHosted": "La zone de ce domaine est hébergée ailleurs : modifiez les enregistrements chez votre fournisseur DNS.",
+      "tooManyRedirects": "Au plus {{max}} destinations de transfert en tout (transfert et règles de réception ensemble).",
+      "rulesUnsupported": "Les règles de réception nécessitent le moteur mail Stalwart.",
+      "forwardingNotAllowed": "Le transfert hors des domaines mail du compte n'est pas autorisé sur cette plateforme ({{target}}).",
+      "invalidRule": "Une règle n'est pas valide."
+    },
+    "rules": {
+      "title": "Règles de réception",
+      "add": "Nouvelle règle",
+      "createTitle": "Nouvelle règle",
+      "editTitle": "Règle {{name}}",
+      "name": "Nom",
+      "when": "Lorsqu'un message arrive et que",
+      "match": "Correspondance",
+      "matchAll": "toutes les conditions sont remplies",
+      "matchAny": "l'une des conditions est remplie",
+      "noCondition": "Aucune condition : tous les messages.",
+      "wordsHint": "un mot, Entrée",
+      "addCondition": "Ajouter une condition",
+      "then": "Effectuer les actions suivantes",
+      "addAction": "Ajouter une action",
+      "redirectHint": "Transférer : une copie repart, le message reste. Rediriger : le message repart avec son expéditeur d'origine et n'est pas conservé.",
+      "stop": "Ne pas appliquer les règles suivantes",
+      "enabled": "Règle activée",
+      "saved": "Règle enregistrée",
+      "saveFailed": "Échec de l'enregistrement des règles",
+      "deleted": "Règle supprimée",
+      "reordered": "Ordre enregistré",
+      "turnedOn": "Règle activée",
+      "turnedOff": "Règle désactivée",
+      "up": "Monter",
+      "down": "Descendre",
+      "delete": "Supprimer la règle",
+      "confirmDelete": "Supprimer la règle « {{name}} » ?",
+      "ifShort": "Si",
+      "thenShort": "Alors",
+      "and": "et",
+      "or": "ou",
+      "allMessages": "Tous les messages",
+      "stopShort": "arrêt",
+      "activeCount": "{{count}} actives",
+      "noneShort": "aucune",
+      "unsupported": "Les règles de réception nécessitent le moteur mail Stalwart.",
+      "none": "Aucune règle. Le titulaire de la boîte peut aussi en créer depuis le webmail Oblimint.",
+      "tooManyRedirects": "Au plus {{max}} destinations de transfert en tout (transfert et règles ensemble).",
+      "cond": {
+        "from": "L'expéditeur contient",
+        "toCc": "À ou Cc contient",
+        "subject": "L'objet contient",
+        "body": "Le corps contient",
+        "hasAttachment": "Contient une pièce jointe",
+        "sizeOver": "Plus grand que (Ko)",
+        "sizeUnder": "Plus petit que (Ko)"
+      },
+      "act": {
+        "move": "Déplacer vers le dossier",
+        "markRead": "Marquer comme lu",
+        "flag": "Signaler",
+        "forward": "Transférer à",
+        "redirect": "Rediriger vers",
+        "delete": "Supprimer (Éléments supprimés)",
+        "discard": "Supprimer définitivement"
+      },
+      "problem": {
+        "name": "Donnez un nom à la règle.",
+        "actions": "Ajoutez au moins une action.",
+        "sameAction": "La même action est présente deux fois.",
+        "oneDestination": "Une seule destination : déplacer, supprimer ou rediriger.",
+        "words": "Chaque condition demande au moins un mot.",
+        "size": "Indiquez une taille en Ko.",
+        "folder": "Choisissez un dossier.",
+        "targets": "Indiquez des adresses valides (5 au plus).",
+        "targetSelf": "Une règle ne peut pas transférer vers la boîte elle-même."
+      },
+      "forwardNotice": "Des règles de réception transfèrent des messages de cette boîte vers {{targets}}.",
+      "stopForced": "Le message est parti après cette règle : les règles suivantes ne s'y appliquent jamais."
     }
   },
   "mailSettings": {
@@ -732,7 +820,9 @@
       "banWindow": "En (minutes)",
       "banDuration": "Durée du bannissement (minutes)",
       "banHint": "Les bannissements ne portent que sur les ports mail (nftables de hostd, avant Docker) ; IPv6 par /64 ; les adresses internes ne sont jamais bannies.",
-      "bansLink": "Voir les bans mail"
+      "bansLink": "Voir les bans mail",
+      "ownerForwarding": "Les titulaires des boîtes peuvent transférer hors de leurs domaines",
+      "ownerForwardingHint": "Transfert et règles de réception (transférer / rediriger) vers une adresse hors du compte d'hébergement, posés par le titulaire de la boîte (webmail) ou un utilisateur client du compte (panel). Désactivé : uniquement vers les domaines du compte ; ce que l'équipe a posé reste. L'équipe n'est pas concernée (protégez les actions du panel dans les restrictions : mail.mailbox_forwarding / mail.mailbox_rules)."
     },
     "bans": {
       "title": "Bans mail",

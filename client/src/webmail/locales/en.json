@@ -26,7 +26,17 @@
       "toPanel": "Back to Oblimint",
       "toPanelHint": "Back to the Oblimint panel"
     },
+    "card": {
+      "copied": "Address copied",
+      "copy": "Copy the address",
+      "copyFailed": "Could not copy the address",
+      "open": "Contact card",
+      "rule": "Create a rule",
+      "search": "Their messages",
+      "write": "Send an email"
+    },
     "common": {
+      "add": "Add",
       "back": "Back",
       "cancel": "Cancel",
       "close": "Close",
@@ -85,7 +95,14 @@
     "errors": {
       "generic": "Something went wrong",
       "network": "The server could not be reached.",
-      "sessionEnded": "Your session has ended: sign in again."
+      "sessionEnded": "Your session has ended: sign in again.",
+      "tooManyAttempts": "Too many changes: try again in a minute.",
+      "invalidTarget": "{{target}} is not a mailbox or an alias of your account.",
+      "invalidAddress": "One of the addresses is not valid.",
+      "forwardingLoop": "The messages would go round in a loop (an address forwards them back here).",
+      "tooManyRedirects": "At most {{max}} forwarding destinations in all (forwarding and rules together).",
+      "invalidRuleN": "Rule {{n}} is not valid.",
+      "invalidRule": "A rule is not valid."
     },
     "folders": {
       "archive": "Archive",
@@ -98,6 +115,33 @@
       "show": "Show the folders",
       "title": "Folders",
       "trash": "Trash"
+    },
+    "forwarding": {
+      "addFirst": "Add an address first.",
+      "andMore": "and {{count}} more",
+      "badAddress": "{{address}} is not a valid address.",
+      "bannerCopy": "A copy stays in this mailbox.",
+      "bannerNoCopy": "No copy stays in this mailbox.",
+      "bannerPanel": "Set from the Oblimint panel on {{date}}.",
+      "bannerTitle": "Your e-mail is being forwarded to {{targets}}.",
+      "changedByPanel": "Changed from the Oblimint panel on {{date}}.",
+      "confirmOff": "Turn off the forwarding of your e-mail?",
+      "disable": "Turn off forwarding",
+      "edit": "Edit",
+      "enable": "Enable forwarding",
+      "internalOnly": "On this platform you may only forward to addresses of your own domains ({{domains}}).",
+      "intro": "Forward your e-mail to another address. Inbox rules can also forward only some messages.",
+      "keepCopy": "Keep a copy of forwarded messages",
+      "noCopyHint": "Messages are not kept in this mailbox (rules do not run on them).",
+      "notAllowed": "Forwarding outside your own domains is not allowed on this platform.",
+      "on": "on",
+      "saved": "Forwarding saved",
+      "title": "Forwarding",
+      "to": "Forward my e-mail to",
+      "turnedOff": "Forwarding turned off",
+      "ruleOne": "The rule « {{rule}} » forwards messages to {{targets}}.",
+      "ruleMany": "{{count}} rules forward messages to {{targets}}.",
+      "seeRules": "See the rules"
     },
     "keys": {
       "archive": "Archive",
@@ -180,6 +224,79 @@
       "showImages": "Show images",
       "truncated": "This message is very long: only its beginning is shown."
     },
+    "rules": {
+      "act": {
+        "delete": "Delete (Deleted Items)",
+        "discard": "Delete permanently",
+        "flag": "Flag it",
+        "forward": "Forward to",
+        "markRead": "Mark as read",
+        "move": "Move to folder",
+        "redirect": "Redirect to"
+      },
+      "add": "New rule",
+      "addAction": "Add an action",
+      "addCondition": "Add a condition",
+      "allMessages": "Every message",
+      "and": "and",
+      "chooseFolder": "Choose a folder…",
+      "cond": {
+        "body": "Message body contains",
+        "from": "From contains",
+        "hasAttachment": "Has an attachment",
+        "sizeOver": "Larger than (KB)",
+        "sizeUnder": "Smaller than (KB)",
+        "subject": "Subject contains",
+        "toCc": "To or Cc contains"
+      },
+      "confirmDelete": "Delete the rule « {{name}} »?",
+      "delete": "Delete the rule",
+      "deleted": "Rule deleted",
+      "down": "Move down",
+      "edit": "Edit",
+      "enabled": "Rule turned on",
+      "folderMissing": "not found",
+      "fromSenderName": "Messages from {{who}}",
+      "ifShort": "If",
+      "intro": "Rules sort incoming messages for you, in this order (spam is left out).",
+      "match": "Match",
+      "matchAll": "all the conditions match",
+      "matchAny": "one of the conditions matches",
+      "name": "Rule name",
+      "newName": "New rule",
+      "noCondition": "No condition: the rule applies to every message.",
+      "none": "No rule yet.",
+      "noneHint": "For example: move the invoices into a folder, flag the messages of your manager.",
+      "or": "or",
+      "problem": {
+        "actions": "Add at least one action.",
+        "folder": "Choose a folder.",
+        "name": "Give the rule a name.",
+        "oneDestination": "One destination only: move, delete or redirect.",
+        "sameAction": "The same action is there twice.",
+        "size": "Enter a size in KB.",
+        "targetSelf": "A rule cannot forward to this mailbox itself.",
+        "targets": "Enter valid addresses (5 at most).",
+        "words": "Each condition needs at least one word."
+      },
+      "redirectHint": "Redirect: the message goes on with its original sender and is not kept here. Forward: a copy goes on, the message stays.",
+      "reordered": "Order saved",
+      "saveRule": "Save the rule",
+      "saved": "Rule saved",
+      "stop": "Stop processing more rules",
+      "stopShort": "stop",
+      "then": "Do the following",
+      "thenShort": "Then",
+      "title": "Rules",
+      "tooManyRedirects": "At most {{max}} forwarding destinations in all (forwarding and rules together).",
+      "turnedOff": "Rule turned off",
+      "turnedOn": "Rule turned on",
+      "unsupported": "Inbox rules are not available on this mail server.",
+      "up": "Move up",
+      "when": "When a message arrives and",
+      "wordsHint": "words, separated by commas",
+      "stopForced": "The message is gone after this rule: the rules below never run on it."
+    },
     "search": {
       "advanced": "Advanced search",
       "clear": "Clear the search",
@@ -193,6 +310,9 @@
       "subject": "Subject",
       "submit": "Search",
       "to": "To"
+    },
+    "settings": {
+      "title": "Mail settings"
     },
     "sso": {
       "invalid": "This link has expired or was already used: open the webmail again from the panel.",
@@ -214,7 +334,7 @@
       "interval": "Answer the same sender at most every (days)",
       "message": "Message",
       "saved": "Vacation responder saved",
-      "title": "Vacation responder",
+      "title": "Automatic replies",
       "until": "Until (optional)"
     }
   }

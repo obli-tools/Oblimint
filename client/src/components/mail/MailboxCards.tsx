@@ -108,7 +108,7 @@ const MAX_FORWARD = 20;
 
 export function MailboxForwardingCard({ box, manage, onChanged }: { box: MailboxDetail; manage: boolean; onChanged: (b: MailboxDetail) => void }) {
   const { t } = useTranslation();
-  const init = { targets: box.forwarding?.targets ?? [], keepCopy: box.forwarding?.keepCopy ?? true };
+  const init = { targets: box.forwarding?.targets ?? [], keepCopy: box.forwarding?.keepCopy ?? true, enabled: box.forwarding?.enabled ?? true };
   const key = JSON.stringify(init);
   const [draft, setDraft] = useState(init);
   useEffect(() => { setDraft(init); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -121,7 +121,7 @@ export function MailboxForwardingCard({ box, manage, onChanged }: { box: Mailbox
     setError('');
     try {
       onChanged(await mailApi.setForwarding(box.id, draft));
-      toast.success(draft.targets.length ? (t('mail.forwarding.saved') || 'Forwarding saved') : (t('mail.forwarding.off') || 'Forwarding turned off'));
+      toast.success(draft.targets.length && draft.enabled ? (t('mail.forwarding.saved') || 'Forwarding saved') : (t('mail.forwarding.off') || 'Forwarding turned off'));
     } catch (err) {
       setError(mailErrorMessage(t, err, t('mail.forwarding.saveFailed') || 'Failed to save the forwarding'));
     } finally {
@@ -133,12 +133,21 @@ export function MailboxForwardingCard({ box, manage, onChanged }: { box: Mailbox
     <Card
       title={t('mail.forwarding.title') || 'Forwarding'}
       icon={<CornerUpRight size={14} className="text-accent" />}
-      actions={box.forwarding && box.forwarding.targets.length > 0 ? <Pill tone="blue">{t('mail.forwarding.active') || 'active'}</Pill> : <Pill>{t('mail.forwarding.inactive') || 'off'}</Pill>}
+      actions={box.forwarding && box.forwarding.targets.length > 0
+        ? (box.forwarding.enabled ? <Pill tone="blue">{t('mail.forwarding.active') || 'active'}</Pill> : <Pill>{t('mail.forwarding.paused') || 'paused'}</Pill>)
+        : <Pill>{t('mail.forwarding.inactive') || 'off'}</Pill>}
     >
-      <div className="space-y-3">
+      <div className="space-y-3" id="mailbox-forwarding">
+        <ToggleSwitch
+          checked={draft.enabled && draft.targets.length > 0}
+          disabled={!manage || draft.targets.length === 0}
+          onChange={(v) => setDraft((d) => ({ ...d, enabled: v }))}
+          label={t('mail.forwarding.enable') || 'Forwarding turned on'}
+          description={t('mail.forwarding.enableHint') || 'Off: the addresses are kept, nothing is forwarded. The mailbox owner sees the forwarding in the webmail.'}
+        />
         <ChipsInput
           value={draft.targets}
-          onChange={(v) => setDraft((d) => ({ ...d, targets: v }))}
+          onChange={(v) => setDraft((d) => ({ ...d, targets: v, enabled: d.targets.length === 0 && v.length > 0 ? true : d.enabled }))}
           validate={isValidAddress}
           normalize={normalizeAddress}
           max={MAX_FORWARD}

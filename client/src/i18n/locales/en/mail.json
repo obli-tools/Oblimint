@@ -311,7 +311,13 @@
       "forwarding": "forward",
       "autoresponder": "auto-reply",
       "imported": "imported",
-      "importedHint": "Password hash imported from another server"
+      "importedHint": "Password hash imported from another server",
+      "forwardingTo": "Forwarded to {{targets}}",
+      "forwardingPaused": "forward paused",
+      "rules": "{{count}} rules",
+      "rulesHint": "Inbox rules turned on",
+      "ruleForwarding": "rule forward",
+      "ruleForwardingTo": "Rules forward messages to {{targets}}"
     },
     "mailboxes": {
       "add": "New mailbox",
@@ -380,7 +386,14 @@
       "keepCopy": "Keep a copy in the mailbox",
       "saved": "Forwarding saved",
       "off": "Forwarding turned off",
-      "saveFailed": "Failed to save the forwarding"
+      "saveFailed": "Failed to save the forwarding",
+      "paused": "paused",
+      "enable": "Forwarding turned on",
+      "enableHint": "Off: the addresses are kept, nothing is forwarded. The mailbox owner sees the forwarding in the webmail.",
+      "notice": "The mail of this mailbox is forwarded to {{targets}}.",
+      "noticeCopy": "A copy stays in the mailbox.",
+      "noticeNoCopy": "No copy stays in the mailbox.",
+      "turnOff": "Turn off"
     },
     "autoresponder": {
       "title": "Auto-reply",
@@ -629,7 +642,82 @@
       "noPublicAddress": "The public address of the server is unknown (setup: public IPv4 / IPv6).",
       "fixPlanChanged": "The zone changed since this preview: review the changes again.",
       "fixIncomplete": "The expected records would still not be served: nothing was changed.",
-      "zoneNotHosted": "The zone of this domain is hosted elsewhere: change the records at your DNS provider."
+      "zoneNotHosted": "The zone of this domain is hosted elsewhere: change the records at your DNS provider.",
+      "tooManyRedirects": "At most {{max}} forwarding destinations in all (forwarding and inbox rules together).",
+      "rulesUnsupported": "Inbox rules need the Stalwart mail engine.",
+      "forwardingNotAllowed": "Forwarding outside the account's own mail domains is not allowed on this platform ({{target}}).",
+      "invalidRule": "A rule is not valid."
+    },
+    "rules": {
+      "title": "Inbox rules",
+      "add": "New rule",
+      "createTitle": "New rule",
+      "editTitle": "Rule {{name}}",
+      "name": "Name",
+      "when": "When a message arrives and",
+      "match": "Match",
+      "matchAll": "all the conditions match",
+      "matchAny": "one of the conditions matches",
+      "noCondition": "No condition: every message.",
+      "wordsHint": "a word, Enter",
+      "addCondition": "Add a condition",
+      "then": "Do the following",
+      "addAction": "Add an action",
+      "redirectHint": "Forward: a copy goes on, the message stays. Redirect: the message goes on with its original sender and is not kept.",
+      "stop": "Stop processing more rules",
+      "enabled": "Rule turned on",
+      "saved": "Rule saved",
+      "saveFailed": "Failed to save the rules",
+      "deleted": "Rule deleted",
+      "reordered": "Order saved",
+      "turnedOn": "Rule turned on",
+      "turnedOff": "Rule turned off",
+      "up": "Move up",
+      "down": "Move down",
+      "delete": "Delete the rule",
+      "confirmDelete": "Delete the rule « {{name}} »?",
+      "ifShort": "If",
+      "thenShort": "Then",
+      "and": "and",
+      "or": "or",
+      "allMessages": "Every message",
+      "stopShort": "stop",
+      "activeCount": "{{count}} on",
+      "noneShort": "none",
+      "unsupported": "Inbox rules need the Stalwart mail engine.",
+      "none": "No rule. The mailbox owner can also create them from the Oblimint webmail.",
+      "tooManyRedirects": "At most {{max}} forwarding destinations in all (forwarding and rules together).",
+      "cond": {
+        "from": "From contains",
+        "toCc": "To or Cc contains",
+        "subject": "Subject contains",
+        "body": "Body contains",
+        "hasAttachment": "Has an attachment",
+        "sizeOver": "Larger than (KB)",
+        "sizeUnder": "Smaller than (KB)"
+      },
+      "act": {
+        "move": "Move to folder",
+        "markRead": "Mark as read",
+        "flag": "Flag",
+        "forward": "Forward to",
+        "redirect": "Redirect to",
+        "delete": "Delete (Deleted Items)",
+        "discard": "Delete permanently"
+      },
+      "problem": {
+        "name": "Give the rule a name.",
+        "actions": "Add at least one action.",
+        "sameAction": "The same action is there twice.",
+        "oneDestination": "One destination only: move, delete or redirect.",
+        "words": "Each condition needs at least one word.",
+        "size": "Enter a size in KB.",
+        "folder": "Choose a folder.",
+        "targets": "Enter valid addresses (5 at most).",
+        "targetSelf": "A rule cannot forward to the mailbox itself."
+      },
+      "forwardNotice": "Inbox rules forward messages of this mailbox to {{targets}}.",
+      "stopForced": "The message is gone after this rule: the rules below never run on it."
     }
   },
   "mailSettings": {
@@ -732,7 +820,9 @@
       "banWindow": "Within (minutes)",
       "banDuration": "Ban duration (minutes)",
       "banHint": "Bans apply to the mail ports only (hostd nftables, before Docker); IPv6 per /64; internal addresses are never banned.",
-      "bansLink": "See the mail bans"
+      "bansLink": "See the mail bans",
+      "ownerForwarding": "Mailbox owners may forward outside their domains",
+      "ownerForwardingHint": "Forwarding and inbox rules (forward / redirect) to an address outside the hosting account, set by the mailbox owner (webmail) or a client user of the account (panel). Off: only to the account's own domains; what the staff set stays. The staff is not bound (protect the panel actions in the restrictions: mail.mailbox_forwarding / mail.mailbox_rules)."
     },
     "bans": {
       "title": "Mail bans",

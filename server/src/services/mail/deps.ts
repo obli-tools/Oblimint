@@ -36,6 +36,13 @@ export interface MailCoreDeps {
   mailboxChanged(mailboxId: number, reason: 'disabled' | 'password' | 'deleted'): void;
   dnsSyncAll(reason: string): void;
   edgeSync(reason: string): void;
+  /**
+   * Informational e-mail to a mailbox about its own settings (mailboxNotice.ts):
+   * imported straight into its Inbox when the engine allows it (never through
+   * its forwarding / rules), else by the transactional sender (kind 'mailbox')
+   * only when `smtpReachesMailbox` (no forwarding without a copy).
+   */
+  mailboxNotice(to: string, subject: string, text: string, opts: { smtpReachesMailbox: boolean }): void;
 }
 
 /** Fire-and-forget: a hook that throws (synchronously or not) is logged, never propagated. */
@@ -74,6 +81,11 @@ const real: MailCoreDeps = {
   },
   edgeSync(reason) {
     hook('edge.scheduleSync', async () => (await import('../edge/edge.service')).edgeService.scheduleSync(reason));
+  },
+  mailboxNotice(to, subject, text, opts) {
+    hook('mail.mailboxNotice', async () => {
+      await (await import('./mailboxNotice')).deliverMailboxNotice(to, subject, text, opts);
+    });
   },
 };
 

@@ -11,6 +11,7 @@ import { formatFullDate, formatListDate } from '../lib/format';
 import { QUICK_FILTERS, type QuickFilter } from '../lib/view';
 import { useWebmail } from '../store';
 import { flattenTree, roleIcon, useMailboxName } from './MailboxTree';
+import { SenderHover } from './SenderCard';
 import { Avatar, CountPill, EmptyState, IconButton, PillButton, Popover } from './ui';
 
 /** Fixed row height: the list is windowed (only the visible rows exist in the DOM). */
@@ -63,6 +64,8 @@ function RowSkeleton() {
 
 interface RowProps {
   e: EmailListItem;
+  /** The correspondent shown (sender, or first recipient in Sent / Drafts): their card on hover. */
+  person: { name: string | null; email: string } | null;
   who: string;
   whoEmail: string;
   count: number;
@@ -76,7 +79,7 @@ interface RowProps {
   onToggle: (id: string, ev: ReactMouseEvent) => void;
 }
 
-function Row({ e, who, whoEmail, count, selected, open, lang, forGood, onOpen, onOpenKey, onToggle }: RowProps) {
+function Row({ e, person, who, whoEmail, count, selected, open, lang, forGood, onOpen, onOpenKey, onToggle }: RowProps) {
   const { t } = useTranslation();
   const unread = !e.keywords?.$seen;
   const flagged = !!e.keywords?.$flagged;
@@ -109,8 +112,10 @@ function Row({ e, who, whoEmail, count, selected, open, lang, forGood, onOpen, o
       <div className="min-w-0 flex-1">
         <div className="flex h-5 items-center gap-1.5">
           {unread && <><span className="h-2 w-2 shrink-0 rounded-full bg-accent" aria-hidden /><span className="sr-only">{t('wm.list.unread') || 'Unread'}</span></>}
-          <span className={cn('min-w-0 flex-1 truncate text-[13.5px]', unread ? 'font-semibold text-text-primary' : 'text-text-secondary')}>
-            {who || (t('wm.list.noSender') || '(no sender)')}
+          <span className="flex min-w-0 flex-1">
+            <SenderHover person={person} className={cn('min-w-0 truncate text-[13.5px]', unread ? 'font-semibold text-text-primary' : 'text-text-secondary')}>
+              {who || (t('wm.list.noSender') || '(no sender)')}
+            </SenderHover>
           </span>
           {count > 1 && <CountPill value={count} />}
           {e.hasAttachment && <Paperclip size={13} className="shrink-0 text-text-muted" aria-label={t('wm.read.attachment') || 'attachment'} />}
@@ -323,7 +328,7 @@ export function MessageList() {
               const who = sentLike ? to.map(displayName).join(', ') : displayName(e.from?.[0]);
               const whoEmail = sentLike ? to[0]?.email ?? '' : e.from?.[0]?.email ?? '';
               return (
-                <Row key={id} e={e} who={who} whoEmail={whoEmail} count={list.threadSizes[e.threadId] ?? 1}
+                <Row key={id} e={e} person={(sentLike ? to[0] : e.from?.[0]) ?? null} who={who} whoEmail={whoEmail} count={list.threadSizes[e.threadId] ?? 1}
                   selected={selection.includes(id)} open={openThreadId === e.threadId} lang={i18n.language} forGood={forGood}
                   onOpen={onOpen} onOpenKey={onOpenKey} onToggle={onToggle} />
               );

@@ -17,12 +17,13 @@ import { MailboxFlags } from '@/components/mail/MailBadges';
 import {
   MailboxAliasesCard, MailboxAutoresponderCard, MailboxForwardingCard, MailboxSettingsCard, MailClientSettingsCard,
 } from '@/components/mail/MailboxCards';
+import { MailboxForwardingNotice, MailboxRulesCard } from '@/components/mail/MailboxRulesCard';
 import { useMailboxActions } from '@/components/mail/useMailboxActions';
 import { apiErrorStatus, mailErrorCode, mailLoadError } from '@/components/mail/mailErrors';
 
 /**
- * /mail/mailboxes/:id — one mailbox: quota bar, password, flags, forwarding,
- * autoresponder, aliases, client settings, "Open webmail" (SSO ticket in a
+ * /mail/mailboxes/:id — one mailbox: quota bar, password, flags, forwarding
+ * (+ its Outlook-like notice), inbox rules, autoresponder, aliases, client settings, "Open webmail" (SSO ticket in a
  * new tab) (docs/P4-PLAN.md §12). OWNED BY MODULE `ui-mail`.
  */
 export function MailboxPage() {
@@ -161,10 +162,14 @@ export function MailboxPage() {
         )}
       />
 
+      <MailboxForwardingNotice box={box} manage={manage} onChanged={setBox}
+        onEdit={() => document.getElementById('mailbox-forwarding')?.scrollIntoView({ behavior: 'smooth', block: 'center' })} />
+
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="flex flex-col gap-5">
           <MailboxSettingsCard box={box} manage={manage} onChanged={setBox} />
           <MailboxForwardingCard box={box} manage={manage} onChanged={setBox} />
+          <MailboxRulesCard box={box} manage={manage} onChanged={setBox} />
           <MailboxAliasesCard box={box} domain={domain} manage={manage} onChanged={() => { void load(true); }} />
         </div>
         <div className="flex flex-col gap-5">

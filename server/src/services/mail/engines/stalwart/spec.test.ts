@@ -12,7 +12,7 @@ test('stalwart container spec: hardened, mail network only, admin API and relay 
   const hc = spec.HostConfig!;
   assert.equal(spec.name, 'oblimint-mail');
   assert.equal(spec.User, '5000:5000');
-  assert.deepEqual(Object.keys(hc.PortBindings!).sort(), ['110/tcp', '143/tcp', '25/tcp', '4190/tcp', '465/tcp', '587/tcp', '993/tcp', '995/tcp']);
+  assert.deepEqual(Object.keys(hc.PortBindings!).sort(), ['110/tcp', '143/tcp', '25/tcp', '465/tcp', '587/tcp', '993/tcp', '995/tcp']);
   for (const b of Object.values(hc.PortBindings!) as Array<Array<{ HostIp?: string; HostPort: string }>>) assert.equal(b[0].HostIp, undefined);
   const published = JSON.stringify(hc.PortBindings);
   assert.ok(!published.includes('8080') && !published.includes('10025'), 'admin API / relay port never published (MA7)');

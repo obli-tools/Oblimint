@@ -268,7 +268,8 @@ const real: MailDnsDeps = {
       await (await import('../../../mail/mail.service')).mailService.updateMailbox(req, actor, id, body);
     },
     async setForwarding(req, actor, id, body) {
-      await (await import('../../../mail/mail.service')).mailService.setForwarding(req, actor, id, body);
+      // An imported setting, not a change of the owner's mail flow: no notice e-mail.
+      await (await import('../../../mail/mail.service')).mailService.setForwarding(req, actor, id, body, { notify: false });
     },
     async findAlias(address) {
       const { db } = await import('../../../../db');

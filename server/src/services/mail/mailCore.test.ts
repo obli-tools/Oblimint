@@ -149,7 +149,7 @@ const mailboxRow = (over: Partial<MailboxRow> = {}): MailboxRow => ({
 test('toMailbox never carries the password hash (MA4); client settings 993 / 995 / 587', () => {
   const mb = toMailbox({ ...mailboxRow({ forward_targets: ['x@gmail.com'], forward_keep_copy: false }), domain_name: 'a.fr' });
   assert.ok(!JSON.stringify(mb).includes('secret'));
-  assert.deepEqual(mb.forwarding, { targets: ['x@gmail.com'], keepCopy: false });
+  assert.deepEqual(mb.forwarding, { targets: ['x@gmail.com'], keepCopy: false, enabled: true });
   const cs = mailClientSettings('contact@a.fr', 'mail.host.net', null);
   assert.deepEqual([cs.imap.port, cs.pop3.port, cs.smtp.port, cs.smtp.security], [993, 995, 587, 'starttls']);
   assert.equal(cs.username, 'contact@a.fr');

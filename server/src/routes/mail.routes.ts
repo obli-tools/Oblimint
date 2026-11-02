@@ -22,7 +22,9 @@ const mailTarget = (r: { tenant_id: number; account_id: number }) => ({ tenantId
 //   GET    /mailboxes/:id                                        → MailboxDetail                (read)
 //   PUT    /mailboxes/:id              MailboxUpdate             → MailboxDetail                (mail.manage)
 //   POST   /mailboxes/:id/password     MailPasswordChange        → MailPasswordResult           (mail.manage)
-//   PUT    /mailboxes/:id/forwarding   MailForwardingInput       → MailboxDetail                (mail.manage)
+//   PUT    /mailboxes/:id/forwarding   MailForwardingInput       → MailboxDetail                (mail.manage, gate mail.mailbox_forwarding)
+//   PUT    /mailboxes/:id/rules        MailRulesInput            → MailboxDetail                (mail.manage, gate mail.mailbox_rules; Stalwart)
+//   GET    /mailboxes/:id/folders                                → string[]                     (read; rule "move to" picker)
 //   PUT    /mailboxes/:id/autoresponder MailAutoresponderInput   → MailboxDetail                (mail.manage)
 //   DELETE /mailboxes/:id              { confirm: address }      → { deleted: true }            (mail.manage)
 //   GET    /aliases?accountId&mailDomainId&tenantId&search       → MailAlias[]                  (read, scoped)
@@ -35,6 +37,7 @@ const mailTarget = (r: { tenant_id: number; account_id: number }) => ({ tenantId
 // invalidAddress / invalidTarget / forwardingLoop (400), weakPassword / passwordTooLong / invalidPassword /
 // invalidPasswordHash (400), invalidSchedule (400: autoresponder endsAt ≤ startsAt), hashImportForbidden (403: client),
 // hashSchemeUnsupported (409: engine), envelopeExceeded (409: tenant maxMailboxes), backendUnavailable (502, A6),
+// invalidRule (400), tooManyRedirects (400: forwarding + rules over 20 destinations), rulesUnsupported (409: engine),
 // mailDataPendingPurge (409: the data another account left under this domain / address could not be purged yet,
 // retry later — MA5 / MA12), mailEngineChanging (409: engine change in progress, retry later).
 const router = Router();
@@ -105,7 +108,11 @@ const passwordChange = z.object({
 const forwardingInput = z.object({
   targets: z.array(address).max(20).transform((v) => [...new Set(v)]),
   keepCopy: z.boolean(),
+  enabled: z.boolean().optional(),
 }).strict();
+
+/** Shape only: the rules themselves are validated by services/mail/rules.ts (same code as the webmail). */
+const rulesInput = z.object({ rules: z.array(z.unknown()).max(50) }).strict();
 
 const autoresponderInput = z.object({
   enabled: z.boolean(),
@@ -219,7 +226,29 @@ router.post('/mailboxes/:id/password', validate(passwordChange), async (req, res
 
 router.put('/mailboxes/:id/forwarding', validate(forwardingInput), async (req, res, next) => {
   try {
-    res.json({ success: true, data: await mailService.setForwarding(req, await resolveActor(req), idParam(req), req.body) });
+    const actor = await resolveActor(req);
+    const mb = await loadMailbox(actor, idParam(req), 'mail.manage');
+    const b = req.body as { targets: string[]; keepCopy: boolean; enabled?: boolean };
+    await gateAction(req, {
+      action: 'mail.mailbox_forwarding', target: mailTarget(mb),
+      params: { mailbox: mb.address, targets: b.targets, keepCopy: b.keepCopy, enabled: b.enabled ?? true },
+    });
+    res.json({ success: true, data: await mailService.setForwarding(req, actor, mb.id, req.body) });
+  } catch (err) { next(err); }
+});
+
+router.put('/mailboxes/:id/rules', validate(rulesInput), async (req, res, next) => {
+  try {
+    const actor = await resolveActor(req);
+    const mb = await loadMailbox(actor, idParam(req), 'mail.manage');
+    await gateAction(req, { action: 'mail.mailbox_rules', target: mailTarget(mb), params: { mailbox: mb.address, rules: (req.body as { rules: unknown[] }).rules } });
+    res.json({ success: true, data: await mailService.setRules(req, actor, mb.id, (req.body as { rules: unknown[] }).rules) });
+  } catch (err) { next(err); }
+});
+
+router.get('/mailboxes/:id/folders', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await mailService.mailboxFolders(await resolveActor(req), idParam(req)) });
   } catch (err) { next(err); }
 });
 

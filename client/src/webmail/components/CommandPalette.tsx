@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
-  ArrowLeftToLine, CalendarOff, CloudMoon, CornerDownLeft, Filter, Keyboard, LogOut, Moon, PenSquare, RefreshCw, Search, Sun,
+  ArrowLeftToLine, CalendarOff, CloudMoon, CornerDownLeft, CornerUpRight, Filter, Keyboard, ListFilter, LogOut, Moon, PenSquare, RefreshCw, Search, Sun,
 } from 'lucide-react';
 import { applyTheme } from '@/utils/theme';
 import { cn } from '@/utils/cn';
@@ -14,7 +14,7 @@ import { Kbd } from './ui';
 
 // Command palette (Oblidesk layout/CommandPalette): Ctrl+K, type to filter,
 // ↑ ↓ to move, Enter to run, Esc to close. Commands: write, search, folders,
-// quick filters, theme, vacation responder, shortcuts, back to the panel,
+// quick filters, theme, automatic replies / forwarding / rules, shortcuts, back to the panel,
 // sign out.
 
 interface Command {
@@ -50,7 +50,9 @@ export function CommandPalette({ panelUrl, onLogout }: { panelUrl: string | null
     list.push(
       { id: 'search', group: 'actions', title: t('wm.keys.search') || 'Search', icon: <Search size={15} />, hint: '/', run: after(() => window.setTimeout(() => document.getElementById(SEARCH_INPUT_ID)?.focus(), 0)) },
       { id: 'refresh', group: 'actions', title: t('wm.actions.refresh') || 'Refresh', icon: <RefreshCw size={15} />, run: after(() => { void s.refreshMailboxes(); void s.reloadList(); }) },
-      { id: 'vacation', group: 'actions', title: t('wm.vacation.title') || 'Vacation responder', icon: <CalendarOff size={15} />, run: () => s.setOverlay('vacation') },
+      { id: 'vacation', group: 'actions', title: t('wm.vacation.title') || 'Automatic replies', icon: <CalendarOff size={15} />, run: () => s.openSettings('vacation') },
+      { id: 'forwarding', group: 'actions', title: t('wm.forwarding.title') || 'Forwarding', icon: <CornerUpRight size={15} />, run: () => s.openSettings('forwarding') },
+      { id: 'rules', group: 'actions', title: t('wm.rules.title') || 'Rules', icon: <ListFilter size={15} />, run: () => s.openSettings('rules') },
       { id: 'shortcuts', group: 'actions', title: t('wm.keys.title') || 'Keyboard shortcuts', icon: <Keyboard size={15} />, hint: '?', run: () => s.setOverlay('shortcuts') },
     );
     if (panelUrl) list.push({ id: 'panel', group: 'actions', title: t('wm.back.toPanel') || 'Back to Oblimint', icon: <ArrowLeftToLine size={15} />, run: after(() => { window.location.assign(panelUrl); }) });

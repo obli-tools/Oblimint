@@ -1,5 +1,5 @@
 import os from 'os';
-import type { MailSettings, PlanLimits } from '@oblimint/shared';
+import type { MailRule, MailRuleAction, MailSettings, PlanLimits } from '@oblimint/shared';
 import { db } from '../../db';
 import { logger } from '../../utils/logger';
 import { SCANNER_CLAMD_PORT, SCANNER_CONTAINER } from '../hosting/naming';
@@ -14,7 +14,7 @@ import type {
 import { effectiveMessageSizeMb } from './limits';
 import { accountServesMail, mailDomainActive } from './mappers';
 import type { AccountSendPolicy } from './outbound/outbound.service';
-import { parseAutoresponder, parseTargets, type MailAliasRow, type MailboxRow } from './rows';
+import { parseAutoresponder, parseMailRules, parseTargets, type MailAliasRow, type MailboxRow } from './rows';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Desired state of the mail engine (docs/P4-PLAN.md §9.1). buildDesiredState
@@ -102,7 +102,9 @@ export function buildDesiredState(input: DesiredStateInput): MailDesiredState {
     const sendEnabled = loginEnabled && !!m.send_enabled && !(policy?.suspended ?? false);
     const receiveEnabled = !!m.receive_enabled && domainActive;
     const mayForwardOut = accountCanSend(m.account_id, dom.src.account_status) && !!m.send_enabled;
-    const targets = parseTargets(m.forward_targets).filter((t) => mayForwardOut || isLocal(t));
+    const reachable = (t: string) => mayForwardOut || isLocal(t);
+    const targets = m.forward_enabled === false ? [] : parseTargets(m.forward_targets).filter(reachable);
+    const rules = desiredRules(parseMailRules(m.mail_rules), reachable);
     const ar = mayForwardOut ? parseAutoresponder(m.autoresponder) : null;
     if (loginEnabled) loginEnabledIds.add(m.id);
     mailboxes.push({
@@ -125,6 +127,7 @@ export function buildDesiredState(input: DesiredStateInput): MailDesiredState {
       autoresponder: ar && ar.enabled && (!ar.endsAt || Date.parse(ar.endsAt) > now.getTime())
         ? { subject: ar.subject, body: ar.body, startsAt: ar.startsAt, endsAt: ar.endsAt, intervalDays: ar.intervalDays }
         : null,
+      ...(rules.length ? { rules } : {}),
     });
   }
 
@@ -162,6 +165,26 @@ export function buildDesiredState(input: DesiredStateInput): MailDesiredState {
     tls: input.tls,
     relay: input.relay,
   };
+}
+
+/**
+ * Enabled rules as the engine runs them: forward / redirect targets the
+ * mailbox may not reach are dropped (MA9: a mailbox / account that may not
+ * send keeps its local targets only), an action left without target goes,
+ * a rule left without action goes. Pure.
+ */
+export function desiredRules(rules: readonly MailRule[], reachable: (address: string) => boolean): MailRule[] {
+  const out: MailRule[] = [];
+  for (const r of rules) {
+    if (!r.enabled) continue;
+    const actions = r.actions.flatMap((a): MailRuleAction[] => {
+      if (a.kind !== 'forward' && a.kind !== 'redirect') return [a];
+      const to = a.to.filter(reachable);
+      return to.length ? [{ ...a, to }] : [];
+    });
+    if (actions.length) out.push({ ...r, actions });
+  }
+  return out;
 }
 
 /** Optional provider: its failure leaves its part at the fallback (logged, never a secret). */

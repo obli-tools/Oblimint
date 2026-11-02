@@ -170,6 +170,13 @@ export interface MailSettings {
   authBanDurationMinutes: number;
   /** mail_log rows kept (days). */
   logRetentionDays: number;
+  /**
+   * The mailbox owner (Oblimint webmail) and the client users of the account
+   * (panel) may forward / redirect outside the hosting account's own mail
+   * domains (forwarding and inbox rules). Off: only to an address of the
+   * account; what is already set stays as is. Staff is not bound.
+   */
+  ownerExternalForwarding: boolean;
 }
 
 /**
@@ -440,6 +447,7 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     authBanWindowMinutes: 10,
     authBanDurationMinutes: 60,
     logRetentionDays: 30,
+    ownerExternalForwarding: true,
   },
   apps: {
     enabled: true,

@@ -158,6 +158,11 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'mail.mailbox_delete', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: P },
   { key: 'mail.mailbox_password', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: P, secret: true },
   { key: 'mail.dkim_rotate', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: P },
+  // Where a mailbox's mail goes: forwarding (on / off / targets) and inbox rules (a rule may forward,
+  // redirect or delete). Panel only (the mailbox owner's own webmail changes are bounded by
+  // settings mail.ownerExternalForwarding instead). Open by default (never in DEFAULT_RESTRICTIONS).
+  { key: 'mail.mailbox_forwarding', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: P },
+  { key: 'mail.mailbox_rules', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: P },
   // ── Cron, previews ──
   { key: 'cron.write', category: 'cron', need: 'sites.manage', scopable: 'site', surfaces: PK },
   { key: 'cron.delete', category: 'cron', need: 'sites.manage', scopable: 'site', surfaces: PK },

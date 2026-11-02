@@ -380,7 +380,7 @@ test('mail-core on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestCon
   assert.equal(r.body.code, 'forwardingLoop', 'contact → sales → info → contact');
   r = await call('PUT', `/mail/mailboxes/${contact}/forwarding`, asManager, { targets: ['me@gmail.com'], keepCopy: false });
   assert.equal(r.status, 200);
-  assert.deepEqual(r.body.data.forwarding, { targets: ['me@gmail.com'], keepCopy: false });
+  assert.deepEqual(r.body.data.forwarding, { targets: ['me@gmail.com'], keepCopy: false, enabled: true });
   assert.deepEqual(r.body.data.aliases.map((a: { address: string }) => a.address), ['info@acme-mail.fr']);
   r = await call('PUT', `/mail/aliases/${info}`, asManager, { targets: ['info@acme-mail.fr'] });
   assert.equal(r.body.code, 'forwardingLoop');

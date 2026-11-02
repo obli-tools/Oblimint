@@ -125,6 +125,8 @@
       "mail_mailbox_delete": "Supprimer une boîte mail",
       "mail_mailbox_password": "Changer le mot de passe d'une boîte mail",
       "mail_dkim_rotate": "Renouveler la clé DKIM",
+      "mail_mailbox_forwarding": "Changer le transfert d'une boîte mail",
+      "mail_mailbox_rules": "Changer les règles de réception d'une boîte mail",
       "cron_write": "Créer ou modifier une tâche cron",
       "cron_delete": "Supprimer une tâche cron",
       "cron_run": "Lancer une tâche cron maintenant",

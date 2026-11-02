@@ -1,4 +1,4 @@
-import type { MailAutoresponder } from './mail';
+import type { MailAutoresponder, MailRule } from './mail';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Oblimint webmail (settings mail.webmail = 'oblimint'): API of the webmail
@@ -17,6 +17,12 @@ import type { MailAutoresponder } from './mail';
 //   GET    /wm-api/events               text/event-stream (JMAP StateChange relay)
 //   GET    /wm-api/vacation             → WebmailVacation
 //   PUT    /wm-api/vacation             WebmailVacation → WebmailVacation
+//   GET    /wm-api/forwarding           → WebmailForwarding
+//   PUT    /wm-api/forwarding           WebmailForwardingInput → WebmailForwarding
+//   GET    /wm-api/rules                → WebmailRules
+//   PUT    /wm-api/rules                { rules } → WebmailRules
+// Forwarding and rules are the panel's own settings of the mailbox (same
+// rows, validation, sync and audit as the panel's mailbox page).
 // Every state-changing call: same Origin + header X-Oblimint-CSRF.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -70,13 +76,69 @@ export interface WebmailLoginRequest {
 /** The mailbox's autoresponder (the panel's, rendered into its managed sieve script). */
 export type WebmailVacation = MailAutoresponder;
 
+/** What the mailbox owner may do with forwarding / forward-redirect rule actions. */
+export interface WebmailForwardingPolicy {
+  /** Targets outside the account's own mail domains are accepted (settings mail.ownerExternalForwarding). */
+  external: boolean;
+  /** The account's own mail domains (always accepted); listed only when external is false ([] otherwise). */
+  internalDomains: string[];
+  /** Forwarding + rule redirections of one message at most. */
+  maxRedirects: number;
+}
+
+/** The mailbox's forwarding (the panel's MailForwarding), as the owner sees it. */
+export interface WebmailForwarding {
+  enabled: boolean;
+  targets: string[];
+  keepCopy: boolean;
+  /** Forwarding applies now (enabled with at least one target). */
+  active: boolean;
+  /** Last change made from the panel, not by the mailbox itself (null: never / by the mailbox). */
+  changedByPanelAt: string | null;
+  /** Enabled inbox rules that forward / redirect messages (shown in the banner like the forwarding). */
+  ruleForwards: WebmailRuleForward[];
+  policy: WebmailForwardingPolicy;
+}
+
+/** One enabled rule that sends messages on. */
+export interface WebmailRuleForward {
+  /** The rule's name. */
+  rule: string;
+  to: string[];
+  /** false = redirect (the message is not kept in the mailbox). */
+  kept: boolean;
+}
+
+export interface WebmailForwardingInput {
+  enabled: boolean;
+  targets: string[];
+  keepCopy: boolean;
+}
+
+export interface WebmailRules {
+  rules: MailRule[];
+  /** The engine runs the rules (Stalwart). */
+  supported: boolean;
+  policy: WebmailForwardingPolicy;
+}
+
 export type WebmailErrorCode =
   | 'invalidCredentials' | 'tooManyAttempts' | 'csrf' | 'notAuthenticated' | 'forbidden' | 'invalidRequest'
   | 'unavailable' | 'tooLarge' | 'ssoInvalid' | 'notFound' | 'upstream'
   /** EmailSubmission refused: the mailbox may not send (send toggle off, outbound suspended…). */
-  | 'sendDisabled';
+  | 'sendDisabled'
+  /** Forwarding / a rule to an address outside the account while the platform does not allow it. */
+  | 'forwardingNotAllowed';
 
 export interface WebmailError {
   error: WebmailErrorCode;
   message: string;
+  /**
+   * Business reason of a refused forwarding / rules change (the panel's
+   * AppError code: invalidTarget, forwardingLoop, tooManyRedirects,
+   * invalidRule, rulesUnsupported, forwardingNotAllowed…), for translation.
+   */
+  reason?: string;
+  /** Values to show with the reason (no other field is ever sent). */
+  details?: { target?: string; max?: number; rule?: number };
 }

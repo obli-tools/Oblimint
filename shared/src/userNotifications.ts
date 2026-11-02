@@ -209,7 +209,8 @@ export interface TransactionalMailSettingsInput {
 }
 
 /** account: password reset, e-mail confirmation and the personal notices of the account. */
-export type TransactionalMailKind = 'notification' | 'test' | 'account';
+/** 'mailbox': notice to a mailbox about its own settings (forwarding turned on / changed from the panel). */
+export type TransactionalMailKind = 'notification' | 'test' | 'account' | 'mailbox';
 
 /** GET /api/system/transactional-mail/log */
 export interface TransactionalMailLogEntry {

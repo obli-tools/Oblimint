@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CornerUpRight, Download, LogIn, MessageSquareReply, Send, Inbox } from 'lucide-react';
+import { CornerUpRight, Download, ListFilter, LogIn, MessageSquareReply, Send, Inbox } from 'lucide-react';
 import type {
   Mailbox, MailDnsCheckStatus, MailDomainStatus, MailEngine, MailLogEventKind, MailOutboundStatus, MailQueueItemStatus,
 } from '@oblimint/shared';
@@ -116,15 +116,26 @@ function Flag({ on, icon, label }: { on: boolean; icon: ReactNode; label: string
 }
 
 /** Login / send / receive flags + forwarding / autoresponder / imported markers of a mailbox. */
-export function MailboxFlags({ box }: { box: Pick<Mailbox, 'enabled' | 'sendEnabled' | 'receiveEnabled' | 'forwarding' | 'autoresponderActive' | 'imported'> }) {
+export function MailboxFlags({ box }: { box: Pick<Mailbox, 'enabled' | 'sendEnabled' | 'receiveEnabled' | 'forwarding' | 'autoresponderActive' | 'imported'> & Partial<Pick<Mailbox, 'activeRuleCount' | 'ruleForwardTargets'>> }) {
   const { t } = useTranslation();
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
       <Flag on={box.enabled} icon={<LogIn size={10} />} label={box.enabled ? (t('mail.flags.loginOn') || 'Login allowed') : (t('mail.flags.loginOff') || 'Login disabled')} />
       <Flag on={box.sendEnabled} icon={<Send size={10} />} label={box.sendEnabled ? (t('mail.flags.sendOn') || 'Sending allowed') : (t('mail.flags.sendOff') || 'Sending disabled')} />
       <Flag on={box.receiveEnabled} icon={<Inbox size={10} />} label={box.receiveEnabled ? (t('mail.flags.receiveOn') || 'Receiving allowed') : (t('mail.flags.receiveOff') || 'Receiving disabled')} />
-      {box.forwarding && box.forwarding.targets.length > 0 && (
-        <Pill tone="blue" title={box.forwarding.targets.join(', ')}><CornerUpRight size={10} />{t('mail.flags.forwarding') || 'forward'}</Pill>
+      {box.forwarding && box.forwarding.targets.length > 0 && (box.forwarding.enabled !== false ? (
+        <Pill tone="blue" title={t('mail.flags.forwardingTo', { targets: box.forwarding.targets.join(', '), defaultValue: 'Forwarded to {{targets}}' })}><CornerUpRight size={10} />{t('mail.flags.forwarding') || 'forward'}</Pill>
+      ) : (
+        <Pill tone="muted" title={box.forwarding.targets.join(', ')}><CornerUpRight size={10} />{t('mail.flags.forwardingPaused') || 'forward paused'}</Pill>
+      ))}
+      {!!box.activeRuleCount && (
+        <Pill tone="muted" title={t('mail.flags.rulesHint') || 'Inbox rules turned on'}><ListFilter size={10} />{t('mail.flags.rules', { count: box.activeRuleCount, defaultValue: '{{count}} rules' })}</Pill>
+      )}
+      {!!box.ruleForwardTargets?.length && (
+        // A rule that forwards / redirects sends mail out like a forwarding: as visible as one.
+        <Pill tone="blue" title={t('mail.flags.ruleForwardingTo', { targets: box.ruleForwardTargets.join(', '), defaultValue: 'Rules forward messages to {{targets}}' })}>
+          <CornerUpRight size={10} />{t('mail.flags.ruleForwarding') || 'rule forward'}
+        </Pill>
       )}
       {box.autoresponderActive && <Pill tone="accent"><MessageSquareReply size={10} />{t('mail.flags.autoresponder') || 'auto-reply'}</Pill>}
       {box.imported && <Pill tone="muted" title={t('mail.flags.importedHint') || 'Password hash imported from another server'}><Download size={10} />{t('mail.flags.imported') || 'imported'}</Pill>}

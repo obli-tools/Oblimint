@@ -26,7 +26,17 @@
       "toPanel": "Retour sur Oblimint",
       "toPanelHint": "Revenir au panneau Oblimint"
     },
+    "card": {
+      "copied": "Adresse copiée",
+      "copy": "Copier l'adresse",
+      "copyFailed": "Impossible de copier l'adresse",
+      "open": "Fiche du contact",
+      "rule": "Créer une règle",
+      "search": "Ses messages",
+      "write": "Envoyer un e-mail"
+    },
     "common": {
+      "add": "Ajouter",
       "back": "Retour",
       "cancel": "Annuler",
       "close": "Fermer",
@@ -85,7 +95,14 @@
     "errors": {
       "generic": "Une erreur est survenue",
       "network": "Le serveur est injoignable.",
-      "sessionEnded": "Votre session est terminée : reconnectez-vous."
+      "sessionEnded": "Votre session est terminée : reconnectez-vous.",
+      "tooManyAttempts": "Trop de modifications : réessayez dans une minute.",
+      "invalidTarget": "{{target}} n'est ni une boîte ni un alias de votre compte.",
+      "invalidAddress": "Une des adresses n'est pas valide.",
+      "forwardingLoop": "Les messages tourneraient en boucle (une adresse les renvoie ici).",
+      "tooManyRedirects": "{{max}} destinations de transfert au plus en tout (transfert et règles ensemble).",
+      "invalidRuleN": "La règle {{n}} n'est pas valide.",
+      "invalidRule": "Une règle n'est pas valide."
     },
     "folders": {
       "archive": "Archives",
@@ -98,6 +115,33 @@
       "show": "Afficher les dossiers",
       "title": "Dossiers",
       "trash": "Corbeille"
+    },
+    "forwarding": {
+      "addFirst": "Ajoutez d'abord une adresse.",
+      "andMore": "et {{count}} autre(s)",
+      "badAddress": "{{address}} n'est pas une adresse valide.",
+      "bannerCopy": "Une copie reste dans cette boîte.",
+      "bannerNoCopy": "Aucune copie ne reste dans cette boîte.",
+      "bannerPanel": "Défini depuis le panel Oblimint le {{date}}.",
+      "bannerTitle": "Vos e-mails sont transférés vers {{targets}}.",
+      "changedByPanel": "Modifié depuis le panel Oblimint le {{date}}.",
+      "confirmOff": "Désactiver le transfert de vos e-mails ?",
+      "disable": "Désactiver le transfert",
+      "edit": "Modifier",
+      "enable": "Activer le transfert",
+      "internalOnly": "Sur cette plateforme, vous ne pouvez transférer qu'à des adresses de vos propres domaines ({{domains}}).",
+      "intro": "Transférez vos e-mails vers une autre adresse. Les règles de réception peuvent aussi ne transférer qu'une partie des messages.",
+      "keepCopy": "Conserver une copie des messages transférés",
+      "noCopyHint": "Les messages ne sont pas conservés dans cette boîte (les règles ne s'y appliquent pas).",
+      "notAllowed": "Le transfert hors de vos propres domaines n'est pas autorisé sur cette plateforme.",
+      "on": "actif",
+      "saved": "Transfert enregistré",
+      "title": "Transfert",
+      "to": "Transférer mes e-mails à",
+      "turnedOff": "Transfert désactivé",
+      "ruleOne": "La règle « {{rule}} » transfère des messages vers {{targets}}.",
+      "ruleMany": "{{count}} règles transfèrent des messages vers {{targets}}.",
+      "seeRules": "Voir les règles"
     },
     "keys": {
       "archive": "Archiver",
@@ -180,6 +224,79 @@
       "showImages": "Afficher les images",
       "truncated": "Ce message est très long : seul son début est affiché."
     },
+    "rules": {
+      "act": {
+        "delete": "Supprimer (Éléments supprimés)",
+        "discard": "Supprimer définitivement",
+        "flag": "Signaler",
+        "forward": "Transférer à",
+        "markRead": "Marquer comme lu",
+        "move": "Déplacer vers le dossier",
+        "redirect": "Rediriger vers"
+      },
+      "add": "Nouvelle règle",
+      "addAction": "Ajouter une action",
+      "addCondition": "Ajouter une condition",
+      "allMessages": "Tous les messages",
+      "and": "et",
+      "chooseFolder": "Choisir un dossier…",
+      "cond": {
+        "body": "Le corps du message contient",
+        "from": "L'expéditeur contient",
+        "hasAttachment": "Contient une pièce jointe",
+        "sizeOver": "Plus grand que (Ko)",
+        "sizeUnder": "Plus petit que (Ko)",
+        "subject": "L'objet contient",
+        "toCc": "À ou Cc contient"
+      },
+      "confirmDelete": "Supprimer la règle « {{name}} » ?",
+      "delete": "Supprimer la règle",
+      "deleted": "Règle supprimée",
+      "down": "Descendre",
+      "edit": "Modifier",
+      "enabled": "Règle activée",
+      "folderMissing": "introuvable",
+      "fromSenderName": "Messages de {{who}}",
+      "ifShort": "Si",
+      "intro": "Les règles trient les messages reçus pour vous, dans cet ordre (le spam est laissé de côté).",
+      "match": "Correspondance",
+      "matchAll": "toutes les conditions sont remplies",
+      "matchAny": "l'une des conditions est remplie",
+      "name": "Nom de la règle",
+      "newName": "Nouvelle règle",
+      "noCondition": "Aucune condition : la règle s'applique à tous les messages.",
+      "none": "Aucune règle pour le moment.",
+      "noneHint": "Par exemple : ranger les factures dans un dossier, signaler les messages de votre responsable.",
+      "or": "ou",
+      "problem": {
+        "actions": "Ajoutez au moins une action.",
+        "folder": "Choisissez un dossier.",
+        "name": "Donnez un nom à la règle.",
+        "oneDestination": "Une seule destination : déplacer, supprimer ou rediriger.",
+        "sameAction": "La même action est présente deux fois.",
+        "size": "Indiquez une taille en Ko.",
+        "targetSelf": "Une règle ne peut pas transférer vers cette boîte elle-même.",
+        "targets": "Indiquez des adresses valides (5 au plus).",
+        "words": "Chaque condition demande au moins un mot."
+      },
+      "redirectHint": "Rediriger : le message repart avec son expéditeur d'origine et n'est pas conservé ici. Transférer : une copie repart, le message reste.",
+      "reordered": "Ordre enregistré",
+      "saveRule": "Enregistrer la règle",
+      "saved": "Règle enregistrée",
+      "stop": "Ne pas appliquer les règles suivantes",
+      "stopShort": "arrêt",
+      "then": "Effectuer les actions suivantes",
+      "thenShort": "Alors",
+      "title": "Règles",
+      "tooManyRedirects": "Au plus {{max}} destinations de transfert en tout (transfert et règles ensemble).",
+      "turnedOff": "Règle désactivée",
+      "turnedOn": "Règle activée",
+      "unsupported": "Les règles de réception ne sont pas disponibles sur ce serveur de messagerie.",
+      "up": "Monter",
+      "when": "Lorsqu'un message arrive et que",
+      "wordsHint": "mots, séparés par des virgules",
+      "stopForced": "Le message est parti après cette règle : les règles suivantes ne s'y appliquent jamais."
+    },
     "search": {
       "advanced": "Recherche avancée",
       "clear": "Effacer la recherche",
@@ -193,6 +310,9 @@
       "subject": "Objet",
       "submit": "Rechercher",
       "to": "À"
+    },
+    "settings": {
+      "title": "Paramètres de messagerie"
     },
     "sso": {
       "invalid": "Ce lien a expiré ou a déjà servi : rouvrez le webmail depuis le panel.",
@@ -214,7 +334,7 @@
       "interval": "Répondre au même expéditeur au plus tous les (jours)",
       "message": "Message",
       "saved": "Répondeur enregistré",
-      "title": "Répondeur d'absence",
+      "title": "Réponses automatiques",
       "until": "Au (facultatif)"
     }
   }

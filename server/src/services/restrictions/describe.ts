@@ -75,6 +75,8 @@ export const ACTION_VERBS_FR: Readonly<Record<string, string>> = {
   'db.ddl': 'Supprimer ou vider un objet de la base',
   'db.rows_write': 'Modifier des lignes de la base',
   'db.dump': 'Exporter la base de données',
+  'mail.mailbox_forwarding': 'Changer le transfert d’une boîte mail',
+  'mail.mailbox_rules': 'Changer les règles de réception d’une boîte mail',
   'db.admin_open': 'Ouvrir phpMyAdmin / Adminer (session d’administration de l’instance)',
   'db.attach': 'Définir ou changer le site propriétaire d’une base de données',
   'db.share': 'Changer le partage d’une base de données avec un site',

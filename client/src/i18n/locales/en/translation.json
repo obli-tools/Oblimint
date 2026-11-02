@@ -97,7 +97,8 @@
     "searchEllipsis": "Search…",
     "expandAll": "Expand all",
     "collapseAll": "Collapse all",
-    "platformGroup": "Platform"
+    "platformGroup": "Platform",
+    "remove": "Remove"
   },
   "dashboard": {
     "accounts": "Hosting accounts",
