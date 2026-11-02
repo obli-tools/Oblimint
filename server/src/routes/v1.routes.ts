@@ -13,9 +13,10 @@ import {
   DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S, FILE_EDIT_MAX_EDITS, FILE_READ_MAX_RANGE, FILE_SEARCH_MAX_PER_FILE, FILE_SEARCH_MAX_RESULTS,
   NOTIFICATION_FAMILIES,
 } from '@oblimint/shared';
-import type { NotificationFamily } from '@oblimint/shared';
+import type { DnsRecordInput, NotificationFamily } from '@oblimint/shared';
 import { keyDatabases } from '../services/apiKeys/keyDatabases';
 import { keyEnv } from '../services/apiKeys/keyEnv';
+import { keyDns } from '../services/apiKeys/keyDns';
 import { keyPending, pendingIdOf, PENDING_WAIT_MAX_MS, statusOf } from '../services/apiKeys/keyPending';
 import { errorListQuery, errorListShape } from '../services/siteErrors/siteErrors.service';
 import type { SiteBaseId } from '@oblimint/shared';
@@ -118,6 +119,11 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   GET    /subdomains                                  → ApiV1Subdomain[] (created by the key)   domains.subdomain
 //   POST   /sites/:id/subdomains {name}                 → ApiV1Subdomain (201)                    domains.subdomain
 //   DELETE /subdomains/:name                            → { deleted: true } (its own only)       domains.subdomain
+//   GET    /zones                                       → ApiV1DnsZone[] (zones of the domains given to the key) dns.read
+//   GET    /zones/:zone/records                         → ApiV1DnsZoneRecords (readOnly: managed by the platform) dns.read
+//   POST   /zones/:zone/records  DnsRecordInput         → ApiV1DnsRecord (201; free records only)  dns.write (gate dns.record_write)
+//   PUT    /zones/:zone/records/:rid DnsRecordInput     → ApiV1DnsRecord                           dns.write (gate dns.record_write)
+//   DELETE /zones/:zone/records/:rid                    → { deleted: true }                        dns.write (gate dns.record_delete)
 //   GET    /pending-actions?status=                     → KeyPendingAction[] (this key's requests for protected actions)
 //   GET    /pending-actions/:pid                        → KeyPendingAction
 //   GET    /pending-actions/:pid/wait?timeout=≤60       → KeyPendingAction once decided (timedOut otherwise; one of the 3 wait slots)
@@ -414,6 +420,27 @@ router.delete('/subdomains/:name', h(async (req, res) => {
   ok(res, { deleted: true });
 }));
 
+// ── DNS records of the zones of the domains given to the key (dns.read / dns.write) ──
+// The type is checked by the DNS service (400 recordInvalid) and the key rules (403 dnsRecordProtected for NS).
+const dnsRecordBody = z.object({
+  name: z.string().max(253),
+  type: z.string().min(1).max(10).transform((v) => v.toUpperCase()),
+  content: z.string().max(8192),
+  ttl: z.number().int().nullable().optional(),
+  priority: z.number().int().nullable().optional(),
+  disabled: z.boolean().optional(),
+  comment: z.string().max(255).nullable().optional(),
+}).strict();
+const dnsInput = (req: Request) => parseBody(dnsRecordBody, req.body) as unknown as DnsRecordInput;
+const zoneName = (req: Request) => String(req.params.zone);
+router.get('/zones', h(async (req, res) => ok(res, await keyDns.zones(ctxOf(req)))));
+router.get('/zones/:zone/records', h(async (req, res) => ok(res, await keyDns.records(ctxOf(req), zoneName(req)))));
+router.post('/zones/:zone/records', h(async (req, res) => ok(res, await keyDns.create(ctxOf(req), req, zoneName(req), dnsInput(req)), 201)));
+router.put('/zones/:zone/records/:rid', h(async (req, res) => ok(res, await keyDns.update(ctxOf(req), req, zoneName(req), Number(req.params.rid), dnsInput(req)))));
+router.delete('/zones/:zone/records/:rid', h(async (req, res) => {
+  await keyDns.remove(ctxOf(req), req, zoneName(req), Number(req.params.rid));
+  ok(res, { deleted: true });
+}));
 // ── path routes ──
 const prefix = z.string().min(1).max(255);
 /** "/uploads" or "uploads" → "/uploads/", checked like the panel routes. */

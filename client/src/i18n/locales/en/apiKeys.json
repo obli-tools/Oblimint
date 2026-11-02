@@ -112,6 +112,16 @@
           "label": "Read the public ports",
           "hint": "Public ports of the account (blocks of the shared IP, dedicated IP) and the published ports of every application, whatever the sites of the key. Read only."
         }
+      },
+      "dns": {
+        "read": {
+          "label": "Read DNS records",
+          "hint": "DNS zones of the domains given to the key (every zone of the account for a key on every domain) and their records; the ones the platform manages are shown read-only."
+        },
+        "write": {
+          "label": "Write DNS records",
+          "hint": "Create, change and delete the free records of those zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), e.g. a name pointing to another server or a game server SRV. Never the records the platform manages: names served by the sites and subdomains, hosted mail, SOA / NS, challenges."
+        }
       }
     },
     "guide": "API & AI agent guide",
@@ -152,7 +162,7 @@
     "allDomains": "Every domain of the account",
     "selectedDomains": "Only the domains below",
     "noDomains": "No domain in this account.",
-    "domainsHint": "With the Routes right, the key may decide which of its sites serves these domains (or a path of them) — even a domain that serves nothing yet; with the Subdomains right, it attaches subdomains under them. A key valid for every site only works on the domains given here. Without a domain here, a key limited to some sites works only on the domains serving its sites alone (subdomains under those same domains). A route towards a site outside the key is never changed or removed. Giving domains needs the domain management right.",
+    "domainsHint": "With the Routes right, the key may decide which of its sites serves these domains (or a path of them) — even a domain that serves nothing yet; with the Subdomains right, it attaches subdomains under them; with the DNS rights, it reads and writes the free records of their DNS zones (never the records the platform manages). A key valid for every site only works on the domains given here. Without a domain here, a key limited to some sites works only on the domains serving its sites alone (subdomains under those same domains), and reaches no DNS zone. A route towards a site outside the key is never changed or removed. Giving domains needs the domain management right.",
     "notHeld": "not held",
     "notHeldHint": "You do not hold this right on the account: you cannot grant it.",
     "domainsNotHeld": "You do not hold the domain management right on the account: you cannot give domains to a key.",

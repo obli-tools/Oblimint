@@ -117,6 +117,7 @@
       "dns_zone_reset": "Réinitialiser une zone DNS",
       "dns_template_apply": "Appliquer un modèle DNS",
       "dns_record_write": "Modifier des enregistrements DNS",
+      "dns_record_delete": "Supprimer des enregistrements DNS",
       "mail_dns_fix": "Corriger les DNS du mail (MX, SPF…)",
       "proxy_host_delete": "Supprimer un hôte du proxy",
       "firewall_mode_change": "Changer le mode du pare-feu (liste blanche)",

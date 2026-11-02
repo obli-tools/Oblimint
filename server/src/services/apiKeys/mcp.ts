@@ -9,7 +9,8 @@ import {
   SITE_ERROR_LIST_MAX, SITE_ERROR_RETENTION_DAYS,
 } from '@oblimint/shared';
 import type { NotificationFamily, RestrictableActionKey } from '@oblimint/shared';
-import { PENDING_ACTION_STATUSES, PENDING_ACTION_USER_MESSAGE_FR } from '@oblimint/shared';
+import { API_KEY_DNS_TYPES, PENDING_ACTION_STATUSES, PENDING_ACTION_USER_MESSAGE_FR } from '@oblimint/shared';
+import type { DnsRecordType } from '@oblimint/shared';
 import { keyPending, PENDING_WAIT_MAX_MS } from './keyPending';
 import { serverVersion } from '../../utils/version';
 import { AppError } from '../../middleware/errorHandler';
@@ -21,6 +22,7 @@ import type { ApiKeyContext } from './apiKeys.service';
 import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, siteCreateSchema, siteUpdateSchema } from '../../validators/hosting.schema';
 import { keyDatabases } from './keyDatabases';
 import { keyEnv } from './keyEnv';
+import { keyDns } from './keyDns';
 import { parseBody } from '../docker/parseBody';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -577,7 +579,63 @@ const TOOLS: ToolDef[] = [
     args: z.object({ name: z.string().min(4).max(253) }),
     run: async (ctx, req, a) => { await keyApi.removeSubdomain(ctx, req, a.name); return { deleted: true }; },
   },
-  // ── path routes (routes.manage), secondary runtimes (sites.manage) ──
+  // ── DNS records of the zones of the domains given to the key (dns.read / dns.write) ──
+  {
+    name: 'list_dns_zones', title: 'DNS zones', readOnly: true,
+    description: 'DNS zones this key reaches (scope dns.read): the zones of the domains given to the key in the panel (every zone of the account for a key on every domain). kind hosted: served by the platform name servers, its free records are editable (writable: true with dns.write); external: hosted elsewhere, read only. Another account or a platform zone never appears.',
+    inputSchema: obj({}, []), args: z.object({}).passthrough(),
+    run: (ctx) => keyDns.zones(ctx),
+  },
+  {
+    name: 'list_dns_records', title: 'DNS records of a zone', readOnly: true,
+    description: 'Records of one zone of list_dns_zones (scope dns.read): name (relative, "@" = apex), fqdn, type, content, ttl, priority, and readOnly. readOnly records are managed by the platform and can never be changed by a key: readOnlyReason generated (the web records of the domains / subdomains served by the sites, the mail records of a hosted mail), override (a human replaced a generated record in the panel), type (NS), reserved (ACME / ownership challenges). The SOA and the apex NS are the platform\'s and are not listed.',
+    inputSchema: obj({ zone: { type: 'string', description: 'Zone name from list_dns_zones, e.g. "example.com".' } }, ['zone']),
+    args: z.object({ zone: z.string().min(1).max(253) }),
+    run: (ctx, _r, a) => keyDns.records(ctx, a.zone),
+  },
+  {
+    name: 'upsert_dns_record', title: 'Create or change a DNS record', gated: ['dns.record_write'],
+    description: `Creates or changes a FREE record of a hosted zone (scope dns.write): types ${API_KEY_DNS_TYPES.join(', ')}. Without record_id the record with this name and type is changed (created when there is none; recordAmbiguous when there are several: give record_id, or add: true to add another value, e.g. a second A or TXT). Records the platform manages are read-only (dnsRecordProtected): NEVER repoint a name served by an Oblimint site (use routes / subdomains for that); DNS records are for what is hosted ELSEWHERE (another server, a game server SRV, a verification TXT…). Same validation as the panel (TTL 60-604800, no CNAME at the apex nor beside another record: recordConflict). Applied to the name servers within seconds.`,
+    inputSchema: obj({
+      zone: { type: 'string', description: 'Zone name from list_dns_zones.' },
+      name: { type: 'string', description: 'Owner name relative to the zone ("@" = apex, "www", "_minecraft._tcp.play") or the full name.' },
+      type: { type: 'string', enum: [...API_KEY_DNS_TYPES] },
+      content: { type: 'string', description: 'A / AAAA: the address; CNAME / MX: the target host name; TXT: the text; SRV: "<weight> <port> <target>"; CAA: <flags> <tag> "<value>".' },
+      ttl: { type: 'integer', minimum: 60, maximum: 604800, description: 'Seconds (default: the zone\'s TTL).' },
+      priority: { type: 'integer', minimum: 0, maximum: 65535, description: 'MX / SRV priority (required for them).' },
+      comment: { type: 'string', description: 'Free note shown in the panel.' },
+      disabled: { type: 'boolean', description: 'Kept but not served.' },
+      record_id: { type: 'integer', description: 'Change this record (id from list_dns_records) instead of looking it up by name and type.' },
+      add: { type: 'boolean', description: 'Always create a new record (another value for the same name and type).' },
+    }, ['zone', 'name', 'type', 'content']),
+    args: z.object({
+      zone: z.string().min(1).max(253), name: z.string().max(253), type: z.enum(API_KEY_DNS_TYPES as unknown as [DnsRecordType, ...DnsRecordType[]]), content: z.string().max(8192),
+      ttl: z.number().int().optional(), priority: z.number().int().optional(), comment: z.string().max(255).optional(), disabled: z.boolean().optional(),
+      record_id: zId.optional(), add: z.boolean().optional(),
+    }),
+    run: (ctx, req, a) => keyDns.upsert(ctx, req, a.zone, {
+      name: a.name, type: a.type, content: a.content, ttl: a.ttl ?? null, priority: a.priority ?? null, comment: a.comment ?? null, disabled: a.disabled === true,
+    }, { recordId: a.record_id ?? null, add: a.add === true }),
+  },
+  {
+    name: 'delete_dns_record', title: 'Delete a DNS record', destructive: true, gated: ['dns.record_delete'],
+    description: 'Deletes a FREE record of a hosted zone (scope dns.write): by record_id (list_dns_records), or by name + type (+ content when several records share them). Records the platform manages are never deleted (dnsRecordProtected). Usually protected by a second factor of the key\'s owner (twoFactorRequired: ask the human, then call again).',
+    inputSchema: obj({
+      zone: { type: 'string', description: 'Zone name from list_dns_zones.' },
+      record_id: { type: 'integer', description: 'Record id from list_dns_records.' },
+      name: { type: 'string', description: 'Instead of record_id: the owner name (relative or full).' },
+      type: { type: 'string', enum: [...API_KEY_DNS_TYPES] },
+      content: { type: 'string', description: 'With name + type: the content of the record to delete when several match.' },
+    }, ['zone']),
+    args: z.object({
+      zone: z.string().min(1).max(253), record_id: zId.optional(), name: z.string().max(253).optional(),
+      type: z.enum(API_KEY_DNS_TYPES as unknown as [DnsRecordType, ...DnsRecordType[]]).optional(), content: z.string().max(8192).optional(),
+    }).refine((a) => a.record_id !== undefined || (a.name !== undefined && a.type !== undefined), { message: 'record_id, or name and type, is required' }),
+    run: async (ctx, req, a) => {
+      if (a.record_id) { await keyDns.remove(ctx, req, a.zone, a.record_id); return { deleted: true, id: a.record_id }; }
+      return keyDns.removeMatching(ctx, req, a.zone, a.name, a.type, a.content ?? null);
+    },
+  },  // ── path routes (routes.manage), secondary runtimes (sites.manage) ──
   {
     name: 'list_routes', title: 'Domains and routes', readOnly: true,
     description: 'Domains of the account with their path routes (which site — and which runtime of it — serves https://domain/prefix/…; longest prefix wins). manageable: the key may change that domain\'s routes (scope routes.manage): a domain given to the key in the panel (even one serving nothing yet), or one whose routes all lead to its sites (a key limited to some sites). Routes always lead to the key\'s own sites; a route towards a site outside the key (site_id 0) is never changed nor removed.',
@@ -998,6 +1056,7 @@ export const MCP_INSTRUCTIONS = [
   'A site in publish mode "auto" puts every staging change live a few seconds later: on a live site, switch it to "manual" (update_site) before developing; switching to "auto" needs releases.publish.',
   'Writable folders are declared data paths (add_data_path); secrets and database credentials go to environment variables (set_env secret: write-only, create_database_user with env_site_id), never into the code (a committed secret stays readable in old releases). Never write your own access key into a file. Every publish runs a leak guard (secrets, dumps, config backups, phpinfo…): run check_leaks before publish; leakBlocked means nothing went live — remove what outcome.leaks names and publish again.',
   'Domains: only those given to the key (Domains of the key in the panel) or serving only its sites can be routed or get subdomains; a route towards a site outside the key is never changed nor removed. Batches: at most 20 messages.',
+  'DNS (scopes dns.read / dns.write): list_dns_zones, list_dns_records, upsert_dns_record, delete_dns_record on the zones of the domains given to the key. The records the platform manages (names served by the sites and subdomains, hosted mail, SOA / NS, challenges) are read-only: never repoint a name served by a site (use routes / subdomains); DNS records are for what is hosted elsewhere.',
   'No permanent process runs: only the website and its cron jobs (one hour at most each).',
   `Protected actions: the humans may protect some operations (dropping a database, an SQL write, publishing…). Such a tool then answers an error twoFactorRequired (the key's owner confirms with his 2FA code) or approvalRequired (a second authorised person approves) with details.pendingActionId, description and userMessage: tell the human exactly that message (« ${PENDING_ACTION_USER_MESSAGE_FR} ») and what is asked, call wait_for_pending_action, and once approved call the SAME tool again with the SAME arguments (or approval_id) — it runs once; any other argument files a new request. twoFactorNotEnrolled: the key's owner must first enable 2FA in his profile; noEligibleApprover: a second authorised person is needed. You never confirm nor approve anything yourself; denied means stop and ask the human.`,
   'Call get_guide for the full guide (rights, tools, databases, cron, routes, how to develop on a live site and roll back).',

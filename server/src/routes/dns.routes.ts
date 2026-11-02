@@ -30,7 +30,7 @@ async function gateZone(req: Request, action: string, params: Record<string, unk
 //   GET    /zones/:id/delegation     → DnsDelegationCheck                                            (read, heavyOpLimiter)
 //   POST   /zones/:id/records        DnsRecordInput → DnsRecord (201)                                (dns.manage)
 //   PUT    /zones/:id/records/:rid   DnsRecordInput → DnsRecord                                      (dns.manage)
-//   DELETE /zones/:id/records/:rid   → { deleted: true }                                             (dns.manage)
+//   DELETE /zones/:id/records/:rid   → { deleted: true }                                             (dns.manage; gate dns.record_delete)
 //   GET    /templates                ?tenantId= → DnsTemplate[]                                      (staff read)
 //   POST   /templates                DnsTemplateInput → DnsTemplate (201)                            (staff dns.manage)
 //   PUT    /templates/:id            Partial<DnsTemplateInput> → DnsTemplate                         (staff dns.manage)
@@ -176,7 +176,8 @@ router.put('/zones/:id/records/:rid', validate(recordInputSchema), async (req, r
 
 router.delete('/zones/:id/records/:rid', async (req, res, next) => {
   try {
-    await gateZone(req, 'dns.record_write', { op: 'delete', recordId: idParam(req, 'rid') });
+    // A deletion has its own protected action (2FA by default, as the other deletions).
+    await gateZone(req, 'dns.record_delete', { op: 'delete', recordId: idParam(req, 'rid') });
     await dnsService.deleteRecord(req, await resolveActor(req), idParam(req), idParam(req, 'rid'));
     res.json({ success: true, data: { deleted: true } });
   } catch (err) { next(err); }

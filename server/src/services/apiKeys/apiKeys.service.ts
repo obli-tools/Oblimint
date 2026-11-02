@@ -29,7 +29,8 @@ import { twoFactorSetupRequired } from '../../middleware/sessionUserGuard';
 //   - the site restriction (siteScope 'selected' + api_key_sites), enforced
 //     by the key API (routes/v1) on top of the services;
 //   - the domains given to it (domainScope + api_key_domains created_by_key
-//     false): with routes.manage, it routes them to its sites. A grant needs
+//     false): with routes.manage, it routes them to its sites; with dns.read /
+//     dns.write, it reads / writes the free records of their zones. A grant needs
 //     domains.manage, and stops counting when the user no longer holds it.
 // Managing the keys of an account needs sites.manage on it, and creating /
 // widening a key needs every scope's right (no one hands out rights he lacks).
@@ -92,6 +93,9 @@ export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed> = {
   'routes.manage': 'domains.manage',
   // Migration 032: read the public ports of the account (membership is enough).
   'network.read': 'read',
+  // DNS records of the zones of the domains given to the key (keyDns.ts): read as the panel reads a zone, write with dns.manage.
+  'dns.read': 'read',
+  'dns.write': 'dns.manage',
 };
 
 /** Client capability each scope gives the key's actor. */
@@ -109,6 +113,8 @@ const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
   'databases.manage': 'databases.manage',
   'routes.manage': 'domains.manage',
   'network.read': null,
+  'dns.read': null,
+  'dns.write': 'dns.manage',
 };
 
 /** Feature B (B9): stops the previews started through a key (never throws). */

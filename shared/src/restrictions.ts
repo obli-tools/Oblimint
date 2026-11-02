@@ -146,7 +146,9 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'dns.zone_delete', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: P },
   { key: 'dns.zone_reset', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: P },
   { key: 'dns.template_apply', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: P },
-  { key: 'dns.record_write', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: P },
+  // A record created / changed (panel, or an access key with dns.write: free records only); deleting one apart.
+  { key: 'dns.record_write', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: PK },
+  { key: 'dns.record_delete', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: PK },
   { key: 'mail.dns_fix', category: 'domains', need: 'mail.manage', alsoNeed: 'dns.manage', scopable: 'account', surfaces: P },
   { key: 'proxy.host_delete', category: 'domains', need: 'proxy.manage', scopable: 'account', surfaces: P },
   // Migration 032: a deploy that opens a port on the Internet (new published binding of an app / stack).
@@ -226,6 +228,8 @@ export const DEFAULT_RESTRICTIONS: Readonly<RestrictionMap> = {
   'db.drop': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'domain.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'dns.zone_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
+  // Existing tenants get it from migration 035.
+  'dns.record_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'mail.domain_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'mail.mailbox_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'user.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },

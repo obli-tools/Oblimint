@@ -52,6 +52,40 @@ test('every key surface of the catalogue is reachable through a gated tool (REST
   assert.deepEqual(keysActions.filter((k) => !declared.has(k)), ['db.dump'], 'only the dump has no MCP tool');
 });
 
+test('DNS tools: read-only listings, a gated upsert, a destructive gated delete, the platform records said read-only', () => {
+  const byName = new Map(toolList().map((t) => [t.name, t]));
+  const gated = new Map(gatedTools().map((t) => [t.name, t.actions]));
+  for (const n of ['list_dns_zones', 'list_dns_records']) {
+    assert.equal(byName.get(n)?.annotations.readOnlyHint, true, n);
+    assert.ok(!gated.has(n), n);
+  }
+  const upsert = byName.get('upsert_dns_record');
+  assert.ok(upsert);
+  assert.deepEqual(gated.get('upsert_dns_record'), ['dns.record_write']);
+  assert.equal(upsert.annotations.destructiveHint, false);
+  assert.match(upsert.description, /NEVER repoint a name served by an Oblimint site/);
+  assert.match(upsert.description, /read-only \(dnsRecordProtected\)/);
+  const types = ((upsert.inputSchema as { properties: Record<string, { enum?: string[] }> }).properties.type.enum ?? []);
+  assert.ok(!types.includes('NS'), 'NS is not a key type');
+  const del = byName.get('delete_dns_record');
+  assert.equal(del?.annotations.destructiveHint, true);
+  assert.deepEqual(gated.get('delete_dns_record'), ['dns.record_delete']);
+  assert.match(MCP_INSTRUCTIONS, /never repoint a name served by a site/);
+  assert.equal(restrictableAction('dns.record_delete')?.surfaces.includes('keys'), true);
+});
+
+test('DNS tools: arguments checked before anything runs', async () => {
+  const call = async (name: string, args: Record<string, unknown>) => (await handleRpc({} as never, {} as never, {
+    jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args },
+  }) as { result: { isError: boolean; content: Array<{ text: string }> } }).result;
+  let r = await call('delete_dns_record', { zone: 'example.com' });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /record_id, or name and type, is required/);
+  r = await call('upsert_dns_record', { zone: 'example.com', name: 'sub', type: 'NS', content: 'ns1.example.net' });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /Invalid arguments: type/);
+});
+
 test('the server instructions tell the agent what to do on a 428', () => {
   assert.ok(MCP_INSTRUCTIONS.includes(PENDING_ACTION_USER_MESSAGE_FR));
   assert.match(MCP_INSTRUCTIONS, /wait_for_pending_action/);

@@ -87,6 +87,7 @@ export const ACTION_VERBS_FR: Readonly<Record<string, string>> = {
   'dns.zone_reset': 'Réinitialiser la zone DNS',
   'dns.template_apply': 'Appliquer un modèle à la zone DNS',
   'dns.record_write': 'Modifier un enregistrement DNS',
+  'dns.record_delete': 'Supprimer un enregistrement DNS',
   'mail.dns_fix': 'Corriger les enregistrements DNS du mail',
   'proxy.host_delete': 'Supprimer un hôte du proxy',
   'app.port_publish': 'Publier un port sur Internet',

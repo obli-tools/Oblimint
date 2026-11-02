@@ -112,6 +112,16 @@
           "label": "Lire les ports publics",
           "hint": "Ports publics du compte (plages de l’IP partagée, IP dédiée) et ports publiés de toutes les applications, quels que soient les sites de la clé. Lecture seule."
         }
+      },
+      "dns": {
+        "read": {
+          "label": "Lire les enregistrements DNS",
+          "hint": "Zones DNS des domaines donnés à la clé (toutes les zones du compte pour une clé sur tous les domaines) et leurs enregistrements ; ceux que gère la plateforme apparaissent en lecture seule."
+        },
+        "write": {
+          "label": "Écrire les enregistrements DNS",
+          "hint": "Créer, modifier et supprimer les enregistrements libres de ces zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), par exemple un nom pointant vers un autre serveur ou le SRV d’un serveur de jeu. Jamais ceux que gère la plateforme : noms servis par les sites et sous-domaines, mail hébergé, SOA / NS, challenges."
+        }
       }
     },
     "guide": "Guide API & agents IA",
@@ -152,7 +162,7 @@
     "allDomains": "Tous les domaines du compte",
     "selectedDomains": "Seulement les domaines ci-dessous",
     "noDomains": "Aucun domaine dans ce compte.",
-    "domainsHint": "Avec le droit Routes, la clé peut choisir lequel de ses sites sert ces domaines (ou un chemin de ces domaines), même un domaine qui ne sert encore rien ; avec le droit Sous-domaines, elle y rattache des sous-domaines. Une clé valable sur tous les sites ne travaille que sur les domaines donnés ici. Sans domaine ici, une clé limitée à certains sites ne travaille que sur les domaines qui ne servent que ses sites (sous-domaines sous ces mêmes domaines). Une route vers un site hors de la clé n'est jamais modifiée ni supprimée. Donner des domaines demande le droit de gérer les domaines.",
+    "domainsHint": "Avec le droit Routes, la clé peut décider lequel de ses sites sert ces domaines (ou un chemin de ceux-ci) — même un domaine qui ne sert encore rien ; avec le droit Sous-domaines, elle y rattache des sous-domaines ; avec les droits DNS, elle lit et écrit les enregistrements libres de leurs zones DNS (jamais ceux que gère la plateforme). Une clé valable pour tous les sites ne travaille que sur les domaines donnés ici. Sans domaine ici, une clé limitée à certains sites ne travaille que sur les domaines qui ne servent que ses sites (sous-domaines sous ces mêmes domaines), et n’atteint aucune zone DNS. Une route vers un site hors de la clé n’est jamais modifiée ni retirée. Donner des domaines demande le droit de gérer les domaines.",
     "notHeld": "non détenu",
     "notHeldHint": "Tu n'as pas ce droit sur le compte : tu ne peux pas l'accorder.",
     "domainsNotHeld": "Tu n'as pas le droit de gérer les domaines du compte : tu ne peux pas donner de domaines à une clé.",

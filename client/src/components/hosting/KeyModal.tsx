@@ -36,6 +36,8 @@ export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'routes.manage': ['Routes', 'Choose which of its sites (or runtime of a site) serves a path of a domain, e.g. example.com/uploads/; only on the domains given to the key or, for a key limited to some sites, on domains serving its sites alone. A route towards a site outside the key is never changed or removed.'],
   'databases.manage': ['Databases', 'Database servers of the account, databases and users (all of them for a key on every site, only its own otherwise); deletes only what it created.'],
   'network.read': ['Read the public ports', 'Public ports of the account (blocks of the shared IP, dedicated IP) and the published ports of every application, whatever the sites of the key. Read only.'],
+  'dns.read': ['Read DNS records', 'DNS zones of the domains given to the key (every zone of the account for a key on every domain) and their records; the ones the platform manages are shown read-only.'],
+  'dns.write': ['Write DNS records', 'Create, change and delete the free records of those zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), e.g. a name pointing to another server or a game server SRV. Never the records the platform manages: names served by the sites and subdomains, hosted mail, SOA / NS, challenges.'],
 };
 
 // Presets of the key form (API_KEY_PRESETS, shared/src/apiKeys.ts): label, what it gives and leaves out.
@@ -269,7 +271,7 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
         </div>
         <div>
           <label className={labelCls}>{t('apiKeys.domains') || 'Domains'}</label>
-          <p className="mb-2 text-[11px] text-text-muted">{t('apiKeys.domainsHint') || 'With the Routes right, the key may decide which of its sites serves these domains (or a path of them) — even a domain that serves nothing yet; with the Subdomains right, it attaches subdomains under them. A key valid for every site only works on the domains given here. Without a domain here, a key limited to some sites works only on the domains serving its sites alone (subdomains under those same domains). A route towards a site outside the key is never changed or removed. Giving domains needs the domain management right.'}</p>
+          <p className="mb-2 text-[11px] text-text-muted">{t('apiKeys.domainsHint') || 'With the Routes right, the key may decide which of its sites serves these domains (or a path of them) — even a domain that serves nothing yet; with the Subdomains right, it attaches subdomains under them; with the DNS rights, it reads and writes the free records of their DNS zones (never the records the platform manages). A key valid for every site only works on the domains given here. Without a domain here, a key limited to some sites works only on the domains serving its sites alone (subdomains under those same domains), and reaches no DNS zone. A route towards a site outside the key is never changed or removed. Giving domains needs the domain management right.'}</p>
           {!canGrantDomains && <p className="mb-2 text-[11px] text-amber-400">{t('apiKeys.domainsNotHeld') || 'You do not hold the domain management right on the account: you cannot give domains to a key.'}</p>}
           <div className="flex flex-wrap gap-3 text-sm">
             <label className="flex items-center gap-1.5"><input type="radio" checked={domainScope === 'selected'} onChange={() => setDomainScopeM('selected')} className="accent-accent" />{t('apiKeys.selectedDomains') || 'Only the domains below'}</label>

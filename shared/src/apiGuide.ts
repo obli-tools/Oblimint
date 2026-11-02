@@ -94,6 +94,8 @@ Consequences:
 | \`databases.manage\` | Databases: the account's database servers (create one within the plan), databases and users, SQL import / export, SQL queries (read-only by default) |
 | \`routes.manage\` | Domain routes: choose which site (or runtime) serves a path, e.g. \`example.com/uploads/\`, towards the key's sites; on the domains given to it in the panel (even one serving nothing yet) or serving only its sites |
 | \`domains.subdomain\` | Attach to the sites **subdomains** of a domain **already in** the account (given to the key in the panel, or serving only its sites), remove the ones the key created |
+| \`dns.read\` | Read the DNS zones of the domains given to the key (every zone of the account for a key on every domain) and their records; the records the platform manages are marked read-only |
+| \`dns.write\` | Create, change and delete the **free** records of those zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), never a record the platform manages (see §5 « DNS records ») |
 | \`logs.read\` | Read access, error (web server / PHP) and application logs, and the PHP errors grouped by release |
 | \`network.read\` | Read the public ports of the account: its blocks of the shared IP, its dedicated IP (public address) and the bindings of **every** app / stack of the account (whatever the site selection). Read only |
 
@@ -102,6 +104,8 @@ Consequences:
 **Databases and sites**: the databases live on the account's shared servers. A database may belong to **one site** (its owner) and be **shared** with other sites; a database without an owner is shared across the account. On a segmented network, a site reaches a database server when it owns or is shared a database there, or when that server still holds a database shared across the account. A key limited to some sites never takes a database from a site outside its selection, never shares one owned by a site outside it (even one shared with its sites), and never makes one shared across the account. Creating a database owned by a site is an attachment like setting its owner (it may need a confirmation).
 
 **Routes**: a key changes the routes of the domains given to it in the panel, and of a domain whose routes **all** lead to its sites (a key limited to some sites; a key valid for every site works only on the domains given to it), and only towards its sites. A route of such a domain towards a site outside the key is never changed nor removed by the key.
+
+**DNS records**: a key reaches the zones of the domains given to it in the panel (every zone of the account for a key on every domain; the domains section of the key bounds both the routes and the DNS records). It only writes the free records of a hosted zone: the records of the names served by the sites, of a hosted mail, the SOA / NS and the challenges stay the platform's.
 
 Never possible with a key: deleting a site, adding a **new root domain**, deleting a database it did not create or a database server, managing FTP / mail accounts or users, or touching another account. Ask the human for those.
 
@@ -148,6 +152,10 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`list_parent_domains\` | Account domains a subdomain can be created under | \`domains.subdomain\` |
 | \`add_subdomain\` | Create \`xxx.existing-domain.tld\` and route it to a site | \`domains.subdomain\` |
 | \`list_subdomains\` / \`remove_subdomain\` | Subdomains of the key (only the ones it created can be removed, and not one with a route towards a site outside the key) | \`domains.subdomain\` |
+| \`list_dns_zones\` | DNS zones the key reaches: \`kind\` (\`hosted\`: editable, \`external\`: read only), \`writable\`, \`domain\` | \`dns.read\` |
+| \`list_dns_records\` | Records of a zone (\`zone\`): \`name\`, \`fqdn\`, \`type\`, \`content\`, \`ttl\`, \`priority\`, \`readOnly\` + \`readOnlyReason\` (\`generated\`, \`override\`, \`type\`, \`reserved\`) | \`dns.read\` |
+| \`upsert_dns_record\` | Create or change a free record: \`zone\`, \`name\`, \`type\`, \`content\`, \`ttl?\`, \`priority?\` (MX / SRV), \`comment?\`, \`disabled?\`; the record of this name and type, or \`record_id\`; \`add: true\` adds another value | \`dns.write\` |
+| \`delete_dns_record\` | Delete a free record: \`record_id\`, or \`name\` + \`type\` (+ \`content\` when several match) | \`dns.write\` |
 | \`get_env\` / \`set_env\` | Environment variables of the site (read by PHP with \`getenv()\`); \`set\` adds / replaces, \`remove\` deletes, the others stay; secrets write-only; the site restarts | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Folders the site may write to (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Secondary runtimes: another container (possibly another engine) serving some paths of the **same** code and data | \`sites.manage\` |
@@ -346,6 +354,25 @@ Sites are only reached through the platform's web proxy (HTTP / HTTPS). An **app
 - The client's source address is preserved. IPv4 only. From inside a container, the public address of a published port is not reachable (no hairpin): use the service name.
 - An app that publishes ports never goes to sleep.
 
+### DNS records
+
+With \`dns.read\` / \`dns.write\`, a key reads and writes the records of the DNS zones of the domains given to it in the panel (Access keys › Domains; every zone of the account for a key on every domain). Only a **hosted** zone (served by the platform name servers) is editable; another account or a platform zone never appears.
+
+- **Never repoint a name served by an Oblimint site**: its records follow the site by themselves. To serve a domain or a subdomain by a site, use the routes (\`add_route\`) or the subdomains (\`add_subdomain\`). DNS records are for what is hosted **elsewhere**: another server (\`A\` / \`AAAA\` / \`CNAME\`), a game server (\`SRV\` named \`_service._protocol.name\`, content \`<weight> <port> <target>\`), a site verification (\`TXT\`), the mail when it is hosted elsewhere (\`MX\`)…
+- The records the platform manages are **read-only** (\`readOnly: true\`; a write answers \`dnsRecordProtected\` 403 with \`details.reason\`): the web records of the domains and subdomains served by the sites (and the names their wildcard answers), the mail records when the mail is hosted here (MX, SPF, DKIM, DMARC, autoconfig…), a platform record a human replaced in the panel, the SOA and NS, the ACME and ownership challenges.
+- Same checks as the panel: TTL from 60 to 604800 seconds, no CNAME at the apex nor beside another record of the same name (\`recordConflict\` 409), 500 records per zone. A change is served within seconds.
+- \`upsert_dns_record\` changes the record of this name and type (created when there is none). Several of them (round robin, several TXT): \`recordAmbiguous\` (409) lists their ids; give \`record_id\`, or \`add: true\` to add another value.
+- Deleting a record is a protected action (by default the key's owner confirms it with his 2FA code, see « Protected actions »).
+
+Point \`play.example.com\` at a game server hosted elsewhere, with its SRV record:
+
+\`\`\`bash
+curl -X POST -H "Authorization: Bearer $OBK" -H "Content-Type: application/json" \\
+  -d '{"name":"play","type":"A","content":"203.0.113.50"}' ${panel}/api/v1/zones/example.com/records
+curl -X POST -H "Authorization: Bearer $OBK" -H "Content-Type: application/json" \\
+  -d '{"name":"_minecraft._tcp.play","type":"SRV","priority":0,"content":"5 25565 play.example.com."}' ${panel}/api/v1/zones/example.com/records
+\`\`\`
+
 ### Protected actions
 
 The humans of the account may protect some operations (dropping a database, an SQL write, a deletion, publishing, a cron job…; by default only the deletions — a site, a database, a domain, a DNS zone, a mailbox…; writing to a database stays free unless the humans protect it). A protected call runs nothing and answers **428** with a request waiting for a human:
@@ -446,6 +473,9 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/domains\` · \`/subdomains\` | possible parent domains · subdomains of the key | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.example.com" }\` | \`domains.subdomain\` |
 | DELETE | \`/subdomains/:name\` | | \`domains.subdomain\` |
+| GET | \`/zones\` | DNS zones of the key (as \`list_dns_zones\`) | \`dns.read\` |
+| GET · POST | \`/zones/:zone/records\` | the zone and its records (\`readOnly\`) · \`{ name, type, content, ttl?, priority?, disabled?, comment? }\` (a free record) | \`dns.read\` (POST: \`dns.write\`) |
+| PUT · DELETE | \`/zones/:zone/records/:recordId\` | PUT: the same body | \`dns.write\` |
 | GET | \`/pending-actions\` · \`/pending-actions/:pid\` | this key's requests for protected actions (\`?status=\`) · one of them | — |
 | GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, default 30): once a human decided (\`timedOut\` otherwise) | — |
 | DELETE | \`/pending-actions/:pid\` | withdraw the request | — |
@@ -522,6 +552,8 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`readOnlyStatement\` · \`oneStatement\` · \`sqlError\` (400) | \`query_database\`: a write without \`write: true\` · several statements · the engine refused the statement (its message follows) | Read the message; split the work; back up before \`write: true\` |
 | \`keyDomainNotManageable\` (403) | The domain is not given to the key (Domains section of the key in the panel) and also serves sites outside it (routes, parent of a subdomain) | Ask the human to give it to the key, or use a domain of \`list_parent_domains\` |
 | \`keyRouteOutside\` (403) | The route leads to a site outside the key | Leave it; add another path, or ask the human |
+| \`dnsRecordProtected\` (403) · \`recordAmbiguous\` (409) | The DNS record is managed by the platform (\`details.reason\`) · several records have this name and type (\`details.recordIds\`) | Leave it (a site is served through routes / subdomains) · give \`record_id\` or \`add: true\` |
+| \`recordInvalid\` (400) · \`recordConflict\` (409) · \`zoneNotHosted\` (409) | Invalid DNS record (\`details.field\`) · CNAME beside another record, or the same record twice · the zone is hosted elsewhere | Fix the record · \`list_dns_records\` · edit it at the DNS provider |
 | \`routeTaken\` (409) · \`runtimeInUse\` (409) | Path already routed · runtime still used by a route | \`list_routes\`; move / remove the route first |
 | \`planLimit\` · \`cronTooFrequent\` (409) | Plan limit (number of databases, cron jobs, minimum interval…) | Stay within the limits, or ask the human |
 | \`instanceNotRunning\` / \`siteNotRunning\` (409) | Database server or site not started | Wait (\`list_databases\`, \`get_site\`), retry |
@@ -631,6 +663,8 @@ Conséquences :
 | \`databases.manage\` | Bases de données : serveurs de bases du compte (en créer un dans les limites du plan), bases et utilisateurs, import / export SQL, requêtes SQL (lecture seule par défaut) |
 | \`routes.manage\` | Routes des domaines : choisir quel site (ou runtime) sert un chemin, ex. \`exemple.com/uploads/\`, vers les sites de la clé ; sur les domaines qui lui sont donnés dans le panel (même un domaine qui ne sert encore rien) ou qui ne servent que ses sites |
 | \`domains.subdomain\` | Rattacher aux sites des **sous-domaines** d'un domaine **déjà présent** sur le compte (donné à la clé dans le panel, ou qui ne sert que ses sites), retirer ceux créés par la clé |
+| \`dns.read\` | Lire les zones DNS des domaines donnés à la clé (toutes les zones du compte pour une clé sur tous les domaines) et leurs enregistrements ; ceux que gère la plateforme sont marqués en lecture seule |
+| \`dns.write\` | Créer, modifier et supprimer les enregistrements **libres** de ces zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), jamais un enregistrement géré par la plateforme (voir §5 « Enregistrements DNS ») |
 | \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs, et les erreurs PHP regroupées par release |
 | \`network.read\` | Lire les ports publics du compte : ses plages de l'IP partagée, son IP dédiée (adresse publique) et les liaisons de **toutes** les applications / stacks du compte (quelle que soit la sélection de sites). Lecture seule |
 
@@ -639,6 +673,8 @@ Conséquences :
 **Bases et sites** : les bases vivent sur les serveurs partagés du compte. Une base peut appartenir à **un site** (son propriétaire) et être **partagée** avec d'autres sites ; une base sans propriétaire est partagée par tout le compte. Sur un réseau segmenté, un site atteint un serveur de bases quand il y possède une base ou qu'on lui en partage une, ou quand ce serveur contient encore une base partagée par tout le compte. Une clé limitée à certains sites ne prend jamais une base à un site hors de sa sélection, ne partage jamais une base appartenant à un site hors d'elle (même partagée avec ses sites), et n'en rend jamais une partagée par tout le compte. Créer une base possédée par un site est un rattachement, comme en changer le propriétaire (il peut demander une confirmation).
 
 **Routes** : une clé change les routes des domaines qui lui sont donnés dans le panel, et d'un domaine dont **toutes** les routes mènent à ses sites (clé limitée à certains sites ; une clé valable pour tous les sites ne travaille que sur les domaines qui lui sont donnés), et seulement vers ses sites. Une route d'un tel domaine vers un site hors de la clé n'est jamais modifiée ni retirée par la clé.
+
+**Enregistrements DNS** : une clé atteint les zones des domaines qui lui sont donnés dans le panel (toutes les zones du compte pour une clé sur tous les domaines ; la section Domaines de la clé borne à la fois les routes et les enregistrements DNS). Elle n'écrit que les enregistrements libres d'une zone hébergée : ceux des noms servis par les sites, d'un mail hébergé, le SOA / NS et les challenges restent à la plateforme.
 
 Jamais possible avec une clé : supprimer un site, ajouter un **nouveau domaine racine**, supprimer une base qu'elle n'a pas créée ou un serveur de bases, gérer les comptes FTP / mail ou les utilisateurs, ou toucher à un autre compte. Pour ça, demande à l'humain.
 
@@ -685,6 +721,10 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`list_parent_domains\` | Domaines du compte sous lesquels créer un sous-domaine | \`domains.subdomain\` |
 | \`add_subdomain\` | Créer \`xxx.domaine-existant.tld\` et le router vers un site | \`domains.subdomain\` |
 | \`list_subdomains\` / \`remove_subdomain\` | Sous-domaines de la clé (seuls ceux qu'elle a créés peuvent être retirés, et pas un qui a une route vers un site hors de la clé) | \`domains.subdomain\` |
+| \`list_dns_zones\` | Zones DNS atteintes par la clé : \`kind\` (\`hosted\` : modifiable, \`external\` : lecture seule), \`writable\`, \`domain\` | \`dns.read\` |
+| \`list_dns_records\` | Enregistrements d'une zone (\`zone\`) : \`name\`, \`fqdn\`, \`type\`, \`content\`, \`ttl\`, \`priority\`, \`readOnly\` + \`readOnlyReason\` (\`generated\`, \`override\`, \`type\`, \`reserved\`) | \`dns.read\` |
+| \`upsert_dns_record\` | Créer ou modifier un enregistrement libre : \`zone\`, \`name\`, \`type\`, \`content\`, \`ttl?\`, \`priority?\` (MX / SRV), \`comment?\`, \`disabled?\` ; celui de ce nom et de ce type, ou \`record_id\` ; \`add: true\` ajoute une autre valeur | \`dns.write\` |
+| \`delete_dns_record\` | Supprimer un enregistrement libre : \`record_id\`, ou \`name\` + \`type\` (+ \`content\` si plusieurs correspondent) | \`dns.write\` |
 | \`get_env\` / \`set_env\` | Variables d'environnement du site (lues par PHP avec \`getenv()\`) ; \`set\` ajoute / remplace, \`remove\` supprime, les autres restent ; secrets en écriture seule ; le site redémarre | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Dossiers où le site peut écrire (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Runtimes secondaires : un autre conteneur (autre moteur possible) qui sert certains chemins du **même** code et des mêmes données | \`sites.manage\` |
@@ -883,6 +923,25 @@ Les sites ne sont joints que par le proxy web de la plateforme (HTTP / HTTPS). U
 - L'adresse source du client est préservée. IPv4 seulement. Depuis un conteneur, l'adresse publique d'un port publié n'est pas joignable (pas de hairpin) : utilisez le nom du service.
 - Une application qui publie des ports n'est jamais mise en veille.
 
+### Enregistrements DNS
+
+Avec \`dns.read\` / \`dns.write\`, une clé lit et écrit les enregistrements des zones DNS des domaines qui lui sont donnés dans le panel (Clés d'accès › Domaines ; toutes les zones du compte pour une clé sur tous les domaines). Seule une zone **hébergée** (servie par les serveurs de noms de la plateforme) est modifiable ; un autre compte ou une zone de la plateforme n'apparaît jamais.
+
+- **Ne jamais rediriger un nom servi par un site Oblimint** : ses enregistrements suivent le site d'eux-mêmes. Pour servir un domaine ou un sous-domaine par un site, passer par les routes (\`add_route\`) ou les sous-domaines (\`add_subdomain\`). Les enregistrements DNS servent à ce qui est hébergé **ailleurs** : un autre serveur (\`A\` / \`AAAA\` / \`CNAME\`), un serveur de jeu (\`SRV\` nommé \`_service._protocole.nom\`, contenu \`<poids> <port> <cible>\`), une vérification de site (\`TXT\`), le mail quand il est hébergé ailleurs (\`MX\`)…
+- Les enregistrements gérés par la plateforme sont en **lecture seule** (\`readOnly: true\` ; une écriture répond \`dnsRecordProtected\` 403 avec \`details.reason\`) : les enregistrements web des domaines et sous-domaines servis par les sites (et les noms auxquels répond leur joker), les enregistrements du mail quand il est hébergé ici (MX, SPF, DKIM, DMARC, autoconfig…), un enregistrement de la plateforme remplacé par un humain dans le panel, le SOA et les NS, les challenges ACME et de propriété.
+- Mêmes contrôles que le panel : TTL de 60 à 604800 secondes, pas de CNAME à l'apex ni à côté d'un autre enregistrement du même nom (\`recordConflict\` 409), 500 enregistrements par zone. Un changement est servi en quelques secondes.
+- \`upsert_dns_record\` modifie l'enregistrement de ce nom et de ce type (créé s'il n'y en a pas). S'il y en a plusieurs (répartition, plusieurs TXT) : \`recordAmbiguous\` (409) liste leurs identifiants ; donner \`record_id\`, ou \`add: true\` pour ajouter une autre valeur.
+- Supprimer un enregistrement est une action protégée (par défaut le propriétaire de la clé la confirme avec son code 2FA, voir « Actions protégées »).
+
+Faire pointer \`play.exemple.com\` vers un serveur de jeu hébergé ailleurs, avec son enregistrement SRV :
+
+\`\`\`bash
+curl -X POST -H "Authorization: Bearer $OBK" -H "Content-Type: application/json" \\
+  -d '{"name":"play","type":"A","content":"203.0.113.50"}' ${panel}/api/v1/zones/exemple.com/records
+curl -X POST -H "Authorization: Bearer $OBK" -H "Content-Type: application/json" \\
+  -d '{"name":"_minecraft._tcp.play","type":"SRV","priority":0,"content":"5 25565 play.exemple.com."}' ${panel}/api/v1/zones/exemple.com/records
+\`\`\`
+
 ### Actions protégées
 
 Les humains du compte peuvent protéger certaines opérations (supprimer une base, une requête SQL en écriture, une suppression, une publication, une tâche planifiée… ; par défaut seulement les suppressions — un site, une base, un domaine, une zone DNS, une boîte mail… ; écrire dans une base reste libre sauf si les humains la protègent). Un appel protégé n'exécute rien et répond **428** avec une demande qui attend un humain :
@@ -983,6 +1042,9 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET | \`/domains\` · \`/subdomains\` | domaines parents possibles · sous-domaines de la clé | \`domains.subdomain\` |
 | POST | \`/sites/:id/subdomains\` | \`{ name: "blog.exemple.com" }\` | \`domains.subdomain\` |
 | DELETE | \`/subdomains/:name\` | | \`domains.subdomain\` |
+| GET | \`/zones\` | zones DNS de la clé (comme \`list_dns_zones\`) | \`dns.read\` |
+| GET · POST | \`/zones/:zone/records\` | la zone et ses enregistrements (\`readOnly\`) · \`{ name, type, content, ttl?, priority?, disabled?, comment? }\` (un enregistrement libre) | \`dns.read\` (POST : \`dns.write\`) |
+| PUT · DELETE | \`/zones/:zone/records/:recordId\` | PUT : le même corps | \`dns.write\` |
 | GET | \`/pending-actions\` · \`/pending-actions/:pid\` | les demandes de cette clé pour des actions protégées (\`?status=\`) · l'une d'elles | — |
 | GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, 30 par défaut) : dès qu'un humain a décidé (\`timedOut\` sinon) | — |
 | DELETE | \`/pending-actions/:pid\` | retirer la demande | — |
@@ -1059,6 +1121,8 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`readOnlyStatement\` · \`oneStatement\` · \`sqlError\` (400) | \`query_database\` : écriture sans \`write: true\` · plusieurs instructions · le moteur a refusé l'instruction (son message suit) | Lire le message ; découper le travail ; sauvegarder avant \`write: true\` |
 | \`keyDomainNotManageable\` (403) | Le domaine n'est pas donné à la clé (section Domaines de la clé dans le panel) et sert aussi des sites hors d'elle (routes, parent d'un sous-domaine) | Demander à l'humain de le donner à la clé, ou utiliser un domaine de \`list_parent_domains\` |
 | \`keyRouteOutside\` (403) | La route mène à un site hors de la clé | La laisser ; ajouter un autre chemin, ou demander à l'humain |
+| \`dnsRecordProtected\` (403) · \`recordAmbiguous\` (409) | L'enregistrement DNS est géré par la plateforme (\`details.reason\`) · plusieurs enregistrements ont ce nom et ce type (\`details.recordIds\`) | Le laisser (un site se sert par les routes / sous-domaines) · donner \`record_id\` ou \`add: true\` |
+| \`recordInvalid\` (400) · \`recordConflict\` (409) · \`zoneNotHosted\` (409) | Enregistrement DNS invalide (\`details.field\`) · CNAME à côté d'un autre enregistrement, ou deux fois le même · la zone est hébergée ailleurs | Corriger l'enregistrement · \`list_dns_records\` · le modifier chez le fournisseur DNS |
 | \`routeTaken\` (409) · \`runtimeInUse\` (409) | Chemin déjà routé · runtime encore utilisé par une route | \`list_routes\` ; déplacer / retirer la route d'abord |
 | \`planLimit\` · \`cronTooFrequent\` (409) | Limite du plan (nombre de bases, de crons, intervalle minimal…) | Rester dans les limites, ou demander à l'humain |
 | \`instanceNotRunning\` / \`siteNotRunning\` (409) | Serveur de bases ou site pas démarré | Attendre (\`list_databases\`, \`get_site\`), réessayer |

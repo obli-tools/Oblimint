@@ -33,6 +33,12 @@ test('catalogue: unique valid keys, defaults only on catalogue actions, platform
   assert.deepEqual(def('db.admin_open'), { key: 'db.admin_open', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: ['panel'] });
   assert.equal(DEFAULT_RESTRICTIONS['db.admin_open'], undefined);
   assert.equal(defaultRestrictionsFor(true)['db.admin_open'], undefined);
+  // DNS records: writing open by default, deleting under a second factor (the deletions rule), panel and keys.
+  assert.deepEqual(def('dns.record_write'), { key: 'dns.record_write', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: ['panel', 'keys'] });
+  assert.deepEqual(def('dns.record_delete'), { key: 'dns.record_delete', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: ['panel', 'keys'] });
+  assert.equal(DEFAULT_RESTRICTIONS['dns.record_write'], undefined);
+  assert.deepEqual(DEFAULT_RESTRICTIONS['dns.record_delete'], { level: 'sensitive', scope: { mode: 'all' }, via: 'all' });
+  assert.ok(defaultRestrictionsFor(false)['dns.record_delete']);
   // Where a mailbox's mail goes (forwarding, inbox rules): protectable, panel only, OPEN by default.
   for (const key of ['mail.mailbox_forwarding', 'mail.mailbox_rules']) {
     assert.deepEqual(def(key), { key, category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: ['panel'] });

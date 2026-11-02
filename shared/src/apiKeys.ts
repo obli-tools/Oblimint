@@ -1,5 +1,6 @@
 import type { DbConnectionInfo, DbDatabase, DbEngine, DbFamily, DbInstanceStatus, DbUser, SiteDatabase } from './databases';
 import type { CurrentReleaseVia, LeakPolicy, LeakReport, SiteUpdate } from './hosting';
+import type { DnsRecordOrigin, DnsRecordType, DnsZoneKind, DnsZoneServed, DnsZoneStatus } from './dns';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API access keys of a hosting account (« Clés d'accès »): a script, a CI or an
@@ -51,10 +52,22 @@ export type ApiKeyScope =
    * (public address only) and the bindings of every app stack of the account, whatever the site selection
    * of the key. Read only: a port is published by deploying an app / stack (`ports:`).
    */
-  | 'network.read';
+  | 'network.read'
+  /**
+   * Read the DNS zones of the domains given to the key (every zone of the account for a key on every
+   * domain) and their records; the records the platform manages are shown read-only.
+   */
+  | 'dns.read'
+  /**
+   * Create, change and delete the FREE records of those zones (A, AAAA, CNAME, TXT, MX, SRV, CAA):
+   * never a record the platform manages (web records of the sites and subdomains, mail records of a
+   * hosted mail, SOA / NS, ACME and ownership challenges). Hosted zones only.
+   */
+  | 'dns.write';
 
 export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
-  'files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain', 'logs.read', 'network.read',
+  'files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain',
+  'dns.read', 'dns.write', 'logs.read', 'network.read',
 ];
 
 export type ApiKeySiteScope = 'all' | 'selected';
@@ -400,6 +413,66 @@ export interface ApiV1Subdomain {
   verified: boolean;
   /** https://<name>/ once the certificate is issued. */
   url: string;
+}
+
+/** GET /api/v1/zones (MCP list_dns_zones): a DNS zone the key reaches (scope dns.read). */
+export interface ApiV1DnsZone {
+  /** Zone apex, e.g. "example.com". */
+  name: string;
+  /** hosted: served by the platform name servers (records editable); external: hosted elsewhere (read only). */
+  kind: DnsZoneKind;
+  status: DnsZoneStatus;
+  /** What the platform name servers serve after the last sync (null: not served). */
+  served: DnsZoneServed | null;
+  /** Domain of the account the zone belongs to (the one given to the key). */
+  domain: string | null;
+  defaultTtl: number;
+  /** Records counted (challenge records excluded). */
+  recordCount: number;
+  /** The key may write its free records (hosted zone and scope dns.write). */
+  writable: boolean;
+}
+
+/**
+ * Why a record is read-only for a key: 'generated' (written by the platform for a site, a subdomain
+ * or the hosted mail), 'override' (a human replaced a generated record in the panel), 'type' (a type
+ * a key never writes: NS), 'reserved' (ACME / ownership challenge names).
+ */
+export type ApiV1DnsReadOnlyReason = 'generated' | 'override' | 'type' | 'reserved';
+
+/** A record as the key API shows it. */
+export interface ApiV1DnsRecord {
+  id: number;
+  /** Relative to the zone ('@' = apex). */
+  name: string;
+  /** Fully qualified name, without the trailing dot. */
+  fqdn: string;
+  type: DnsRecordType;
+  /** Presentation content without the priority (MX / SRV: priority apart). */
+  content: string;
+  ttl: number;
+  priority: number | null;
+  disabled: boolean;
+  comment: string | null;
+  origin: DnsRecordOrigin;
+  /** Managed by the platform: a key reads it, never changes nor deletes it. */
+  readOnly: boolean;
+  readOnlyReason: ApiV1DnsReadOnlyReason | null;
+}
+
+/** GET /api/v1/zones/:zone/records (MCP list_dns_records). */
+export interface ApiV1DnsZoneRecords {
+  zone: ApiV1DnsZone;
+  records: ApiV1DnsRecord[];
+}
+
+/** Record types a key writes (scope dns.write); NS (delegations) stays in the panel. */
+export const API_KEY_DNS_TYPES: readonly DnsRecordType[] = ['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'SRV', 'CAA'];
+
+/** MCP upsert_dns_record: what was done. */
+export interface ApiV1DnsUpsertResult {
+  action: 'created' | 'updated';
+  record: ApiV1DnsRecord;
 }
 
 /** A database as the key API shows it. */

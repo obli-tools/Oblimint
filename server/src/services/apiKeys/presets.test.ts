@@ -86,6 +86,12 @@ test('no preset asking for domains routes them', () => {
   }
 });
 
+test('DNS records: only « Everything » gives them; no read-only or site preset writes a record', () => {
+  assert.ok(scopesOf('all').includes('dns.read') && scopesOf('all').includes('dns.write'));
+  for (const id of ['readonly', 'update', 'site', 'multisite', 'autonomous'] as const) lacks(id, 'dns.write');
+  lacks('readonly', 'dns.read');
+});
+
 test('everything is every grantable scope, never more', () => {
   assert.deepEqual(scopesOf('all'), ALL);
   const held: ApiKeyScope[] = ['files.read', 'logs.read', 'sites.manage'];
