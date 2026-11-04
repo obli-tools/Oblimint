@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { AccountScopeBar, useAccountScope } from '@/components/common/AccountScope';
 import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { groupRowsByAccount } from '@/components/common/accountGroups';
+import { AppInstallsBanner } from '@/components/sites/AppInstallsBanner';
 import { CreateSiteModal } from '@/components/sites/CreateSiteModal';
 import { BaseBadge, PhpVersionBadge, SiteStatusBadge, usePublishModeLabel } from '@/components/sites/SiteBadges';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
@@ -164,6 +165,8 @@ export function SitesPage() {
       {loadError && (
         <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">{loadError}</div>
       )}
+
+      <AppInstallsBanner />
 
       {vulnerable.length > 0 && (
         <div className="rounded-lg border-2 border-red-500 bg-red-500/10 px-4 py-3 text-sm">

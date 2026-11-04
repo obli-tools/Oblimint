@@ -397,7 +397,11 @@
       "previewDbInstanceNotRunning": "The database server is not running.",
       "previewDbExposed": "A database server of the account has external access (or one of the server while the egress filter is off): no preview can run, it could reach the live database. Turn external access off first.",
       "approvalRequired": "This change needs the right to approve releases.",
-      "cmsGuardRelaxForbidden": "Switching the CMS login protection off or tolerating more failures needs the right to manage the bans of the account."
+      "cmsGuardRelaxForbidden": "Switching the CMS login protection off or tolerating more failures needs the right to manage the bans of the account.",
+      "appInstallBusy": "Too many installations are running: try again shortly.",
+      "appInstallRights": "Installing an application also needs the rights to manage the databases and to publish.",
+      "appInstallState": "This installation is no longer in a state that allows this.",
+      "appInstallSiteGone": "The site of this installation was deleted."
     },
     "fields": {
       "account": "Hosting account",
@@ -524,6 +528,60 @@
       "adminHint": "The patched images are applied from Nodes > Updates (site images, with the redeployment of the sites).",
       "openUpdates": "Open the updates",
       "clientHint": "The host applies the patched images: the containers are recreated during the next platform update."
+    },
+    "install": {
+      "modeEmpty": "Empty site",
+      "modeInstall": "Install an application",
+      "appLabel": "Application",
+      "appHint": "Immutable: the code is in a read-only release, analysed, with a rollback. A database and its user are created.",
+      "title": "Site title",
+      "locale": "Language",
+      "adminUser": "Administrator login",
+      "adminEmail": "Administrator e-mail",
+      "adminUserInvalid": "Invalid login: letters, digits, ., _ and -.",
+      "baseInvalid": "WordPress needs a PHP base.",
+      "previewFirst": "Install in a preview first",
+      "previewFirstHint": "Stops before publishing: you check WordPress in a preview, with a disposable copy of the database, then you publish release 1.",
+      "submit": "Install",
+      "progressTitle": "Installing {{name}}",
+      "release": "Release {{n}}",
+      "passwordTitle": "WordPress administrator password: shown once",
+      "passwordHint": "Note it now: it is kept nowhere and will never be shown again.",
+      "password": "Password",
+      "passwordAck": "I have noted this password",
+      "retry": "Resume",
+      "cleanup": "Clean up",
+      "publish": "Publish release 1",
+      "openPreview": "Open the preview",
+      "cleanupTitle": "Clean up this installation?",
+      "cleanupMessage": "The site, the database and the user made by this operation are deleted. Nothing that existed before is touched.",
+      "previewHint": "WordPress runs in a preview with a disposable copy of the database: what you change there is not kept. Publish to put release 1 online.",
+      "approvalHint": "Release 1 waits for an approver in the Releases tab of the site.",
+      "doneHint": "The code is read-only: an extension or a theme goes through the staging and a release, not through the WordPress screens. Attach a domain to the site: WordPress follows it.",
+      "cleanedHint": "What the operation had created was removed.",
+      "bannerTitle": "Application installations",
+      "follow": "Open",
+      "status": {
+        "running": "Installing",
+        "previewReady": "In preview",
+        "awaitingApproval": "Awaiting approval",
+        "succeeded": "Installed",
+        "failed": "Failed",
+        "cleaning": "Cleaning up",
+        "cleaned": "Cleaned up"
+      },
+      "step": {
+        "site": "Site",
+        "database": "Database server, database and user",
+        "variables": "Environment variables",
+        "download": "Download and archive checksum",
+        "extract": "Code placed in the staging",
+        "config": "wp-config.php reading the environment",
+        "verify": "Checksum of every core file",
+        "install": "WordPress installation",
+        "preview": "Preview",
+        "publish": "Publication of release 1"
+      }
     }
   },
   "leakGuard": {

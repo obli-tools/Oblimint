@@ -397,7 +397,11 @@
       "previewDbInstanceNotRunning": "Le serveur de base de données n'est pas démarré.",
       "previewDbExposed": "Un serveur de base du compte a l'accès externe activé (ou un serveur de la machine alors que le filtre de sortie est coupé) : aucun aperçu ne peut tourner, il pourrait joindre la base en ligne. Coupez d'abord l'accès externe.",
       "approvalRequired": "Ce changement demande le droit d'approuver les releases.",
-      "cmsGuardRelaxForbidden": "Désactiver la protection des connexions CMS ou tolérer plus d'échecs demande le droit de gérer les bannissements du compte."
+      "cmsGuardRelaxForbidden": "Désactiver la protection des connexions CMS ou tolérer plus d'échecs demande le droit de gérer les bannissements du compte.",
+      "appInstallBusy": "Trop d'installations en cours : réessayez dans un instant.",
+      "appInstallRights": "Installer une application demande aussi les droits de gérer les bases et de publier.",
+      "appInstallState": "Cette installation n'est plus dans un état qui le permet.",
+      "appInstallSiteGone": "Le site de cette installation a été supprimé."
     },
     "fields": {
       "account": "Compte d'hébergement",
@@ -524,6 +528,60 @@
       "adminHint": "Les images corrigées s'appliquent depuis Nœuds > Mises à jour (images des sites, avec le redéploiement des sites).",
       "openUpdates": "Ouvrir les mises à jour",
       "clientHint": "L'hébergeur applique les images corrigées : les conteneurs sont recréés lors de la prochaine mise à jour de la plateforme."
+    },
+    "install": {
+      "modeEmpty": "Site vide",
+      "modeInstall": "Installer une application",
+      "appLabel": "Application",
+      "appHint": "Immuable : le code est dans une release en lecture seule, analysée, avec retour arrière. Une base et son utilisateur sont créés.",
+      "title": "Titre du site",
+      "locale": "Langue",
+      "adminUser": "Identifiant administrateur",
+      "adminEmail": "E-mail administrateur",
+      "adminUserInvalid": "Identifiant invalide : lettres, chiffres, ., _ et -.",
+      "baseInvalid": "WordPress a besoin d'une base PHP.",
+      "previewFirst": "Installer d'abord dans un aperçu",
+      "previewFirstHint": "S'arrête avant de publier : vous vérifiez WordPress dans un aperçu, avec une copie jetable de la base, puis vous publiez la release 1.",
+      "submit": "Installer",
+      "progressTitle": "Installation de {{name}}",
+      "release": "Release {{n}}",
+      "passwordTitle": "Mot de passe administrateur WordPress : affiché une seule fois",
+      "passwordHint": "Notez-le maintenant : il n'est conservé nulle part et ne sera plus jamais affiché.",
+      "password": "Mot de passe",
+      "passwordAck": "J'ai noté ce mot de passe",
+      "retry": "Reprendre",
+      "cleanup": "Nettoyer",
+      "publish": "Publier la release 1",
+      "openPreview": "Ouvrir l'aperçu",
+      "cleanupTitle": "Nettoyer cette installation ?",
+      "cleanupMessage": "Le site, la base et l'utilisateur créés par cette opération sont supprimés. Rien de ce qui existait avant n'est touché.",
+      "previewHint": "WordPress tourne dans un aperçu avec une copie jetable de la base : ce que vous y changez n'est pas conservé. Publiez pour mettre la release 1 en ligne.",
+      "approvalHint": "La release 1 attend un approbateur dans l'onglet Releases du site.",
+      "doneHint": "Le code est en lecture seule : une extension ou un thème passe par le staging et une release, pas par les écrans de WordPress. Rattachez un domaine au site : WordPress le suit.",
+      "cleanedHint": "Ce que l'opération avait créé a été retiré.",
+      "bannerTitle": "Installations d'applications",
+      "follow": "Ouvrir",
+      "status": {
+        "running": "Installation",
+        "previewReady": "En aperçu",
+        "awaitingApproval": "En attente d'approbation",
+        "succeeded": "Installé",
+        "failed": "Échec",
+        "cleaning": "Nettoyage",
+        "cleaned": "Nettoyé"
+      },
+      "step": {
+        "site": "Site",
+        "database": "Serveur de base, base et utilisateur",
+        "variables": "Variables d'environnement",
+        "download": "Téléchargement et somme de l'archive",
+        "extract": "Code déposé dans le staging",
+        "config": "wp-config.php lisant l'environnement",
+        "verify": "Somme de chaque fichier du cœur",
+        "install": "Installation de WordPress",
+        "preview": "Aperçu",
+        "publish": "Publication de la release 1"
+      }
     }
   },
   "leakGuard": {

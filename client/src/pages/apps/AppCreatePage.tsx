@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Pill } from '@/components/common/Pill';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { ArrowLeft, CheckCircle2, Code2, FolderArchive, GitBranch, LayoutGrid, Rocket, ShieldCheck, Upload } from 'lucide-react';
@@ -254,8 +255,15 @@ export function AppCreatePage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-lg font-semibold text-text-primary">{template.name}</span>
                       <span className="font-mono text-xs text-text-muted">{template.version}</span>
+                      {template.mutableCode && <Pill tone="amber">{t('apps.catalog.notImmutable') || 'Not immutable'}</Pill>}
                     </div>
                     <p className="mt-1 text-sm text-text-secondary">{template.description}</p>
+                    {template.mutableCode && (
+                      <p className="mt-1 text-xs text-text-muted">
+                        {t('apps.catalog.notImmutableHint') || 'Here the code lives on a writable volume: no release, no analysis, no rollback.'}{' '}
+                        <Link to="/sites?create=1" className="text-accent hover:underline">{t('apps.catalog.useInstaller') || 'Prefer the immutable install (New site, Install an application).'}</Link>
+                      </p>
+                    )}
                   </div>
                   <button type="button" onClick={() => setParams((prev) => patchParams(prev, { template: null, source: 'catalog' }), { replace: true })} className="shrink-0 text-xs text-accent hover:underline">
                     {t('apps.create.changeTemplate') || 'Change'}
@@ -401,7 +409,10 @@ function TemplatePicker({ onPick }: { onPick: (slug: string) => void }) {
         <button key={tpl.id} type="button" onClick={() => onPick(tpl.slug)} className="flex min-w-0 items-center gap-3 rounded-xl border-2 border-transparent bg-bg-secondary p-3 text-left hover:border-accent/30">
           <CatalogIcon icon={tpl.icon} size={36} />
           <span className="min-w-0">
-            <span className="block truncate font-medium text-text-primary">{tpl.name}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate font-medium text-text-primary">{tpl.name}</span>
+              {tpl.mutableCode && <Pill tone="amber" className="shrink-0 text-[10px]">{t('apps.catalog.notImmutable') || 'Not immutable'}</Pill>}
+            </span>
             <span className="block truncate text-xs text-text-muted">{tpl.description}</span>
           </span>
         </button>

@@ -56,7 +56,10 @@
       "disable": "Disable",
       "enabledToast": "Template enabled",
       "disabledToast": "Template disabled",
-      "saveFailed": "Failed to save the template"
+      "saveFailed": "Failed to save the template",
+      "notImmutable": "Not immutable",
+      "notImmutableHint": "Here the code lives on a writable volume: no release, no analysis, no rollback.",
+      "useInstaller": "Prefer the immutable install (New site, Install an application)."
     },
     "charts": {
       "noData": "Not enough data yet.",

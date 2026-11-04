@@ -74,6 +74,7 @@
       "btnExclude": "Scope: all but {{count}}"
     },
     "actions": {
+      "app_install": "Install an application (creates a site and a database, publishes)",
       "site_delete": "Delete a site",
       "site_stop": "Stop a site",
       "site_publish_mode_change": "Leave the « approval » publish mode",

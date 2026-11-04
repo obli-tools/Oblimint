@@ -1,18 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Globe, Plus } from 'lucide-react';
+import { Globe, Plus, Rocket } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
-  APP_PROFILES, SITE_BASES, appProfileDef, normalizePathPrefix, normalizeRelPath,
-  type AppProfileId, type HostingAccount, type PublishMode, type Site, type SiteBaseId,
+  APP_INSTALL_ADMIN_USER_RE, APP_PROFILES, SITE_BASES, appProfileDef, normalizePathPrefix, normalizeRelPath, siteBaseDef,
+  type AppInstallStartResult, type AppProfileId, type HostingAccount, type PublishMode, type Site, type SiteBaseId,
 } from '@oblimint/shared';
 import { accountsApi } from '@/api/accounts.api';
+import { appInstallsApi } from '@/api/appInstalls.api';
 import { sitesApi } from '@/api/sites.api';
 import { useHostingMe } from '@/store/hostingStore';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
+import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { InfoTip } from '@/components/common/Tip';
+import { AppInstallProgressModal } from './AppInstallProgressModal';
 import { BasePicker } from './BasePicker';
 import { isBaseAllowed, pickAllowedBase } from './allowedBases';
 import { Pill, PolicyBadge } from './SiteBadges';
@@ -55,6 +58,14 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
   const [publishMode, setPublishMode] = useState<PublishMode>('auto');
   const [debounce, setDebounce] = useState('30');
   const [applyDataPaths, setApplyDataPaths] = useState(true);
+  // « Installer une application »: immutable WordPress in one operation (shared/src/appInstall.ts).
+  const [mode, setMode] = useState<'empty' | 'install'>('empty');
+  const [siteTitle, setSiteTitle] = useState('');
+  const [adminUser, setAdminUser] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [locale, setLocale] = useState('en_US');
+  const [previewFirst, setPreviewFirst] = useState(false);
+  const [started, setStarted] = useState<AppInstallStartResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -115,11 +126,44 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
     if (!canPublish && publishMode === 'auto') setPublishMode('manual');
   }, [canPublish, publishMode]);
 
+  const switchMode = (next: 'empty' | 'install') => {
+    setMode(next);
+    if (next === 'install') {
+      setProfile('wordpress');
+      setDocroot('');
+      setBasePath('/');
+      setBase(pickAllowedBase(allowedBases, appProfileDef('wordpress').recommendedBase, SITE_BASES));
+    }
+  };
+
   const slugValid = SITE_SLUG_RE.test(slug);
   const docrootNorm = normalizeRelPath(docroot, true);
   const basePathNorm = normalizePathPrefix(basePath);
   const debounceNum = Number(debounce);
   const debounceValid = publishMode !== 'auto' || (Number.isInteger(debounceNum) && debounceNum >= 5 && debounceNum <= 3600);
+
+  const submitInstall = async () => {
+    setError('');
+    if (!accountId || !name.trim() || !slug || !adminUser || !adminEmail.trim()) { setError(t('common.requiredField') || 'This field is required'); return; }
+    if (!slugValid) { setError(t('sites.create.slugInvalid') || 'Invalid identifier: lower-case letters, digits and dashes, 40 characters max.'); return; }
+    if (!APP_INSTALL_ADMIN_USER_RE.test(adminUser)) { setError(t('sites.install.adminUserInvalid') || 'Invalid login: letters, digits, ., _ and -.'); return; }
+    if (siteBaseDef(base).php === null) { setError(t('sites.install.baseInvalid') || 'WordPress needs a PHP base.'); return; }
+    if (!debounceValid) { setError(t('sites.form.debounceInvalid') || 'The delay must be between 5 and 3600 seconds.'); return; }
+    if (!isBaseAllowed(allowedBases, base)) { setError(t('runtime.notInPlanError') || 'This base is not allowed by the plan of the account.'); return; }
+    setSaving(true);
+    try {
+      setStarted(await appInstallsApi.start({
+        accountId, app: 'wordpress', name: name.trim(), slug, base, publishMode,
+        ...(publishMode === 'auto' ? { publishDebounceSec: debounceNum } : {}),
+        ...(siteTitle.trim() ? { title: siteTitle.trim() } : {}),
+        adminUser, adminEmail: adminEmail.trim(), locale, previewFirst,
+      }));
+    } catch (err) {
+      setError(siteErrorMessage(err, t));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const submit = async () => {
     setError('');
@@ -152,6 +196,20 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
     }
   };
 
+  if (started) {
+    return (
+      <AppInstallProgressModal
+        installId={started.install.id}
+        initial={started.install}
+        password={{ user: started.adminUser, value: started.adminPassword }}
+        onClose={(install) => {
+          if (install?.siteId) void sitesApi.get(install.siteId).then(onCreated, onClose);
+          else onClose();
+        }}
+      />
+    );
+  }
+
   return (
     <Modal
       open
@@ -164,14 +222,31 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
         <>
           {error && <p className="mr-auto text-xs text-red-400">{error}</p>}
           <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>{t('common.cancel') || 'Cancel'}</Button>
-          <Button size="sm" onClick={submit} loading={saving}>
-            <Plus size={14} className="mr-1" />
-            {t('common.create') || 'Create'}
-          </Button>
+          {mode === 'install' ? (
+            <Button size="sm" onClick={submitInstall} loading={saving}>
+              <Rocket size={14} className="mr-1" />
+              {t('sites.install.submit') || 'Install'}
+            </Button>
+          ) : (
+            <Button size="sm" onClick={submit} loading={saving}>
+              <Plus size={14} className="mr-1" />
+              {t('common.create') || 'Create'}
+            </Button>
+          )}
         </>
       }
     >
       <div className="space-y-5">
+        <SegmentedTabs
+          size="sm"
+          value={mode}
+          onChange={switchMode}
+          tabs={[
+            { id: 'empty', label: t('sites.install.modeEmpty') || 'Empty site' },
+            { id: 'install', label: t('sites.install.modeInstall') || 'Install an application', disabled: accountId != null && !(can('databases.manage', accountId) && can('releases.publish', accountId)) },
+          ]}
+        />
+
         {/* Identity */}
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
@@ -228,8 +303,47 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
           </div>
         </div>
 
+        {mode === 'install' && (
+          <div className="space-y-3">
+            <div className={sectionLabelCls}>{t('sites.install.appLabel') || 'Application'}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Pill tone="accent">WordPress</Pill>
+              <span className="text-xs text-text-muted">{t('sites.install.appHint') || 'Immutable: the code is in a read-only release, analysed, with a rollback. A database and its user are created.'}</span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className={labelCls} htmlFor="install-title">{t('sites.install.title') || 'Site title'}</label>
+                <input id="install-title" value={siteTitle} onChange={(e) => setSiteTitle(e.target.value)} className={fieldCls} placeholder={name} maxLength={120} />
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="install-locale">{t('sites.install.locale') || 'Language'}</label>
+                <select id="install-locale" value={locale} onChange={(e) => setLocale(e.target.value)} className={fieldCls}>
+                  {INSTALL_LOCALES.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="install-admin">{t('sites.install.adminUser') || 'Administrator login'}</label>
+                <input id="install-admin" value={adminUser} onChange={(e) => setAdminUser(e.target.value)} className={`${fieldCls} font-mono`} maxLength={60} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="install-email">{t('sites.install.adminEmail') || 'Administrator e-mail'}</label>
+                <input id="install-email" type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} className={fieldCls} maxLength={200} />
+              </div>
+            </div>
+            <div className="rounded-lg bg-bg-tertiary/60 p-3">
+              <ToggleSwitch
+                checked={previewFirst}
+                onChange={setPreviewFirst}
+                size="sm"
+                label={t('sites.install.previewFirst') || 'Install in a preview first'}
+                description={t('sites.install.previewFirstHint') || 'Stops before publishing: you check WordPress in a preview, with a disposable copy of the database, then you publish release 1.'}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Application profile */}
-        <div>
+        {mode === 'empty' && <div>
           <div className={sectionLabelCls}>{t('sites.fields.appProfile') || 'Application'}</div>
           <div className="flex flex-wrap gap-1.5">
             <ProfileChip active={profile === ''} onClick={() => pickProfile('')} label={t('sites.profile.none') || 'Other / none'} />
@@ -263,7 +377,7 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
               )}
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Base */}
         <div>
@@ -272,7 +386,7 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
             value={base}
             onSelect={setBase}
             compact
-            isDisabled={(b) => !isBaseAllowed(allowedBases, b)}
+            isDisabled={(b) => !isBaseAllowed(allowedBases, b) || (mode === 'install' && siteBaseDef(b).php === null)}
             markers={(b) => (
               <>
                 {profileDef?.recommendedBase === b && <Pill tone="accent" className="text-[10px]">{t('sites.create.recommended') || 'recommended'}</Pill>}
@@ -283,7 +397,7 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
         </div>
 
         {/* Paths */}
-        <div className="grid gap-3 sm:grid-cols-2">
+        {mode === 'empty' && <div className="grid gap-3 sm:grid-cols-2">
           <div>
             <label className={labelCls} htmlFor="site-docroot">
               {t('sites.fields.docroot') || 'Document root'}
@@ -302,7 +416,7 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
               ? <p className="mt-1 text-xs text-red-400">{t('sites.form.basePathInvalid') || 'Invalid base path.'}</p>
               : basePathNorm !== basePath.trim() && <p className="mt-1 font-mono text-[11px] text-text-muted">→ {basePathNorm}</p>}
           </div>
-        </div>
+        </div>}
 
         {/* Publication */}
         <PublishModeField mode={publishMode} onModeChange={setPublishMode} debounce={debounce} onDebounceChange={setDebounce} autoDisabled={!canPublish} />
@@ -310,6 +424,12 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
     </Modal>
   );
 }
+
+/** Builds of WordPress offered by the form (the API takes any locale of wordpress.org). */
+const INSTALL_LOCALES = [
+  { id: 'en_US', label: 'English (US)' }, { id: 'fr_FR', label: 'Français' }, { id: 'de_DE', label: 'Deutsch' }, { id: 'es_ES', label: 'Español' },
+  { id: 'it_IT', label: 'Italiano' }, { id: 'nl_NL', label: 'Nederlands' }, { id: 'pt_PT', label: 'Português' }, { id: 'pl_PL', label: 'Polski' },
+] as const;
 
 function ProfileChip({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
   return (

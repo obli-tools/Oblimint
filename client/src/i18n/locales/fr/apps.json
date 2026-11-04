@@ -56,7 +56,10 @@
       "disable": "Désactiver",
       "enabledToast": "Modèle activé",
       "disabledToast": "Modèle désactivé",
-      "saveFailed": "Échec de l’enregistrement du modèle"
+      "saveFailed": "Échec de l’enregistrement du modèle",
+      "notImmutable": "Non immuable",
+      "notImmutableHint": "Ici le code vit sur un volume inscriptible : ni release, ni analyse, ni retour arrière.",
+      "useInstaller": "Préférez l'installation immuable (Nouveau site, Installer une application)."
     },
     "charts": {
       "noData": "Pas encore assez de données.",

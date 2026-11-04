@@ -74,6 +74,7 @@
       "btnExclude": "Portée : tous sauf {{count}}"
     },
     "actions": {
+      "app_install": "Installer une application (crée un site et une base, publie)",
       "site_delete": "Supprimer un site",
       "site_stop": "Arrêter un site",
       "site_publish_mode_change": "Quitter le mode de publication « approbation »",
