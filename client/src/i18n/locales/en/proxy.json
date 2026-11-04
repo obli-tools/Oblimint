@@ -591,7 +591,8 @@
       "obliguard": "Obliguard",
       "promotion": "Promotion",
       "keyIntrusion": "Access keys: intrusion",
-      "keyBruteforce": "Access keys: bad keys"
+      "keyBruteforce": "Access keys: bad keys",
+      "cmsBruteforce": "CMS login brute force"
     },
     "sourceLabel": "Source",
     "state": "State",
@@ -619,7 +620,8 @@
       "noAccount": "No hosting account.",
       "pickAccount": "Choose an account: the SFTP / SQL bans belong to the firewall of each account.",
       "firewallLink": "Firewall of the account (rules, allowed addresses)"
-    }
+    },
+    "siteHint": "Site whose logins were attacked (the ban covers every site of the account)"
   },
   "traffic": {
     "at": "Time",

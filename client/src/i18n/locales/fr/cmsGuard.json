@@ -1,0 +1,29 @@
+{
+  "cmsGuard": {
+    "platformTitle": "Force brute sur les connexions CMS",
+    "platformIntro": "Les échecs de connexion répétés sur les pages de connexion des sites ({{list}}), lus dans le journal d'accès edge, bannissent l'adresse des sites du compte concerné (barème d'escalade ci-dessus). Les adresses jamais bannies, le serveur et les sessions ouvertes du panel des administrateurs, du staff et des utilisateurs du compte ne sont jamais bannis.",
+    "platformHint": "Chaque site peut abaisser ou relever ces seuils, ou désactiver la protection, dans son onglet Configuration.",
+    "modeLabel": "Mode",
+    "mode": {
+      "auto": "Automatique (journal 48 h, puis bans)",
+      "off": "Désactivé",
+      "log": "Journal seul (« aurait banni » dans le journal d'audit)",
+      "on": "Actif (bans)"
+    },
+    "state": {
+      "on": "bannit",
+      "log": "journal seul",
+      "off": "désactivé"
+    },
+    "autoUntil": "Bans à partir du {{at}}.",
+    "maxFailures": "Échecs avant un ban",
+    "windowMinutes": "Fenêtre (minutes)",
+    "siteTitle": "Protection des connexions CMS",
+    "siteIntro": "Les échecs de connexion répétés d'une même adresse sur les pages de connexion de ce site ({{list}}) bannissent cette adresse des sites du compte, pour une durée qui augmente à chaque récidive. Les bans apparaissent dans Sécurité > Bannissements avec ce site.",
+    "siteEnabled": "Protéger les connexions de ce site",
+    "siteEnabledHint": "À désactiver seulement si un service légitime se connecte très souvent (une sonde externe, un outil de synchronisation) : son adresse serait bannie.",
+    "platformDefault": "défaut de la plateforme",
+    "thresholdHint": "Vide = le défaut de la plateforme. Une connexion réussie remet à zéro le compte de son adresse.",
+    "relaxNeedsProxy": "Désactiver la protection ou tolérer plus d'échecs demande le droit de gérer les bannissements du compte."
+  }
+}

@@ -31,7 +31,7 @@ import { BAN_SOURCES, GeoLine, ObliguardPill, useBanSourceLabel } from '@/compon
 import { BanCreateModal } from '@/components/security/BanCreateModal';
 import { AccountAccessBans } from '@/components/security/AccountSecurityTab';
 import { MailBansPanel } from '@/components/mail/MailSettingsSections';
-import { accountAccessHref } from '@/utils/links';
+import { accountAccessHref, siteHref } from '@/utils/links';
 import { cn } from '@/utils/cn';
 
 const PAGE = 50;
@@ -352,6 +352,7 @@ function WebBansPanel({ scope, refreshTick }: { scope: AccountScope; refreshTick
               {b.reason && <div className="mt-1 break-all font-mono text-[11px] text-text-muted">{b.reason}</div>}
               <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
                 <span>{sourceLabel(b.source)}</span>
+                {b.siteId != null && <Link to={siteHref(b.siteId)} className="text-accent hover:underline">{b.siteName ?? `#${b.siteId}`}</Link>}
                 {scopePill(b)}
                 <span>{t('bans.hitsShort', { count: b.hitCount, defaultValue: '{{count}} hit(s)' })}</span>
                 {b.offenseLevel > 1 && <Pill tone="amber">{t('bans.level', { level: b.offenseLevel, defaultValue: 'level {{level}}' })}</Pill>}
@@ -388,6 +389,7 @@ function WebBansPanel({ scope, refreshTick }: { scope: AccountScope; refreshTick
                   <td className="px-4 py-3 text-xs text-text-secondary">
                     {sourceLabel(b.source)}
                     {b.proxyHostId != null && <div className="mt-0.5"><Link to={`/proxy/hosts/${b.proxyHostId}`} className="text-accent hover:underline">{b.proxyHostName ?? `#${b.proxyHostId}`}</Link></div>}
+                    {b.siteId != null && <div className="mt-0.5"><Link to={siteHref(b.siteId)} className="text-accent hover:underline" title={t('bans.siteHint') || 'Site whose logins were attacked (the ban covers every site of the account)'}>{b.siteName ?? `#${b.siteId}`}</Link></div>}
                     {b.createdBy && <div className="mt-0.5 text-text-muted">{b.createdBy}</div>}
                   </td>
                   <td className="px-4 py-3">{scopePill(b)}</td>

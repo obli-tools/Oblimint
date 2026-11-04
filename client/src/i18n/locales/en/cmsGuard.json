@@ -1,0 +1,29 @@
+{
+  "cmsGuard": {
+    "platformTitle": "CMS login brute force",
+    "platformIntro": "Repeated failed logins on the login pages of the sites ({{list}}), read from the edge access log, ban the address on the sites of that account (escalation ladder above). Addresses never banned, the server and the open panel sessions of the administrators, of the staff and of the account users are never banned.",
+    "platformHint": "Each site can lower or raise these thresholds, or switch the protection off, in its Configuration tab.",
+    "modeLabel": "Mode",
+    "mode": {
+      "auto": "Automatic (journal for 48 h, then bans)",
+      "off": "Off",
+      "log": "Journal only (would-ban entries in the audit log)",
+      "on": "On (bans)"
+    },
+    "state": {
+      "on": "banning",
+      "log": "journal only",
+      "off": "off"
+    },
+    "autoUntil": "Bans from {{at}}.",
+    "maxFailures": "Failures before a ban",
+    "windowMinutes": "Window (minutes)",
+    "siteTitle": "CMS login protection",
+    "siteIntro": "Repeated failed logins from one address on the login pages of this site ({{list}}) ban that address from the sites of the account, for a duration that grows with each offence. The bans appear in Security > Bans with this site.",
+    "siteEnabled": "Protect the logins of this site",
+    "siteEnabledHint": "Switch it off only if a legitimate service logs in many times (an external monitor, a sync tool): its address would be banned.",
+    "platformDefault": "platform default",
+    "thresholdHint": "Empty = the platform default. A login that succeeds resets the count of its address.",
+    "relaxNeedsProxy": "Switching the protection off or tolerating more failures takes the right to manage the bans of the account."
+  }
+}

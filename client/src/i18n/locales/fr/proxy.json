@@ -591,7 +591,8 @@
       "obliguard": "Obliguard",
       "promotion": "Promotion",
       "keyIntrusion": "Clés d'accès : intrusion",
-      "keyBruteforce": "Clés d'accès : clés invalides"
+      "keyBruteforce": "Clés d'accès : clés invalides",
+      "cmsBruteforce": "Force brute sur une connexion CMS"
     },
     "sourceLabel": "Source",
     "state": "État",
@@ -619,7 +620,8 @@
       "noAccount": "Aucun compte d’hébergement.",
       "pickAccount": "Choisissez un compte : les bans SFTP / SQL relèvent du pare-feu de chaque compte.",
       "firewallLink": "Pare-feu du compte (règles, adresses autorisées)"
-    }
+    },
+    "siteHint": "Site dont les connexions ont été attaquées (le ban couvre tous les sites du compte)"
   },
   "traffic": {
     "at": "Heure",

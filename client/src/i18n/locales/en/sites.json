@@ -382,7 +382,8 @@
       "previewDbCloneDisabled": "Database copies are disabled on this platform.",
       "previewDbInstanceNotRunning": "The database server is not running.",
       "previewDbExposed": "A database server of the account has external access (or one of the server while the egress filter is off): no preview can run, it could reach the live database. Turn external access off first.",
-      "approvalRequired": "This change needs the right to approve releases."
+      "approvalRequired": "This change needs the right to approve releases.",
+      "cmsGuardRelaxForbidden": "Switching the CMS login protection off or tolerating more failures needs the right to manage the bans of the account."
     },
     "fields": {
       "account": "Hosting account",

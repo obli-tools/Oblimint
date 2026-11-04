@@ -39,6 +39,7 @@ const SITE_ERROR_FALLBACKS = {
   releaseSuperseded: 'A newer release has already been published; this one can no longer be approved.',
   siteDeleting: 'The site is being deleted.',
   approvalRequired: 'This change needs the right to approve releases.',
+  cmsGuardRelaxForbidden: 'Switching the CMS login protection off or tolerating more failures needs the right to manage the bans of the account.',
   runtimeMismatch: 'This runtime does not belong to the site.',
   runtimePrefixLimit: 'A runtime serves at most 64 path prefixes.',
   runtimeSwitchFailed: 'The runtime change failed: the previous runtime was restored (details for administrators in the logs).',

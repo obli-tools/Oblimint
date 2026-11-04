@@ -382,7 +382,8 @@
       "previewDbCloneDisabled": "Les copies de base sont désactivées sur cette plateforme.",
       "previewDbInstanceNotRunning": "Le serveur de base de données n'est pas démarré.",
       "previewDbExposed": "Un serveur de base du compte a l'accès externe activé (ou un serveur de la machine alors que le filtre de sortie est coupé) : aucun aperçu ne peut tourner, il pourrait joindre la base en ligne. Coupez d'abord l'accès externe.",
-      "approvalRequired": "Ce changement demande le droit d'approuver les releases."
+      "approvalRequired": "Ce changement demande le droit d'approuver les releases.",
+      "cmsGuardRelaxForbidden": "Désactiver la protection des connexions CMS ou tolérer plus d'échecs demande le droit de gérer les bannissements du compte."
     },
     "fields": {
       "account": "Compte d'hébergement",

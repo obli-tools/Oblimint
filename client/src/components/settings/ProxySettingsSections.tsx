@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import { AlertTriangle, Plus, ServerCog, ShieldBan, X } from 'lucide-react';
 import type { BansSettings, CustomPage, EdgeSettings, HostingSettings, HostingSettingsUpdate } from '@oblimint/shared';
+import { CMS_GUARD_MAX_FAILURES_RANGE, CMS_GUARD_WINDOW_RANGE } from '@oblimint/shared';
+import { CmsGuardPlatformFields } from '@/components/security/CmsGuard';
 import { hostingSettingsApi } from '@/api/hostingSettings.api';
 import { proxyApi } from '@/api/proxy.api';
 import { isStepUpHandled } from '@/api/client';
@@ -245,6 +247,9 @@ function BansBlock({ value, save }: { value: BansSettings; save: SaveFn<BansSett
     geoipProvider: value.geoipProvider,
     geoipMmdbPath: value.geoipMmdbPath ?? '',
     retentionDays: String(value.retentionDays),
+    cmsGuardMode: value.cmsGuardMode,
+    cmsGuardMaxFailures: String(value.cmsGuardMaxFailures),
+    cmsGuardWindowMinutes: String(value.cmsGuardWindowMinutes),
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -256,7 +261,9 @@ function BansBlock({ value, save }: { value: BansSettings; save: SaveFn<BansSett
   const retention = intIn(draft.retentionDays, 1, 3650);
   const urlOk = !draft.obliguardUrl.trim() || /^https?:\/\/[^\s]+$/.test(draft.obliguardUrl.trim());
   const mmdbOk = draft.geoipProvider !== 'mmdb' || /^\/[^\0]+\.mmdb$/.test(draft.geoipMmdbPath.trim());
-  const valid = ladderOk && windowDays != null && retention != null && urlOk && mmdbOk;
+  const cmsMax = intIn(draft.cmsGuardMaxFailures, CMS_GUARD_MAX_FAILURES_RANGE.min, CMS_GUARD_MAX_FAILURES_RANGE.max);
+  const cmsWindow = intIn(draft.cmsGuardWindowMinutes, CMS_GUARD_WINDOW_RANGE.min, CMS_GUARD_WINDOW_RANGE.max);
+  const valid = ladderOk && windowDays != null && retention != null && urlOk && mmdbOk && cmsMax != null && cmsWindow != null;
 
   const submit = async () => {
     if (!valid) return;
@@ -272,6 +279,9 @@ function BansBlock({ value, save }: { value: BansSettings; save: SaveFn<BansSett
       geoipProvider: draft.geoipProvider,
       geoipMmdbPath: draft.geoipMmdbPath.trim() || null,
       retentionDays: retention!,
+      cmsGuardMode: draft.cmsGuardMode,
+      cmsGuardMaxFailures: cmsMax!,
+      cmsGuardWindowMinutes: cmsWindow!,
     });
     setSaving(false);
     setError(err || null);
@@ -338,6 +348,14 @@ function BansBlock({ value, save }: { value: BansSettings; save: SaveFn<BansSett
       <Field label={t('bans.settings.neverBan') || 'Never ban (CIDR)'} htmlFor="bans-never" hint={t('bans.settings.neverBanHint') || 'On top of the private, loopback, link-local, CGNAT and ULA ranges and the addresses of the server, always excluded.'}>
         <ChipsInput id="bans-never" value={draft.neverBan} onChange={(v) => set({ neverBan: v })} validate={isValidCidr} max={200} placeholder="198.51.100.0/24" ariaLabel={t('bans.settings.neverBan') || 'Never ban (CIDR)'} />
       </Field>
+
+      <CmsGuardPlatformFields
+        mode={draft.cmsGuardMode}
+        autoAt={value.cmsGuardAutoAt}
+        maxFailures={draft.cmsGuardMaxFailures}
+        windowMinutes={draft.cmsGuardWindowMinutes}
+        onChange={(p) => set(p)}
+      />
 
       <ToggleSwitch checked={draft.nftables} onChange={(v) => set({ nftables: v })} label={t('bans.settings.nftables') || 'Firewall for the platform bans'}
         description={t('bans.settings.nftablesHint') || 'Platform bans are also dropped by nftables on ports 80 / 443, before Docker.'} />
