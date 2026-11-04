@@ -188,6 +188,8 @@ export type NotificationEvent =
   // IP security of the access keys
   | 'security.keyRegimeChanged'   // the key surfaces switched between strict and watch
   | 'security.keyAbuse'           // repeated bad keys from a never-banned range (connectors)
+  | 'account.contained'           // an account was contained after an incident (or the operation is incomplete)
+  | 'account.containmentLifted'   // the staff lifted the containment
   // Health center (platform admins: services/healthCenter), one notification per transition
   | 'platform.componentDown'      // a deep health component failed several checks in a row
   | 'platform.componentUp'        // it is green again (same count of checks)
@@ -205,7 +207,7 @@ export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'platform.updateAvailable', 'platform.updated', 'platform.updateFailed',
   'release.pendingApproval', 'release.approved', 'release.rejected', 'release.decided', 'release.degraded', 'release.failedObservation', 'domain.verified', 'domain.reclaimed',
   'action.confirmationRequired', 'action.approvalRequired', 'action.approved', 'action.denied', 'action.expired',
-  'security.keyRegimeChanged', 'security.keyAbuse',
+  'security.keyRegimeChanged', 'security.keyAbuse', 'account.contained', 'account.containmentLifted',
   'platform.componentDown', 'platform.componentUp', 'node.diskLow', 'node.diskOk', 'backup.failed', 'backup.recovered',
 ];
 

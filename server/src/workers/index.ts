@@ -73,7 +73,7 @@ interface Worker { start(): void; stop(): void }
 
 /** P2 workers, in start order. */
 async function p2Workers(): Promise<Array<[string, Worker]>> {
-  const [dns, ownership, databases, firewall, usage, cron, logs, phpErrors, inbox, pendingActions, keySurfaces, observation] = await Promise.all([
+  const [dns, ownership, databases, firewall, usage, cron, logs, phpErrors, inbox, pendingActions, keySurfaces, observation, containment] = await Promise.all([
     import('../services/dns/dns.service').then((m) => m.dnsService),
     import('../services/ownership/ownership.service').then((m) => m.ownershipService),
     import('../services/databases/databases.service').then((m) => m.databaseService),
@@ -86,6 +86,7 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
     import('../services/restrictions/pendingActions.service').then((m) => m.pendingActionsWorker),
     import('../services/security/keySurfaceGuard').then((m) => m.keySurfaceGuard),
     import('../services/releaseObservation/observation.service').then((m) => m.releaseObservation),
+    import('../services/containment/containment.service').then((m) => m.containmentService),
   ]);
   const list: Array<[string, Worker]> = [
     ['dns', dns],
@@ -105,6 +106,8 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
     ['key-surfaces', keySurfaces],
     // Observation after each publication: edge log 5xx, health probes, new PHP errors → verdict, alert or automatic return.
     ['release-observation', observation],
+    // Containments: a window opened in the race is closed again, the audit keeps being frozen until +72 h.
+    ['containment', containment],
   ];
   if (config.hosting.usageCollector) list.push(['usage-collector', usage.usageCollector]);
   return list;

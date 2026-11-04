@@ -3,6 +3,7 @@ import type { AppProfileId, PhpSettings, PlanLimits, Site, SiteBaseId, SiteDataP
 import { APP_PROFILES, HostingSocketEvents, appProfileDef, cmsGuardRelaxes, isSiteBaseId, normalizePathPrefix, normalizeRelPath } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
+import { assertNotContained } from '../containment/guard';
 import { logger } from '../../utils/logger';
 import type { DataPathInputBody, DataPathUpdateBody, SiteCreateBody, SiteUpdateBody } from '../../validators/hosting.schema';
 import { appConfigService } from '../appConfig.service';
@@ -256,6 +257,7 @@ export const sitesService = {
     const fields = checkedSiteFields(body);
     // Without releases.publish the site starts in manual (an explicit 'auto' is refused).
     const canPublish = actorCan(actor, 'releases.publish', { tenantId: account.tenant_id, accountId: account.id });
+    await assertNotContained(account.id);
     if (body.publishMode === 'auto' && !canPublish) throw publishRequired();
     const publishMode = body.publishMode ?? (canPublish ? 'auto' : 'manual');
     if (account.status === 'deleting') throw accountDeleting();
@@ -325,6 +327,7 @@ export const sitesService = {
     }
     if (fields.basePath !== undefined && fields.basePath !== row.base_path) patch.base_path = fields.basePath;
     if (body.publishMode !== undefined && body.publishMode !== row.publish_mode) {
+      await assertNotContained(row.account_id);
       // The approval gate is the approvers' control: leaving 'approval' takes
       // releases.approve (a client given sites.manage + releases.publish but
       // not releases.approve must not switch its own reviews off).

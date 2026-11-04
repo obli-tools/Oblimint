@@ -7,6 +7,7 @@ import type {
 import { HostingSocketEvents, normalizeRelPath, riskLevelOf, WINDOW_ACTIVE_STATUSES } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
+import { accountContained, isAccountContained } from '../containment/guard';
 import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
 import { siteDeletions } from '../hosting/deletions';
@@ -94,7 +95,7 @@ async function exclusive<T>(windowId: number, fn: () => Promise<T>, skipIfBusy =
 
 export interface SiteCtx {
   site: SiteRow;
-  account: { id: number; tenant_id: number; node_id: number; uid: number; gid: number; status: string; username: string };
+  account: { id: number; tenant_id: number; node_id: number; uid: number; gid: number; status: string; username: string; contained_at?: Date | string | null };
   spec: HostdSiteSpec;
 }
 
@@ -102,7 +103,7 @@ export async function siteCtx(siteId: number): Promise<SiteCtx> {
   const site = await db('sites').where({ id: siteId }).first() as SiteRow | undefined;
   if (!site) throw new AppError(404, 'Site not found', 'notFound');
   const account = await db('hosting_accounts').where({ id: site.account_id })
-    .first('id', 'tenant_id', 'node_id', 'uid', 'gid', 'status', 'username') as SiteCtx['account'] | undefined;
+    .first('id', 'tenant_id', 'node_id', 'uid', 'gid', 'status', 'username', 'contained_at') as SiteCtx['account'] | undefined;
   if (!account) throw new AppError(404, 'Account not found', 'notFound');
   return { site, account, spec: { accountId: account.id, siteId: site.id, slug: site.slug, uid: account.uid, gid: account.gid } };
 }
@@ -383,6 +384,7 @@ function conflict(message: string, code: string, details?: unknown): AppError {
 export async function openRefusal(ctx: SiteCtx): Promise<AppError | null> {
   if (siteDeletions.has(ctx.site.id) || ctx.account.status === 'deleting') return conflict('The site is being deleted', 'siteDeleting');
   if (ctx.account.status === 'suspended') return conflict('The hosting account is suspended', 'accountSuspended');
+  if (ctx.account.contained_at) return accountContained();
   if (ctx.site.status === 'stopped') return conflict('The site is stopped', 'siteStopped');
   return null;
 }
@@ -984,7 +986,8 @@ async function analyzeAndDecide(run: WinRun, opts: AnalyzeOpts): Promise<void> {
   const autoAllowed = (w.trigger === 'scheduled' || (w.trigger === 'api' && settings.autoValidate === 'scheduled-api'))
     && settings.autoValidate !== 'off' && !analysis.summary.blocked && !analysis.summary.scannerUnavailable
     && analysis.summary.verdict === 'clean' && analysis.scan.verdict === 'clean'
-    && fresh?.publish_mode !== 'approval' && !conflicts.length && baseIsCurrent;
+    && fresh?.publish_mode !== 'approval' && !conflicts.length && baseIsCurrent
+    && !(await isAccountContained(ctx.account.id)); // a contained account publishes nothing by itself
   if (auto.decision === 'validate' && !autoAllowed) {
     auto = {
       ...auto, decision: 'review',

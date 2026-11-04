@@ -4,6 +4,7 @@ import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
 import { accountsService } from '../services/hosting/accounts.service';
 import { assertStaff, idParam, loadAccount, requireStaffActor, resolveActor } from '../services/hosting/access';
+import { assertNotContained } from '../services/containment/guard';
 import { clientUsersService } from '../services/hosting/clientUsers.service';
 import { gateAction } from '../services/restrictions/gate';
 import { accountTarget, gateAccount } from '../services/restrictions/targets';
@@ -135,6 +136,7 @@ router.get('/:id/users/candidates', async (req, res, next) => {
 router.post('/:id/users', async (req, res, next) => {
   try {
     const account = await staffAccount(req);
+    await assertNotContained(account.id);
     const parsed = clientUserAddSchema.safeParse(req.body);
     if (!parsed.success) {
       const issues = parsed.error.errors.map((e) => `${e.path.length ? e.path.join('.') : '<root>'}: ${e.message}`);

@@ -8,6 +8,7 @@ import { ipKey } from '../../middleware/rateLimiter';
 import { clientIp } from '../../utils/clientIp';
 import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
+import { accountContained, assertNotContained, credentialContained } from '../containment/guard';
 import { actorCan, loadSite, type HostingActor } from '../hosting/access';
 import type { SiteRow } from '../hosting/rows';
 import { userCanPublish } from './guarantor';
@@ -123,6 +124,7 @@ export const siteTokenService = {
 
   async create(req: Request, actor: HostingActor, siteId: number, body: SiteApiTokenCreate): Promise<SiteApiTokenCreated> {
     const site = await loadSiteForTokens(actor, siteId);
+    await assertNotContained(site.account_id);
     const name = String(body.name ?? '').trim().slice(0, 100);
     if (!name) throw new AppError(400, 'A token needs a name', 'validation');
     let expiresAt: Date | null = null;
@@ -180,11 +182,16 @@ export const siteTokenService = {
       .join('sites as s', function joinSite() { this.on('s.id', '=', 't.site_id').andOn('s.account_id', '=', 't.account_id'); })
       .join('hosting_accounts as a', function joinAccount() { this.on('a.id', '=', 't.account_id').andOn('a.tenant_id', '=', 't.tenant_id'); })
       .where('t.id', id)
-      .first('t.id', 't.site_id', 't.account_id', 't.tenant_id', 't.name', 't.token_hash', 't.scopes', 't.expires_at', 't.created_by', 'a.status as account_status') as
-      (Pick<TokenRow, 'id' | 'site_id' | 'account_id' | 'tenant_id' | 'name' | 'token_hash' | 'scopes' | 'expires_at' | 'created_by'> & { account_status: string }) | undefined;
+      .first('t.id', 't.site_id', 't.account_id', 't.tenant_id', 't.name', 't.token_hash', 't.scopes', 't.expires_at', 't.created_by', 'a.status as account_status', 'a.contained_at as account_contained_at') as
+      (Pick<TokenRow, 'id' | 'site_id' | 'account_id' | 'tenant_id' | 'name' | 'token_hash' | 'scopes' | 'expires_at' | 'created_by'> & { account_status: string; account_contained_at: Date | string | null }) | undefined;
     // Compare even when the row is missing: same work whatever the id.
     const ok = tokenMatches(raw, row?.token_hash ?? '');
-    if (!row || !ok) return null;
+    if (!row || !ok) {
+      // Revoked by a containment still in force: its holder is told, like every agent.
+      if (await credentialContained(raw)) throw accountContained();
+      return null;
+    }
+    if (row.account_contained_at) throw accountContained();
     if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return null;
     if (!scopesOf(row.scopes).includes('windows')) return null;
     if (row.account_status === 'deleting') return null;

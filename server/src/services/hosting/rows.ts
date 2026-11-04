@@ -26,6 +26,8 @@ export interface AccountRow {
   status: HostingAccount['status']; status_message: string | null; uid: number; gid: number;
   disk_used_bytes: number | string | null; quota_mode: 'xfs' | 'measured' | null; usage_checked_at: Date | string | null;
   filesrv_mode: 'always' | 'on-demand' | 'off'; filesrv_port: number | null; filesrv_active_until: Date | string | null;
+  /** Services/containment: set while contained. */
+  contained_at?: Date | string | null;
   filesrv_password_hash: string | null;
   /** P2 (migration 003) */
   access_mode?: AccessMode; access_grant_ttl_min?: number; access_applied_at?: Date | string | null;
@@ -180,6 +182,7 @@ export function toHostingAccount(r: AccountRow): HostingAccount {
     displayName: r.display_name,
     status: r.status,
     statusMessage: r.status_message,
+    containedAt: iso(r.contained_at ?? null),
     uid: r.uid,
     gid: r.gid,
     diskQuotaMb: limits ? limits.diskMb : null,

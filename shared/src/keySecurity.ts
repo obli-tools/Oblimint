@@ -119,4 +119,4 @@ export type KeySecuritySettingsUpdate = Partial<Omit<KeySecuritySettings, 'autoS
 
 /** Why a key was refused (verify / verifyAccessToken / contextFor). */
 export type ApiKeyVerifyFailure =
-  | 'unknown' | 'malformed' | 'expired' | 'revoked' | 'ipNotAllowed' | 'ipRequired' | 'ownerInactive' | 'accountDeleting';
+  | 'unknown' | 'malformed' | 'expired' | 'revoked' | 'ipNotAllowed' | 'ipRequired' | 'ownerInactive' | 'accountDeleting' | 'accountContained';

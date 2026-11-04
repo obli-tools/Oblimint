@@ -9,6 +9,7 @@ import { tenantService, noTenantAccessError, refuseSignInWithoutTenant } from '.
 import { obligateService } from '../services/obligate.service';
 import { auditService } from '../services/audit.service';
 import { AppError } from '../middleware/errorHandler';
+import { accountContained } from '../services/containment/guard';
 import { config, SESSION_COOKIE_NAME, sessionCookieSecure } from '../config';
 import { db } from '../db';
 import type { LoginInput } from '../validators/auth.schema';
@@ -68,6 +69,20 @@ export const authController = {
           expected: wrongHost.expected,
         });
         return;
+      }
+
+      // A client whose every account is contained does not sign in: a stolen password stops here.
+      // Checked once the password is proven (no enumeration).
+      if (user.kind === 'client') {
+        const accounts = await db('account_users as au').join('hosting_accounts as a', 'a.id', 'au.account_id').where('au.user_id', user.id).select('a.contained_at') as Array<{ contained_at: Date | null }>;
+        if (accounts.length > 0 && accounts.every((a) => a.contained_at)) {
+          const tenant = await tenantService.getFirstTenantForUser(user.id);
+          await auditService.log({
+            tenantId: tenant?.id ?? MASTER_TENANT_ID, userId: user.id, action: 'auth.login_refused', resourceType: 'user', resourcePath: String(user.id),
+            details: { username: user.username, reason: 'account_contained', via: 'password' }, ipAddress: clientIp(req) || undefined,
+          });
+          throw accountContained();
+        }
       }
 
       // New session id once the password is proven (session fixation).

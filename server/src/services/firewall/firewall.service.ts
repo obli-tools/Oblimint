@@ -218,7 +218,7 @@ async function flush(): Promise<void> {
   }
 }
 
-type SyncRow = Pick<AccountRow, 'id' | 'tenant_id' | 'node_id' | 'status' | 'filesrv_mode' | 'filesrv_port' | 'access_mode' | 'access_apply_error'>;
+type SyncRow = Pick<AccountRow, 'id' | 'tenant_id' | 'node_id' | 'status' | 'filesrv_mode' | 'filesrv_port' | 'access_mode' | 'access_apply_error' | 'contained_at'>;
 
 /** The state of one account as pushed to hostd. */
 async function stateOf(row: SyncRow, now: Date) {
@@ -227,13 +227,15 @@ async function stateOf(row: SyncRow, now: Date) {
   ]);
   return buildAccountState({
     accountId: row.id,
-    mode: row.access_mode ?? 'open',
+    // Contained (services/containment): an empty allow-list. The ports close without touching a container: the
+    // database the site uses is not recreated. The rules are kept and apply again after the lift.
+    mode: row.contained_at ? 'allowlist' : row.access_mode ?? 'open',
     portGateway: config.hosting.portGateway,
     filesrvMode: row.filesrv_mode,
     filesrvPort: row.filesrv_port,
     publishedPorts: ports.map((p) => p.port),
-    rules: rules.map((r) => ({ cidr: r.cidr, expiresAt: r.expires_at })),
-    grants: grants.map((g) => ({ ip: g.ip, expiresAt: g.expires_at })),
+    rules: row.contained_at ? [] : rules.map((r) => ({ cidr: r.cidr, expiresAt: r.expires_at })),
+    grants: row.contained_at ? [] : grants.map((g) => ({ ip: g.ip, expiresAt: g.expires_at })),
     bans: bans.map((b) => ({ ip: b.ip, expiresAt: b.expires_at })),
     now,
   });
@@ -243,7 +245,7 @@ async function stateOf(row: SyncRow, now: Date) {
 async function syncAccount(accountId: number, reason: string): Promise<void> {
   try {
     const row = await db('hosting_accounts').where({ id: accountId })
-      .first('id', 'tenant_id', 'node_id', 'status', 'filesrv_mode', 'filesrv_port', 'access_mode', 'access_apply_error') as SyncRow | undefined;
+      .first('id', 'tenant_id', 'node_id', 'status', 'filesrv_mode', 'filesrv_port', 'access_mode', 'access_apply_error', 'contained_at') as SyncRow | undefined;
     if (!row) {
       pending.delete(accountId);
       const hostd = backends.hostd(await backends.localNode());
@@ -266,6 +268,13 @@ async function syncAccount(accountId: number, reason: string): Promise<void> {
   } catch (err) {
     logger.warn({ accountId, err: errText(err) }, 'firewall: account sync failed');
   }
+}
+
+/** Pushes one account now and reports the outcome (containment: a refused state is a failed step). */
+export async function syncAccountNow(accountId: number): Promise<void> {
+  await syncAccount(accountId, 'containment');
+  const row = await db('hosting_accounts').where({ id: accountId }).first('access_apply_error') as { access_apply_error: string | null } | undefined;
+  if (row?.access_apply_error) throw new Error(row.access_apply_error);
 }
 
 function subnetsOf(ipam: { Config?: Array<{ Subnet?: string }> } | undefined): string[] {

@@ -102,6 +102,8 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'site.env_write', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: PK, secret: true },
   { key: 'account.suspend', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true },
   { key: 'account.delete', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true },
+  { key: 'account.contain', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true },
+  { key: 'account.contain_lift', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true },
   { key: 'account.client_users', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true },
   { key: 'account.sftp_credentials', category: 'sites', need: 'files.manage', scopable: 'account', surfaces: P, secret: true },
   // ── Releases, windows, backups ──

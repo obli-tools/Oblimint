@@ -10,6 +10,7 @@ import { DB_ENGINE_VERSIONS, dbEngineVersionDef, dbFamilyOf } from '@oblimint/sh
 import { config } from '../../config';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
+import { assertNotContained } from '../containment/guard';
 import { generatePassword } from '../../utils/crypto';
 import { logger } from '../../utils/logger';
 import { seal } from '../../utils/secretBox';
@@ -673,6 +674,7 @@ export const databaseService = {
     if (row.status === 'deleting') throw notFound('Database instance');
     const enabled = body.enabled === true;
     if (enabled) {
+      await assertNotContained(row.account_id);
       const { limits } = await accountWithPlan(row.account_id);
       if (!limits.dbExternalAccess) throw planLimit('dbExternalAccess', 'The plan does not allow external database access');
     }

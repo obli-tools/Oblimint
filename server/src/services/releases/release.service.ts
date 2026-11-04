@@ -26,7 +26,7 @@ import { notify } from '../usage/notifications.service';
 import { EMPTY_TREE, type GitIdentity } from './git';
 import {
   clearStaleGitLocks, commitExists, commitStaging, diffNameOnly, diffNameStatus, diffNumstat, diffStats, filePatch, headCommit, initBareRepo, scanStaging,
-  snapshotStagingCommit, stagingChanges, stagingDiffAgainst, treesOf, writeExclude, type StagingDiffEntry, type TreeMatchInput,
+  pinCommit, snapshotStagingCommit, stagingChanges, stagingDiffAgainst, treesOf, writeExclude, type StagingDiffEntry, type TreeMatchInput,
 } from './repo';
 import { fastForwardHead, parentOf } from './candidate';
 import { dataLinksMatch, materializeRelease, readCurrent, removeTmpEntries, removeUnder, staleDataExposure, switchCurrent } from './materialize';
@@ -1079,6 +1079,45 @@ export const releaseService = {
    * recreate them as root-owned orphans. 409 publishInProgress when one runs.
    * Returns the function releasing the locks (call it in a finally).
    */
+  /**
+   * Containment: pins the staging as it is and the live commit under
+   * refs/oblimint/containment/<id>/, and lists what differs between them. Reads the
+   * staging, writes nothing the site serves. 409 publishInProgress when the
+   * pipeline holds the site: the step is resumed.
+   */
+  async freezeStagingDiff(siteId: number, containmentId: number): Promise<{
+    liveReleaseNumber: number | null; liveCommit: string | null; stagingCommit: string | null; entries: Array<{ path: string; status: string }>; note: string | null;
+  }> {
+    return this.withSiteLock(siteId, async () => {
+      const ctx = await loadContext(siteId);
+      const repo = ctx.paths.repo;
+      const none = { liveReleaseNumber: null, liveCommit: null, stagingCommit: null, entries: [] };
+      if (!fs.existsSync(path.join(repo, 'HEAD'))) return { ...none, note: 'noRepository' };
+      if (!fs.existsSync(ctx.paths.staging)) return { ...none, note: 'noStaging' };
+      const live = ctx.site.current_release_id
+        ? await db('releases').where({ id: ctx.site.current_release_id, site_id: siteId }).first('number', 'commit_sha') as { number: number; commit_sha: string | null } | undefined
+        : undefined;
+      const head = await headCommit(repo);
+      const base = live?.commit_sha ?? head ?? EMPTY_TREE;
+      const dataPaths = dataPathList(ctx);
+      const scan = scanStaging(ctx.paths.staging, dataPaths, restoreTuning.scanMax);
+      if (scan.truncated) throw new AppError(409, 'The staging holds too many entries to be compared', 'stagingTooLarge');
+      const diff = await stagingDiffAgainst({
+        repoDir: repo, stagingDir: ctx.paths.staging, dataPaths, nestedRepos: scan.nestedRepos, commit: base, tmpIndex: tmpIndexPath('freeze', siteId),
+      });
+      const refBase = `refs/oblimint/containment/${containmentId}` as const;
+      const snapshot = await snapshotStagingCommit({
+        repoDir: repo, ref: `${refBase}/staging`, tree: diff.tree,
+        message: `Staging figé par le confinement #${containmentId}`, author: await authorIdentity(null),
+      });
+      if (live?.commit_sha) await pinCommit(repo, `${refBase}/live`, live.commit_sha);
+      return {
+        liveReleaseNumber: live?.number ?? null, liveCommit: live?.commit_sha ?? null, stagingCommit: snapshot ?? head,
+        entries: diff.entries.map((e) => ({ path: e.path, status: e.status })), note: null,
+      };
+    });
+  },
+
   /**
    * Feature B (A6): runs fn under the per-site pipeline lock (no publication,
    * rollback, storage repair — clearStaleGitLocks — runs meanwhile).

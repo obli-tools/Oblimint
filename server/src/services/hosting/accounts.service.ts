@@ -3,6 +3,7 @@ import type { HostingAccount, HostingAccountStatus } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
+import { accountContained } from '../containment/guard';
 import { logger } from '../../utils/logger';
 import type { AccountCreateBody, AccountUpdateBody } from '../../validators/hosting.schema';
 import { auditService } from '../audit.service';
@@ -318,6 +319,7 @@ export const accountsService = {
   async remove(req: Request, actor: HostingActor, accountId: number, confirm: unknown): Promise<void> {
     const row = await loadAccount(actor, accountId, 'accounts.manage');
     if (confirm !== row.username) throw new AppError(400, 'Type the account name to confirm the deletion', 'confirmMismatch');
+    if (row.contained_at) throw accountContained(); // an incident in progress: the evidence and the sites stay until the staff lifts it
     if (accountDeletionsInFlight.has(row.id)) throw accountDeleting();
     accountDeletionsInFlight.add(row.id);
     try {

@@ -8,6 +8,7 @@ import { logger } from '../../utils/logger';
 import { appConfigService } from '../appConfig.service';
 import { auditService } from '../audit.service';
 import { fileServerService } from '../docker/filesrv.service';
+import { assertNotContained } from '../containment/guard';
 import { emitHosting } from './events';
 import { iso, type AccountRow } from './rows';
 import { parseSshPublicKey, sshKeysService } from './sshKeys.service';
@@ -100,10 +101,10 @@ export const fileAccessService = {
       const dummy = await getDummyHash();
       const row = Number.isInteger(accountId) && accountId > 0
         ? await db('hosting_accounts').where({ id: accountId })
-          .first('id', 'username', 'status', 'filesrv_mode', 'filesrv_active_until', 'filesrv_password_hash') as
-          Pick<AccountRow, 'id' | 'username' | 'status' | 'filesrv_mode' | 'filesrv_active_until' | 'filesrv_password_hash'> | undefined
+          .first('id', 'username', 'status', 'contained_at', 'filesrv_mode', 'filesrv_active_until', 'filesrv_password_hash') as
+          Pick<AccountRow, 'id' | 'username' | 'status' | 'contained_at' | 'filesrv_mode' | 'filesrv_active_until' | 'filesrv_password_hash'> | undefined
         : undefined;
-      const eligible = !!row && row.status === 'active' && row.filesrv_mode !== 'off'
+      const eligible = !!row && row.status === 'active' && !row.contained_at && row.filesrv_mode !== 'off'
         && (row.filesrv_mode !== 'on-demand' || activeWindowOpen(row.filesrv_active_until))
         && typeof attempt?.username === 'string' && attempt.username === row.username;
       const password = typeof attempt?.password === 'string' && attempt.password.length > 0 && attempt.password.length <= 1024
@@ -152,6 +153,7 @@ export const fileAccessService = {
 
   /** PUT /accounts/:id/file-access {mode} (files.manage). */
   async setMode(req: Request, account: AccountRow, mode: FileServerMode): Promise<FileAccessInfo> {
+    await assertNotContained(account.id);
     if (mode !== account.filesrv_mode) {
       await db('hosting_accounts').where({ id: account.id, tenant_id: account.tenant_id })
         .update({ filesrv_mode: mode, filesrv_active_until: mode === 'on-demand' ? account.filesrv_active_until : null, updated_at: db.fn.now() });
@@ -166,6 +168,7 @@ export const fileAccessService = {
 
   /** POST /accounts/:id/file-access/password: new random password, returned ONCE, stored bcrypt. */
   async resetPassword(req: Request, account: AccountRow): Promise<FileAccessPasswordResult> {
+    await assertNotContained(account.id);
     const password = generatePassword(FILESRV_PASSWORD_LENGTH);
     await db('hosting_accounts').where({ id: account.id, tenant_id: account.tenant_id })
       .update({ filesrv_password_hash: await hashPassword(password), updated_at: db.fn.now() });
@@ -190,6 +193,7 @@ export const fileAccessService = {
   },
 
   async addKey(req: Request, account: AccountRow, input: { name: string; publicKey: string }): Promise<AccountSshKey> {
+    await assertNotContained(account.id);
     const key = await sshKeysService.add(account.id, input);
     await auditService.logReqAs(req, account.tenant_id, 'filesrv.key_add', {
       resourceType: 'account', resourcePath: String(account.id),

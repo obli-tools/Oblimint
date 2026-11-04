@@ -63,6 +63,8 @@ export function eventLabel(t: TFunction, e: NotificationEvent | AccountNotificat
     'action.expired': 'Request expired',
     'security.keyRegimeChanged': 'Access keys: security regime changed',
     'security.keyAbuse': 'Repeated invalid access keys',
+    'account.contained': 'Account contained',
+    'account.containmentLifted': 'Containment lifted',
     // Health center (platform admins)
     'platform.componentDown': 'Platform component down',
     'platform.componentUp': 'Platform component recovered',

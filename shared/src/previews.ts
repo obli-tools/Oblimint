@@ -18,7 +18,7 @@ import type { ScanSummary, SiteBaseId } from './hosting';
 
 export type PreviewTarget = 'release' | 'staging';
 export type PreviewStatus = 'building' | 'starting' | 'running' | 'failed' | 'stopping' | 'stopped';
-export type PreviewStopReason = 'user' | 'expired' | 'replaced' | 'failed' | 'siteStopped' | 'suspended' | 'key' | 'siteDeleted';
+export type PreviewStopReason = 'user' | 'expired' | 'replaced' | 'failed' | 'siteStopped' | 'suspended' | 'key' | 'siteDeleted' | 'contained';
 export type PreviewEnvMode = 'public' | 'all';
 /** 'clone': a disposable copy of the site's database(s) (databases.manage on top of the preview rights). */
 export type PreviewDatabaseMode = 'none' | 'clone';

@@ -436,6 +436,8 @@ export interface HostingAccount {
   primaryDomain?: string | null;
   /** P2: access allow-list mode of the account's ports (SFTP, external SQL). */
   accessMode: AccessMode;
+  /** Set while the account is contained after an incident (shared/containment.ts): sites serve, access is cut. */
+  containedAt?: string | null;
   /** P2: quota enforcement state (usage module). */
   overQuota: OverQuotaState;
   /** Migration 032: public ports of the shared IP (target = override ?? plan) and the dedicated IP, if any. */

@@ -33,6 +33,7 @@ import { accountBackupsRouter, systemBackupsRouter } from './backups.routes'; //
 import healthMonitorRoutes from './healthMonitor.routes';      // deep health token + outbound heartbeat
 import apiKeysRoutes from './apiKeys.routes';            // API access keys (management)
 import { oauthApiRouter } from '../services/apiKeys/oauth'; // Claude connectors: OAuth consent
+import containmentRoutes from './containment.routes'; // incident containment of an account
 import infraRoutes from './infra.routes';                // orchestration
 import platformUpdatesRoutes from './platformUpdates.routes';  // platform updates (Nodes > Updates)
 import edgeRoutes from './edge.routes';                  // edge
@@ -144,6 +145,7 @@ tenantRouter.use('/nodes', nodesRoutes);
 tenantRouter.use('/hosting', hostingMeRoutes);
 tenantRouter.use('/plans', plansRoutes);
 tenantRouter.use('/accounts', accountsRoutes);
+tenantRouter.use('/accounts', containmentRoutes);        // /:id/containment…
 tenantRouter.use('/accounts', fileServerRoutes);
 tenantRouter.use('/accounts', filesRoutes);              // web file explorer
 tenantRouter.use('/accounts', apiKeysRoutes);            // API access keys

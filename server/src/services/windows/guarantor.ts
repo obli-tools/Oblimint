@@ -1,4 +1,5 @@
 import { db } from '../../db';
+import { isAccountContained } from '../containment/guard';
 import { permissionService } from '../permission.service';
 import { clientCapabilities } from '../hosting/rows';
 
@@ -24,6 +25,8 @@ export interface GuarantorTarget { tenantId: number; accountId: number }
 export async function userCanPublish(userId: number | null | undefined, target: GuarantorTarget): Promise<boolean> {
   if (!userId || !Number.isInteger(Number(userId))) return false;
   try {
+    // A contained account publishes nothing unattended: tokens, schedules and adapter schedules are disarmed.
+    if (await isAccountContained(target.accountId)) return false;
     const user = await db('users').where({ id: userId }).first('kind', 'role', 'is_active') as
       { kind: string; role: string; is_active: boolean } | undefined;
     if (!user || !user.is_active) return false;

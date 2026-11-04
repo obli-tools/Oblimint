@@ -11,6 +11,7 @@ import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
+import { accountContained, assertNotContained } from '../containment/guard';
 import { cidrContains, normalizeCidr } from '../firewall/addresses';
 import { actorCan, actorForUser, loadAccount, type HostingActor, type HostingNeed } from '../hosting/access';
 import { twoFactorSetupRequired } from '../../middleware/sessionUserGuard';
@@ -407,12 +408,15 @@ export const apiKeysService = {
   async create(req: Request, actor: HostingActor, accountId: number, body: ApiKeyCreate): Promise<ApiKeyCreated> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
     if (account.status === 'deleting') throw new AppError(409, 'The account is being deleted', 'accountDeleting');
+    await assertNotContained(account.id);
     if (body.kind !== undefined && body.kind !== 'key' && body.kind !== 'connector') throw new AppError(400, 'kind is key or connector', 'validation');
     const kind: ApiKeyKind = body.kind === 'connector' ? 'connector' : 'key';
     const n = await normalize(actor, account, body, true);
     await assertIpWhenRequired(account.tenant_id, kind, n.allowedIps ?? []);
     const created = await db.transaction(async (trx) => {
-      await trx('hosting_accounts').where({ id: account.id }).forUpdate().first('id');
+      // Under the lock the containment takes for its barrier: no key slips between the check above and the revocation.
+      const locked = await trx('hosting_accounts').where({ id: account.id }).forUpdate().first('contained_at') as { contained_at: Date | null } | undefined;
+      if (locked?.contained_at) throw accountContained();
       const count = await trx('api_keys').where({ account_id: account.id }).count<{ n: string }[]>('* as n');
       if (Number(count[0]?.n ?? 0) >= MAX_API_KEYS_PER_ACCOUNT) {
         throw new AppError(409, `At most ${MAX_API_KEYS_PER_ACCOUNT} keys per account`, 'keyLimit', { max: MAX_API_KEYS_PER_ACCOUNT });
@@ -502,6 +506,7 @@ export const apiKeysService = {
     beforeWrite?: (w: { widens: boolean; account: { id: number; tenant_id: number }; keyId: number; name: string }) => Promise<void>,
   ): Promise<ApiKey> {
     const account = await loadAccount(actor, accountId, 'sites.manage');
+    await assertNotContained(account.id);
     const { row, creator } = await managedKey(actor, account, keyId, { label: 'Key' });
     const n = await normalize(actor, account, body, false);
     const wider = await widens(row, n);
@@ -619,7 +624,7 @@ export const apiKeysService = {
 /** OAuth access token of a connector: oba_<43 chars base64url>. */
 export const ACCESS_TOKEN_RE = /^oba_[A-Za-z0-9_-]{43}$/;
 
-type KeyWithAccount = KeyRow & { account_status: string; tenant_key_require_ip: boolean | null };
+type KeyWithAccount = KeyRow & { account_status: string; account_contained_at: Date | string | null; tenant_key_require_ip: boolean | null };
 
 export type KeyVerifyResult = { ok: true; ctx: ApiKeyContext } | { ok: false; reason: ApiKeyVerifyFailure };
 
@@ -627,7 +632,7 @@ function keyWithAccount() {
   return db('api_keys as k')
     .join('hosting_accounts as a', function joinAccount() { this.on('a.id', '=', 'k.account_id').andOn('a.tenant_id', '=', 'k.tenant_id'); })
     .leftJoin('tenants as t', 't.id', 'k.tenant_id')
-    .select('k.*', 'a.status as account_status', 't.key_require_ip as tenant_key_require_ip');
+    .select('k.*', 'a.status as account_status', 'a.contained_at as account_contained_at', 't.key_require_ip as tenant_key_require_ip');
 }
 
 /** keySecurity settings (defaults when unreadable). */
@@ -660,6 +665,7 @@ async function contextFor(row: KeyWithAccount, userId: number, ip: string): Prom
   const fail = (reason: ApiKeyVerifyFailure): KeyVerifyResult => ({ ok: false, reason });
   if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return fail('expired');
   if (row.account_status === 'deleting') return fail('accountDeleting');
+  if (row.account_contained_at) return fail('accountContained');
   const ks = await keySecurity();
   const ips = ipsOf(row.allowed_ips);
   const connector = (row.kind ?? 'key') === 'connector';

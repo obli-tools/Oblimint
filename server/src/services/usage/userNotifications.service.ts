@@ -75,6 +75,9 @@ const EVENT_AUDIENCE: Partial<Record<NotificationEvent, Audience>> = {
   // IP security of the access keys: platform admins only.
   'security.keyRegimeChanged': { staff: null, client: null },
   'security.keyAbuse': { staff: null, client: null },
+  // Containment: whoever manages accounts, and the clients of the account (their access is cut: they must know why).
+  'account.contained': { staff: 'accounts.manage', client: 'read' },
+  'account.containmentLifted': { staff: 'accounts.manage', client: 'read' },
 };
 
 export function audienceOf(event: NotificationEvent): Audience {

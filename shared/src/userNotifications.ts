@@ -96,6 +96,8 @@ export const NOTIFICATION_EVENT_FAMILY: Record<NotificationEvent, NotificationFa
   'action.expired': 'approvals',
   'security.keyRegimeChanged': 'security',
   'security.keyAbuse': 'security',
+  'account.contained': 'account',
+  'account.containmentLifted': 'account',
   // Health center (platform admins only: family platform)
   'platform.componentDown': 'platform',
   'platform.componentUp': 'platform',

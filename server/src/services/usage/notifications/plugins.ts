@@ -128,6 +128,8 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'action.expired': 'Demande expirée',
   'security.keyRegimeChanged': 'Sécurité des clés d’accès : régime changé',
   'security.keyAbuse': 'Clés d’accès invalides répétées',
+  'account.contained': 'Compte confiné',
+  'account.containmentLifted': 'Confinement levé',
   // Health center
   'platform.componentDown': 'Composant de la plateforme en panne',
   'platform.componentUp': 'Composant de la plateforme rétabli',

@@ -50,6 +50,8 @@ export const ACTION_VERBS_FR: Readonly<Record<string, string>> = {
   'site.env_write': 'Modifier les variables d’environnement du site',
   'account.suspend': 'Suspendre le compte d’hébergement',
   'account.delete': 'Supprimer le compte d’hébergement',
+  'account.contain': 'Confiner le compte d’hébergement (accès coupés, sites en ligne)',
+  'account.contain_lift': 'Lever le confinement du compte d’hébergement',
   'account.client_users': 'Modifier les utilisateurs clients du compte',
   'account.sftp_credentials': 'Changer les accès SFTP du compte',
   'release.publish': 'Publier une release',

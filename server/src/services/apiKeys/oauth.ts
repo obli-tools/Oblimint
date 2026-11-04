@@ -10,6 +10,8 @@ import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
 import { publicPanelOrigin } from '../panelHosts';
 import { gateAction } from '../restrictions/gate';
+import { ACCOUNT_CONTAINED_CODE } from '@oblimint/shared';
+import { credentialContained } from '../containment/guard';
 import { clientSecretMatches, hashKey, invalidateKeySurfaces, scopesHeldBy } from './apiKeys.service';
 import { answerBanned, keySurfaceGate, recordKeySurfaceFailure } from '../../middleware/keySurfaceGate';
 import { platformSettings } from '../platformSettings';
@@ -42,7 +44,7 @@ const REFRESH_TTL_MS = 60 * 86_400_000;
 
 interface ConnectorRow {
   id: number; tenant_id: number; account_id: number; name: string; scopes: unknown; site_scope: 'all' | 'selected';
-  oauth_secret_hash: string | null; expires_at: Date | string | null; account_status: string; username: string; primary_domain: string | null;
+  oauth_secret_hash: string | null; expires_at: Date | string | null; account_status: string; account_contained_at: Date | string | null; username: string; primary_domain: string | null;
   allowed_ips?: unknown;
 }
 
@@ -61,10 +63,10 @@ async function loadConnector(clientId: unknown): Promise<ConnectorRow | null> {
     .join('hosting_accounts as a', function joinAccount() { this.on('a.id', '=', 'k.account_id').andOn('a.tenant_id', '=', 'k.tenant_id'); })
     .where({ 'k.oauth_client_id': clientId, 'k.kind': 'connector' })
     .first('k.id', 'k.tenant_id', 'k.account_id', 'k.name', 'k.scopes', 'k.site_scope', 'k.oauth_secret_hash', 'k.expires_at', 'k.allowed_ips',
-      'a.status as account_status', 'a.username',
+      'a.status as account_status', 'a.contained_at as account_contained_at', 'a.username',
       db.raw("(SELECT d.name FROM domains d WHERE d.account_id = a.id AND d.kind = 'primary' ORDER BY d.id LIMIT 1) AS primary_domain")) as ConnectorRow | undefined;
   if (!row) return null;
-  if (row.account_status === 'deleting') return null;
+  if (row.account_status === 'deleting' || row.account_contained_at) return null;
   if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) return null;
   return row;
 }
@@ -306,6 +308,13 @@ oauthPublicRouter.post('/oauth/token', keySurfaceGate('oauth-token'), tokenLimit
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
     const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    // A credential a containment revoked: 423, not invalid_grant (the client stops and tells its human; not a failed attempt).
+    for (const v of [body.refresh_token, body.code, body.client_id]) {
+      if (typeof v === 'string' && await credentialContained(v)) {
+        res.status(423).json({ error: 'temporarily_unavailable', code: ACCOUNT_CONTAINED_CODE, error_description: 'This account is contained after a security incident' });
+        return;
+      }
+    }
     const out = await oauthService.token(body, req.headers.authorization, clientIp(req));
     const error = typeof out.body.error === 'string' ? out.body.error : null;
     if ((error === 'invalid_client' || error === 'invalid_grant') && await recordKeySurfaceFailure(req, 'oauth-token', error)) {

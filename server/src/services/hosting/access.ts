@@ -5,6 +5,7 @@ import { isMasterTenant } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { permissionService } from '../permission.service';
+import { accountContained, isAccountContained } from '../containment/guard';
 import { clientCapabilities, type AccountRow, type DomainRow, type SiteRow } from './rows';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -204,9 +205,10 @@ export async function actorForUser(userId: number, tenantId: number): Promise<Ho
       .join('hosting_accounts as a', 'a.id', 'au.account_id')
       .where('au.user_id', userId)
       .andWhere('a.tenant_id', tenantId)
-      .select('au.account_id', 'au.capabilities') as Array<{ account_id: number; capabilities: unknown }>;
+      .select('au.account_id', 'au.capabilities', 'a.contained_at') as Array<{ account_id: number; capabilities: unknown; contained_at: Date | string | null }>;
     const accounts = new Map<number, ReadonlySet<ClientCapability>>();
-    for (const r of rows) accounts.set(Number(r.account_id), new Set(clientCapabilities(r.capabilities)));
+    // Contained account (services/containment): membership only, 'read'. Every capability is off whatever the surface.
+    for (const r of rows) accounts.set(Number(r.account_id), new Set(r.contained_at ? [] : clientCapabilities(r.capabilities)));
     return { kind: 'client', userId, tenantId, accounts };
   }
 
@@ -290,12 +292,18 @@ function forbidden(): AppError {
   return new AppError(403, 'Insufficient permissions');
 }
 
+/** The refusal of a need: 423 for a client whose capabilities are off because the account is contained (never a need no client holds). */
+async function refusal(actor: HostingActor, need: HostingNeed, accountId: number): Promise<AppError> {
+  if (actor.kind === 'client' && CLIENT_CAP[need] !== null && await isAccountContained(accountId)) return accountContained();
+  return forbidden();
+}
+
 /** One hosting account visible to the actor, with `need` granted. 404 / 403 otherwise. */
 export async function loadAccount(actor: HostingActor, accountId: number, need: HostingNeed = 'read'): Promise<AccountRow> {
   if (!Number.isInteger(accountId) || accountId <= 0) throw notFound('Account');
   const row = await db('hosting_accounts').where({ id: accountId }).first() as AccountRow | undefined;
   if (!row || !actorSees(actor, { tenantId: row.tenant_id, accountId: row.id })) throw notFound('Account');
-  if (!actorCan(actor, need, { tenantId: row.tenant_id, accountId: row.id })) throw forbidden();
+  if (!actorCan(actor, need, { tenantId: row.tenant_id, accountId: row.id })) throw await refusal(actor, need, row.id);
   return row;
 }
 
@@ -307,7 +315,7 @@ export async function loadSite(actor: HostingActor, siteId: number, need: Hostin
     .where('s.id', siteId)
     .first('s.*', 'a.username as account_username') as SiteRow | undefined;
   if (!row || !actorSees(actor, { tenantId: row.tenant_id, accountId: row.account_id })) throw notFound('Site');
-  if (!actorCan(actor, need, { tenantId: row.tenant_id, accountId: row.account_id })) throw forbidden();
+  if (!actorCan(actor, need, { tenantId: row.tenant_id, accountId: row.account_id })) throw await refusal(actor, need, row.account_id);
   return row;
 }
 
@@ -331,7 +339,7 @@ export async function loadDomain(actor: HostingActor, domainId: number, need: Ho
     .where('d.id', domainId)
     .first('d.*', 'a.username as account_username') as DomainRow | undefined;
   if (!row || !actorSees(actor, { tenantId: row.tenant_id, accountId: row.account_id })) throw notFound('Domain');
-  if (!actorCan(actor, need, { tenantId: row.tenant_id, accountId: row.account_id })) throw forbidden();
+  if (!actorCan(actor, need, { tenantId: row.tenant_id, accountId: row.account_id })) throw await refusal(actor, need, row.account_id);
   return row;
 }
 

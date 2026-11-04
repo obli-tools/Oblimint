@@ -447,7 +447,7 @@ export async function treesOf(repoDir: string, commits: Array<string | null | un
  * moved with compare-and-swap. Caller holds the site lock.
  */
 export async function snapshotStagingCommit(input: {
-  repoDir: string; tree: string; message: string; author: GitIdentity; ref: 'HEAD' | 'refs/oblimint/staging-before-restore';
+  repoDir: string; tree: string; message: string; author: GitIdentity; ref: 'HEAD' | `refs/oblimint/${string}`;
 }): Promise<string | null> {
   const { repoDir, tree } = input;
   if (!SHA_RE.test(tree)) throw new Error(`invalid tree ${tree}`);
@@ -469,4 +469,10 @@ export async function snapshotStagingCommit(input: {
   if (!SHA_RE.test(created)) throw new Error('commit-tree gave no commit');
   await runGit(['update-ref', '-m', 'oblimint staging snapshot', input.ref, created, old ?? ''], { gitDir: repoDir });
   return created;
+}
+
+/** Keeps a commit reachable under refs/oblimint (evidence of a containment): never pruned with the old releases. */
+export async function pinCommit(repoDir: string, ref: `refs/oblimint/${string}`, commit: string): Promise<void> {
+  if (!SHA_RE.test(commit)) throw new Error(`invalid commit ${commit}`);
+  await runGit(['update-ref', ref, commit], { gitDir: repoDir });
 }

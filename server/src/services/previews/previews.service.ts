@@ -8,6 +8,7 @@ import {
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
+import { assertNotContained } from '../containment/guard';
 import { logger } from '../../utils/logger';
 import { open as openSecret, seal } from '../../utils/secretBox';
 import { auditService } from '../audit.service';
@@ -190,6 +191,7 @@ export const previewService = {
     // 1. Site + code.read.
     const site = await loadSite(actor, siteId, 'read');
     assertReadsCode(actor, site);
+    await assertNotContained(site.account_id);
     const target = siteTarget(site);
     const keyId = via.keyId ?? null;
 
@@ -422,6 +424,7 @@ export const previewService = {
     const site = await loadSite(actor, siteId, 'read');
     assertReadsCode(actor, site);
     if (!canShare(actor, site)) throw err(403, 'Share links need the right to manage the site', 'previewShareForbidden');
+    await assertNotContained(site.account_id);
     const row = await activeOrThrow(site.id);
     assertCloneAccess(actor, site, row, reach);
     await assertProposalAccess(actor, site, row, null);
@@ -434,6 +437,7 @@ export const previewService = {
   async openLink(req: Request, actor: HostingActor, siteId: number): Promise<string> {
     const site = await loadSite(actor, siteId, 'read');
     assertReadsCode(actor, site);
+    await assertNotContained(site.account_id);
     const row = await activeOrThrow(site.id, ['starting', 'running']);
     assertCloneAccess(actor, site, row);
     await assertProposalAccess(actor, site, row, null);
@@ -529,6 +533,20 @@ export const previewService = {
       logger.warn({ err: (e as Error).message, keyId }, 'preview: previews of a key not stopped');
       return 0;
     }
+  },
+
+  /** Containment: every shared or open link dies, every preview of the account stops. Throws when one could not be stopped. */
+  async stopForAccount(accountId: number): Promise<number> {
+    const rows = await db('site_previews as p').join('sites as s', 's.id', 'p.site_id').where('s.account_id', accountId).whereNull('p.cleaned_at').select('p.id', 'p.site_id', 'p.status') as Array<{ id: number; site_id: number; status: string }>;
+    if (rows.length) await db('site_preview_links').whereIn('preview_id', rows.map((r) => r.id)).del();
+    let stopped = 0;
+    for (const r of rows) {
+      previewBuilder.cancel(r.id);
+      if ((ACTIVE as readonly string[]).includes(r.status)) stopped += 1;
+      await db('site_previews').where({ id: r.id }).whereIn('status', ACTIVE).update({ status: 'stopping', stop_reason: 'contained', updated_at: db.fn.now() });
+      await stopInternal(r.id, 'contained');
+    }
+    return stopped;
   },
 
   /** Site / account deletion (after lockForTeardown): cancels and waits the builds, stops and cleans (siteDeleted). */

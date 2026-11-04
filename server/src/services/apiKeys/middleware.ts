@@ -4,6 +4,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { ipKey } from '../../middleware/rateLimiter';
 import { clientIp } from '../../utils/clientIp';
 import { setRequestActor } from '../hosting/access';
+import { accountContained, credentialContained } from '../containment/guard';
 import { answerBanned, recordKeySurfaceFailure } from '../../middleware/keySurfaceGate';
 import { apiKeysService, type KeyVerifyResult } from './apiKeys.service';
 import { resourceMetadataUrl } from './oauth';
@@ -28,7 +29,8 @@ export const apiKeyAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   skipSuccessfulRequests: true,
-  requestWasSuccessful: (req) => isAuthenticated(req),
+  // 423: a real credential of a contained account, never a guess.
+  requestWasSuccessful: (req, res) => isAuthenticated(req) || res.statusCode === 423,
   skip: (req) => !req.headers.authorization,
   standardHeaders: true,
   legacyHeaders: false,
@@ -86,6 +88,11 @@ async function authenticate(req: Request, res: Response, next: NextFunction, con
         : await apiKeysService.verifyDetailed(raw, clientIp(req));
     const ctx = result?.ok ? result.ctx : null;
     if (!ctx) {
+      // A contained account: the live or revoked credential of its holder answers 423, and is not a failed attempt.
+      if ((result && !result.ok && result.reason === 'accountContained') || (raw && await credentialContained(raw))) {
+        next(accountContained());
+        return;
+      }
       // Spec §5.2: a refused credential is counted (a request WITHOUT Authorization is OAuth discovery, never a guess).
       const surface = connectors ? 'mcp' : 'key-api';
       if (h && await recordKeySurfaceFailure(req, surface, result && !result.ok ? result.reason : 'malformed')) {
