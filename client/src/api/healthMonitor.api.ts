@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ApiResponse, HealthMonitorSettings, HealthMonitorTokenResult } from '@oblimint/shared';
+import type { ApiResponse, HealthCenterSettingsInput, HealthCenterStatus, HealthMonitorSettings, HealthMonitorTokenResult } from '@oblimint/shared';
 
 // Deep health token + outbound heartbeat: /api/system/health-monitor (platform admin, master workspace).
 export const healthMonitorApi = {
@@ -17,5 +17,12 @@ export const healthMonitorApi = {
   },
   async test(): Promise<HealthMonitorSettings> {
     return (await apiClient.post<ApiResponse<HealthMonitorSettings>>('/system/health-monitor/test')).data.data!;
+  },
+  /** Health center: state of the components, disk, failing backups, settings. */
+  async center(): Promise<HealthCenterStatus> {
+    return (await apiClient.get<ApiResponse<HealthCenterStatus>>('/system/health-monitor/center')).data.data!;
+  },
+  async updateCenter(input: HealthCenterSettingsInput): Promise<HealthCenterStatus> {
+    return (await apiClient.put<ApiResponse<HealthCenterStatus>>('/system/health-monitor/center/settings', input)).data.data!;
   },
 };

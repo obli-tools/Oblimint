@@ -1,0 +1,58 @@
+{
+  "healthCenter": {
+    "title": "Health center",
+    "cardTitle": "Platform health",
+    "intro": "Every minute, the deep checks (database, hostd, edge, DNS, mail, workers) and the data disk of the node are followed, as well as the backup runs. The platform administrators are notified once per change of state — in the bell, by e-mail according to their preferences, and on the notification channels subscribed to these events.",
+    "loadFailed": "The health center could not be loaded",
+    "saveFailed": "The health center settings could not be saved",
+    "saved": "Health center settings saved",
+    "workersOff": "Background workers are off on this panel (OBLIMINT_WORKERS=off): nothing is followed.",
+    "enabled": "Notify the platform administrators",
+    "enabledHint": "Off: the states are still followed and shown on the dashboard, nothing is sent.",
+    "confirmChecks": "Checks before a change of state",
+    "confirmChecksHint": "Consecutive checks (one per minute) needed before a component or the disk is declared down — and as many to declare it back. Avoids alerts on a single hiccup.",
+    "diskMinFreePercent": "Low disk: free share under (%)",
+    "diskMinFreeGiB": "…or free space under (GiB)",
+    "diskHint": "The data disk of the node is low under either threshold (0 GiB: share only).",
+    "eventsTitle": "Events",
+    "event": {
+      "platformComponentDown": "A component goes down",
+      "platformComponentUp": "A component recovers",
+      "nodeDiskLow": "Low disk space on the node",
+      "nodeDiskOk": "Disk space back to normal",
+      "backupFailed": "A backup fails (or is incomplete)",
+      "backupRecovered": "A backup succeeds again after a failure"
+    },
+    "status": {
+      "ok": "ok",
+      "fail": "down",
+      "skipped": "not deployed",
+      "unknown": "unknown",
+      "low": "low",
+      "pending": "confirming ({{count}})"
+    },
+    "components": "Components",
+    "since": "since {{ago}}",
+    "lastCheck": "Last check {{ago}} ago",
+    "notCheckedYet": "Not checked yet: the first pass runs about a minute after the start.",
+    "disk": "Data disk",
+    "diskFree": "{{free}} free of {{total}} ({{pct}} %)",
+    "diskUnknown": "Not measured yet",
+    "backups": "Backups",
+    "backupsFailing": "{{count}} target(s) failing",
+    "backupsOk": "No backup target in failure",
+    "lastFailure": "Last failure:",
+    "noFailure": "No failed backup",
+    "panel": "Panel",
+    "failures": "{{count}} failure(s) in a row",
+    "settings": "Settings",
+    "comp": {
+      "postgres": "PostgreSQL",
+      "hostd": "hostd",
+      "edge": "Edge",
+      "dns": "DNS",
+      "mail": "Mail",
+      "workers": "Workers"
+    }
+  }
+}

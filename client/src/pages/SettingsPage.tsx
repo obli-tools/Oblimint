@@ -22,6 +22,7 @@ import { AppsSettingsSections } from '@/components/settings/AppsSettingsSections
 import { ProxySettingsSections } from '@/components/settings/ProxySettingsSections';
 import { BackupSettingsSections } from '@/components/settings/BackupSettingsSections';
 import { HealthMonitorSection } from '@/components/settings/HealthMonitorSection';
+import { HealthCenterSection } from '@/components/settings/HealthCenterSection';
 import { KeySecuritySection } from '@/components/settings/KeySecuritySection';
 import { TransactionalMailSection } from '@/components/settings/TransactionalMailSection';
 import { SettingsGroup, SettingsPageLayout, SettingsTocChips, useSettingsToc } from '@/components/settings/SettingsToc';
@@ -302,8 +303,8 @@ export function SettingsPage() {
       {/* ── External backups (destinations, passphrase, schedule, runs) ── */}
       {admin && <SettingsGroup id="settings-group-backups" title={t('settings.toc.backups') || 'Backups'}><BackupSettingsSections /></SettingsGroup>}
 
-      {/* ── Deep health endpoint token + outbound heartbeat (platform admin, master workspace) ── */}
-      {admin && masterAdmin && <SettingsGroup id="settings-group-health" title={t('settings.toc.health') || 'Health monitoring'}><HealthMonitorSection /></SettingsGroup>}
+      {/* ── Deep health endpoint token + outbound heartbeat, health center (platform admin, master workspace) ── */}
+      {admin && masterAdmin && <SettingsGroup id="settings-group-health" title={t('settings.toc.health') || 'Health monitoring'}><HealthMonitorSection /><HealthCenterSection /></SettingsGroup>}
 
       {/* ── Transactional e-mail sender of the platform (platform admin on the master tenant) ── */}
       {admin && masterAdmin && <SettingsGroup id="settings-group-email-sender" title={t('settings.toc.emailSender') || 'E-mail sender'}><TransactionalMailSection /></SettingsGroup>}

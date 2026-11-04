@@ -16,6 +16,7 @@ import { usageApi } from '@/api/usage.api';
 import { HeroCard, HeroFeatured, MiniStat } from '@/components/usage/HeroCards';
 import { HostResources, useHostMetrics } from '@/components/usage/HostResources';
 import { DashboardOverviewPanel } from '@/components/dashboard/DashboardOverviewPanel';
+import { HealthCenterCard } from '@/components/dashboard/HealthCenterCard';
 import { fillMonthDays, isoMonth, quotaColor, quotaPct } from '@/components/usage/usageFormat';
 import { dayLabel, useByteFormat } from '@/components/usage/usageUi';
 
@@ -153,6 +154,9 @@ function StaffDashboard() {
 
       {/* Server resources (platform admin): CPU, memory, data disk of the node. */}
       {isAdmin && isMaster && <HostResources metrics={host} />}
+
+      {/* Platform health (platform admin): components, data disk, failing backups — the health center. */}
+      {isAdmin && isMaster && <HealthCenterCard />}
 
       {/* Health and activity: what needs attention, sites, publications, monitoring, audit (admins). */}
       <DashboardOverviewPanel tenantKey={currentTenantId} showActivity={isAdmin} />

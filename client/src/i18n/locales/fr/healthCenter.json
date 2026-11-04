@@ -1,0 +1,58 @@
+{
+  "healthCenter": {
+    "title": "Centre de santé",
+    "cardTitle": "Santé de la plateforme",
+    "intro": "Chaque minute, les contrôles profonds (base, hostd, edge, DNS, mail, workers) et le disque de données du nœud sont suivis, ainsi que les sauvegardes. Les administrateurs de la plateforme sont prévenus une fois par changement d’état — dans la cloche, par e-mail selon leurs préférences, et sur les canaux de notification abonnés à ces événements.",
+    "loadFailed": "Le centre de santé n’a pas pu être chargé",
+    "saveFailed": "Les réglages du centre de santé n’ont pas pu être enregistrés",
+    "saved": "Réglages du centre de santé enregistrés",
+    "workersOff": "Les workers de fond sont désactivés sur ce panel (OBLIMINT_WORKERS=off) : rien n’est suivi.",
+    "enabled": "Prévenir les administrateurs de la plateforme",
+    "enabledHint": "Désactivé : les états restent suivis et affichés sur le tableau de bord, rien n’est envoyé.",
+    "confirmChecks": "Contrôles avant un changement d’état",
+    "confirmChecksHint": "Contrôles consécutifs (un par minute) nécessaires pour déclarer un composant ou le disque en panne — et autant pour le déclarer rétabli. Évite les alertes sur un simple hoquet.",
+    "diskMinFreePercent": "Disque faible : part libre sous (%)",
+    "diskMinFreeGiB": "…ou espace libre sous (Gio)",
+    "diskHint": "Le disque de données du nœud est faible sous l’un ou l’autre seuil (0 Gio : la part seule).",
+    "eventsTitle": "Événements",
+    "event": {
+      "platformComponentDown": "Un composant tombe en panne",
+      "platformComponentUp": "Un composant est rétabli",
+      "nodeDiskLow": "Espace disque faible sur le nœud",
+      "nodeDiskOk": "Espace disque revenu à la normale",
+      "backupFailed": "Une sauvegarde échoue (ou est incomplète)",
+      "backupRecovered": "Une sauvegarde réussit de nouveau après un échec"
+    },
+    "status": {
+      "ok": "ok",
+      "fail": "en panne",
+      "skipped": "non déployé",
+      "unknown": "inconnu",
+      "low": "faible",
+      "pending": "confirmation ({{count}})"
+    },
+    "components": "Composants",
+    "since": "depuis {{ago}}",
+    "lastCheck": "Dernier contrôle il y a {{ago}}",
+    "notCheckedYet": "Pas encore contrôlé : le premier passage a lieu environ une minute après le démarrage.",
+    "disk": "Disque de données",
+    "diskFree": "{{free}} libres sur {{total}} ({{pct}} %)",
+    "diskUnknown": "Pas encore mesuré",
+    "backups": "Sauvegardes",
+    "backupsFailing": "{{count}} cible(s) en échec",
+    "backupsOk": "Aucune cible de sauvegarde en échec",
+    "lastFailure": "Dernier échec :",
+    "noFailure": "Aucune sauvegarde en échec",
+    "panel": "Panel",
+    "failures": "{{count}} échec(s) de suite",
+    "settings": "Réglages",
+    "comp": {
+      "postgres": "PostgreSQL",
+      "hostd": "hostd",
+      "edge": "Edge",
+      "dns": "DNS",
+      "mail": "Mail",
+      "workers": "Workers"
+    }
+  }
+}
