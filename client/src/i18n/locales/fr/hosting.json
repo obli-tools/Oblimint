@@ -180,6 +180,75 @@
       "saveFailed": "Échec de l'enregistrement des capacités",
       "saved": "Capacités enregistrées",
       "userId": "Id de l'utilisateur"
+    },
+    "containment": {
+      "action": "Confiner",
+      "title": "Confiner {{username}}",
+      "reason": "Motif (facultatif)",
+      "note": "Note (facultative)",
+      "done": "Compte confiné",
+      "incomplete": "Confinement incomplet : consultez le rapport et reprenez",
+      "failed": "Échec du confinement",
+      "lifted": "Confinement levé",
+      "liftFailed": "Impossible de lever le confinement",
+      "auditFailed": "Impossible de lire l'audit figé",
+      "effects": {
+        "credentials": "Révoque les clés d'accès, les connecteurs et les jetons de fenêtre, et met fin aux sessions des clients.",
+        "sftp": "Coupe le SFTP : nouveau mot de passe inconnu, clés SSH retirées, ports fermés (SQL depuis l'extérieur aussi).",
+        "publish": "Passe les sites en mode approbation et ferme les fenêtres ouvertes : leurs changements attendent une revue.",
+        "evidence": "Fige le diff staging / release et l'audit sur ±72 h.",
+        "serving": "Les sites continuent de servir et leurs mots de passe de base ne changent pas. Seul le staff peut lever le confinement."
+      },
+      "bannerStaff": "Confiné depuis le {{date}} : les sites servent, les accès sont coupés, rien de ce qui ouvre un accès ne peut être créé avant la levée.",
+      "bannerClient": "Ce compte est confiné après un incident de sécurité : vos sites continuent de servir, mais les accès et les modifications sont suspendus. Contactez votre hébergeur : lui seul peut lever le confinement.",
+      "report": "Confinement",
+      "resume": "Reprendre",
+      "lift": "Lever",
+      "details": "Détails",
+      "status": {
+        "running": "En cours",
+        "partial": "Incomplet",
+        "active": "Confiné",
+        "lifted": "Levé"
+      },
+      "summary": "Lancé le {{date}} par {{by}} : {{done}} étapes sur {{total}} terminées.",
+      "liftedSummary": "Levé le {{date}} par {{by}}. Les anciennes clés, les anciens jetons et l'ancien mot de passe SFTP restent révoqués : créez-en de nouveaux.",
+      "stepsTitle": "Étapes",
+      "steps": {
+        "keys": "Clés d'accès et connecteurs révoqués",
+        "siteTokens": "Jetons de fenêtre révoqués",
+        "sessions": "Sessions des clients terminées",
+        "sftp": "SFTP coupé, mot de passe changé, clés SSH retirées",
+        "firewall": "Ports SFTP et SQL externe fermés",
+        "previews": "Aperçus et liens partagés arrêtés",
+        "pendingActions": "Approbations en attente annulées",
+        "consoles": "Consoles et webmail du panel fermés",
+        "publishMode": "Sites en mode approbation",
+        "windows": "Fenêtres ouvertes fermées",
+        "evidenceStaging": "Diff staging / release figé",
+        "evidenceAudit": "Audit figé",
+        "verify": "Vérification"
+      },
+      "credentials": "Accès révoqués",
+      "none": "Aucun",
+      "rules": "Règles de liste d'accès à revoir avant la levée",
+      "family": {
+        "key": "Clé",
+        "connector": "Connecteur",
+        "siteToken": "Jeton de fenêtre",
+        "sshKey": "Clé SSH"
+      },
+      "frozenDiff": "Diff staging / release figé",
+      "frozenCount": "{{count}} chemin(s) diffèrent",
+      "freezeNote": {
+        "noRepository": "rien de publié pour l'instant",
+        "noStaging": "pas de staging"
+      },
+      "frozenAudit": "Audit figé",
+      "auditSpan": "{{count}} entrées, du {{from}} au {{until}}",
+      "showAudit": "Afficher",
+      "liftTitle": "Lever le confinement",
+      "liftConfirm": "Les modes de publication et le serveur de fichiers reviennent. Les anciennes clés, les anciens jetons, les clés SSH et le mot de passe SFTP restent révoqués. Revoyez d'abord le diff figé et les règles de la liste d'accès. Un nouveau code de second facteur est demandé."
     }
   },
   "certificates": {
@@ -488,7 +557,10 @@
       "usernameTaken": "Ce nom d'utilisateur est déjà pris.",
       "validation": "Certains champs sont invalides.",
       "notFound": "Cet élément n'existe plus (il a peut-être été supprimé entre-temps). Actualisez la page.",
-      "rateLimited": "Trop de requêtes : patientez une minute, puis réessayez."
+      "rateLimited": "Trop de requêtes : patientez une minute, puis réessayez.",
+      "accountContained": "Ce compte est confiné après un incident de sécurité : cette action est suspendue jusqu'à la levée par le staff.",
+      "accountNotContained": "Ce compte n'est pas confiné.",
+      "containmentBusy": "Le confinement de ce compte est encore en cours."
     },
     "generate": "Générer",
     "hide": "Masquer",

@@ -80,6 +80,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         throw Object.assign(new Error(serverMessage ?? 'Sign in at the other address.'), { code: 'wrongPanelHost', url: data.url ?? null, expected: data.expected ?? null });
       }
       // The account belongs to no tenant: no session (the login page says why).
+      if (status === 423) {
+        throw Object.assign(new Error(serverMessage ?? 'This account is contained.'), { code: 'accountContained' });
+      }
+
       if (status === 403 && axiosErr?.response?.data?.code === 'noTenantAccess') {
         throw Object.assign(new Error(serverMessage ?? 'This account has no access to any tenant.'), { code: 'noTenantAccess' });
       }

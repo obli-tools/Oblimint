@@ -208,7 +208,8 @@
       "goClient": "Go to the client space",
       "goAdmin": "Go to the panel",
       "ssoOnClientSpace": "Single sign-on is not available on the client space."
-    }
+    },
+    "accountContained": "Your access is suspended after a security incident on your account. Your sites keep serving. Contact your host."
   },
   "nav": {
     "accounts": "Accounts",

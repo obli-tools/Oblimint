@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
   AlertTriangle, AppWindow, Archive, AtSign, BarChart3, ChevronRight, Database, FolderOpen, Gauge, Globe, HardDrive, HeartPulse, Layers, LayoutGrid,
-  ListChecks, Network, Pause, Play, Plus, RefreshCw, Server, ShieldCheck, Shuffle, Trash2, Workflow, Activity,
+  ListChecks, Network, Pause, Play, Plus, RefreshCw, Server, ShieldAlert, ShieldCheck, Shuffle, Trash2, Workflow, Activity,
 } from 'lucide-react';
 import type { ApiKey, ApiKeyKind, AppStack, BackupRun, DbInstance, Domain, HostingAccount, MailOverview, Plan, ProxyHost, Site, UptimeMonitor } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
@@ -20,6 +20,7 @@ import { uptimeApi } from '@/api/uptime.api';
 import { backupsApi } from '@/api/backups.api';
 import { apiKeysApi } from '@/api/apiKeys.api';
 import { AgentConnectCard } from '@/components/hosting/AgentConnectCard';
+import { AccountContainmentPanel, ContainModal } from '@/components/hosting/AccountContainment';
 import { hostingCan, useHostingMe } from '@/store/hostingStore';
 import { useIsMasterTenant } from '@/hooks/useIsMasterTenant';
 import { PageContainer } from '@/components/common/PageContainer';
@@ -86,6 +87,7 @@ export function AccountDetailPage() {
 
   const isStaff = me?.kind === 'staff';
   const manage = isStaff && can('accounts.manage', accountId);
+  const [containing, setContaining] = useState(false);
   const appsReadable = hostingCan(me, 'read', accountId);
   const resolved = resolveAccountTab(params.get('tab'));
   const tab: Tab = resolved.tab === 'apps' && me && !appsReadable ? 'overview' : resolved.tab;
@@ -198,7 +200,8 @@ export function AccountDetailPage() {
     { key: 'plan', icon: <Layers size={16} />, label: t('accounts.changePlan') || 'Change plan', onClick: () => setPlanModal(true), hidden: !manage },
     { key: 'suspend', icon: <Pause size={16} />, label: t('accounts.suspend') || 'Suspend', onClick: () => { void suspend(); }, hidden: !manage || account.status === 'suspended' || account.status === 'deleting' },
     { key: 'unsuspend', icon: <Play size={16} />, label: t('accounts.unsuspend') || 'Resume', onClick: () => { void act('unsuspend', () => accountsApi.unsuspend(account.id), 'accounts.unsuspended', 'Account resumed', 'accounts.actionFailed', 'Action failed'); }, hidden: !manage || account.status !== 'suspended' },
-    { key: 'delete', icon: <Trash2 size={16} />, label: t('accounts.delete') || 'Delete the account', onClick: () => { void remove(); }, hidden: !manage || account.status === 'deleting', danger: true, separator: true },
+    { key: 'contain', icon: <ShieldAlert size={16} />, label: t('accounts.containment.action') || 'Contain', onClick: () => setContaining(true), hidden: !manage || !!account.containedAt || account.status === 'deleting', danger: true, separator: true },
+    { key: 'delete', icon: <Trash2 size={16} />, label: t('accounts.delete') || 'Delete the account', onClick: () => { void remove(); }, hidden: !manage || account.status === 'deleting' || !!account.containedAt, danger: true, separator: true },
   ];
 
   const count = (n: number) => <span className="font-mono text-[10px] opacity-70">{n}</span>;
@@ -247,6 +250,9 @@ export function AccountDetailPage() {
           <span>{account.statusMessage || t('accounts.suspendedBanner') || 'This account is suspended: its sites show a suspension page and SFTP is refused.'}</span>
         </div>
       )}
+
+      <AccountContainmentPanel account={account} isStaff={isStaff} canManage={manage} onChanged={() => { void load(); }} />
+      <ContainModal account={account} open={containing} onClose={() => setContaining(false)} onDone={() => { void load(); }} />
 
       {account.status !== 'suspended' && tab !== 'usage' && <OverQuotaBanner state={account.overQuota} />}
 

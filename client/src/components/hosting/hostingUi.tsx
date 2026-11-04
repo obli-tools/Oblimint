@@ -177,6 +177,7 @@ export function CopyButton({ text, label, className }: { text: string; label?: s
 // ── Errors (server `code` → translated message) ─────────────────────────────
 
 const KNOWN_CODES = [
+  'accountContained', 'accountNotContained', 'containmentBusy',
   'envelopeExceeded', 'planLimit', 'usernameTaken', 'planInUse', 'domainTaken', 'routeTaken', 'confirmMismatch',
   'accountSuspended', 'fileServerOff', 'keyExists', 'allocationExhausted', 'backendUnavailable', 'notImplemented',
   'planNameTaken', 'planInactive', 'baseNotAllowed', 'accountDeleting', 'invalidSshKey', 'emailTaken', 'alreadyMember',

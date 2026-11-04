@@ -50,7 +50,8 @@
       "siteStopped": "site stopped",
       "suspended": "account suspended",
       "key": "key removed",
-      "siteDeleted": "site deleted"
+      "siteDeleted": "site deleted",
+      "contained": "account contained"
     },
     "warnings": {
       "scanWarnings": "The analysis reported findings: check them before publishing.",

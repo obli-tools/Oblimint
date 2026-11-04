@@ -1,5 +1,6 @@
 import apiClient from './client';
 import type {
+  AccountContainment, ContainmentAuditRow, ContainmentLiftRequest, ContainmentStartRequest,
   AccountClientUser, AccountClientUserAdd, AccountSshKey, ApiResponse, ClientCapability, ClientUserCandidate, FileAccessInfo,
   FileAccessPasswordResult, FileAccessUpdate, FileServerStatus, HostingAccount, HostingAccountCreate,
   HostingAccountStatus, HostingAccountUpdate, SshKeyInput,
@@ -72,6 +73,28 @@ export const accountsApi = {
 
   async removeUser(id: number, userId: number, deleteUser = false): Promise<void> {
     await apiClient.delete(`/accounts/${id}/users/${userId}`, { params: deleteUser ? { deleteUser: 'true' } : {} });
+  },
+
+  // ── Containment (staff) ────────────────────────────────────────────────────
+  async containment(id: number): Promise<AccountContainment | null> {
+    const res = await apiClient.get<ApiResponse<AccountContainment | null>>(`/accounts/${id}/containment`);
+    return res.data.data ?? null;
+  },
+
+  /** Starts or resumes (step-up by the client interceptor). */
+  async contain(id: number, data: ContainmentStartRequest): Promise<AccountContainment> {
+    const res = await apiClient.post<ApiResponse<AccountContainment>>(`/accounts/${id}/containment`, data);
+    return res.data.data!;
+  },
+
+  async liftContainment(id: number, data: ContainmentLiftRequest): Promise<AccountContainment> {
+    const res = await apiClient.post<ApiResponse<AccountContainment>>(`/accounts/${id}/containment/lift`, data);
+    return res.data.data!;
+  },
+
+  async containmentAudit(id: number): Promise<{ items: ContainmentAuditRow[]; total: number }> {
+    const res = await apiClient.get<ApiResponse<{ items: ContainmentAuditRow[]; total: number }>>(`/accounts/${id}/containment/audit`, { params: { limit: 500 } });
+    return res.data.data!;
   },
 
   // ── File access (SFTP credentials) ─────────────────────────────────────────

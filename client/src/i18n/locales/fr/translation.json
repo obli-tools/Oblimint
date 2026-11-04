@@ -208,7 +208,8 @@
       "goClient": "Aller sur l'espace client",
       "goAdmin": "Aller sur le panel",
       "ssoOnClientSpace": "La connexion unique (SSO) n'est pas disponible sur l'espace client."
-    }
+    },
+    "accountContained": "Vos accès sont suspendus après un incident de sécurité sur votre compte. Vos sites continuent de servir. Contactez votre hébergeur."
   },
   "nav": {
     "accounts": "Comptes",

@@ -50,7 +50,8 @@
       "siteStopped": "site arrêté",
       "suspended": "compte suspendu",
       "key": "clé supprimée",
-      "siteDeleted": "site supprimé"
+      "siteDeleted": "site supprimé",
+      "contained": "compte confiné"
     },
     "warnings": {
       "scanWarnings": "L'analyse a relevé des points : vérifie-les avant de publier.",

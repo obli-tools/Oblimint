@@ -157,7 +157,9 @@
       "platform_backup_destinations": "Modifier les destinations de sauvegarde",
       "app_port_publish": "Publier un port sur Internet (déploiement d’application)",
       "platform_port_allocation": "Attribuer des ports publics à un compte",
-      "platform_public_ips": "Gérer les IP publiques (déclarer, affecter, reprise, SNAT)"
+      "platform_public_ips": "Gérer les IP publiques (déclarer, affecter, reprise, SNAT)",
+      "account_contain": "Confiner un compte",
+      "account_contain_lift": "Lever le confinement d'un compte"
     }
   }
 }

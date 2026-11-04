@@ -180,6 +180,75 @@
       "saveFailed": "Failed to save the capabilities",
       "saved": "Capabilities saved",
       "userId": "User id"
+    },
+    "containment": {
+      "action": "Contain",
+      "title": "Contain {{username}}",
+      "reason": "Reason (optional)",
+      "note": "Note (optional)",
+      "done": "Account contained",
+      "incomplete": "Containment incomplete: see the report and resume",
+      "failed": "Containment failed",
+      "lifted": "Containment lifted",
+      "liftFailed": "Could not lift the containment",
+      "auditFailed": "Could not read the frozen audit",
+      "effects": {
+        "credentials": "Revokes the access keys, connectors and window tokens, and ends the client sessions.",
+        "sftp": "Cuts SFTP: new unknown password, SSH keys removed, ports closed (SQL from outside too).",
+        "publish": "Puts the sites in approval mode and closes the open windows: their changes wait for a review.",
+        "evidence": "Freezes the staging / release diff and the audit over ±72 h.",
+        "serving": "The sites keep serving, and their database passwords do not change. Only the staff can lift it."
+      },
+      "bannerStaff": "Contained since {{date}}: the sites serve, access is cut, nothing that opens access can be created until the containment is lifted.",
+      "bannerClient": "This account is contained after a security incident: your sites keep serving, but access and changes are suspended. Contact your host: only they can lift it.",
+      "report": "Containment",
+      "resume": "Resume",
+      "lift": "Lift",
+      "details": "Details",
+      "status": {
+        "running": "Running",
+        "partial": "Incomplete",
+        "active": "Contained",
+        "lifted": "Lifted"
+      },
+      "summary": "Started {{date}} by {{by}}: {{done}} of {{total}} steps done.",
+      "liftedSummary": "Lifted {{date}} by {{by}}. Old keys, tokens and SFTP password stay revoked: create new ones.",
+      "stepsTitle": "Steps",
+      "steps": {
+        "keys": "Access keys and connectors revoked",
+        "siteTokens": "Window tokens revoked",
+        "sessions": "Client sessions ended",
+        "sftp": "SFTP cut, password rotated, SSH keys removed",
+        "firewall": "SFTP and external SQL ports closed",
+        "previews": "Previews and shared links stopped",
+        "pendingActions": "Pending approvals cancelled",
+        "consoles": "Consoles and panel webmail closed",
+        "publishMode": "Sites in approval mode",
+        "windows": "Open windows closed",
+        "evidenceStaging": "Staging / release diff frozen",
+        "evidenceAudit": "Audit frozen",
+        "verify": "Verification"
+      },
+      "credentials": "Credentials revoked",
+      "none": "None",
+      "rules": "Allow-list rules to review before lifting",
+      "family": {
+        "key": "Key",
+        "connector": "Connector",
+        "siteToken": "Window token",
+        "sshKey": "SSH key"
+      },
+      "frozenDiff": "Frozen staging / release diff",
+      "frozenCount": "{{count}} path(s) differ",
+      "freezeNote": {
+        "noRepository": "nothing published yet",
+        "noStaging": "no staging"
+      },
+      "frozenAudit": "Frozen audit",
+      "auditSpan": "{{count}} entries, {{from}} to {{until}}",
+      "showAudit": "Show",
+      "liftTitle": "Lift the containment",
+      "liftConfirm": "The publish modes and the file server come back. Old keys, tokens, SSH keys and the SFTP password stay revoked. Review the frozen diff and the allow-list rules first. A fresh second-factor code is asked."
     }
   },
   "certificates": {
@@ -488,7 +557,10 @@
       "usernameTaken": "This user name is already taken.",
       "validation": "Some fields are invalid.",
       "notFound": "This item no longer exists (it may have been deleted in the meantime). Refresh the page.",
-      "rateLimited": "Too many requests: wait a minute, then try again."
+      "rateLimited": "Too many requests: wait a minute, then try again.",
+      "accountContained": "This account is contained after a security incident: this is suspended until the staff lifts the containment.",
+      "accountNotContained": "This account is not contained.",
+      "containmentBusy": "The containment of this account is still running."
     },
     "generate": "Generate",
     "hide": "Hide",

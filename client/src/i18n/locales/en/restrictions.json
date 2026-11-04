@@ -157,7 +157,9 @@
       "platform_backup_destinations": "Change the backup destinations",
       "app_port_publish": "Publish a port on the Internet (application deploy)",
       "platform_port_allocation": "Allocate public ports to an account",
-      "platform_public_ips": "Manage the public IPs (declare, assign, takeover, SNAT)"
+      "platform_public_ips": "Manage the public IPs (declare, assign, takeover, SNAT)",
+      "account_contain": "Contain an account",
+      "account_contain_lift": "Lift the containment of an account"
     }
   }
 }
