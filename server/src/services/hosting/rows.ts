@@ -1,10 +1,11 @@
 import type {
   AccessMode, CmsGuardSiteSettings, DnsZoneKind, DomainVerificationMethod, DomainVerificationStatus, OverQuotaState,
-  AccountSshKey, AppProfileId, CertificateSummary, ClientCapability, CurrentReleaseVia, DataPathPolicy, Domain, HostingAccount, LeakPolicy, PhpSettings,
+  AccountSshKey, AppProfileId, CertificateSummary, ObservationMode, ClientCapability, CurrentReleaseVia, DataPathPolicy, Domain, HostingAccount, LeakPolicy, PhpSettings,
   Plan, PlanLimits, Release, ReleaseDetail, ReleaseLogLine, ScanSummary, Site, SiteBaseId, SiteDataPath, SiteRoute,
 } from '@oblimint/shared';
-import { CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS } from '@oblimint/shared';
+import { CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS, OBSERVATION_WINDOW_DEFAULT_MINUTES } from '@oblimint/shared';
 import { releaseErrorCode } from '../releases/outcome';
+import { observationOfJoined } from '../releaseObservation/rows';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Raw rows of the P1 tables (migration 002_hosting_core) and their mappers to
@@ -47,6 +48,8 @@ export interface SiteRow {
   leak_policy?: LeakPolicy | null; leak_allowlist?: unknown;
   /** migration 039: anti brute force of the CMS logins (null thresholds = the platform's). */
   cms_guard_enabled?: boolean | null; cms_guard_max_failures?: number | null; cms_guard_window_minutes?: number | null;
+  /** migration 040: observation after each publication. */
+  observation_mode?: ObservationMode | null; observation_window_minutes?: number | null;
   /** joined */ account_username?: string; current_release_number?: number | null; primary_domain?: string | null;
   /** joined */ current_release_by_name?: string | null; rolled_back_from_number?: number | null;
 }
@@ -92,6 +95,8 @@ export interface ReleaseRow {
   /** migration 016: access key that created it (Release.apiKeyId / apiKeyName: "via key X"). */
   api_key_id?: number | null;
   /** joined */ author_name?: string | null; approver_name?: string | null; is_current?: boolean; api_key_name?: string | null;
+  /** joined (migration 040): to_jsonb of its release_observations row, null when not observed. */
+  observation?: unknown;
 }
 
 export interface CertificateRow {
@@ -225,6 +230,8 @@ export function toSite(r: SiteRow, extras: { previewUrl?: string | null } = {}):
     leakPolicy: r.leak_policy === 'warn' ? 'warn' : 'block',
     leakAllowlist: json<unknown[]>(r.leak_allowlist, []).filter((x): x is string => typeof x === 'string'),
     cmsGuard: siteCmsGuard(r),
+    observationMode: r.observation_mode === 'off' || r.observation_mode === 'revert' ? r.observation_mode : 'alert',
+    observationWindowMinutes: r.observation_window_minutes ?? OBSERVATION_WINDOW_DEFAULT_MINUTES,
     primaryDomain: r.primary_domain ?? null,
     createdAt: isoReq(r.created_at),
     updatedAt: isoReq(r.updated_at),
@@ -323,6 +330,7 @@ export function toRelease(r: ReleaseRow): Release {
     apiKeyId: r.api_key_id && r.api_key_name ? Number(r.api_key_id) : null,
     apiKeyName: r.api_key_id && r.api_key_name ? r.api_key_name : null,
     errorCode: releaseErrorCode({ status: r.status, error: r.error, scan }),
+    observation: observationOfJoined(r.observation),
   };
 }
 

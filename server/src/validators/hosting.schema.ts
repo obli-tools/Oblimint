@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  APP_PROFILES, CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS, LEAK_ALLOWLIST_ENTRY_MAX, LEAK_ALLOWLIST_MAX, SITE_BASE_IDS,
+  APP_PROFILES, CLIENT_CAPABILITIES, OBSERVATION_MODES, OBSERVATION_WINDOW_MAX_MINUTES, OBSERVATION_WINDOW_MIN_MINUTES, DEFAULT_PLAN_LIMITS, LEAK_ALLOWLIST_ENTRY_MAX, LEAK_ALLOWLIST_MAX, SITE_BASE_IDS,
   normalizeLeakAllowlistEntry, normalizePathPrefix, normalizeRelPath,
   type AppProfileId, type ClientCapability, type SiteBaseId,
 } from '@oblimint/shared';
@@ -209,6 +209,8 @@ export const siteUpdateSchema = z.object({
     maxFailures: z.number().int().min(3).max(1000).nullable().optional(),
     windowMinutes: z.number().int().min(1).max(1440).nullable().optional(),
   }).strict().optional(),
+  observationMode: z.enum(OBSERVATION_MODES).optional(),
+  observationWindowMinutes: z.number().int().min(OBSERVATION_WINDOW_MIN_MINUTES).max(OBSERVATION_WINDOW_MAX_MINUTES).optional(),
   leakAllowlist: z.array(z.string().max(LEAK_ALLOWLIST_ENTRY_MAX + 16)).max(LEAK_ALLOWLIST_MAX).transform((v, ctx) => {
     const out: string[] = [];
     for (const raw of v) {

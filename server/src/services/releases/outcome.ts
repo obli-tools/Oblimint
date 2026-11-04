@@ -1,4 +1,4 @@
-import type { ReleaseErrorCode, ReleaseLogLine, ReleaseOutcome, ReleaseStatus, ScanSummary } from '@oblimint/shared';
+import type { ReleaseErrorCode, ReleaseLogLine, ReleaseObservation, ReleaseOutcome, ReleaseStatus, ScanSummary } from '@oblimint/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Outcome of a release as an agent / a CI reads it (keyApi: publish with wait,
@@ -75,7 +75,7 @@ const NOT_REVERTED_HINTS: Partial<Record<ReleaseErrorCode, string>> = {
  * the release serving the site now (sites.current_release_id) and its number.
  */
 export function releaseOutcome(
-  r: OutcomeInput & { id: number; log: ReleaseLogLine[] },
+  r: OutcomeInput & { id: number; log: ReleaseLogLine[]; observation?: ReleaseObservation | null },
   live: { id: number; number: number } | null,
   opts: { timedOut?: boolean } = {},
 ): ReleaseOutcome {
@@ -107,10 +107,39 @@ export function releaseOutcome(
   if (hint && leaks && !leaks.blocked && leaks.critical + leaks.warn > 0 && r.status === 'ready') {
     hint += ` The leak guard reported ${leaks.critical} critical / ${leaks.warn} warning finding(s) (outcome.leaks): remove them from the staging and publish again.`;
   }
+  const o = r.observation ?? null;
+  const observation: ReleaseOutcome['observation'] = o ? {
+    state: o.state, verdict: o.verdict, provisionalVerdict: o.provisionalVerdict, endsAt: o.endsAt, action: o.action, revertedToReleaseId: o.revertedToReleaseId,
+  } : null;
+  const oh = observationHint(o);
+  if (oh) hint = r.status === 'ready' && o?.state === 'watching' && live?.id === r.id ? `${hint ? `${hint} ` : ''}${oh}` : oh;
   return {
     settled, timedOut: opts.timedOut === true && !settled, status: r.status, live: live?.id === r.id,
-    healthcheck, autoReverted, liveRelease: live, scan, leaks, errorCode, hint,
+    healthcheck, autoReverted, liveRelease: live, scan, leaks, errorCode, observation, hint,
   };
+}
+
+/** What an agent does with the observation of a release (null: nothing to add). */
+function observationHint(o: ReleaseObservation | null): string | null {
+  if (!o) return null;
+  if (o.state === 'watching') {
+    return `Observation running until ${o.endsAt} (${o.windowMinutes} min, mode ${o.mode}; so far: ${o.provisionalVerdict}): call wait_for_release with until "verdict" to get the verdict.`;
+  }
+  if (o.state === 'superseded') return null;
+  if (o.action === 'reverted') {
+    return `Observation verdict failed (${o.reasons.join(', ')}): the previous release #${o.previousReleaseNumber ?? '?'} was put back automatically. Read list_errors (release_id, new_only) and read_logs, fix the staging, publish again.`;
+  }
+  if (o.action === 'revertFailed') {
+    return `Observation verdict failed (${o.reasons.join(', ')}) and the automatic return failed: this release is still live. Tell the human; rollback if the site is broken.`;
+  }
+  if (o.verdict === 'failed') {
+    return `Observation verdict failed (${o.reasons.join(', ')})${o.revertBlocked === 'migrations' ? ' — no automatic return: this release ran database migrations' : ''}: the release is still live. Check the site, list_errors (release_id, new_only); rollback if it is broken, and tell the human.`;
+  }
+  if (o.verdict === 'degraded') {
+    return `Observation verdict degraded (${o.reasons.join(', ')}): the release answers worse than the previous one. Read list_errors (release_id, new_only) and read_logs (source "access", status "5xx"), fix and publish again, or rollback.`;
+  }
+  if (o.verdict === 'insufficient_data') return 'Observation verdict insufficient_data: too little traffic to judge; check the pages that matter yourself.';
+  return null;
 }
 
 /** "utilisateur #12" in a pipeline log line, with its " (…)" or "l’" around it. */

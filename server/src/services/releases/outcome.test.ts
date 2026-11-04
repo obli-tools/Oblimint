@@ -121,3 +121,34 @@ test('publicReleaseText: no backend detail', () => {
   }
   assert.equal(publicReleaseText(null), null);
 });
+
+test('releaseOutcome: observation after publication (watching, verdicts, automatic return)', async () => {
+  const { toObservation } = await import('../releaseObservation/rows');
+  const base = {
+    id: 1, tenant_id: 1, site_id: 2, release_id: 9, release_number: 4, previous_release_id: 8, previous_release_number: 3,
+    mode: 'revert' as const, window_minutes: 15, state: 'watching' as const, started_at: '2026-11-04T10:00:00.000Z', ends_at: '2026-11-04T10:15:00.000Z', finished_at: null,
+    requests: 10, errors_5xx: 0, upstream_errors: 0, baseline: null, probes: 1, probe_failures: 0, probe_consecutive: 0, last_probe_at: null, last_probe_error: null,
+    new_error_groups: 0, new_fatal_groups: 0, new_error_occurrences: 0, verdict: null, reasons: [], revert_blocked: null,
+    action: 'none' as const, action_reason: null, reverted_to_release_id: null,
+  };
+  const rel = (o: Parameters<typeof toObservation>[0] | null) => ({
+    id: 9, status: 'ready' as const, error: null, scan: null, log: [line('healthcheck OK (HTTP 200, essai 1)')], observation: o ? toObservation(o) : null,
+  });
+  const watching = releaseOutcome(rel(base), { id: 9, number: 4 });
+  assert.equal(watching.observation?.state, 'watching');
+  assert.equal(watching.observation?.verdict, null);
+  assert.match(watching.hint ?? '', /^Live: .*Observation running until 2026-11-04T10:15:00\.000Z .*until "verdict"/);
+
+  const reverted = releaseOutcome(rel({ ...base, state: 'done', verdict: 'failed', reasons: ['errorRate'], action: 'reverted', reverted_to_release_id: 8 }), { id: 8, number: 3 });
+  assert.equal(reverted.live, false);
+  assert.deepEqual(reverted.observation, { state: 'done', verdict: 'failed', provisionalVerdict: 'failed', endsAt: '2026-11-04T10:15:00.000Z', action: 'reverted', revertedToReleaseId: 8 });
+  assert.match(reverted.hint ?? '', /release #3 was put back automatically/);
+
+  const migrations = releaseOutcome(rel({ ...base, state: 'done', verdict: 'failed', reasons: ['healthcheckFailing'], action: 'alerted', revert_blocked: 'migrations' }), { id: 9, number: 4 });
+  assert.match(migrations.hint ?? '', /no automatic return: this release ran database migrations/);
+  const degraded = releaseOutcome(rel({ ...base, state: 'done', verdict: 'degraded', reasons: ['newFatalErrors'], action: 'alerted' }), { id: 9, number: 4 });
+  assert.match(degraded.hint ?? '', /^Observation verdict degraded \(newFatalErrors\)/);
+  const healthy = releaseOutcome(rel({ ...base, state: 'done', verdict: 'healthy' }), { id: 9, number: 4 });
+  assert.match(healthy.hint ?? '', /^Live/);
+  assert.equal(releaseOutcome(rel(null), { id: 9, number: 4 }).observation, null);
+});

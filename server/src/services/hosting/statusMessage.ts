@@ -1,4 +1,6 @@
+import type { ReleaseObservation } from '@oblimint/shared';
 import type { HostingActor } from './access';
+import { publicReleaseText } from '../releases/outcome';
 
 // status_message of accounts and sites is written by the reconcile as
 // "<French label> : <raw Docker / hostd cause>" (several joined with " · ").
@@ -36,9 +38,20 @@ function redactInternal(text: string | null): string | null {
   return text !== null && text.startsWith(INTERNAL_PREFIX) ? INTERNAL_FOR_CLIENT : text;
 }
 
-export function releaseForActor<T extends { error: string | null; log?: Array<{ message: string }> }>(actor: HostingActor, release: T): T {
+export function releaseForActor<T extends { error: string | null; log?: Array<{ message: string }>; observation?: ReleaseObservation | null }>(actor: HostingActor, release: T): T {
   if (actor.kind !== 'client') return release;
   const out = { ...release, error: redactInternal(release.error) };
   if (Array.isArray(release.log)) out.log = release.log.map((l) => ({ ...l, message: redactInternal(l.message) ?? '' }));
+  // Observation: the raw cause of a failed automatic return / of a failed probe is for the staff.
+  if (release.observation) out.observation = observationForClient(release.observation);
   return out;
+}
+
+/** An observation as a client (or an access key) reads it: labels of the action, no backend address / path. */
+export function observationForClient(o: ReleaseObservation): ReleaseObservation {
+  return {
+    ...o,
+    actionReason: o.action === 'revertFailed' ? clientStatusMessage(o.actionReason) : o.actionReason,
+    facts: { ...o.facts, lastProbeError: o.facts.lastProbeError === null ? null : publicReleaseText(o.facts.lastProbeError) },
+  };
 }

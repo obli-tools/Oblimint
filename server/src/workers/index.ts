@@ -73,7 +73,7 @@ interface Worker { start(): void; stop(): void }
 
 /** P2 workers, in start order. */
 async function p2Workers(): Promise<Array<[string, Worker]>> {
-  const [dns, ownership, databases, firewall, usage, cron, logs, phpErrors, inbox, pendingActions, keySurfaces] = await Promise.all([
+  const [dns, ownership, databases, firewall, usage, cron, logs, phpErrors, inbox, pendingActions, keySurfaces, observation] = await Promise.all([
     import('../services/dns/dns.service').then((m) => m.dnsService),
     import('../services/ownership/ownership.service').then((m) => m.ownershipService),
     import('../services/databases/databases.service').then((m) => m.databaseService),
@@ -85,6 +85,7 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
     import('../services/usage/userNotifications.service').then((m) => m.userNotificationsWorker),
     import('../services/restrictions/pendingActions.service').then((m) => m.pendingActionsWorker),
     import('../services/security/keySurfaceGuard').then((m) => m.keySurfaceGuard),
+    import('../services/releaseObservation/observation.service').then((m) => m.releaseObservation),
   ]);
   const list: Array<[string, Worker]> = [
     ['dns', dns],
@@ -102,6 +103,8 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
     ['pending-actions', pendingActions],
     // IP security of the key surfaces: 48 h log-only start, regime / auto-strict notifications, CLI changes → edge resync.
     ['key-surfaces', keySurfaces],
+    // Observation after each publication: edge log 5xx, health probes, new PHP errors → verdict, alert or automatic return.
+    ['release-observation', observation],
   ];
   if (config.hosting.usageCollector) list.push(['usage-collector', usage.usageCollector]);
   return list;

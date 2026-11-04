@@ -31,6 +31,7 @@ import {
 import { fastForwardHead, parentOf } from './candidate';
 import { dataLinksMatch, materializeRelease, readCurrent, removeTmpEntries, removeUnder, staleDataExposure, switchCurrent } from './materialize';
 import { releaseDeps } from './deps';
+import { releaseObservation } from '../releaseObservation/observation.service';
 import { getScanner } from './scan';
 import { liveStates } from './liveState';
 import { AUTO_REVERT_TEXT, AUTO_REVERT_TO_TEXT, HEALTHCHECK_FAILED_TEXT, HEALTHCHECK_OK_TEXT, INTERNAL_TEXT, INTERRUPTED_TEXT, LEAK_BLOCKED_TEXT, RELOAD_FAILED_TEXT, STAGING_EMPTY_TEXT } from './outcome';
@@ -267,12 +268,15 @@ function releaseQuery() {
     .leftJoin('users as ap', 'ap.id', 'r.approved_by')
     // The key that published it: one of the site's account (api_key_id is only ever set from it).
     .leftJoin('api_keys as k', function joinKey() { this.on('k.id', '=', 'r.api_key_id').andOn('k.account_id', '=', 's.account_id'); })
+    // Observation after it went live (migration 040): one row at most per release, of the same site.
+    .leftJoin('release_observations as ro', function joinObservation() { this.on('ro.release_id', '=', 'r.id').andOn('ro.site_id', '=', 'r.site_id'); })
     .select(
       'r.*',
       'k.name as api_key_name',
       db.raw('COALESCE(au.display_name, au.username) as author_name'),
       db.raw('COALESCE(ap.display_name, ap.username) as approver_name'),
       db.raw('(s.current_release_id = r.id) as is_current'),
+      db.raw('CASE WHEN ro.id IS NULL THEN NULL ELSE to_jsonb(ro) END as observation'),
     );
 }
 
@@ -649,6 +653,8 @@ async function deploy(run: Run): Promise<void> {
   // A publication from the staging is an assumed decision: a pending rollback is cleared. A window /
   // adapter release only reflects ITS paths into the staging (the rest still holds the abandoned code): kept.
   const fromStaging = release.trigger === 'manual' || release.trigger === 'auto' || release.trigger === 'api';
+  const before = await db('sites').where({ id: ctx.site.id }).first('current_release_id') as { current_release_id: number | null } | undefined;
+  const previousReleaseId = before?.current_release_id ?? null;
   await db.transaction(async (trx) => {
     await trx('releases').where({ id: release.id }).update({ status: 'ready', published_at: trx.fn.now(), error: null });
     await trx('sites').where({ id: ctx.site.id }).update({
@@ -668,6 +674,9 @@ async function deploy(run: Run): Promise<void> {
       details: { siteId: ctx.site.id, number: release.number, trigger: release.trigger, live: true },
     });
   }
+  // Observation after the publication (migration 040): verdict over the site's window, alert or automatic return.
+  const watching = await releaseObservation.onReleaseLive({ siteId: ctx.site.id, releaseId: release.id, previousReleaseId });
+  if (watching) await run.step('info', watching);
 }
 
 /**

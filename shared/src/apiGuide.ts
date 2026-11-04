@@ -139,7 +139,7 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`publish\` | Publish (new live release), \`message?\`, \`override_rollback?\` (only on the human's explicit request), \`wait?\` (default true: waits ≤ 25 s and returns the release with its \`outcome\`, see §5 « After publishing ») | \`releases.publish\` |
 | \`list_releases\` | Release history, newest first (\`limit\`); \`apiKeyName\` (the key that published it), \`errorCode\` | — |
 | \`get_release\` | One release: its pipeline log (French; backend details removed) and its \`outcome\` | — |
-| \`wait_for_release\` | Wait until a release is settled (\`timeout_s\` ≤ 60, default 30), then as \`get_release\`; \`outcome.timedOut\`: call it again | — |
+| \`wait_for_release\` | Wait until a release is settled (\`timeout_s\` ≤ 60, default 30), then as \`get_release\`; \`until: "verdict"\` also waits for the end of its observation after publication (§5 « After publishing »); \`outcome.timedOut\`: call it again | — |
 | \`diff_release\` | Changed files of a release against \`"previous"\` (default), \`"live"\` or a release id (\`against\`); \`file\` for one full patch (≤ 96 KB). Shows the code as is | \`files.read\` + code right |
 | \`rollback\` | Back to a release (\`release_id\`); the staging is not changed | \`releases.publish\` |
 | \`list_release_files\` / \`read_release_file\` | Files of any release, read from its history (paged: \`nextOffset\`; windows of ~96 KB) | \`files.read\` + code right |
@@ -217,7 +217,11 @@ The idea: the agent develops on the platform, puts things live **only once the w
    - \`errorClass: "readOnlyWrite"\`: the code writes next to itself (cache, uploads): the live code is read-only. Declare that folder as a data path (\`add_data_path\`) and publish again.
    - \`errorClass: "execRefused"\`: PHP refused a script outside the release (a data path, \`/tmp\`): PHP code must come from the staging, never be written at runtime.
 4. Broken: \`rollback\` to the previous release at once, then fix in the staging.
-5. A preview still running (\`get_preview\`): \`stop_preview\`.
+5. **Observation after publication.** A live release is then watched by the panel for the site's window (\`get_site\` → \`observation\`: \`mode\` \`alert\` by default, \`revert\` or \`off\`; \`windowMinutes\`, 15 by default; set by a human only): the share of 5xx answers in the edge log, compared with the previous release over the same span before the switch (\`baseline\`), the PHP error groups this release brought, and a health check every minute. \`wait_for_release\` with \`until: "verdict"\` (call it again while \`outcome.timedOut\`) returns \`outcome.observation\`; \`get_release\` → \`observation\` holds the facts (\`requests\`, \`errors5xx\`, \`errorRate\`, \`baseline\`, \`newErrorGroups\`, \`newFatalGroups\`, \`probes\`, \`probeFailures\`) and the \`reasons\`:
+   - \`healthy\`: at least 50 requests and nothing worse than before. \`insufficient_data\`: fewer requests (no verdict on a handful of requests): check the pages that matter yourself.
+   - \`degraded\` (notification \`release.degraded\`): 5xx at least 5 % and twice the previous release, 2 failed health checks, or new fatal PHP errors. Read \`list_errors\` (\`release_id\`, \`new_only\`), fix and publish again, or \`rollback\`.
+   - \`failed\` (notification \`release.failedObservation\`): 5xx at least 25 % and 15 points above the previous release, or 3 failed health checks in a row; decided after 2 minutes already. In mode \`revert\` the previous release is put back once (\`action: "reverted"\`, \`revertedToReleaseId\`); never for a release that ran database migrations (\`revertBlocked: "migrations"\`: alert only), never after a rollback. Otherwise the release stays live: \`rollback\` if the site is broken, and tell the human.
+6. A preview still running (\`get_preview\`): \`stop_preview\`.
 
 ### Secrets and leaks
 
@@ -455,7 +459,7 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| seconds ≤ 25 }\` (message ≤ 500 characters); with \`wait\`: the release + \`outcome\` | \`releases.publish\` |
 | GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | GET | \`/sites/:id/releases/:releaseId\` | the release, its log and its \`outcome\` | — |
-| GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (seconds ≤ 60, default 30): as above once settled (\`outcome.timedOut\` otherwise) | — |
+| GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (seconds ≤ 60, default 30), \`?until=\` (\`settled\` default, or \`verdict\`: also the end of its observation after publication): as above once settled (\`outcome.timedOut\` otherwise) | — |
 | GET | \`/sites/:id/releases/:releaseId/diff\` | \`?against=previous\\|live\\|empty\\|<releaseId>&file=\` (one patch ≤ 256 KB) | \`files.read\` + code right |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
 | GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` + code right |
@@ -708,7 +712,7 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`publish\` | Publier (nouvelle release en ligne), \`message?\`, \`override_rollback?\` (seulement à la demande explicite de l'humain), \`wait?\` (true par défaut : attend 25 s au plus et renvoie la release avec son \`outcome\`, voir §5 « Après publication ») | \`releases.publish\` |
 | \`list_releases\` | Historique des releases, la plus récente en premier (\`limit\`) ; \`apiKeyName\` (la clé qui l'a publiée), \`errorCode\` | — |
 | \`get_release\` | Une release : son journal de publication (en français, sans détail technique interne) et son \`outcome\` | — |
-| \`wait_for_release\` | Attendre qu'une release soit terminée (\`timeout_s\` ≤ 60, 30 par défaut), puis comme \`get_release\` ; \`outcome.timedOut\` : rappelle-le | — |
+| \`wait_for_release\` | Attendre qu'une release soit terminée (\`timeout_s\` ≤ 60, 30 par défaut), puis comme \`get_release\` ; \`until: "verdict"\` attend aussi la fin de sa surveillance après publication (§5 « Après publication ») ; \`outcome.timedOut\` : rappelle-le | — |
 | \`diff_release\` | Fichiers changés par une release par rapport à \`"previous"\` (par défaut), \`"live"\` ou un id de release (\`against\`) ; \`file\` pour le patch complet d'un fichier (≤ 96 Ko). Montre le code tel quel | \`files.read\` + droit sur le code |
 | \`rollback\` | Retour à une release (\`release_id\`) ; le staging n'est pas modifié | \`releases.publish\` |
 | \`list_release_files\` / \`read_release_file\` | Fichiers de n'importe quelle release, lus dans son historique (pagination : \`nextOffset\` ; fenêtres d'environ 96 Ko) | \`files.read\` + droit sur le code |
@@ -786,7 +790,11 @@ L'idée : l'agent développe sur la plateforme, ne met en ligne **qu'une fois le
    - \`errorClass: "readOnlyWrite"\` : le code écrit à côté de lui-même (cache, uploads) alors que le code en ligne est en lecture seule. Déclare ce dossier comme chemin de données (\`add_data_path\`) et republie.
    - \`errorClass: "execRefused"\` : PHP a refusé un script hors de la release (chemin de données, \`/tmp\`) : le code PHP doit venir du staging, jamais être écrit pendant l'exécution.
 4. Cassé : \`rollback\` vers la release précédente tout de suite, puis corrige dans le staging.
-5. Un aperçu encore en marche (\`get_preview\`) : \`stop_preview\`.
+5. **Surveillance après publication.** Une release en ligne est ensuite observée par le panel pendant la fenêtre du site (\`get_site\` → \`observation\` : \`mode\` \`alert\` par défaut, \`revert\` ou \`off\` ; \`windowMinutes\`, 15 par défaut ; réglés par un humain seulement) : la part de réponses 5xx dans le journal edge, comparée à la release précédente sur la même durée avant la bascule (\`baseline\`), les groupes d'erreurs PHP apportés par cette release, et un contrôle de santé par minute. \`wait_for_release\` avec \`until: "verdict"\` (rappelle-le tant que \`outcome.timedOut\`) renvoie \`outcome.observation\` ; \`get_release\` → \`observation\` contient les faits (\`requests\`, \`errors5xx\`, \`errorRate\`, \`baseline\`, \`newErrorGroups\`, \`newFatalGroups\`, \`probes\`, \`probeFailures\`) et les raisons (\`reasons\`) :
+   - \`healthy\` : au moins 50 requêtes et rien de pire qu'avant. \`insufficient_data\` : moins de requêtes (pas de verdict sur une poignée de requêtes) : vérifie toi-même les pages qui comptent.
+   - \`degraded\` (notification \`release.degraded\`) : 5xx d'au moins 5 % et le double de la release précédente, 2 contrôles de santé en échec, ou de nouvelles erreurs PHP fatales. Lis \`list_errors\` (\`release_id\`, \`new_only\`), corrige et republie, ou \`rollback\`.
+   - \`failed\` (notification \`release.failedObservation\`) : 5xx d'au moins 25 % et 15 points au-dessus de la release précédente, ou 3 contrôles de santé en échec de suite ; décidé dès 2 minutes. En mode \`revert\`, la release précédente est remise une seule fois (\`action: "reverted"\`, \`revertedToReleaseId\`) ; jamais pour une release qui a lancé des migrations de base (\`revertBlocked: "migrations"\` : alerte seulement), jamais après un retour arrière. Sinon la release reste en ligne : \`rollback\` si le site est cassé, et préviens l'humain.
+6. Un aperçu encore en marche (\`get_preview\`) : \`stop_preview\`.
 
 ### Secrets et fuites
 
@@ -1024,7 +1032,7 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| secondes ≤ 25 }\` (message ≤ 500 caractères) ; avec \`wait\` : la release + \`outcome\` | \`releases.publish\` |
 | GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | GET | \`/sites/:id/releases/:releaseId\` | la release, son journal et son \`outcome\` | — |
-| GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (secondes ≤ 60, 30 par défaut) : comme ci-dessus une fois terminée (\`outcome.timedOut\` sinon) | — |
+| GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (secondes ≤ 60, 30 par défaut), \`?until=\` (\`settled\` par défaut, ou \`verdict\` : aussi la fin de sa surveillance après publication) : comme ci-dessus une fois terminée (\`outcome.timedOut\` sinon) | — |
 | GET | \`/sites/:id/releases/:releaseId/diff\` | \`?against=previous\\|live\\|empty\\|<releaseId>&file=\` (un patch ≤ 256 Ko) | \`files.read\` + droit sur le code |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
 | GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` + droit sur le code |

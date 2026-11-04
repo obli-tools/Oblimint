@@ -9,7 +9,7 @@ import type {
   NotificationFamily, UserNotificationPage,
 } from '@oblimint/shared';
 import { userNotificationService } from '../usage/userNotifications.service';
-import { apiKeyGuide } from '@oblimint/shared';
+import { apiKeyGuide, OBSERVATION_WINDOW_DEFAULT_MINUTES } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { auditService } from '../audit.service';
@@ -20,7 +20,7 @@ import { actorCan, assertReadsCode, loadAccount, loadSite } from '../hosting/acc
 import type { AccountRow, SiteRow } from '../hosting/rows';
 import { domainsService } from '../hosting/domains.service';
 import { sitesService } from '../hosting/sites.service';
-import { clientStatusMessage } from '../hosting/statusMessage';
+import { clientStatusMessage, observationForClient } from '../hosting/statusMessage';
 import { appConfigService } from '../appConfig.service';
 import { publicPanelOrigin } from '../panelHosts';
 import { cronService } from '../cron/cron.service';
@@ -30,6 +30,7 @@ import { siteErrorsService, type ErrorListQuery } from '../siteErrors/siteErrors
 import { releaseService } from '../releases/release.service';
 import { liveStates } from '../releases/liveState';
 import { loggedUserIds, maskStaffIds, publicReleaseText, releaseOutcome } from '../releases/outcome';
+import { releaseObservation } from '../releaseObservation/observation.service';
 import { previewService } from '../previews/previews.service';
 import { leakSettingsOf, stagingLeakReport } from '../scan/leakRelease';
 import { localPaths } from '../hosting/paths';
@@ -275,6 +276,8 @@ async function keyReleases<T extends Release & { log?: ReleaseLogLine[] }>(site:
       ...(approver && hidden.has(Number(approver)) ? { approvedBy: null } : {}),
       // Only a staff member overrides a blocked scan (M5): never named to a key.
       ...(r.scan?.override ? { scan: { ...r.scan, override: { ...r.scan.override, by: 'staff' } } } : {}),
+      // Observation after publication: no backend detail in a failed return / a failed probe.
+      ...(r.observation ? { observation: observationForClient(r.observation) } : {}),
     };
     if (Array.isArray(r.log)) out.log = r.log.map((l) => ({ ...l, message: maskStaffIds(publicReleaseText(l.message), hidden) }));
     return out;
@@ -354,12 +357,12 @@ async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV
   const q = db('sites as s')
     .leftJoin('releases as r', 'r.id', 's.current_release_id')
     .where('s.account_id', ctx.accountId)
-    .select('s.id', 's.name', 's.slug', 's.status', 's.base', 's.docroot', 's.publish_mode', 's.leak_policy', 's.leak_allowlist', 'r.number as release_number')
+    .select('s.id', 's.name', 's.slug', 's.status', 's.base', 's.docroot', 's.publish_mode', 's.leak_policy', 's.leak_allowlist', 's.observation_mode', 's.observation_window_minutes', 'r.number as release_number')
     .orderBy('s.id');
   if (ids) q.whereIn('s.id', ids);
   const rows = (await q as Array<{
     id: number; name: string; slug: string; status: string; base: string; docroot: string; publish_mode: string; release_number: number | null;
-    leak_policy: string | null; leak_allowlist: unknown;
+    leak_policy: string | null; leak_allowlist: unknown; observation_mode: string | null; observation_window_minutes: number | null;
   }>)
     .filter((r) => keyAllowsSite(ctx, r.id));
   if (!rows.length) return [];
@@ -390,6 +393,10 @@ async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV
       rolledBack: st?.rolledBack ?? false,
       rolledBackFrom: st?.rolledBackFrom ? { id: st.rolledBackFrom.id, number: st.rolledBackFrom.number } : null,
       leakGuard: { policy: leak.policy, allowlist: leak.allowlist },
+      observation: {
+        mode: r.observation_mode === 'off' || r.observation_mode === 'revert' ? r.observation_mode : 'alert',
+        windowMinutes: Number(r.observation_window_minutes ?? OBSERVATION_WINDOW_DEFAULT_MINUTES),
+      },
     };
   });
 }
@@ -761,15 +768,27 @@ export const keyApi = {
     return releaseDetail(site, releaseIdOf(releaseId));
   },
 
-  /** Waits (≤ 60 s) until the release is settled (ready, failed, rejected, awaiting approval), then as release(). */
-  async waitRelease(ctx: ApiKeyContext, req: Request | null, siteId: number, releaseId: unknown, timeoutMs: number): Promise<ApiV1ReleaseDetail> {
+  /**
+   * Waits (≤ 60 s) until the release is settled (ready, failed, rejected, awaiting approval), then as release().
+   * until 'verdict': also until its observation after publication ended (verdict given), within the same bound.
+   */
+  async waitRelease(
+    ctx: ApiKeyContext, req: Request | null, siteId: number, releaseId: unknown, timeoutMs: number, opts: { until?: 'settled' | 'verdict' } = {},
+  ): Promise<ApiV1ReleaseDetail> {
     const site = await keySite(ctx, siteId);
     const rid = releaseIdOf(releaseId);
     const ms = Math.min(RELEASE_WAIT_MAX_MS, Math.max(0, Math.trunc(timeoutMs) || 0));
     if (!ms) return releaseDetail(site, rid);
+    const deadline = Date.now() + ms;
     // A release already settled when the wait begins returns at once (the site lock of another run is not waited for).
-    await withWaitSlot(ctx, req, site.id, (signal) => releaseService.waitForRelease(site.id, rid, ms, { signal, lockGrace: 'ifRunning' }));
-    return releaseDetail(site, rid, true);
+    await withWaitSlot(ctx, req, site.id, async (signal) => {
+      await releaseService.waitForRelease(site.id, rid, ms, { signal, lockGrace: 'ifRunning' });
+      if (opts.until === 'verdict') await releaseObservation.waitForVerdict(site.id, rid, deadline, signal);
+    });
+    const out = await releaseDetail(site, rid, false);
+    // timedOut: still running, or (until verdict) still observed.
+    const pending = !out.outcome.settled || (opts.until === 'verdict' && out.outcome.observation?.state === 'watching');
+    return { ...out, outcome: { ...out.outcome, timedOut: pending } };
   },
 
   /**

@@ -12,6 +12,7 @@ import type { CmsGuardSiteSettings } from './cmsGuard';
 import type { DbEngine, DbTuningProfile, SiteDatabase } from './databases';
 import type { DnsZoneKind, DomainVerificationSummary } from './dns';
 import type { OverQuotaAction, OverQuotaState } from './usage';
+import type { ObservationMode, ReleaseObservation, ReleaseVerdict, ObservationAction, ObservationState } from './releaseObservation';
 
 // ─── SITE BASES (ARCHITECTURE §3.1) ──────────────────────────────────────────
 
@@ -643,6 +644,9 @@ export interface Site {
   leakAllowlist: string[];
   /** Anti brute force of the CMS logins of this site (edge log → account ban). */
   cmsGuard: CmsGuardSiteSettings;
+  /** Observation after each publication (migration 040): off / alert (default) / revert, window in minutes. */
+  observationMode: ObservationMode;
+  observationWindowMinutes: number;
   /** First domain routed to this site at '/', if any. */
   primaryDomain: string | null;
   /** Site detail only (GET /sites/:id): its databases (owned, then shared with it). */
@@ -682,6 +686,9 @@ export interface SiteUpdate {
   leakAllowlist?: string[];
   /** Switching it off / tolerating more failures takes proxy.manage too. */
   cmsGuard?: Partial<CmsGuardSiteSettings>;
+  /** 'revert' takes releases.publish (it puts a previous release back by itself). */
+  observationMode?: ObservationMode;
+  observationWindowMinutes?: number;
 }
 
 export interface SiteDataPath {
@@ -1015,6 +1022,8 @@ export interface Release {
   apiKeyName: string | null;
   /** Stable code of what stopped it (failed / blocked), null otherwise (RELEASE_ERROR_CODES). */
   errorCode: ReleaseErrorCode | null;
+  /** Observation after it went live: verdict and facts (null: not observed). */
+  observation: ReleaseObservation | null;
 }
 
 export interface ReleaseDetail extends Release {
@@ -1055,6 +1064,15 @@ export interface ReleaseOutcome {
   /** Leak guard verdict (null: not run, older release): counts and the first findings (file:line and rule, never the secret). */
   leaks: { policy: LeakPolicy; blocked: boolean; critical: number; warn: number; findings: Array<Pick<LeakFinding, 'path' | 'line' | 'rule' | 'severity' | 'served'>> } | null;
   errorCode: ReleaseErrorCode | null;
+  /**
+   * Observation after it went live (null: not observed): watching until endsAt, then the verdict
+   * (healthy | degraded | failed | insufficient_data) and what the panel did (action: alerted, reverted…).
+   * Full facts in observation of get_release.
+   */
+  observation: {
+    state: ObservationState; verdict: ReleaseVerdict | null; provisionalVerdict: ReleaseVerdict; endsAt: string;
+    action: ObservationAction; revertedToReleaseId: number | null;
+  } | null;
   /** What to do next (English, for a model). */
   hint: string | null;
 }

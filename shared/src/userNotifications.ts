@@ -51,6 +51,8 @@ export const NOTIFICATION_EVENT_FAMILY: Record<NotificationEvent, NotificationFa
   'release.pendingApproval': 'releases',
   'release.approved': 'releases',
   'release.rejected': 'releases',
+  'release.degraded': 'releases',
+  'release.failedObservation': 'releases',
   'window.pendingReview': 'releases',
   'window.autoValidated': 'releases',
   'window.failed': 'releases',

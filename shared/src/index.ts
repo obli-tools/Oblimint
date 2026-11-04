@@ -46,3 +46,5 @@ export * from './siteErrors';
 export * from './restrictions';
 export * from './keySecurity';
 export * from './cmsGuard';
+// Observation of a release after it went live (verdict, automatic return)
+export * from './releaseObservation';

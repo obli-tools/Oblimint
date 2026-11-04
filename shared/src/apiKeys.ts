@@ -1,5 +1,6 @@
 import type { DbConnectionInfo, DbDatabase, DbEngine, DbFamily, DbInstanceStatus, DbUser, SiteDatabase } from './databases';
 import type { CurrentReleaseVia, LeakPolicy, LeakReport, SiteUpdate } from './hosting';
+import type { ObservationMode } from './releaseObservation';
 import type { DnsRecordOrigin, DnsRecordType, DnsZoneKind, DnsZoneServed, DnsZoneStatus } from './dns';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -362,6 +363,8 @@ export interface ApiV1Site {
   rolledBackFrom: { id: number; number: number } | null;
   /** Leak guard of the publications (read only for a key: set by a human in the panel). */
   leakGuard: { policy: LeakPolicy; allowlist: string[] };
+  /** Observation after each publication (read only for a key): mode off | alert | revert and window (minutes). */
+  observation: { mode: ObservationMode; windowMinutes: number };
 }
 
 /** GET /api/v1/sites/:id/leak-check (MCP check_leaks): the leak guard run on the staging, as the next publish would see it. */

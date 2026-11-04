@@ -187,7 +187,9 @@ const diffQuery = z.object({
   against: z.union([z.enum(['previous', 'live', 'empty']), z.coerce.number().int().positive()]).default('previous'),
   file: z.string().min(1).max(4096).optional(),
 }).strict();
-const waitQuery = z.object({ timeout: z.coerce.number().int().min(0).max(RELEASE_WAIT_MAX_MS / 1000).default(30) }).strict();
+const waitQuery = z.object({
+  timeout: z.coerce.number().int().min(0).max(RELEASE_WAIT_MAX_MS / 1000).default(30), until: z.enum(['settled', 'verdict']).default('settled'),
+}).strict();
 const waitMsOf = (w: boolean | number | undefined) => (w === true ? PUBLISH_WAIT_MAX_MS : typeof w === 'number' ? w * 1000 : 0);
 const restoreBody = z.object({ discardPending: z.boolean().optional() }).strict();
 const releaseFilesQuery = z.object({
@@ -337,7 +339,7 @@ router.get('/sites/:id/releases', h(async (req, res) => {
 router.get('/sites/:id/releases/:rid', h(async (req, res) => ok(res, await keyApi.release(ctxOf(req), siteId(req), req.params.rid))));
 router.get('/sites/:id/releases/:rid/wait', h(async (req, res) => {
   const q = parseBody(waitQuery, req.query);
-  ok(res, await keyApi.waitRelease(ctxOf(req), req, siteId(req), req.params.rid, q.timeout * 1000));
+  ok(res, await keyApi.waitRelease(ctxOf(req), req, siteId(req), req.params.rid, q.timeout * 1000, { until: q.until }));
 }));
 router.get('/sites/:id/releases/:rid/diff', heavyOpLimiter, h(async (req, res) => {
   const q = parseBody(diffQuery, req.query);

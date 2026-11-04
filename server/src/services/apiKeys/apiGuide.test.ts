@@ -36,6 +36,7 @@ for (const t of tools) collectProps(t.inputSchema);
 const OTHER_SNAKE = new Set([
   'include_key', // POST /sites/:id/preview: returns the preview's key (REST only)
   'awaiting_approval', // a release status
+  'insufficient_data', // a release verdict (observation after publication)
   'unix_socket', // PDO DSN parameter
   'id_rsa', 'node_modules', 'pg_advisory_lock', // file and folder names, PostgreSQL function
   'host_ip', // compose key of a published port (§5 « Public ports »)

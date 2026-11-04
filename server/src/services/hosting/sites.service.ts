@@ -382,6 +382,15 @@ export const sitesService = {
       if (next.maxFailures !== cur.maxFailures) patch.cms_guard_max_failures = next.maxFailures;
       if (next.windowMinutes !== cur.windowMinutes) patch.cms_guard_window_minutes = next.windowMinutes;
     }
+    // Observation after publication: 'revert' puts a previous release back by itself — the right to publish.
+    const curObs = row.observation_mode === 'off' || row.observation_mode === 'revert' ? row.observation_mode : 'alert';
+    if (body.observationMode !== undefined && body.observationMode !== curObs) {
+      if (body.observationMode === 'revert' && !actorCan(actor, 'releases.publish', { tenantId: row.tenant_id, accountId: row.account_id })) {
+        throw new AppError(403, 'The automatic return to the previous release requires the right to publish releases', 'publishRequired');
+      }
+      patch.observation_mode = body.observationMode;
+    }
+    if (body.observationWindowMinutes !== undefined && body.observationWindowMinutes !== row.observation_window_minutes) patch.observation_window_minutes = body.observationWindowMinutes;
     if (Object.keys(patch).length > 0) {
       patch.updated_at = db.fn.now();
       await db('sites').where({ id: row.id, tenant_id: row.tenant_id }).update(patch);
