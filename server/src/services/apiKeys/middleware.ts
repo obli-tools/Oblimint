@@ -19,17 +19,27 @@ import { resourceMetadataUrl } from './oauth';
  * Refused keys: 20 / 15 min per address (/64 in IPv6), successes not counted.
  * A request without credentials is not a guess: an OAuth client (claude.ai)
  * starts every connection with one to discover the authorization server.
+ * "Success" = the credential was accepted (req.apiKey set by authenticate),
+ * whatever the route answers next: the library default (status < 400) would
+ * count a 404 / 409 / 429 of an authenticated call as a refused key and lock
+ * a working key out for 15 minutes.
  */
 export const apiKeyAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   skipSuccessfulRequests: true,
+  requestWasSuccessful: (req) => isAuthenticated(req),
   skip: (req) => !req.headers.authorization,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => `apikey-auth:${ipKey(clientIp(req))}`,
   message: { success: false, error: 'Too many invalid API keys, try again later', code: 'rateLimited' },
 });
+
+/** The request's credential was accepted (apiKeyAuth / mcpAuth ran and set req.apiKey). */
+export function isAuthenticated(req: Request): boolean {
+  return req.apiKey !== undefined && req.apiKey !== null;
+}
 
 const API_KEY_MAX_PER_MIN = 1200;
 const apiKeyStore = new MemoryStore();
