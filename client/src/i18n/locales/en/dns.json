@@ -280,6 +280,58 @@
       "rateLimited": "Too many requests: wait a moment, then retry.",
       "notImplemented": "This DNS feature is not available on this server yet.",
       "recordAutoOrigin": "Automatic records follow the domain and cannot be deleted: disable or edit the record instead (it then becomes a manual override)."
+    },
+    "history": {
+      "title": "History",
+      "intro": "Each change of the records files a revision: in the panel, by an access key, or by the platform itself (sites, subdomains, mail). Open one to compare it with the current records and restore it.",
+      "empty": "No revision yet: the first one is filed at the next change or sync.",
+      "loadFailed": "Failed to load the history",
+      "current": "current",
+      "view": "Compare / restore",
+      "platform": "Platform",
+      "fromSeq": "(from #{{seq}})",
+      "revisionTitle": "Revision #{{seq}}",
+      "sinceTitle": "Changes since this revision",
+      "sinceHint": "From this revision to the current records.",
+      "noDiff": "No difference.",
+      "planTitle": "What a restore would do",
+      "planEmpty": "Nothing: the records you can restore already match this revision.",
+      "skippedTitle": "Left as they are:",
+      "recordsTitle": "Records of this revision ({{count}})",
+      "enabled": "Enabled",
+      "comment": "comment",
+      "restore": "Restore",
+      "restoreTitle": "Restore this revision",
+      "restoreConfirm": "Put the records of revision #{{seq}} back? {{add}} record(s) written back, {{remove}} removed. The records the platform maintains stay as they are. The restore files a new revision: you can undo it.",
+      "restored": "Revision #{{seq}} restored",
+      "nothingToRestore": "Nothing to restore: the records already match",
+      "restoreFailed": "Failed to restore the revision",
+      "actions": {
+        "recordCreated": "Record created",
+        "recordUpdated": "Record changed",
+        "recordDeleted": "Record deleted",
+        "zoneCreated": "Zone created",
+        "zoneUpdated": "Zone settings changed",
+        "zoneReset": "Zone reset",
+        "templateApplied": "Template applied",
+        "zoneRestored": "Revision restored",
+        "mailDnsFix": "Mail DNS fixed",
+        "sync": "Automatic update",
+        "initial": "Initial state"
+      },
+      "sources": {
+        "panel": "Panel",
+        "api": "API",
+        "mcp": "MCP",
+        "system": "Platform"
+      },
+      "skip": {
+        "generated": "maintained by the platform",
+        "protected": "out of reach",
+        "invalid": "no longer valid",
+        "conflict": "conflicts with another record",
+        "limit": "record limit reached"
+      }
     }
   },
   "domainOwnership": {

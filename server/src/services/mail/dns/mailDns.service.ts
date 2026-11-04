@@ -8,6 +8,7 @@ import { AppError } from '../../../middleware/errorHandler';
 import { logger } from '../../../utils/logger';
 import { auditService } from '../../audit.service';
 import { registerZoneRecordContributor, unregisterZoneRecordContributor } from '../../dns/contributors';
+import { authorOfRequest, recordRevision } from '../../dns/history';
 import { loadContext, regenerateAuto, zoneForName, type ZoneRow } from '../../dns/store';
 import { registerEdgeContributor, unregisterEdgeContributor } from '../../edge/contributors';
 import { iso, json } from '../../hosting/rows';
@@ -378,6 +379,8 @@ async function fixApply(req: Request, actor: HostingActor, mailDomainId: number,
       removed: removed.map((r) => ({ id: r.id, name: r.name, type: r.type, content: r.content, priority: r.priority, origin: r.origin })),
     },
   });
+  // The zone's history (dns/history.ts): this write does not go through dnsService.
+  await recordRevision(zone.id, await authorOfRequest(req), 'mail-dns-fix');
   try {
     emitHosting(HostingSocketEvents.DNS_ZONE_UPDATED, { zoneId: zone.id, domainId: zone.domain_id, accountId: zone.account_id },
       { tenantId: zone.tenant_id, accountId: zone.account_id });

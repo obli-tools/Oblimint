@@ -280,6 +280,58 @@
       "rateLimited": "Trop de requêtes : patientez un instant, puis réessayez.",
       "notImplemented": "Cette fonction DNS n'est pas encore disponible sur ce serveur.",
       "recordAutoOrigin": "Les enregistrements automatiques suivent le domaine et ne peuvent pas être supprimés : désactivez ou modifiez l'enregistrement (il devient alors une surcharge manuelle)."
+    },
+    "history": {
+      "title": "Historique",
+      "intro": "Chaque modification des enregistrements crée une révision : dans le panel, par une clé d’accès, ou par la plateforme elle-même (sites, sous-domaines, mail). Ouvrez-en une pour la comparer aux enregistrements actuels et la restaurer.",
+      "empty": "Aucune révision pour l’instant : la première est créée à la prochaine modification ou synchronisation.",
+      "loadFailed": "Impossible de charger l’historique",
+      "current": "actuelle",
+      "view": "Comparer / restaurer",
+      "platform": "Plateforme",
+      "fromSeq": "(depuis #{{seq}})",
+      "revisionTitle": "Révision #{{seq}}",
+      "sinceTitle": "Changements depuis cette révision",
+      "sinceHint": "De cette révision aux enregistrements actuels.",
+      "noDiff": "Aucune différence.",
+      "planTitle": "Ce que ferait une restauration",
+      "planEmpty": "Rien : les enregistrements restaurables correspondent déjà à cette révision.",
+      "skippedTitle": "Laissés tels quels :",
+      "recordsTitle": "Enregistrements de cette révision ({{count}})",
+      "enabled": "Activé",
+      "comment": "commentaire",
+      "restore": "Restaurer",
+      "restoreTitle": "Restaurer cette révision",
+      "restoreConfirm": "Remettre les enregistrements de la révision #{{seq}} ? {{add}} enregistrement(s) réécrit(s), {{remove}} supprimé(s). Les enregistrements maintenus par la plateforme restent tels quels. La restauration crée une nouvelle révision : vous pourrez l’annuler.",
+      "restored": "Révision #{{seq}} restaurée",
+      "nothingToRestore": "Rien à restaurer : les enregistrements correspondent déjà",
+      "restoreFailed": "Impossible de restaurer la révision",
+      "actions": {
+        "recordCreated": "Enregistrement créé",
+        "recordUpdated": "Enregistrement modifié",
+        "recordDeleted": "Enregistrement supprimé",
+        "zoneCreated": "Zone créée",
+        "zoneUpdated": "Réglages de la zone modifiés",
+        "zoneReset": "Zone réinitialisée",
+        "templateApplied": "Modèle appliqué",
+        "zoneRestored": "Révision restaurée",
+        "mailDnsFix": "DNS du mail corrigés",
+        "sync": "Mise à jour automatique",
+        "initial": "État initial"
+      },
+      "sources": {
+        "panel": "Panel",
+        "api": "API",
+        "mcp": "MCP",
+        "system": "Plateforme"
+      },
+      "skip": {
+        "generated": "maintenu par la plateforme",
+        "protected": "hors de portée",
+        "invalid": "n’est plus valide",
+        "conflict": "en conflit avec un autre enregistrement",
+        "limit": "limite d’enregistrements atteinte"
+      }
     }
   },
   "domainOwnership": {

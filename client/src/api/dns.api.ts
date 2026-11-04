@@ -1,7 +1,7 @@
 import apiClient from './client';
 import type {
   ApiResponse, DnsDelegationCheck, DnsRecord, DnsRecordInput, DnsServerStatus, DnsTemplate, DnsTemplateInput, DnsZone,
-  DnsZoneCreate, DnsZoneDetail, DnsZoneUpdate,
+  DnsRestoreResult, DnsZoneCreate, DnsZoneDetail, DnsZoneRevision, DnsZoneRevisionDetail, DnsZoneUpdate,
 } from '@oblimint/shared';
 
 // /api/dns + /api/system/dns — docs/P2-PLAN.md §6.1. OWNED BY MODULE `ui-dns-db`
@@ -40,6 +40,20 @@ export const dnsApi = {
   },
   async checkDelegation(id: number): Promise<DnsDelegationCheck> {
     const res = await apiClient.get<ApiResponse<DnsDelegationCheck>>(`/dns/zones/${id}/delegation`);
+    return res.data.data!;
+  },
+
+  // ── history (revisions of the zone) ──
+  async listRevisions(zoneId: number, limit?: number): Promise<DnsZoneRevision[]> {
+    const res = await apiClient.get<ApiResponse<DnsZoneRevision[]>>(`/dns/zones/${zoneId}/revisions`, { params: { limit } });
+    return res.data.data ?? [];
+  },
+  async getRevision(zoneId: number, revisionId: number): Promise<DnsZoneRevisionDetail> {
+    const res = await apiClient.get<ApiResponse<DnsZoneRevisionDetail>>(`/dns/zones/${zoneId}/revisions/${revisionId}`);
+    return res.data.data!;
+  },
+  async restoreRevision(zoneId: number, revisionId: number): Promise<DnsRestoreResult> {
+    const res = await apiClient.post<ApiResponse<DnsRestoreResult>>(`/dns/zones/${zoneId}/revisions/${revisionId}/restore`);
     return res.data.data!;
   },
 

@@ -146,6 +146,9 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'dns.zone_delete', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: P },
   { key: 'dns.zone_reset', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: P },
   { key: 'dns.template_apply', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: P },
+  // Migration 038: restoring a revision of the zone (panel, or a key with dns.write: free records only). Gated with
+  // dns.record_write / dns.record_delete as well when it adds / removes records (the strictest of them).
+  { key: 'dns.zone_restore', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: PK },
   // A record created / changed (panel, or an access key with dns.write: free records only); deleting one apart.
   { key: 'dns.record_write', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: PK },
   { key: 'dns.record_delete', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: PK },

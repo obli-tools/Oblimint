@@ -8,6 +8,7 @@ import { pdns, PdnsError, type PdnsClient } from './pdnsClient';
 import {
   buildRrsets, diffRrsets, inZone, nextSerial, publicationOf, soaRname, soaSerialOf, type Rrset,
 } from './records';
+import { recordRevision, SYSTEM_AUTHOR } from './history';
 import { pendingZoneDecisionForZone, pendingZoneRefusalLabel } from './pendingZone';
 import {
   domainRow, insertZone, loadContext, regenerateAuto, soaPrimary, zoneById, zoneForName, zoneRecords, zoneVerified,
@@ -151,6 +152,9 @@ async function syncZoneInner(zoneId: number, reason: string, ctxIn?: DnsContext)
   if (!zone) return { ok: true, published: false, changed: false, error: null };
   const ctx = ctxIn ?? await loadContext();
   const autoChanged = await regenerateAuto(zone, ctx);
+  // What the platform changed by itself (domains, sites, mail, settings) since the last revision: filed as 'system'
+  // (nothing when a write already filed it with its author). Never throws.
+  await recordRevision(zone.id, SYSTEM_AUTHOR, 'sync');
   const pub = await publicationFor(zone, ctx);
 
   if (!pub.publish) {

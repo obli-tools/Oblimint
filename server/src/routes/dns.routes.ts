@@ -2,10 +2,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { DNS_RECORD_TYPES, type DnsRecordInput, type DnsRecordType, type DnsTemplateInput, type DnsZoneCreate, type DnsZoneUpdate } from '@oblimint/shared';
 import { validate } from '../middleware/validate';
+import { AppError } from '../middleware/errorHandler';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { dnsService, loadZone } from '../services/dns/dns.service';
-import { gateAction } from '../services/restrictions/gate';
+import { gateAction, gateStrictest, type GateSpec } from '../services/restrictions/gate';
 import { MASTER_TENANT_ID } from '@oblimint/shared';
 import type { Request } from 'express';
 
@@ -31,6 +32,10 @@ async function gateZone(req: Request, action: string, params: Record<string, unk
 //   POST   /zones/:id/records        DnsRecordInput → DnsRecord (201)                                (dns.manage)
 //   PUT    /zones/:id/records/:rid   DnsRecordInput → DnsRecord                                      (dns.manage)
 //   DELETE /zones/:id/records/:rid   → { deleted: true }                                             (dns.manage; gate dns.record_delete)
+//   GET    /zones/:id/revisions      ?limit= → DnsZoneRevision[] (most recent first)                 (read)
+//   GET    /zones/:id/revisions/:rid → DnsZoneRevisionDetail (records, diff to now, restore plan)    (read)
+//   POST   /zones/:id/revisions/:rid/restore → DnsRestoreResult                                      (dns.manage; gate dns.zone_restore
+//                                     + dns.record_write when it writes records back, dns.record_delete when it removes some)
 //   GET    /templates                ?tenantId= → DnsTemplate[]                                      (staff read)
 //   POST   /templates                DnsTemplateInput → DnsTemplate (201)                            (staff dns.manage)
 //   PUT    /templates/:id            Partial<DnsTemplateInput> → DnsTemplate                         (staff dns.manage)
@@ -180,6 +185,38 @@ router.delete('/zones/:id/records/:rid', async (req, res, next) => {
     await gateZone(req, 'dns.record_delete', { op: 'delete', recordId: idParam(req, 'rid') });
     await dnsService.deleteRecord(req, await resolveActor(req), idParam(req), idParam(req, 'rid'));
     res.json({ success: true, data: { deleted: true } });
+  } catch (err) { next(err); }
+});
+
+router.get('/zones/:id/revisions', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await dnsService.listRevisions(await resolveActor(req), idParam(req), optionalId(req.query.limit) ?? undefined) });
+  } catch (err) { next(err); }
+});
+
+router.get('/zones/:id/revisions/:rid', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await dnsService.revisionDetail(await resolveActor(req), idParam(req), idParam(req, 'rid')) });
+  } catch (err) { next(err); }
+});
+
+router.post('/zones/:id/revisions/:rid/restore', async (req, res, next) => {
+  try {
+    const actor = await resolveActor(req);
+    const zone = await loadZone(actor, idParam(req), 'dns.manage');
+    if (zone.kind !== 'hosted') throw new AppError(409, 'This zone is hosted elsewhere: edit it at your DNS provider', 'zoneNotHosted');
+    // The plan before the gate: nobody confirms a restore that changes nothing; a restore that writes or removes
+    // records is also that write / deletion (the strictest of the three protections, one confirmation).
+    const detail = await dnsService.revisionDetail(actor, zone.id, idParam(req, 'rid'));
+    if (detail.plan.add.length || detail.plan.remove.length) {
+      const target = { tenantId: Number(zone.tenant_id ?? MASTER_TENANT_ID), accountId: zone.account_id === null ? null : Number(zone.account_id), siteId: null };
+      const params = { zone: zone.name, revisionId: detail.revision.id, seq: detail.revision.seq };
+      const specs: GateSpec[] = [{ action: 'dns.zone_restore', target, params }];
+      if (detail.plan.add.length) specs.push({ action: 'dns.record_write', target, params });
+      if (detail.plan.remove.length) specs.push({ action: 'dns.record_delete', target, params });
+      await gateStrictest(req, specs);
+    }
+    res.json({ success: true, data: await dnsService.restoreRevision(req, actor, zone.id, detail.revision.id) });
   } catch (err) { next(err); }
 });
 

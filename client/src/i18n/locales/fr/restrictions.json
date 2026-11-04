@@ -116,6 +116,7 @@
       "dns_zone_delete": "Supprimer une zone DNS",
       "dns_zone_reset": "Réinitialiser une zone DNS",
       "dns_template_apply": "Appliquer un modèle DNS",
+      "dns_zone_restore": "Restaurer une révision de zone DNS",
       "dns_record_write": "Modifier des enregistrements DNS",
       "dns_record_delete": "Supprimer des enregistrements DNS",
       "mail_dns_fix": "Corriger les DNS du mail (MX, SPF…)",

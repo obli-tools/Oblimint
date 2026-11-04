@@ -94,8 +94,8 @@ Consequences:
 | \`databases.manage\` | Databases: the account's database servers (create one within the plan), databases and users, SQL import / export, SQL queries (read-only by default) |
 | \`routes.manage\` | Domain routes: choose which site (or runtime) serves a path, e.g. \`example.com/uploads/\`, towards the key's sites; on the domains given to it in the panel (even one serving nothing yet) or serving only its sites |
 | \`domains.subdomain\` | Attach to the sites **subdomains** of a domain **already in** the account (given to the key in the panel, or serving only its sites), remove the ones the key created |
-| \`dns.read\` | Read the DNS zones of the domains given to the key (every zone of the account for a key on every domain) and their records; the records the platform manages are marked read-only |
-| \`dns.write\` | Create, change and delete the **free** records of those zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), never a record the platform manages (see §5 « DNS records ») |
+| \`dns.read\` | Read the DNS zones of the domains given to the key (every zone of the account for a key on every domain) and their records and history; the records the platform manages are marked read-only |
+| \`dns.write\` | Create, change and delete the **free** records of those zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), never a record the platform manages; restore a revision of the zone (see §5 « DNS records ») |
 | \`logs.read\` | Read access, error (web server / PHP) and application logs, and the PHP errors grouped by release |
 | \`network.read\` | Read the public ports of the account: its blocks of the shared IP, its dedicated IP (public address) and the bindings of **every** app / stack of the account (whatever the site selection). Read only |
 
@@ -156,6 +156,9 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`list_dns_records\` | Records of a zone (\`zone\`): \`name\`, \`fqdn\`, \`type\`, \`content\`, \`ttl\`, \`priority\`, \`readOnly\` + \`readOnlyReason\` (\`generated\`, \`override\`, \`type\`, \`reserved\`) | \`dns.read\` |
 | \`upsert_dns_record\` | Create or change a free record: \`zone\`, \`name\`, \`type\`, \`content\`, \`ttl?\`, \`priority?\` (MX / SRV), \`comment?\`, \`disabled?\`; the record of this name and type, or \`record_id\`; \`add: true\` adds another value | \`dns.write\` |
 | \`delete_dns_record\` | Delete a free record: \`record_id\`, or \`name\` + \`type\` (+ \`content\` when several match) | \`dns.write\` |
+| \`list_dns_revisions\` | History of a zone (\`zone\`, \`limit?\`), most recent first: \`id\`, \`seq\`, \`source\` (\`panel\`, \`api\`, \`mcp\`, \`system\`), \`action\`, \`author\`, \`summary\` | \`dns.read\` |
+| \`get_dns_revision\` | A revision (\`zone\`, \`revision_id\`): its \`records\`, the \`diff\` to the current records and the \`plan\` of a restore by this key | \`dns.read\` |
+| \`restore_dns_revision\` | Put the free records back as they were in a revision (\`zone\`, \`revision_id\`, \`dry_run?\`); files a new revision | \`dns.write\` |
 | \`get_env\` / \`set_env\` | Environment variables of the site (read by PHP with \`getenv()\`); \`set\` adds / replaces, \`remove\` deletes, the others stay; secrets write-only; the site restarts | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Folders the site may write to (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Secondary runtimes: another container (possibly another engine) serving some paths of the **same** code and data | \`sites.manage\` |
@@ -367,6 +370,7 @@ With \`dns.read\` / \`dns.write\`, a key reads and writes the records of the DNS
 - Same checks as the panel: TTL from 60 to 604800 seconds, no CNAME at the apex nor beside another record of the same name (\`recordConflict\` 409), 500 records per zone (\`recordLimit\` 409). A change is served within seconds.
 - \`upsert_dns_record\` changes the free record of this name and type (TXT: of the same use, a verification TXT never replaces the SPF record; created when there is none). Several of them (round robin, several TXT): \`recordAmbiguous\` (409) lists their ids; give \`record_id\`, or \`add: true\` to add another value.
 - Deleting a record is a protected action (by default the key's owner confirms it with his 2FA code, see « Protected actions »).
+- **History**: every change of a zone files a revision (\`list_dns_revisions\`): made in the panel, by a key (\`source\` \`api\` or \`mcp\`, with the key's name) or by the platform itself (\`system\`: a site, a subdomain or the hosted mail changed the generated records). After a bad change, \`get_dns_revision\` shows what changed since a revision and what a restore would do; \`restore_dns_revision\` (try \`dry_run: true\` first) puts the free records back as they were. The records the platform manages and the ones a key may not touch stay as they are (\`skipped\`, with a \`reason\`: \`generated\`, \`protected\`, \`invalid\`, \`conflict\`, \`limit\`). A restore is protected like the writes and deletions it makes, and files a new revision: restoring the revision before it undoes it. The history keeps at least the last 100 revisions of a zone and those of the last 90 days.
 
 Point \`play.example.com\` at a game server hosted elsewhere, with its SRV record:
 
@@ -480,6 +484,8 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/zones\` | DNS zones of the key (as \`list_dns_zones\`) | \`dns.read\` |
 | GET · POST | \`/zones/:zone/records\` | the zone and its records (\`readOnly\`) · \`{ name, type, content, ttl?, priority?, disabled?, comment? }\` (a free record) | \`dns.read\` (POST: \`dns.write\`) |
 | PUT · DELETE | \`/zones/:zone/records/:recordId\` | PUT: the same body | \`dns.write\` |
+| GET | \`/zones/:zone/revisions?limit=\` · \`…/revisions/:revisionId\` | history of the zone (as \`list_dns_revisions\`) · a revision (as \`get_dns_revision\`) | \`dns.read\` |
+| POST | \`/zones/:zone/revisions/:revisionId/restore\` | \`{ dryRun? }\`: restore a revision (as \`restore_dns_revision\`) | \`dns.write\` |
 | GET | \`/pending-actions\` · \`/pending-actions/:pid\` | this key's requests for protected actions (\`?status=\`) · one of them | — |
 | GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, default 30): once a human decided (\`timedOut\` otherwise) | — |
 | DELETE | \`/pending-actions/:pid\` | withdraw the request | — |
@@ -667,8 +673,8 @@ Conséquences :
 | \`databases.manage\` | Bases de données : serveurs de bases du compte (en créer un dans les limites du plan), bases et utilisateurs, import / export SQL, requêtes SQL (lecture seule par défaut) |
 | \`routes.manage\` | Routes des domaines : choisir quel site (ou runtime) sert un chemin, ex. \`exemple.com/uploads/\`, vers les sites de la clé ; sur les domaines qui lui sont donnés dans le panel (même un domaine qui ne sert encore rien) ou qui ne servent que ses sites |
 | \`domains.subdomain\` | Rattacher aux sites des **sous-domaines** d'un domaine **déjà présent** sur le compte (donné à la clé dans le panel, ou qui ne sert que ses sites), retirer ceux créés par la clé |
-| \`dns.read\` | Lire les zones DNS des domaines donnés à la clé (toutes les zones du compte pour une clé sur tous les domaines) et leurs enregistrements ; ceux que gère la plateforme sont marqués en lecture seule |
-| \`dns.write\` | Créer, modifier et supprimer les enregistrements **libres** de ces zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), jamais un enregistrement géré par la plateforme (voir §5 « Enregistrements DNS ») |
+| \`dns.read\` | Lire les zones DNS des domaines donnés à la clé (toutes les zones du compte pour une clé sur tous les domaines) et leurs enregistrements et leur historique ; ceux que gère la plateforme sont marqués en lecture seule |
+| \`dns.write\` | Créer, modifier et supprimer les enregistrements **libres** de ces zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), jamais un enregistrement géré par la plateforme ; restaurer une révision de la zone (voir §5 « Enregistrements DNS ») |
 | \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs, et les erreurs PHP regroupées par release |
 | \`network.read\` | Lire les ports publics du compte : ses plages de l'IP partagée, son IP dédiée (adresse publique) et les liaisons de **toutes** les applications / stacks du compte (quelle que soit la sélection de sites). Lecture seule |
 
@@ -729,6 +735,9 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`list_dns_records\` | Enregistrements d'une zone (\`zone\`) : \`name\`, \`fqdn\`, \`type\`, \`content\`, \`ttl\`, \`priority\`, \`readOnly\` + \`readOnlyReason\` (\`generated\`, \`override\`, \`type\`, \`reserved\`) | \`dns.read\` |
 | \`upsert_dns_record\` | Créer ou modifier un enregistrement libre : \`zone\`, \`name\`, \`type\`, \`content\`, \`ttl?\`, \`priority?\` (MX / SRV), \`comment?\`, \`disabled?\` ; celui de ce nom et de ce type, ou \`record_id\` ; \`add: true\` ajoute une autre valeur | \`dns.write\` |
 | \`delete_dns_record\` | Supprimer un enregistrement libre : \`record_id\`, ou \`name\` + \`type\` (+ \`content\` si plusieurs correspondent) | \`dns.write\` |
+| \`list_dns_revisions\` | Historique d'une zone (\`zone\`, \`limit?\`), de la plus récente à la plus ancienne : \`id\`, \`seq\`, \`source\` (\`panel\`, \`api\`, \`mcp\`, \`system\`), \`action\`, \`author\`, \`summary\` | \`dns.read\` |
+| \`get_dns_revision\` | Une révision (\`zone\`, \`revision_id\`) : ses \`records\`, le \`diff\` jusqu'aux enregistrements actuels et le \`plan\` d'une restauration par cette clé | \`dns.read\` |
+| \`restore_dns_revision\` | Remettre les enregistrements libres tels qu'ils étaient dans une révision (\`zone\`, \`revision_id\`, \`dry_run?\`) ; crée une nouvelle révision | \`dns.write\` |
 | \`get_env\` / \`set_env\` | Variables d'environnement du site (lues par PHP avec \`getenv()\`) ; \`set\` ajoute / remplace, \`remove\` supprime, les autres restent ; secrets en écriture seule ; le site redémarre | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Dossiers où le site peut écrire (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Runtimes secondaires : un autre conteneur (autre moteur possible) qui sert certains chemins du **même** code et des mêmes données | \`sites.manage\` |
@@ -940,6 +949,7 @@ Avec \`dns.read\` / \`dns.write\`, une clé lit et écrit les enregistrements de
 - Mêmes contrôles que le panel : TTL de 60 à 604800 secondes, pas de CNAME à l'apex ni à côté d'un autre enregistrement du même nom (\`recordConflict\` 409), 500 enregistrements par zone (\`recordLimit\` 409). Un changement est servi en quelques secondes.
 - \`upsert_dns_record\` modifie l'enregistrement libre de ce nom et de ce type (TXT : du même usage, un TXT de vérification ne remplace jamais le SPF ; créé s'il n'y en a pas). S'il y en a plusieurs (répartition, plusieurs TXT) : \`recordAmbiguous\` (409) liste leurs identifiants ; donner \`record_id\`, ou \`add: true\` pour ajouter une autre valeur.
 - Supprimer un enregistrement est une action protégée (par défaut le propriétaire de la clé la confirme avec son code 2FA, voir « Actions protégées »).
+- **Historique** : chaque modification d'une zone crée une révision (\`list_dns_revisions\`) : faite dans le panel, par une clé (\`source\` \`api\` ou \`mcp\`, avec le nom de la clé) ou par la plateforme elle-même (\`system\` : un site, un sous-domaine ou le mail hébergé a changé les enregistrements générés). Après une mauvaise modification, \`get_dns_revision\` montre ce qui a changé depuis une révision et ce que ferait une restauration ; \`restore_dns_revision\` (essayer d'abord \`dry_run: true\`) remet les enregistrements libres tels qu'ils étaient. Les enregistrements gérés par la plateforme et ceux qu'une clé ne peut pas toucher restent tels quels (\`skipped\`, avec une \`reason\` : \`generated\`, \`protected\`, \`invalid\`, \`conflict\`, \`limit\`). Une restauration est protégée comme les écritures et suppressions qu'elle fait, et crée elle-même une révision : restaurer la révision précédente l'annule. L'historique garde au moins les 100 dernières révisions d'une zone et celles des 90 derniers jours.
 
 Faire pointer \`play.exemple.com\` vers un serveur de jeu hébergé ailleurs, avec son enregistrement SRV :
 
@@ -1053,6 +1063,8 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET | \`/zones\` | zones DNS de la clé (comme \`list_dns_zones\`) | \`dns.read\` |
 | GET · POST | \`/zones/:zone/records\` | la zone et ses enregistrements (\`readOnly\`) · \`{ name, type, content, ttl?, priority?, disabled?, comment? }\` (un enregistrement libre) | \`dns.read\` (POST : \`dns.write\`) |
 | PUT · DELETE | \`/zones/:zone/records/:recordId\` | PUT : le même corps | \`dns.write\` |
+| GET | \`/zones/:zone/revisions?limit=\` · \`…/revisions/:revisionId\` | historique de la zone (comme \`list_dns_revisions\`) · une révision (comme \`get_dns_revision\`) | \`dns.read\` |
+| POST | \`/zones/:zone/revisions/:revisionId/restore\` | \`{ dryRun? }\` : restaurer une révision (comme \`restore_dns_revision\`) | \`dns.write\` |
 | GET | \`/pending-actions\` · \`/pending-actions/:pid\` | les demandes de cette clé pour des actions protégées (\`?status=\`) · l'une d'elles | — |
 | GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, 30 par défaut) : dès qu'un humain a décidé (\`timedOut\` sinon) | — |
 | DELETE | \`/pending-actions/:pid\` | retirer la demande | — |

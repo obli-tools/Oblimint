@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import type {
   DnsDelegationCheck, DnsExpectedRecord, DnsRecord, DnsRecordInput, DnsServerStatus, DnsTemplate, DnsTemplateInput, DnsZone, DnsZoneCreate,
-  DnsZoneDetail, DnsZoneKind, DnsZoneUpdate, DnssecInfo,
+  DnsRestoreResult, DnsZoneDetail, DnsZoneKind, DnsZoneRevision, DnsZoneRevisionDetail, DnsZoneUpdate, DnssecInfo,
 } from '@oblimint/shared';
 import { HostingSocketEvents } from '@oblimint/shared';
 import { db } from '../../db';
@@ -17,6 +17,10 @@ import { inspectContainer } from '../docker/dockerOps';
 import { engineFor, localNodeId } from '../docker/engine';
 import { PDNS_CONTAINER } from '../hosting/naming';
 import { pdns } from './pdnsClient';
+import {
+  applyRestore, authorOfRequest, currentSnapshot, listRevisions, planRestore, recordRevision, revisionOf, type RestoreRules, type RestoreWork,
+} from './history';
+import { diffSnapshots } from './historyDiff';
 import {
   exportBind, generatedRecordsExpected, inZone, MAX_RECORDS_PER_ZONE, normalizeZoneName, recordConflict, RecordValidationError,
   soaRname, TemplateValidationError, validateRecord, validateTemplateRecords, verificationExpected,
@@ -109,10 +113,16 @@ function safeHook(what: string, fn: () => void): void {
   try { fn(); } catch (err) { logger.warn({ err: (err as Error)?.message, hook: what }, 'dns hook failed'); }
 }
 
-/** After a change: the zone is pushed by the queue (immediately when the worker runs). */
-function changed(zone: Pick<ZoneRow, 'id' | 'domain_id' | 'account_id' | 'tenant_id'>, reason: string): void {
+/**
+ * After a change — the ONE step every write of this service ends with: a revision of the zone is filed with the
+ * request's author (history.ts; nothing when the records did not change), then the zone is pushed by the queue
+ * (immediately when the worker runs). `reason` is the revision's action.
+ */
+async function changed(req: Request, zone: Pick<ZoneRow, 'id' | 'domain_id' | 'account_id' | 'tenant_id'>, reason: string, opts: { restoredFromSeq?: number | null } = {}): Promise<DnsZoneRevision | null> {
+  const revision = await recordRevision(zone.id, await authorOfRequest(req), reason, opts);
   emitZone(zone);
   queue.zone(zone.id, reason);
+  return revision;
 }
 
 /**
@@ -243,7 +253,7 @@ export const dnsService = {
     await audit(req, zone, 'dns.zone.ttl', { from: zone.default_ttl, to: ttl, recordsRetimed });
     const fresh = await zoneById(zone.id);
     if (fresh) await regenerateAuto(fresh, await loadContext());
-    changed(zone, 'zone-updated');
+    await changed(req, zone, 'zone-updated');
     return { zoneId: zone.id, recordsRetimed };
   },
 
@@ -324,7 +334,7 @@ export const dnsService = {
 
     const row = await db.transaction((trx) => insertZone(trx, { tenantId, accountId, domainId, name, kind, templateId }, ctx));
     await audit(req, row, 'dns.zone.create', { kind, domainId, templateId });
-    changed(row, 'zone-created');
+    await changed(req, row, 'zone-created');
     return zoneView(actor, row.id);
   },
 
@@ -350,7 +360,7 @@ export const dnsService = {
     if (body.applyTtlToRecords) recordsRetimed = await applyTtlToRecords(zone.id, (patch.default_ttl as number | undefined) ?? zone.default_ttl);
     if (recordsRetimed && !Object.keys(patch).length) {
       await audit(req, zone, 'dns.zone.update', { ...body, recordsRetimed });
-      changed(zone, 'zone-updated');
+      await changed(req, zone, 'zone-updated');
     }
     const dnssecChange = body.dnssec !== undefined && body.dnssec !== !!zone.dnssec;
     if (dnssecChange) {
@@ -374,7 +384,7 @@ export const dnsService = {
     } else if (Object.keys(patch).length) {
       const fresh = await zoneById(zone.id);
       if (fresh) await regenerateAuto(fresh, await loadContext());
-      changed(zone, 'zone-updated');
+      await changed(req, zone, 'zone-updated');
     }
     return detail(actor, zone.id);
   },
@@ -407,7 +417,7 @@ export const dnsService = {
       await regenerateAuto(zone, ctx, trx);
     });
     await audit(req, zone, 'dns.zone.reset', { keepManual: opts.keepManual });
-    changed(zone, 'zone-reset');
+    await changed(req, zone, 'zone-reset');
     return detail(actor, zone.id);
   },
 
@@ -429,7 +439,7 @@ export const dnsService = {
       await regenerateAuto(zone, ctx, trx);
     });
     await audit(req, zone, 'dns.zone.update', { templateId: template.id, template: template.name, written });
-    changed(zone, 'template-applied');
+    await changed(req, zone, 'template-applied');
     return detail(actor, zone.id);
   },
 
@@ -476,7 +486,7 @@ export const dnsService = {
     }).returning('*') as RecordRow[];
     await regenerateAuto(zone, await loadContext());
     await audit(req, zone, 'dns.record.create', { recordId: row.id, name: rec.name, type: rec.type, content: rec.content });
-    changed(zone, 'record-created');
+    await changed(req, zone, 'record-created');
     return toRecord(row);
   },
 
@@ -498,7 +508,7 @@ export const dnsService = {
     await audit(req, zone, 'dns.record.update', {
       recordId: row.id, name: rec.name, type: rec.type, content: rec.content, before: { name: current.name, type: current.type, content: current.content },
     });
-    changed(zone, 'record-updated');
+    await changed(req, zone, 'record-updated');
     return toRecord(row);
   },
 
@@ -514,7 +524,56 @@ export const dnsService = {
     await db('dns_records').where({ id: current.id }).delete();
     await regenerateAuto(zone, await loadContext());
     await audit(req, zone, 'dns.record.delete', { recordId: current.id, name: current.name, type: current.type, content: current.content });
-    changed(zone, 'record-deleted');
+    await changed(req, zone, 'record-deleted');
+  },
+
+  // ── history (migration 038, history.ts) ──
+  /** Revisions of the zone, most recent first (read). */
+  async listRevisions(actor: HostingActor, zoneId: number, limit?: number): Promise<DnsZoneRevision[]> {
+    const zone = await loadZone(actor, zoneId, 'read');
+    return listRevisions(zone.id, limit);
+  },
+
+  /**
+   * A revision, its records, what changed since (revision → current records) and what a restore would do now
+   * (`rules`: the key's write rules, apiKeys/keyDns).
+   */
+  async revisionDetail(actor: HostingActor, zoneId: number, revisionId: number, rules: RestoreRules = {}): Promise<DnsZoneRevisionDetail> {
+    const zone = await loadZone(actor, zoneId, 'read');
+    const rev = await revisionOf(zone.id, revisionId);
+    if (!rev) throw new AppError(404, 'DNS zone revision not found', 'notFound');
+    const work = await planRestore(zone, rev.records, rules);
+    return { revision: rev.revision, records: rev.records, diff: diffSnapshots(rev.records, await currentSnapshot(zone.id)), plan: work.plan };
+  },
+
+  /**
+   * Restores a revision: the records people wrote go back to it, the ones the platform maintains follow the domains
+   * (history.planRestore). Same checks as a write (dns.manage, hosted zone, validation, conflicts, limit); the gate
+   * is the caller's (routes: dns.zone_restore + dns.record_write / dns.record_delete). Files a revision itself
+   * (zone-restored, restoredFromSeq). `opts.apiKeyId`: restored by that key (provenance of the rows written back).
+   */
+  async restoreRevision(req: Request, actor: HostingActor, zoneId: number, revisionId: number, opts: { rules?: RestoreRules; apiKeyId?: number | null } = {}): Promise<DnsRestoreResult> {
+    const zone = await loadZone(actor, zoneId, 'dns.manage');
+    assertHosted(zone);
+    const rev = await revisionOf(zone.id, revisionId);
+    if (!rev) throw new AppError(404, 'DNS zone revision not found', 'notFound');
+    const ctx = await loadContext();
+    let work: RestoreWork | null = null;
+    await db.transaction(async (trx) => {
+      // Serialized with the other restores and the mail DNS fix (same row lock); the plan is made on the locked state.
+      await trx('dns_zones').where({ id: zone.id }).forUpdate().first('id');
+      work = await planRestore(zone, rev.records, opts.rules ?? {}, trx);
+      await applyRestore(trx, zone.id, work, opts.apiKeyId ?? null);
+      if (work.deleteIds.length || work.inserts.length) await regenerateAuto(zone, ctx, trx);
+    });
+    const done = work as RestoreWork | null;
+    const added = done?.inserts.length ?? 0;
+    const removed = done?.deleteIds.length ?? 0;
+    const skipped = done?.plan.skipped ?? [];
+    if (!added && !removed) return { revision: null, added, removed, skipped };
+    await audit(req, zone, 'dns.zone.restore', { revisionId: rev.revision.id, seq: rev.revision.seq, added, removed, skipped: skipped.length });
+    const revision = await changed(req, zone, 'zone-restored', { restoredFromSeq: rev.revision.seq });
+    return { revision, added, removed, skipped };
   },
 
   // ── templates (per tenant; staff dns.manage) ──

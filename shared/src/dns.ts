@@ -192,6 +192,115 @@ export interface DnsTemplateInput {
   isDefault?: boolean;
 }
 
+// ─── ZONE HISTORY (migration 038) ───────────────────────────────────────────
+//
+// Every change of the records of a zone (panel, access key / MCP, automatic
+// sync of the platform: domains, mail, certificates) files a revision: the
+// full snapshot of its records (challenge records aside), who made it and a
+// summary of the change. A revision can be compared with the current state and
+// restored (the records the platform maintains follow the domains whatever the
+// revision says).
+
+/** Where a revision comes from: the panel, the REST key API, the MCP endpoint, or the platform itself. */
+export type DnsRevisionSource = 'panel' | 'api' | 'mcp' | 'system';
+
+export interface DnsRevisionAuthor {
+  kind: 'user' | 'key' | 'system';
+  /** The user (a key: its owner); null for the platform. */
+  userId: number | null;
+  /** User name at the time of the change (null: the platform). */
+  name: string | null;
+  apiKeyId: number | null;
+  apiKeyName: string | null;
+}
+
+/** A record as a revision keeps it (relative name, '@' = apex). */
+export interface DnsSnapshotRecord {
+  name: string;
+  type: DnsRecordType;
+  content: string;
+  ttl: number;
+  priority: number | null;
+  disabled: boolean;
+  comment: string | null;
+  origin: DnsRecordOrigin;
+  /** Written by an access key (dns_records.api_key_id). */
+  byKey?: boolean;
+}
+
+/** One record changed between two snapshots: same name and type, `fields` differ. */
+export interface DnsRecordChange {
+  before: DnsSnapshotRecord;
+  after: DnsSnapshotRecord;
+  fields: Array<'content' | 'ttl' | 'priority' | 'disabled' | 'comment' | 'origin'>;
+}
+
+export interface DnsSnapshotDiff {
+  added: DnsSnapshotRecord[];
+  removed: DnsSnapshotRecord[];
+  changed: DnsRecordChange[];
+}
+
+/** Summary of a revision against the previous one. */
+export interface DnsRevisionSummary {
+  added: number;
+  removed: number;
+  changed: number;
+  /** A few lines such as "+ A www 192.0.2.1" (at most DNS_REVISION_SUMMARY_LINES). */
+  lines: string[];
+}
+
+export const DNS_REVISION_SUMMARY_LINES = 8;
+
+export interface DnsZoneRevision {
+  id: number;
+  zoneId: number;
+  /** Number of the revision in its zone (1, 2, …). */
+  seq: number;
+  createdAt: string;
+  source: DnsRevisionSource;
+  /** What was done: record-created, record-updated, record-deleted, zone-created, zone-updated, zone-reset, template-applied, zone-restored, mail-dns-fix, sync (the platform), initial (the zone as the history first found it). */
+  action: string;
+  author: DnsRevisionAuthor;
+  summary: DnsRevisionSummary;
+  recordCount: number;
+  /** zone.restore: the revision restored (its seq). */
+  restoredFromSeq: number | null;
+}
+
+/**
+ * Why a restore leaves a record as it is: 'generated' (the platform maintains it from the domains, the sites or
+ * the mail), 'protected' (a key may not write it: same rules as upsert_dns_record), 'invalid' (no longer valid
+ * for the zone), 'conflict' (a CNAME beside another record, a duplicate…), 'limit' (the zone's record limit).
+ */
+export type DnsRestoreSkipReason = 'generated' | 'protected' | 'invalid' | 'conflict' | 'limit';
+
+/** What restoring a revision does to the current records. */
+export interface DnsRestorePlan {
+  add: DnsSnapshotRecord[];
+  remove: DnsSnapshotRecord[];
+  skipped: Array<{ op: 'add' | 'remove'; record: DnsSnapshotRecord; reason: DnsRestoreSkipReason }>;
+}
+
+/** GET /api/dns/zones/:id/revisions/:rid (and the key API): a revision, its records and what changed since. */
+export interface DnsZoneRevisionDetail {
+  revision: DnsZoneRevision;
+  records: DnsSnapshotRecord[];
+  /** From this revision to the current records. */
+  diff: DnsSnapshotDiff;
+  /** What a restore would do now. */
+  plan: DnsRestorePlan;
+}
+
+/** POST /api/dns/zones/:id/revisions/:rid/restore */
+export interface DnsRestoreResult {
+  /** The revision the restore filed (null: nothing changed). */
+  revision: DnsZoneRevision | null;
+  added: number;
+  removed: number;
+  skipped: DnsRestorePlan['skipped'];
+}
+
 // ─── SERVER (platform) ───────────────────────────────────────────────────────
 
 /** GET /api/system/dns */

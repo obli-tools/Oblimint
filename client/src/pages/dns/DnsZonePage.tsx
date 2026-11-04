@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  Download, EyeOff, FileStack, KeyRound, Lock, Network, Pencil, Plus, RotateCcw, Search, Trash2,
+  Download, EyeOff, FileStack, History, KeyRound, Lock, Network, Pencil, Plus, RotateCcw, Search, Trash2,
 } from 'lucide-react';
 import { HostingSocketEvents, type DnsRecord, type DnsRecordType, type DnsZoneDetail } from '@oblimint/shared';
 import { dnsApi } from '@/api/dns.api';
@@ -17,10 +17,12 @@ import { PageContainer } from '@/components/common/PageContainer';
 import { GroupedTable, domainTree } from '@/components/common/GroupedTable';
 import { TenantBadge } from '@/components/common/TenantBadge';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
+import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { useConfirm } from '@/components/common/ConfirmDialog';
 import { Card, Pill, payloadNumber, useHostingEvents } from '@/components/hosting/hostingUi';
 import { RecordOriginBadge, ZoneKindBadge, ZoneStatusBadge } from '@/components/dns/DnsBadges';
 import { DnsRecordModal } from '@/components/dns/DnsRecordModal';
+import { DnsZoneHistoryCard } from '@/components/dns/DnsZoneHistory';
 import { ApplyTemplateModal, DelegationCard, ExpectedRecordsCard, ZoneResetModal, ZoneSettingsCard } from '@/components/dns/DnsZoneCards';
 import { RECORD_TYPES, compareRecords, fqdnOf } from '@/components/dns/dnsRecords';
 import { apiErrorStatus, dnsErrorMessage, toastDnsError } from '@/components/dns/dnsErrors';
@@ -49,6 +51,8 @@ export function DnsZonePage() {
   const [editing, setEditing] = useState<DnsRecord | 'new' | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+  // Records editor or history of the zone (revisions, diff, restore).
+  const [tab, setTab] = useState<'records' | 'history'>('records');
 
   // A late answer for a previous zone (/dns/zones/1 → /2) must not land here.
   const reqSeq = useRef(0);
@@ -254,7 +258,23 @@ export function DnsZonePage() {
 
       {!hosted && <ExpectedRecordsCard zone={zone} />}
 
+      <SegmentedTabs
+        fill={false}
+        className="self-start"
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'records', label: t('dns.records.title') || 'Records', icon: <Network size={14} /> },
+          { id: 'history', label: t('dns.history.title') || 'History', icon: <History size={14} /> },
+        ]}
+      />
+
+      {tab === 'history' && (
+        <DnsZoneHistoryCard zone={zone} manage={manage} refreshKey={`${zone.serial}:${zone.updatedAt}:${zone.records.length}:${zone.records.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), '')}`} onRestored={() => { void load(true); }} />
+      )}
+
       {/* Records */}
+      {tab === 'records' && (
       <Card
         title={t('dns.records.title') || 'Records'}
         icon={<Network size={14} className="text-accent" />}
@@ -359,6 +379,7 @@ export function DnsZonePage() {
           />
         )}
       </Card>
+      )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <ZoneSettingsCard zone={zone} manage={manage} onChanged={setZone} />

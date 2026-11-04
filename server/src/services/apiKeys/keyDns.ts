@@ -1,11 +1,13 @@
 import type { Request } from 'express';
 import type {
-  ApiV1DnsRecord, ApiV1DnsUpsertResult, ApiV1DnsZone, ApiV1DnsZoneRecords, DnsRecord, DnsRecordInput, DnsRecordType,
+  ApiV1DnsRecord, ApiV1DnsUpsertResult, ApiV1DnsZone, ApiV1DnsZoneRecords, DnsRecord, DnsRecordInput, DnsRecordType, DnsRestorePlan,
+  DnsRestoreResult, DnsZoneRevision, DnsZoneRevisionDetail,
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { assertRecordFits, dnsService, validatedRecord } from '../dns/dns.service';
 import { inZone, txtKind, validateRecord, type GeneratedRecord, type NormalizedRecord } from '../dns/records';
+import type { RestoreRules } from '../dns/history';
 import { generatedAuto, loadContext, zoneQuery, type RecordRow, type ZoneRow } from '../dns/store';
 import type { GateSpec } from '../restrictions/gate';
 import { asKeyRequest, keyGated } from '../restrictions/targets';
@@ -136,7 +138,7 @@ async function recordOf(zone: ZoneRow, recordId: number): Promise<RecordRow> {
 
 const fqdnOf = (zone: string, name: string) => (name === '@' ? zone : `${name}.${zone}`);
 
-function gateSpec(zone: ZoneRow, action: 'dns.record_write' | 'dns.record_delete', params: Record<string, unknown>): GateSpec {
+function gateSpec(zone: ZoneRow, action: 'dns.record_write' | 'dns.record_delete' | 'dns.zone_restore', params: Record<string, unknown>): GateSpec {
   return {
     action,
     target: { tenantId: Number(zone.tenant_id), accountId: Number(zone.account_id), siteId: null },
@@ -217,6 +219,18 @@ function ambiguous(rows: RecordRow[]): AppError {
     'recordAmbiguous', { recordIds: rows.map((r) => r.id) });
 }
 
+/**
+ * What a key's restore may do (dns/history planRestore): write back only what upsert_dns_record could write, remove
+ * only what delete_dns_record could delete — the platform's records and the humans' records on its names stay.
+ */
+async function restoreRules(zone: ZoneRow): Promise<RestoreRules> {
+  const rules = await zoneRules(zone);
+  return {
+    canAdd: (rec) => (keyWriteGuard(rec, rules.generated, rules.facts) ? 'protected' : null),
+    canRemove: (row) => (rowReadOnly(row, rules) ? 'protected' : null),
+  };
+}
+
 export const keyDns = {
   /** Zones the key reaches (dns.read). */
   async zones(ctx: ApiKeyContext): Promise<ApiV1DnsZone[]> {
@@ -281,5 +295,38 @@ export const keyDns = {
     if (free.length > 1) throw ambiguous(free);
     await keyDns.remove(ctx, req, zoneName, free[0].id);
     return { deleted: true, id: free[0].id };
+  },
+
+  // ── history of the zone (migration 038, dns/history.ts) ──
+  /** Revisions of a zone of the key, most recent first (dns.read). */
+  async revisions(ctx: ApiKeyContext, zoneName: string, limit?: number): Promise<DnsZoneRevision[]> {
+    requireScope(ctx, 'dns.read');
+    const { zone } = await keyZone(ctx, zoneName);
+    return dnsService.listRevisions(ctx.actor, zone.id, limit);
+  },
+
+  /** A revision, its records, the diff to the current records and what a restore by this key would do (dns.read). */
+  async revision(ctx: ApiKeyContext, zoneName: string, revisionId: number): Promise<DnsZoneRevisionDetail> {
+    requireScope(ctx, 'dns.read');
+    const { zone } = await keyZone(ctx, zoneName);
+    return dnsService.revisionDetail(ctx.actor, zone.id, revisionId, await restoreRules(zone));
+  },
+
+  /**
+   * Restores a revision within the key's rules (dns.write, hosted zone): its free records go back to the revision,
+   * the others stay (skipped). Gate dns.zone_restore, with dns.record_write / dns.record_delete when it writes /
+   * removes records (the strictest). dryRun: the plan only, nothing gated nor written.
+   */
+  async restore(ctx: ApiKeyContext, req: Request, zoneName: string, revisionId: number, opts: { dryRun?: boolean } = {}): Promise<DnsRestoreResult | { dryRun: true; plan: DnsRestorePlan }> {
+    const zone = await writableZone(ctx, zoneName);
+    const rules = await restoreRules(zone);
+    const detail = await dnsService.revisionDetail(ctx.actor, zone.id, revisionId, rules);
+    if (opts.dryRun) return { dryRun: true, plan: detail.plan };
+    if (!detail.plan.add.length && !detail.plan.remove.length) return { revision: null, added: 0, removed: 0, skipped: detail.plan.skipped };
+    const params = { op: 'restore', revisionId: detail.revision.id, seq: detail.revision.seq };
+    const specs = [gateSpec(zone, 'dns.zone_restore', params)];
+    if (detail.plan.add.length) specs.push(gateSpec(zone, 'dns.record_write', params));
+    if (detail.plan.remove.length) specs.push(gateSpec(zone, 'dns.record_delete', params));
+    return keyGated(ctx, req, specs, () => dnsService.restoreRevision(asKeyRequest(req, ctx), ctx.actor, zone.id, detail.revision.id, { rules, apiKeyId: ctx.id }));
   },
 };

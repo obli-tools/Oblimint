@@ -124,6 +124,10 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   POST   /zones/:zone/records  DnsRecordInput         → ApiV1DnsRecord (201; free records only)  dns.write (gate dns.record_write)
 //   PUT    /zones/:zone/records/:rid DnsRecordInput     → ApiV1DnsRecord                           dns.write (gate dns.record_write)
 //   DELETE /zones/:zone/records/:rid                    → { deleted: true }                        dns.write (gate dns.record_delete)
+//   GET    /zones/:zone/revisions?limit=                → DnsZoneRevision[] (history, most recent first) dns.read
+//   GET    /zones/:zone/revisions/:rev                  → DnsZoneRevisionDetail (records, diff to now, restore plan) dns.read
+//   POST   /zones/:zone/revisions/:rev/restore {dryRun?} → DnsRestoreResult (free records only)    dns.write (gate dns.zone_restore
+//                                                         + dns.record_write / dns.record_delete when it writes / removes records)
 //   GET    /pending-actions?status=                     → KeyPendingAction[] (this key's requests for protected actions)
 //   GET    /pending-actions/:pid                        → KeyPendingAction
 //   GET    /pending-actions/:pid/wait?timeout=≤60       → KeyPendingAction once decided (timedOut otherwise; one of the 3 wait slots)
@@ -442,6 +446,16 @@ router.put('/zones/:zone/records/:rid', h(async (req, res) => ok(res, await keyD
 router.delete('/zones/:zone/records/:rid', h(async (req, res) => {
   await keyDns.remove(ctxOf(req), req, zoneName(req), Number(req.params.rid));
   ok(res, { deleted: true });
+}));
+router.get('/zones/:zone/revisions', h(async (req, res) => {
+  const limit = Number(req.query.limit);
+  ok(res, await keyDns.revisions(ctxOf(req), zoneName(req), Number.isInteger(limit) && limit > 0 ? limit : undefined));
+}));
+router.get('/zones/:zone/revisions/:rev', h(async (req, res) => ok(res, await keyDns.revision(ctxOf(req), zoneName(req), Number(req.params.rev)))));
+const dnsRestoreBody = z.object({ dryRun: z.boolean().optional() }).strict();
+router.post('/zones/:zone/revisions/:rev/restore', h(async (req, res) => {
+  const body = parseBody(dnsRestoreBody, req.body ?? {});
+  ok(res, await keyDns.restore(ctxOf(req), req, zoneName(req), Number(req.params.rev), { dryRun: body.dryRun === true }));
 }));
 // ── path routes ──
 const prefix = z.string().min(1).max(255);

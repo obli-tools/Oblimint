@@ -638,6 +638,37 @@ const TOOLS: ToolDef[] = [
       if (a.record_id) { await keyDns.remove(ctx, req, a.zone, a.record_id); return { deleted: true, id: a.record_id }; }
       return keyDns.removeMatching(ctx, req, a.zone, a.name, a.type, a.content ?? null);
     },
+  },
+  {
+    name: 'list_dns_revisions', title: 'History of a DNS zone', readOnly: true,
+    description: 'Revisions of one zone of list_dns_zones, most recent first (scope dns.read). Every change of its records files one: a change in the panel, by an access key (REST or MCP), or by the platform itself (source system: a site, a subdomain or the hosted mail changed the generated records). Each revision: id, seq, createdAt, source (panel, api, mcp, system), action (record-created, record-updated, record-deleted, zone-reset, template-applied, zone-updated, zone-restored, mail-dns-fix, sync, initial…), author (user / key name), summary (added / removed / changed counts and a few lines). Use it to find the state to go back to after a bad change.',
+    inputSchema: obj({
+      zone: { type: 'string', description: 'Zone name from list_dns_zones.' },
+      limit: { type: 'integer', minimum: 1, maximum: 500, description: 'At most this many revisions (default 100).' },
+    }, ['zone']),
+    args: z.object({ zone: z.string().min(1).max(253), limit: z.number().int().min(1).max(500).optional() }),
+    run: (ctx, _r, a) => keyDns.revisions(ctx, a.zone, a.limit),
+  },
+  {
+    name: 'get_dns_revision', title: 'A revision of a DNS zone', readOnly: true,
+    description: 'One revision of list_dns_revisions (scope dns.read): its records, diff (from that revision to the current records: added, removed, changed) and plan (what restore_dns_revision by THIS key would do now: add, remove, and skipped with a reason — generated: maintained by the platform from the sites / mail, never restored; protected: a record a key may not write or delete; invalid, conflict, limit).',
+    inputSchema: obj({
+      zone: { type: 'string', description: 'Zone name from list_dns_zones.' },
+      revision_id: { type: 'integer', description: 'Revision id from list_dns_revisions.' },
+    }, ['zone', 'revision_id']),
+    args: z.object({ zone: z.string().min(1).max(253), revision_id: zId }),
+    run: (ctx, _r, a) => keyDns.revision(ctx, a.zone, a.revision_id),
+  },
+  {
+    name: 'restore_dns_revision', title: 'Restore a revision of a DNS zone', destructive: true, gated: ['dns.zone_restore', 'dns.record_write', 'dns.record_delete'],
+    description: 'Puts the FREE records of a hosted zone back as they were in a revision (scope dns.write): the free records the revision does not hold are deleted, its missing ones written back. The records the platform manages (sites, subdomains, hosted mail, challenges) and the ones a key may not touch stay as they are (listed in skipped). Check get_dns_revision first, or dry_run: true for the plan only. The restore files a new revision (zone-restored): restoring the previous one undoes it. Protected like the writes and deletions of records (twoFactorRequired: ask the human, then call again).',
+    inputSchema: obj({
+      zone: { type: 'string', description: 'Zone name from list_dns_zones.' },
+      revision_id: { type: 'integer', description: 'Revision id from list_dns_revisions.' },
+      dry_run: { type: 'boolean', description: 'Only return what the restore would do.' },
+    }, ['zone', 'revision_id']),
+    args: z.object({ zone: z.string().min(1).max(253), revision_id: zId, dry_run: z.boolean().optional() }),
+    run: (ctx, req, a) => keyDns.restore(ctx, req, a.zone, a.revision_id, { dryRun: a.dry_run === true }),
   },  // ── path routes (routes.manage), secondary runtimes (sites.manage) ──
   {
     name: 'list_routes', title: 'Domains and routes', readOnly: true,
@@ -1059,7 +1090,7 @@ export const MCP_INSTRUCTIONS = [
   'A site in publish mode "auto" puts every staging change live a few seconds later: on a live site, switch it to "manual" (update_site) before developing; switching to "auto" needs releases.publish.',
   'Writable folders are declared data paths (add_data_path); secrets and database credentials go to environment variables (set_env secret: write-only, create_database_user with env_site_id), never into the code (a committed secret stays readable in old releases). Never write your own access key into a file. Every publish runs a leak guard (secrets, dumps, config backups, phpinfo…): run check_leaks before publish; leakBlocked means nothing went live — remove what outcome.leaks names and publish again.',
   'Domains: only those given to the key (Domains of the key in the panel) or serving only its sites can be routed or get subdomains; a route towards a site outside the key is never changed nor removed. Batches: at most 20 messages.',
-  'DNS (scopes dns.read / dns.write): list_dns_zones, list_dns_records, upsert_dns_record, delete_dns_record on the zones of the domains given to the key. The records the platform manages (names served by the sites and subdomains, hosted mail, SOA / NS, challenges) are read-only: never repoint a name served by a site (use routes / subdomains); DNS records are for what is hosted elsewhere.',
+  'DNS (scopes dns.read / dns.write): list_dns_zones, list_dns_records, upsert_dns_record, delete_dns_record on the zones of the domains given to the key; list_dns_revisions / get_dns_revision / restore_dns_revision to go back after a bad change. The records the platform manages (names served by the sites and subdomains, hosted mail, SOA / NS, challenges) are read-only: never repoint a name served by a site (use routes / subdomains); DNS records are for what is hosted elsewhere.',
   'No permanent process runs: only the website and its cron jobs (one hour at most each).',
   `Protected actions: the humans may protect some operations (dropping a database, an SQL write, publishing…). Such a tool then answers an error twoFactorRequired (the key's owner confirms with his 2FA code) or approvalRequired (a second authorised person approves) with details.pendingActionId, description and userMessage: tell the human exactly that message (« ${PENDING_ACTION_USER_MESSAGE_FR} ») and what is asked, call wait_for_pending_action, and once approved call the SAME tool again with the SAME arguments (or approval_id) — it runs once; any other argument files a new request. twoFactorNotEnrolled: the key's owner must first enable 2FA in his profile; noEligibleApprover: a second authorised person is needed. You never confirm nor approve anything yourself; denied means stop and ask the human.`,
   'Call get_guide for the full guide (rights, tools, databases, cron, routes, how to develop on a live site and roll back).',
