@@ -449,6 +449,12 @@
       "actionExpired": "Request expired",
       "securityKeyRegimeChanged": "Access keys: security regime changed",
       "securityKeyAbuse": "Repeated invalid access keys",
+      "platformComponentDown": "Platform component down",
+      "platformComponentUp": "Platform component recovered",
+      "nodeDiskLow": "Low disk space on the node",
+      "nodeDiskOk": "Node disk space back to normal",
+      "backupFailed": "Backup failed",
+      "backupRecovered": "Backup recovered",
       "accountRecoveryCodeUsed": "Recovery code used",
       "accountPasswordReset": "Password reset",
       "accountEmailChanged": "E-mail address changed"

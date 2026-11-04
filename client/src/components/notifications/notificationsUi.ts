@@ -60,6 +60,13 @@ export function eventLabel(t: TFunction, e: NotificationEvent | AccountNotificat
     'action.expired': 'Request expired',
     'security.keyRegimeChanged': 'Access keys: security regime changed',
     'security.keyAbuse': 'Repeated invalid access keys',
+    // Health center (platform admins)
+    'platform.componentDown': 'Platform component down',
+    'platform.componentUp': 'Platform component recovered',
+    'node.diskLow': 'Low disk space on the node',
+    'node.diskOk': 'Node disk space back to normal',
+    'backup.failed': 'Backup failed',
+    'backup.recovered': 'Backup recovered',
     // Personal notices (family account)
     'account.recoveryCodeUsed': 'Recovery code used',
     'account.passwordReset': 'Password reset',

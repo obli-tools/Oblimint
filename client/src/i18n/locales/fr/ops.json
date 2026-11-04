@@ -449,6 +449,12 @@
       "actionExpired": "Demande expirée",
       "securityKeyRegimeChanged": "Clés d'accès : régime de sécurité changé",
       "securityKeyAbuse": "Clés d'accès invalides répétées",
+      "platformComponentDown": "Composant de la plateforme en panne",
+      "platformComponentUp": "Composant de la plateforme rétabli",
+      "nodeDiskLow": "Espace disque faible sur le nœud",
+      "nodeDiskOk": "Espace disque du nœud revenu à la normale",
+      "backupFailed": "Échec de sauvegarde",
+      "backupRecovered": "Sauvegarde rétablie",
       "accountRecoveryCodeUsed": "Code de secours utilisé",
       "accountPasswordReset": "Mot de passe réinitialisé",
       "accountEmailChanged": "Adresse e-mail changée"

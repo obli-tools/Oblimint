@@ -93,6 +93,13 @@ export const NOTIFICATION_EVENT_FAMILY: Record<NotificationEvent, NotificationFa
   'action.expired': 'approvals',
   'security.keyRegimeChanged': 'security',
   'security.keyAbuse': 'security',
+  // Health center (platform admins only: family platform)
+  'platform.componentDown': 'platform',
+  'platform.componentUp': 'platform',
+  'node.diskLow': 'platform',
+  'node.diskOk': 'platform',
+  'backup.failed': 'platform',
+  'backup.recovered': 'platform',
 };
 
 export type UserNotificationSeverity = 'info' | 'warning' | 'critical';

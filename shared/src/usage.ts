@@ -184,7 +184,14 @@ export type NotificationEvent =
   | 'action.expired'              // my request expired before a decision / before being used
   // IP security of the access keys
   | 'security.keyRegimeChanged'   // the key surfaces switched between strict and watch
-  | 'security.keyAbuse';          // repeated bad keys from a never-banned range (connectors)
+  | 'security.keyAbuse'           // repeated bad keys from a never-banned range (connectors)
+  // Health center (platform admins: services/healthCenter), one notification per transition
+  | 'platform.componentDown'      // a deep health component failed several checks in a row
+  | 'platform.componentUp'        // it is green again (same count of checks)
+  | 'node.diskLow'                // the data disk of the node is under its threshold
+  | 'node.diskOk'                 // back over it
+  | 'backup.failed'               // a backup run of a target (account / panel) failed or was partial
+  | 'backup.recovered';           // the next run of that target succeeded
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'quota.warning', 'quota.exceeded', 'quota.action', 'certificate.failed', 'certificate.issued', 'dns.syncFailed', 'db.instanceFailed', 'cron.failed', 'security.banned',
@@ -196,6 +203,7 @@ export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'release.pendingApproval', 'release.approved', 'release.rejected', 'domain.verified', 'domain.reclaimed',
   'action.confirmationRequired', 'action.approvalRequired', 'action.approved', 'action.denied', 'action.expired',
   'security.keyRegimeChanged', 'security.keyAbuse',
+  'platform.componentDown', 'platform.componentUp', 'node.diskLow', 'node.diskOk', 'backup.failed', 'backup.recovered',
 ];
 
 /**

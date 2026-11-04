@@ -125,6 +125,13 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'action.expired': 'Demande expirée',
   'security.keyRegimeChanged': 'Sécurité des clés d’accès : régime changé',
   'security.keyAbuse': 'Clés d’accès invalides répétées',
+  // Health center
+  'platform.componentDown': 'Composant de la plateforme en panne',
+  'platform.componentUp': 'Composant de la plateforme rétabli',
+  'node.diskLow': 'Espace disque faible sur le nœud',
+  'node.diskOk': 'Espace disque du nœud revenu à la normale',
+  'backup.failed': 'Échec de sauvegarde',
+  'backup.recovered': 'Sauvegarde rétablie',
   test: 'Test',
 };
 
