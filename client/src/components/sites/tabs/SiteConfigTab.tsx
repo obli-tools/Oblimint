@@ -15,13 +15,14 @@ import { accountHref } from '@/utils/links';
 import { SiteSettingsCard } from '../SiteSettingsCard';
 import { LeakGuardCard } from '../LeakGuard';
 import { CmsGuardCard } from '@/components/security/CmsGuard';
+import { ObservationSettingsCard } from '../ReleaseObservation';
 import { sectionLabelCls } from '../styles';
 import { SiteDataPathsTab } from './SiteDataPathsTab';
 import { SiteEnvTab } from './SiteEnvTab';
 import type { SiteTabProps } from './types';
 
 /** Sections of the Configuration tab reachable with `&section=` (aliases `data` / `env`). */
-type Section = 'general' | 'leaks' | 'logins' | 'data' | 'env' | 'db' | 'mail';
+type Section = 'general' | 'leaks' | 'logins' | 'observation' | 'data' | 'env' | 'db' | 'mail';
 
 /**
  * Configuration of a site (coherence plan 1.3): general settings and
@@ -53,6 +54,9 @@ export function SiteConfigTab(props: SiteTabProps) {
       </section>
       <section id="site-config-logins" className="scroll-mt-4">
         <CmsGuardCard site={site} onSiteChange={props.onSiteChange} />
+      </section>
+      <section id="site-config-observation" className="scroll-mt-4">
+        <ObservationSettingsCard site={site} onSiteChange={props.onSiteChange} />
       </section>
       <section id="site-config-data" className="scroll-mt-4">
         <div className={sectionLabelCls}>{t('sites.tabs.data') || 'Data paths'}</div>

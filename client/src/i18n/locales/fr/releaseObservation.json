@@ -1,0 +1,58 @@
+{
+  "releaseObservation": {
+    "title": "Surveillance après publication",
+    "watching": "en observation",
+    "soFar": "Pour l’instant : {{verdict}}",
+    "badgeTitle": "Verdict de la surveillance après publication",
+    "reverted": "retirée",
+    "verdict": {
+      "healthy": "saine",
+      "degraded": "dégradée",
+      "failed": "en échec",
+      "insufficientData": "trafic insuffisant"
+    },
+    "reason": {
+      "errorRate": "Part de réponses 5xx très au-dessus du seuil et de la release précédente",
+      "healthcheckFailing": "Contrôle de santé en échec plusieurs fois de suite",
+      "errorRateUp": "Plus de réponses 5xx qu’avec la release précédente",
+      "healthcheckFlaky": "Quelques contrôles de santé en échec",
+      "newFatalErrors": "Nouvelles erreurs PHP fatales (aucune release antérieure ne les avait)",
+      "lowTraffic": "Moins de {{count}} requêtes : pas de verdict sur le trafic"
+    },
+    "mode": {
+      "alert": "alerte",
+      "revert": "retour automatique"
+    },
+    "watchingText": "Comparée à la release précédente jusqu’au {{date}}. Pour l’instant : {{verdict}}.",
+    "supersededText": "Arrêtée : une autre release est passée en ligne pendant la fenêtre.",
+    "revertedText": "Cette release était cassée : la release #{{number}} a été remise en ligne automatiquement.",
+    "revertFailedText": "Le retour automatique a échoué : cette release est restée en ligne.",
+    "migrationsText": "Cette release a lancé des migrations de base : elle n’est jamais retirée automatiquement (alerte seulement).",
+    "facts": {
+      "window": "Fenêtre",
+      "requests": "Requêtes",
+      "errors": "Réponses 5xx",
+      "upstream": "{{count}} × 502/503/504",
+      "baseline": "Avant",
+      "baselineOf": "Avant (#{{number}})",
+      "minutes": "{{count}} min",
+      "noBaseline": "inconnu (première release, ou panel redémarré)",
+      "php": "Nouvelles erreurs PHP",
+      "phpValue": "{{groups}} groupe(s), {{fatals}} fatale(s), {{occurrences}} occurrence(s)",
+      "probes": "Contrôles de santé",
+      "probesValue": "{{ok}}/{{total}} OK"
+    },
+    "settings": {
+      "intro": "Après chaque publication, la nouvelle release est comparée à la précédente pendant un moment : part de réponses 5xx, nouvelles erreurs PHP, un contrôle de santé par minute. Verdict : saine, dégradée, en échec, ou trafic insuffisant (moins de {{requests}} requêtes).",
+      "modeLabel": "Quand une release est dégradée ou en échec",
+      "alert": "Alerter (recommandé)",
+      "revert": "Remettre la release précédente si elle est en échec",
+      "off": "Pas de surveillance",
+      "modeHint": "Alerte : une notification pour une release dégradée ou en échec. Retour automatique : une release en échec est remplacée une seule fois par la précédente — jamais une release qui a lancé des migrations de base (alerte seulement), jamais après un retour arrière.",
+      "windowLabel": "Fenêtre (minutes)",
+      "windowHint": "Une release clairement en échec est jugée au bout de 2 minutes ; sinon à la fin de la fenêtre.",
+      "windowInvalid": "Entre {{min}} et {{max}} minutes.",
+      "revertNeedsPublish": "Le retour automatique demande le droit de publier des releases."
+    }
+  }
+}

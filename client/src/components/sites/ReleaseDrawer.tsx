@@ -13,6 +13,7 @@ import { toastMaintenanceError } from '@/components/maintenance/maintenanceError
 import { cn } from '@/utils/cn';
 import { ReleaseDiffPanel } from './DiffViewer';
 import { LeakReportPanel } from './LeakGuard';
+import { ReleaseObservationPanel, ReleaseVerdictBadge } from './ReleaseObservation';
 import { Pill, ReleaseStatusBadge, ScanVerdictChip } from './SiteBadges';
 import { formatDateTime } from './siteForm';
 import { siteErrorMessage } from './siteErrors';
@@ -143,6 +144,7 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
         <span className="flex items-center gap-1.5">
           {release.isCurrent && <Pill tone="accent">{t('releases.current') || 'current'}</Pill>}
           <ReleaseStatusBadge status={release.status} />
+          <ReleaseVerdictBadge observation={release.observation} />
         </span>
       ) : undefined}
       footer={release && renderActions ? renderActions(release) : undefined}
@@ -170,6 +172,8 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
               <p className="whitespace-pre-wrap break-words font-mono text-xs text-red-400">{release.error}</p>
             </div>
           )}
+
+          {release.observation && <ReleaseObservationPanel observation={release.observation} />}
 
           {release.scan && (
             <section>

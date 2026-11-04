@@ -50,6 +50,8 @@ export function eventLabel(t: TFunction, e: NotificationEvent | AccountNotificat
     'release.pendingApproval': 'Release waiting for approval',
     'release.approved': 'Release approved',
     'release.rejected': 'Release rejected',
+    'release.degraded': 'Release degraded after going live',
+    'release.failedObservation': 'Release failed after going live',
     'domain.verified': 'Domain ownership verified',
     'domain.reclaimed': 'Domain taken back by its owner',
     // Sensitive actions (family approvals)

@@ -1,0 +1,58 @@
+{
+  "releaseObservation": {
+    "title": "Observation after publication",
+    "watching": "observing",
+    "soFar": "So far: {{verdict}}",
+    "badgeTitle": "Verdict of the observation after publication",
+    "reverted": "reverted",
+    "verdict": {
+      "healthy": "healthy",
+      "degraded": "degraded",
+      "failed": "failed",
+      "insufficientData": "not enough traffic"
+    },
+    "reason": {
+      "errorRate": "Share of 5xx answers far above the threshold and the previous release",
+      "healthcheckFailing": "Health check failing several times in a row",
+      "errorRateUp": "More 5xx answers than with the previous release",
+      "healthcheckFlaky": "Some health checks failed",
+      "newFatalErrors": "New fatal PHP errors (none of the earlier releases had them)",
+      "lowTraffic": "Fewer than {{count}} requests: no verdict on the traffic"
+    },
+    "mode": {
+      "alert": "alert",
+      "revert": "automatic return"
+    },
+    "watchingText": "Compared with the previous release until {{date}}. So far: {{verdict}}.",
+    "supersededText": "Stopped: another release went live during the window.",
+    "revertedText": "This release was broken: release #{{number}} was put back automatically.",
+    "revertFailedText": "The automatic return failed: this release stayed live.",
+    "migrationsText": "This release ran database migrations: it is never put back automatically (alert only).",
+    "facts": {
+      "window": "Window",
+      "requests": "Requests",
+      "errors": "5xx answers",
+      "upstream": "{{count}} × 502/503/504",
+      "baseline": "Before",
+      "baselineOf": "Before (#{{number}})",
+      "minutes": "{{count}} min",
+      "noBaseline": "unknown (first release, or the panel restarted)",
+      "php": "New PHP errors",
+      "phpValue": "{{groups}} group(s), {{fatals}} fatal, {{occurrences}} occurrence(s)",
+      "probes": "Health checks",
+      "probesValue": "{{ok}}/{{total}} OK"
+    },
+    "settings": {
+      "intro": "After each publication the new release is compared with the previous one for a while: share of 5xx answers, new PHP errors, a health check every minute. Verdict: healthy, degraded, failed, or not enough traffic (fewer than {{requests}} requests).",
+      "modeLabel": "When a release is degraded or failed",
+      "alert": "Alert (recommended)",
+      "revert": "Put the previous release back if it failed",
+      "off": "No observation",
+      "modeHint": "Alert: a notification for a degraded or failed release. Automatic return: a failed release is replaced once by the previous one — never a release that ran database migrations (alert only), never after a rollback.",
+      "windowLabel": "Window (minutes)",
+      "windowHint": "A clearly failed release is judged after 2 minutes; otherwise at the end of the window.",
+      "windowInvalid": "Between {{min}} and {{max}} minutes.",
+      "revertNeedsPublish": "The automatic return takes the right to publish releases."
+    }
+  }
+}

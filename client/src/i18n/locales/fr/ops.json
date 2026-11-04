@@ -440,6 +440,8 @@
       "releasePendingApproval": "Release en attente d’approbation",
       "releaseApproved": "Release approuvée",
       "releaseRejected": "Release rejetée",
+      "releaseDegraded": "Release dégradée après sa mise en ligne",
+      "releaseFailedObservation": "Release en échec après sa mise en ligne",
       "domainVerified": "Propriété du domaine vérifiée",
       "domainReclaimed": "Domaine repris par son propriétaire",
       "actionConfirmationRequired": "Confirmation demandée",

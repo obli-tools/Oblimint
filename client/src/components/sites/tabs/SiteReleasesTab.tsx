@@ -15,6 +15,7 @@ import { IconButton } from '@/components/common/IconButton';
 import { GroupedTable, flatNodes } from '@/components/common/GroupedTable';
 import { useConfirm, usePrompt } from '@/components/common/ConfirmDialog';
 import { Pill, ReleaseStatusBadge, ScanVerdictChip } from '../SiteBadges';
+import { ReleaseVerdictBadge } from '../ReleaseObservation';
 import { ReleaseDrawer, triggerLabel } from '../ReleaseDrawer';
 import { formatDateTime } from '../siteForm';
 import { apiErrorCode, isNotImplemented, siteErrorMessage, toastSiteError } from '../siteErrors';
@@ -299,7 +300,12 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
                 </>
               ),
             },
-            { id: 'status', header: t('releases.fields.status') || 'Status', sort: (r) => r.status, cell: (r) => <ReleaseStatusBadge status={r.status} /> },
+            { id: 'status', header: t('releases.fields.status') || 'Status', sort: (r) => r.status, cell: (r) => (
+                <span className="inline-flex flex-wrap items-center gap-1">
+                  <ReleaseStatusBadge status={r.status} />
+                  <ReleaseVerdictBadge observation={r.observation} />
+                </span>
+              ) },
             {
               id: 'trigger', header: t('releases.fields.trigger') || 'Trigger', tdClassName: 'text-xs text-text-secondary', sort: (r) => r.trigger,
               cell: (r) => (
