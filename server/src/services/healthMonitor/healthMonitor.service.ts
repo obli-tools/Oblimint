@@ -287,6 +287,16 @@ export const healthMonitorService = {
   },
 };
 
+/**
+ * Health center worker (services/healthCenter): the admin report of the deep
+ * checks (shared 15 s cache with the heartbeat and /health/deep: the checks
+ * are never run twice in the same minute) and the raw figures of the data disk.
+ */
+export async function deepHealthForCenter(): Promise<{ report: DeepHealthReport; disk: { totalBytes: number; availableBytes: number } | null }> {
+  const [run, disk] = await Promise.all([deepReport(), probes.disk().catch(() => null)]);
+  return { report: run.admin, disk };
+}
+
 /** GET /health/deep (no session; token-protected). */
 export const deepHealthHandler: RequestHandler = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');

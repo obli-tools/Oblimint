@@ -50,6 +50,9 @@ export async function startWorkers(): Promise<void> {
   // Outbound heartbeat (Settings > Health monitoring): a beat per minute while every deep check is green.
   const { healthMonitorService } = await import('../services/healthMonitor/healthMonitor.service');
   starters.push(['heartbeat', () => healthMonitorService.start()]);
+  // Health center (platform admins): component / disk / backup transitions notified once each.
+  const { healthCenterService } = await import('../services/healthCenter/healthCenter.service');
+  starters.push(['health-center', () => healthCenterService.start()]);
   // P2 workers (docs/P2-PLAN.md §Workers): same contract (start returns at once, never throws).
   const p2 = await p2Workers();
   for (const [name, w] of p2) starters.push([name, () => w.start()]);
@@ -205,6 +208,7 @@ export async function stopWorkers(): Promise<void> {
     import('../services/backups/backup.service').then((m) => m.backupService),
     import('../services/previews/previewExpiry').then((m) => m.previewWorker),
     import('../services/healthMonitor/healthMonitor.service').then((m) => m.healthMonitorService),
+    import('../services/healthCenter/healthCenter.service').then((m) => m.healthCenterService),
   ]);
   for (const m of mods) { try { m.stop(); } catch { /* exiting */ } }
   for (const [, w] of await p2Workers()) { try { w.stop(); } catch { /* exiting */ } }

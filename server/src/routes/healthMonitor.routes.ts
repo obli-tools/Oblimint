@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { HEARTBEAT_URL_MAX } from '@oblimint/shared';
 import { parseBody } from '../services/docker/parseBody';
 import { healthMonitorService } from '../services/healthMonitor/healthMonitor.service';
+import { healthCenterService, healthCenterSettingsInputSchema } from '../services/healthCenter/healthCenter.service';
 
 // /api/system/health-monitor — platform admin on the master tenant:
 //   GET  /            settings (token set?, heartbeat origin, last beat, last report)
@@ -10,6 +11,8 @@ import { healthMonitorService } from '../services/healthMonitor/healthMonitor.se
 //   POST /token       new deep health token (shown once, replaces the previous)
 //   DELETE /token     disables GET /health/deep
 //   POST /test        runs the checks and sends a beat now
+//   GET  /center      health center: state of each component, disk, failing backups, settings
+//   PUT  /center/settings  health center settings (thresholds, notifications per event)
 const router = Router();
 router.use((_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
@@ -33,6 +36,14 @@ router.delete('/token', async (req, res, next) => {
 
 router.post('/test', async (_req, res, next) => {
   try { res.json({ success: true, data: await healthMonitorService.testHeartbeat() }); } catch (err) { next(err); }
+});
+
+router.get('/center', async (_req, res, next) => {
+  try { res.json({ success: true, data: await healthCenterService.getStatus() }); } catch (err) { next(err); }
+});
+
+router.put('/center/settings', async (req, res, next) => {
+  try { res.json({ success: true, data: await healthCenterService.updateSettings(req, parseBody(healthCenterSettingsInputSchema, req.body)) }); } catch (err) { next(err); }
 });
 
 export default router;
