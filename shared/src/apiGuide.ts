@@ -124,6 +124,9 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`get_guide\` | This guide (\`lang\`: \`en\` or \`fr\`) | — |
 | \`list_notifications\` | Notifications of the key's human about this account (release awaiting approval / approved / rejected, certificate issued or failing, domain verified, quota, cron…): \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Only for a key on every site, and only the families its scopes cover (releases: \`releases.publish\`; domains and certificates: every domain too; cron: \`cron.manage\`). Read-only: they stay unread for the human | — |
 | \`list_sites\` / \`get_site\` | Sites of the key (id, slug, domains, status, document root, publish mode); \`liveRelease\` (since when, how: \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, by whom), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
+| \`install_app\` | Install WordPress as an immutable site, in one call: \`app\`, \`name\`, \`slug\`, \`admin_user\`, \`admin_email\`, \`title?\`, \`locale?\`, \`base?\`, \`publish_mode?\`, \`preview_first?\`. Answers with the admin password, **once** | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
+| \`list_app_installs\` · \`get_app_install\` | Installations; state and steps of one (\`install_id\`). Never a password | \`sites.create\` |
+| \`retry_app_install\` · \`publish_app_install\` · \`cleanup_app_install\` | Resume at the failed step; publish release 1 after a preview; delete what the operation created (only if this key started it) | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
 | \`create_site\` | Create a site: \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (URL prefix it expects, e.g. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Change a site: \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
 | \`list_files\` | List a folder (\`path\`, \`area\`); \`with_sha256: true\` adds the hash of each file | \`files.read\` |
@@ -327,6 +330,17 @@ A human may work on the same files over SFTP at the same time. Never overwrite w
 
 A domain with \`verified: false\` is not proven yet: its subdomains show a placeholder page and get no certificate until the human verifies it in the panel (TXT record, or name servers). \`pendingZone: true\` means the platform's name servers already answer for it (with no address yet): the human can switch the domain's name servers at the registrar now, then click « Check now » on the domain in the panel. A key cannot verify a domain.
 
+### Installing WordPress
+
+\`install_app\` does in one call what would otherwise take a dozen: a site with the \`wordpress\` profile (document root, data folders), a database and its user, the variables, the verified code, a \`wp-config.php\` that reads the environment (no secret in the code or its history), the installation, then release 1, read-only and with a rollback. The WordPress of the Docker catalogue, on a writable volume, has none of this.
+
+1. \`install_app\` with \`app: "wordpress"\`. **The answer holds \`adminPassword\`, shown once**: give it to the human, write it nowhere (no file, no commit, no log). It never appears again, in any tool.
+2. \`get_app_install\` every few seconds while \`status\` is \`running\`. End: \`succeeded\` (release 1 is live), \`awaiting_approval\` (site in mode \`approval\`), \`preview_ready\` (with \`preview_first\`), \`failed\`.
+3. With \`preview_first\`: open the preview (\`get_preview\`; its database is a disposable copy), then \`publish_app_install\` or \`cleanup_app_install\`.
+4. \`failed\`: read \`failedStep\` and \`errorCode\`. \`retry_app_install\` resumes at that step; \`cleanup_app_install\` removes what the operation created and nothing else.
+
+The address of the site comes from the request: a domain attached later works without touching the code. wp-admin works, but the code is read-only: an extension or a theme goes through the staging and a release, not through the WordPress screens.
+
 ### An application's database
 
 1. \`list_databases\`: with no server of the right engine, \`database_catalog\` then \`create_database_instance\` (wait for \`status: "running"\`).
@@ -428,6 +442,9 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/me\` | | — |
 | GET | \`/guide\` | \`?lang=en\` or \`fr\`: this guide as Markdown | — |
 | GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50): \`{ items, unreadCount, hasMore }\`, this account only, within the key's reach (see \`list_notifications\`), read-only | — |
+| POST | \`/apps/install\` | \`{ app, name, slug, adminUser, adminEmail, title?, locale?, base?, publishMode?, publishDebounceSec?, previewFirst? }\` → \`{ install, adminUser, adminPassword }\` (the password: **once**) | \`sites.create\` |
+| GET | \`/apps/installs\` · \`…/installs/:id\` | State and steps; never a password | \`sites.create\` |
+| POST | \`/apps/installs/:id/retry\` · \`/publish\` · \`/cleanup\` | Resume at the failed step; publish after a preview; remove what it created (the key that started it). Also needs \`databases.manage\` and \`releases.publish\` | \`sites.create\` |
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
 | PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |
@@ -719,6 +736,9 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`get_guide\` | Ce guide (\`lang\`: \`fr\` ou \`en\`) | — |
 | \`list_notifications\` | Notifications de l'humain de la clé sur ce compte (release en attente d'approbation / approuvée / rejetée, certificat délivré ou en échec, domaine vérifié, quota, cron…) : \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Seulement pour une clé sur tous les sites, et seulement les familles que couvrent ses portées (releases : \`releases.publish\` ; domaines et certificats : tous les domaines aussi ; cron : \`cron.manage\`). Lecture seule : elles restent non lues pour l'humain | — |
 | \`list_sites\` / \`get_site\` | Sites de la clé (id, slug, domaines, statut, racine web, mode de publication) ; \`liveRelease\` (depuis quand, comment : \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, par qui), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
+| \`install_app\` | Installer WordPress en site immuable, en un appel : \`app\`, \`name\`, \`slug\`, \`admin_user\`, \`admin_email\`, \`title?\`, \`locale?\`, \`base?\`, \`publish_mode?\`, \`preview_first?\`. Répond avec le mot de passe administrateur, **une seule fois** | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
+| \`list_app_installs\` · \`get_app_install\` | Installations ; état et étapes de l'une (\`install_id\`). Jamais de mot de passe | \`sites.create\` |
+| \`retry_app_install\` · \`publish_app_install\` · \`cleanup_app_install\` | Reprendre à l'étape en échec ; publier la release 1 après un aperçu ; supprimer ce que l'opération a créé (si cette clé l'a lancée) | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
 | \`create_site\` | Créer un site : \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (préfixe d'URL attendu, ex. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
 | \`update_site\` | Modifier un site : \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
 | \`list_files\` | Lister un dossier (\`path\`, \`area\`) ; \`with_sha256: true\` ajoute l'empreinte de chaque fichier | \`files.read\` |
@@ -922,6 +942,17 @@ Un humain peut travailler sur les mêmes fichiers en SFTP au même moment. N'éc
 
 Un domaine en \`verified: false\` n'est pas encore prouvé : ses sous-domaines affichent une page d'attente et n'ont pas de certificat tant que l'humain ne l'a pas vérifié dans le panel (enregistrement TXT, ou serveurs de noms). \`pendingZone: true\` signifie que les serveurs de noms de la plateforme répondent déjà pour lui (sans adresse pour l'instant) : l'humain peut basculer dès maintenant les serveurs de noms du domaine chez le registrar, puis cliquer « Vérifier maintenant » sur le domaine dans le panel. Une clé ne peut pas vérifier un domaine.
 
+### Installer WordPress
+
+\`install_app\` fait en un appel ce qui en demanderait une douzaine : un site au profil \`wordpress\` (racine web, dossiers de données), une base et son utilisateur, les variables, le code vérifié, un \`wp-config.php\` qui lit l'environnement (aucun secret dans le code ni son historique), l'installation, puis la release 1, en lecture seule et avec retour arrière. Le WordPress du catalogue Docker, sur un volume inscriptible, n'a rien de tout cela.
+
+1. \`install_app\` avec \`app: "wordpress"\`. **La réponse contient \`adminPassword\`, affiché une seule fois** : donne-le à l'humain, ne l'écris nulle part (ni fichier, ni commit, ni journal). Il ne réapparaît jamais, dans aucun outil.
+2. \`get_app_install\` toutes les quelques secondes tant que \`status\` vaut \`running\`. Fin : \`succeeded\` (la release 1 est en ligne), \`awaiting_approval\` (site en mode \`approval\`), \`preview_ready\` (avec \`preview_first\`), \`failed\`.
+3. Avec \`preview_first\` : ouvre l'aperçu (\`get_preview\` ; sa base est une copie jetable), puis \`publish_app_install\` ou \`cleanup_app_install\`.
+4. \`failed\` : lis \`failedStep\` et \`errorCode\`. \`retry_app_install\` reprend à cette étape ; \`cleanup_app_install\` retire ce que l'opération a créé et rien d'autre.
+
+L'adresse du site vient de la requête : un domaine rattaché plus tard fonctionne sans toucher au code. wp-admin fonctionne, mais le code est en lecture seule : une extension ou un thème passe par le staging et une release, pas par les écrans de WordPress.
+
 ### Base de données d'une application
 
 1. \`list_databases\` : s'il n'y a aucun serveur du bon moteur, \`database_catalog\` puis \`create_database_instance\` (attends \`status: "running"\`).
@@ -1023,6 +1054,9 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET | \`/me\` | | — |
 | GET | \`/guide\` | \`?lang=fr\` ou \`en\` : ce guide en Markdown | — |
 | GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50) : \`{ items, unreadCount, hasMore }\`, ce compte seulement, dans la portée de la clé (voir \`list_notifications\`), lecture seule | — |
+| POST | \`/apps/install\` | \`{ app, name, slug, adminUser, adminEmail, title?, locale?, base?, publishMode?, publishDebounceSec?, previewFirst? }\` → \`{ install, adminUser, adminPassword }\` (le mot de passe : **une seule fois**) | \`sites.create\` |
+| GET | \`/apps/installs\` · \`…/installs/:id\` | État et étapes ; jamais de mot de passe | \`sites.create\` |
+| POST | \`/apps/installs/:id/retry\` · \`/publish\` · \`/cleanup\` | Reprendre à l'étape en échec ; publier après un aperçu ; retirer ce qu'elle a créé (la clé qui l'a lancée). Demande aussi \`databases.manage\` et \`releases.publish\` | \`sites.create\` |
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
 | PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |

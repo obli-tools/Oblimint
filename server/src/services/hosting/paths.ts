@@ -63,6 +63,8 @@ import { config, dataDir } from '../../config';
 //       src/        git checkout / extracted ZIP / rendered template (panel writes, no-follow reads)
 //       files/      files referenced by relative binds of an editor stack (panel writes)
 //       volumes/<name>/   named volumes (Docker local driver, o=bind) — written by the containers
+//   <root>/app-dist/<app>-<version>-<locale>.tar.gz  verified application archives (panel only)
+//   <root>/app-dist/seed/<installId>/               one installation: the archive (hard link) + generated files, RO in its tools steps
 //   <root>/dns/                                     (P2: PowerDNS state, panel only)
 //   <root>/logs/<accountId>/<siteId>/              (P2: persisted access logs, panel only)
 //   <root>/run/hostd.sock                           (never mounted in tenant containers)
@@ -93,6 +95,8 @@ export const CONTAINER_PATHS = {
   filesrvState: '/var/lib/sftpgo',
   /** P3 — adapter tools container: the workspace (copy of the release, rw) and the site data (rw). */
   toolsApp: '/srv/app',
+  /** Application installer tools step: the verified archive and the generated files, READ-ONLY. */
+  toolsDist: '/run/oblimint-dist',
 } as const;
 
 function joinPosix(...parts: Array<string | number>): string {
@@ -121,6 +125,9 @@ export function hostingLayout(root: string) {
     siteStaging: (accountId: number, siteSlug: string) => joinPosix(account(accountId), 'staging', siteSlug),
     data: (accountId: number) => joinPosix(account(accountId), 'data'),
     siteData: (accountId: number, siteSlug: string) => joinPosix(account(accountId), 'data', siteSlug),
+    // Application installer (panel writes, never a tenant): verified archives, read-only bind of a tools step.
+    appDist: () => joinPosix(r, 'app-dist'),
+    appDistSeed: (installId: number) => joinPosix(r, 'app-dist', 'seed', installId),
     fileServerState: (accountId: number) => joinPosix(account(accountId), 'filesrv'),
     site,
     repo: (accountId: number, siteId: number) => joinPosix(site(accountId, siteId), 'repo.git'),

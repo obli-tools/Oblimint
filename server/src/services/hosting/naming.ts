@@ -118,6 +118,8 @@ export const toolsImage = (php: string): string => `${config.hosting.toolsImageP
 export const P3_LABELS = {
   /** adapter_runs.id of a tools container (role tools). */
   adapterRun: 'oblimint.adapter-run',
+  /** app_installs.id of a tools container (role tools) of the application installer: no network, no flow. */
+  appInstall: 'oblimint.app-install',
 } as const;
 
 // ── P4 (docs/P4-PLAN.md §4) ─────────────────────────────────────────────────

@@ -67,6 +67,12 @@ export interface ToolsSpecInput {
   limits: Pick<PlanLimits, 'memoryMb' | 'cpuCores'>;
   /** Node ceiling (tests); default config.hosting. */
   ceiling?: { memoryMb: number; cpus: number };
+  /**
+   * Application installer (services/appInstall): the "workspace" is the staging of a new site that
+   * holds no tenant code yet, the step has NO network at all (database through its socket, archive
+   * through `dist`, read-only), and its label is not an adapter run. Absent: an adapter run.
+   */
+  installer?: { installId: number; dist: string };
 }
 
 function posix(p: string): string {
@@ -86,6 +92,7 @@ export function toolsContainerSpec(input: ToolsSpecInput): Docker.ContainerCreat
   if (!/^\d+\.\d+$/.test(input.php)) throw new Error(`tools container: invalid PHP version ${JSON.stringify(input.php)}`);
   const name = toolsContainer(input.runId, input.step);
   const net = accountNetwork(input.accountId);
+  const installer = input.installer ?? null;
 
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(input.env ?? {})) {
@@ -103,6 +110,7 @@ export function toolsContainerSpec(input: ToolsSpecInput): Docker.ContainerCreat
       { Type: 'bind', Source: posix(input.dbSockets.root), Target: CONTAINER_PATHS.dbSocketsAll, ReadOnly: true },
       { Type: 'bind', Source: posix(input.dbSockets.mysql), Target: CONTAINER_PATHS.dbSocketMysql, ReadOnly: true },
       { Type: 'bind', Source: posix(input.dbSockets.postgresql), Target: CONTAINER_PATHS.dbSocketPostgresql, ReadOnly: true },
+      ...(installer ? [{ Type: 'bind' as const, Source: posix(installer.dist), Target: CONTAINER_PATHS.toolsDist, ReadOnly: true }] : []),
     ],
     Tmpfs: {
       '/tmp': `${TMPFS_SHARED_FLAGS},size=${TOOLS_TMP_SIZE}`,
@@ -116,7 +124,7 @@ export function toolsContainerSpec(input: ToolsSpecInput): Docker.ContainerCreat
     MemorySwap: memoryBytes,
     OomScoreAdj: TENANT_OOM_SCORE_ADJ,
     RestartPolicy: { Name: 'no' },
-    NetworkMode: net,
+    NetworkMode: installer ? 'none' : net,
     LogConfig: LOG_CONFIG,
     // Explicitly nothing published, no privileged mode, no devices.
     PortBindings: {},
@@ -136,7 +144,7 @@ export function toolsContainerSpec(input: ToolsSpecInput): Docker.ContainerCreat
       [LABELS.account]: String(input.accountId),
       [LABELS.site]: String(input.siteId),
       [LABELS.role]: 'tools',
-      [P3_LABELS.adapterRun]: String(input.runId),
+      ...(installer ? { [P3_LABELS.appInstall]: String(installer.installId) } : { [P3_LABELS.adapterRun]: String(input.runId) }),
     },
     AttachStdin: false,
     AttachStdout: false,
@@ -145,6 +153,6 @@ export function toolsContainerSpec(input: ToolsSpecInput): Docker.ContainerCreat
     OpenStdin: false,
     ExposedPorts: {},
     HostConfig: hostConfig,
-    NetworkingConfig: { EndpointsConfig: { [net]: {} } },
+    ...(installer ? {} : { NetworkingConfig: { EndpointsConfig: { [net]: {} } } }),
   });
 }

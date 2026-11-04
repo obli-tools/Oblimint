@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 import type { AppTemplate, AppTemplateCategory, AppTemplateDetail, AppTemplateField, AppTemplateInput } from '@oblimint/shared';
-import { APP_TEMPLATE_CATEGORIES } from '@oblimint/shared';
+import { APP_TEMPLATE_CATEGORIES, MUTABLE_CODE_TEMPLATES } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
@@ -42,6 +42,7 @@ export function toTemplate(r: TemplateRow): AppTemplate {
     id: r.id, slug: r.slug, name: r.name, icon: r.icon, category: r.category, description: r.description, docsUrl: r.docs_url,
     version: r.version, builtin: r.builtin, tenantId: r.tenant_id, enabled: r.enabled, fields: json<AppTemplateField[]>(r.fields, []),
     defaultProxy: json<AppTemplate['defaultProxy']>(r.default_proxy, null), minMemoryMb: r.min_memory_mb,
+    ...(r.builtin && MUTABLE_CODE_TEMPLATES.includes(r.slug) ? { mutableCode: true } : {}),
   };
 }
 

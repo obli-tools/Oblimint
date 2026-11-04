@@ -94,6 +94,8 @@ const PK: readonly RestrictionSurface[] = ['panel', 'keys'];
 /** Catalogue of the restrictable actions (spec §2). Labels: i18n restrictions.actions.<key>. */
 export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   // ── Sites and accounts ──
+  // Immutable application installer: creates a site, a database, its variables, and publishes.
+  { key: 'app.install', category: 'sites', need: 'sites.manage', alsoNeed: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'site.delete', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: P },
   { key: 'site.stop', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: P },
   { key: 'site.publish_mode_change', category: 'sites', need: 'releases.approve', scopable: 'site', surfaces: PK },

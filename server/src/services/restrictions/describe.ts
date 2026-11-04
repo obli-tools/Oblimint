@@ -42,6 +42,7 @@ export function fields(obj: unknown, max = 300): string {
 
 /** French verb phrase of every catalogue action. */
 export const ACTION_VERBS_FR: Readonly<Record<string, string>> = {
+  'app.install': 'Installer une application (site, base de données, variables, publication)',
   'site.delete': 'Supprimer le site',
   'site.stop': 'Arrêter le site',
   'site.publish_mode_change': 'Changer le mode de publication du site',

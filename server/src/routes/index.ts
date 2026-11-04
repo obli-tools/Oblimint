@@ -56,6 +56,7 @@ import windowsRoutes from './windows.routes';                  // windows (/site
 import maintenanceRoutes from './maintenance.routes';          // windows (/maintenance/windows overview)
 import siteApiRoutes from './siteApi.routes';                  // windows (public, Bearer site token)
 import snapshotsRoutes from './snapshots.routes';              // checksums-snapshots
+import appInstallsRoutes from './appInstalls.routes';          // immutable application installer
 import adaptersRoutes from './adapters.routes';                // adapters
 import quarantineRoutes from './quarantine.routes';            // supervised-quarantine
 import supervisionRoutes from './supervision.routes';          // supervised-quarantine
@@ -172,6 +173,7 @@ tenantRouter.use('/notifications', notificationsRoutes);
 // P3 updates / windows. Shared /sites prefix: no catch-all in any of these routers.
 tenantRouter.use('/sites', windowsRoutes);              // /:id/maintenance, /:id/windows…, /:id/tokens…
 tenantRouter.use('/sites', snapshotsRoutes);            // /:id/snapshots…
+tenantRouter.use('/app-installs', appInstallsRoutes);
 tenantRouter.use('/sites', adaptersRoutes);             // /:id/adapters…
 tenantRouter.use('/sites', supervisionRoutes);          // /:id/supervision…
 tenantRouter.use('/maintenance', maintenanceRoutes);

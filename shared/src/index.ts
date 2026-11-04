@@ -49,3 +49,4 @@ export * from './cmsGuard';
 // Observation of a release after it went live (verdict, automatic return)
 export * from './releaseObservation';
 export * from './containment';
+export * from './appInstall';

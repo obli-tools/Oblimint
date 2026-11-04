@@ -57,6 +57,9 @@ async function record(ctx: ApiKeyContext, kind: ObjKind, id: number): Promise<vo
   await db('api_key_db_objects').insert({ key_id: ctx.id, kind, object_id: id, account_id: ctx.accountId }).onConflict(['key_id', 'kind', 'object_id']).ignore();
 }
 
+/** A database object made for this key by another service (application installer): within its reach, deletable by it. */
+export const recordKeyDbObject = record;
+
 const reaches = (ctx: ApiKeyContext, own: Set<number>, id: number) => ctx.siteScope === 'all' || own.has(id);
 
 /**

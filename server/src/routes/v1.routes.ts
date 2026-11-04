@@ -14,7 +14,9 @@ import {
   NOTIFICATION_FAMILIES,
 } from '@oblimint/shared';
 import type { DnsRecordInput, NotificationFamily } from '@oblimint/shared';
+import { keyApps } from '../services/apiKeys/keyApps';
 import { keyDatabases } from '../services/apiKeys/keyDatabases';
+import { appInstallStartSchema } from '../validators/appInstall.schema';
 import { keyEnv } from '../services/apiKeys/keyEnv';
 import { keyDns } from '../services/apiKeys/keyDns';
 import { keyPending, pendingIdOf, PENDING_WAIT_MAX_MS, statusOf } from '../services/apiKeys/keyPending';
@@ -30,6 +32,9 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   GET    /guide?lang=en|fr                            → this API's guide (text/markdown)
 //   GET    /notifications?unread=1&family=&before=&limit= → UserNotificationPage (the creator's, this account only; read-only)
 //   GET    /sites                                       → ApiV1Site[]
+//   POST   /apps/install  AppInstallStartRequest − accountId → AppInstallStartResult (201; admin password, once) sites.create + databases.manage + releases.publish
+//   GET    /apps/installs · /apps/installs/:id          → AppInstall[] · AppInstall      sites.create
+//   POST   /apps/installs/:id/retry | /publish | /cleanup → resume · publish after a preview · remove what it created
 //   POST   /sites                SiteCreate − accountId → ApiV1Site (201)              sites.create
 //   GET    /sites/:id                                   → ApiV1Site
 //   PATCH  /sites/:id   {name?, docroot?, publishMode?, publishDebounceSec?, healthcheckPath?, php?} → ApiV1Site  sites.manage
@@ -239,6 +244,20 @@ router.get('/notifications', h(async (req, res) => {
   const q = parseBody(notificationsQuery, req.query);
   ok(res, await keyApi.notifications(ctx, { unread: q.unread === '1' || q.unread === 'true', family: q.family ?? null, before: q.before ?? null, limit: q.limit }));
 }));
+router.post('/apps/install', h(async (req, res) => {
+  const data = await keyApps.install(ctxOf(req), req, parseBody(appInstallStartSchema.omit({ accountId: true }), req.body));
+  res.set('Cache-Control', 'no-store');
+  ok(res, data, 201);
+}));
+router.get('/apps/installs', h(async (req, res) => ok(res, await keyApps.list(ctxOf(req)))));
+router.get('/apps/installs/:id', h(async (req, res) => ok(res, await keyApps.get(ctxOf(req), siteId(req)))));
+router.post('/apps/installs/:id/retry', h(async (req, res) => {
+  const data = await keyApps.retry(ctxOf(req), req, siteId(req));
+  res.set('Cache-Control', 'no-store');
+  ok(res, data);
+}));
+router.post('/apps/installs/:id/publish', h(async (req, res) => ok(res, await keyApps.publish(ctxOf(req), req, siteId(req)))));
+router.post('/apps/installs/:id/cleanup', h(async (req, res) => ok(res, await keyApps.cleanup(ctxOf(req), req, siteId(req)))));
 router.get('/sites', h(async (req, res) => ok(res, await keyApi.listSites(ctxOf(req)))));
 router.post('/sites', h(async (req, res) => ok(res, await keyApi.createSite(ctxOf(req), req, parseBody(createSchema, req.body)), 201)));
 router.get('/sites/:id', h(async (req, res) => ok(res, await keyApi.getSite(ctxOf(req), siteId(req)))));

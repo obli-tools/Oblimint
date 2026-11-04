@@ -120,12 +120,13 @@ async function p2Workers(): Promise<Array<[string, Worker]>> {
  * quarantine (hostd events, watch specs, supervision digests).
  */
 async function p3Workers(): Promise<Array<[string, Worker]>> {
-  const [scan, windows, snapshots, adapters, quarantine] = await Promise.all([
+  const [scan, windows, snapshots, adapters, quarantine, appInstall] = await Promise.all([
     import('../services/scan/scan.service').then((m) => m.scanService),
     import('../services/windows/window.service').then((m) => m.windowService),
     import('../services/snapshots/snapshot.service').then((m) => m.snapshotService),
     import('../services/adapters/adapter.service').then((m) => m.adapterService),
     import('../services/quarantine/quarantine.service').then((m) => m.quarantineService),
+    import('../services/appInstall/appInstall.service').then((m) => m.appInstallWorker),
   ]);
   return [
     ['scan', scan],
@@ -133,6 +134,7 @@ async function p3Workers(): Promise<Array<[string, Worker]>> {
     ['snapshots', snapshots],
     ['adapters', adapters],
     ['quarantine', quarantine],
+    ['app-install', appInstall],
   ];
 }
 

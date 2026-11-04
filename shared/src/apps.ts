@@ -479,7 +479,15 @@ export interface AppTemplate {
   defaultProxy: { service: string; port: number } | null;
   /** Indicative minimum memory (MiB) shown before deploying. */
   minMemoryMb: number | null;
+  /**
+   * The code lives on a writable volume: no release, no analysis, no rollback. The UI says so and
+   * points to the immutable installer when there is one.
+   */
+  mutableCode?: boolean;
 }
+
+/** Built-in templates whose application code is mutable although an immutable installer exists. */
+export const MUTABLE_CODE_TEMPLATES: readonly string[] = ['wordpress'];
 
 export interface AppTemplateDetail extends AppTemplate {
   composeYaml: string;

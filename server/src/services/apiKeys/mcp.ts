@@ -20,7 +20,9 @@ import { apiKeyAuthLimiter, apiKeyLimiter, countKeyRequest, mcpAuth } from './mi
 import { keySurfaceGate } from '../../middleware/keySurfaceGate';
 import type { ApiKeyContext } from './apiKeys.service';
 import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, siteCreateSchema, siteUpdateSchema } from '../../validators/hosting.schema';
+import { keyApps } from './keyApps';
 import { keyDatabases } from './keyDatabases';
+import { appInstallStartSchema } from '../../validators/appInstall.schema';
 import { keyEnv } from './keyEnv';
 import { keyDns } from './keyDns';
 import { parseBody } from '../docker/parseBody';
@@ -210,6 +212,66 @@ const TOOLS: ToolDef[] = [
       name: a.name, slug: a.slug, base: a.base, ...(a.app_profile ? { appProfile: a.app_profile } : {}), ...(a.docroot !== undefined ? { docroot: a.docroot } : {}),
       ...(a.publish_mode ? { publishMode: a.publish_mode } : {}), ...(a.base_path ? { basePath: a.base_path } : {}),
     })),
+  },
+  {
+    name: 'install_app', title: 'Install an application (WordPress)', gated: ['app.install', 'db.attach', 'site.env_write', 'release.publish', 'site.publish_mode_change', 'preview.db_clone'], heavy: true,
+    description: 'Installs WordPress as an IMMUTABLE site: new site (profile wordpress), database and user, variables, verified code in the staging, a wp-config.php reading the environment, wp core install, then release 1 (read-only, analysed, rollback possible). Scopes sites.create, databases.manage, releases.publish (preview_first: previews.manage too). Answers at once with the admin password, SHOWN ONCE: hand it to the human, write it nowhere (no file, no commit, no log). Then follow get_app_install until status succeeded, awaiting_approval, preview_ready or failed.',
+    inputSchema: obj({
+      app: { type: 'string', enum: ['wordpress'], description: 'WordPress only for now.' },
+      name: { type: 'string', description: 'Display name of the site.' },
+      slug: { type: 'string', description: 'Lower-case letters, digits and dashes (1-40).' },
+      admin_user: { type: 'string', description: 'WordPress administrator login.' },
+      admin_email: { type: 'string', description: 'WordPress administrator e-mail address.' },
+      title: { type: 'string', description: 'Site title (default: name).' },
+      locale: { type: 'string', description: 'WordPress locale such as en_US (default) or fr_FR.' },
+      base: { type: 'string', enum: [...SITE_BASE_IDS], description: 'A PHP base (default: the one recommended for WordPress).' },
+      publish_mode: publishMode,
+      preview_first: { type: 'boolean', description: 'Stop in a preview (staging + disposable copy of the database) before publishing; then publish_app_install or cleanup_app_install.' },
+    }, ['app', 'name', 'slug', 'admin_user', 'admin_email']),
+    args: z.object({
+      app: z.string(), name: z.string(), slug: z.string(), admin_user: z.string(), admin_email: z.string(), title: z.string().optional(), locale: z.string().optional(),
+      base: z.string().optional(), publish_mode: zPublishMode.optional(), preview_first: z.boolean().optional(),
+    }),
+    run: (ctx, req, a) => keyApps.install(ctx, req, parseBody(appInstallStartSchema.omit({ accountId: true }), {
+      app: a.app, name: a.name, slug: a.slug, adminUser: a.admin_user, adminEmail: a.admin_email,
+      ...(a.title ? { title: a.title } : {}), ...(a.locale ? { locale: a.locale } : {}), ...(a.base ? { base: a.base } : {}),
+      ...(a.publish_mode ? { publishMode: a.publish_mode } : {}), ...(a.preview_first !== undefined ? { previewFirst: a.preview_first } : {}),
+    })),
+  },
+  {
+    name: 'list_app_installs', title: 'Application installations', readOnly: true,
+    description: 'The application installations of the account within this key\'s reach, newest first (scope sites.create). Never a password.',
+    inputSchema: obj({}, []),
+    args: z.object({}),
+    run: (ctx) => keyApps.list(ctx),
+  },
+  {
+    name: 'get_app_install', title: 'Follow an installation', readOnly: true,
+    description: 'State of an installation: status, each step (site, database, variables, download, extract, config, verify, install, preview, publish), error. Call it every few seconds while status is running. Never a password.',
+    inputSchema: obj({ install_id: { type: 'integer', description: 'Id returned by install_app.' } }, ['install_id']),
+    args: z.object({ install_id: z.number().int().positive() }),
+    run: (ctx, _req, a) => keyApps.get(ctx, a.install_id),
+  },
+  {
+    name: 'retry_app_install', title: 'Resume a failed installation', gated: ['app.install', 'release.publish'], heavy: true,
+    description: 'Resumes a failed installation at the step that failed (the steps done are not run again). Keeps the admin password given by install_app, unless the answer holds a new adminPassword (the first one had been purged after 7 days): shown once as well.',
+    inputSchema: obj({ install_id: { type: 'integer' } }, ['install_id']),
+    args: z.object({ install_id: z.number().int().positive() }),
+    run: (ctx, req, a) => keyApps.retry(ctx, req, a.install_id),
+  },
+  {
+    name: 'publish_app_install', title: 'Publish after the preview', gated: ['release.publish'], heavy: true,
+    description: 'An installation in status preview_ready: publishes release 1. What was changed inside the preview is not kept (its database is a disposable copy).',
+    inputSchema: obj({ install_id: { type: 'integer' } }, ['install_id']),
+    args: z.object({ install_id: z.number().int().positive() }),
+    run: (ctx, req, a) => keyApps.publish(ctx, req, a.install_id),
+  },
+  {
+    name: 'cleanup_app_install', title: 'Clean up an installation', destructive: true, gated: ['site.delete', 'db.drop', 'db.user_delete', 'db.instance_drop'], heavy: true,
+    description: 'An installation in status failed or preview_ready, started by this key: deletes what the operation created (site, database, user, and the database server if it made one and it holds nothing else). Nothing that existed before. Never a live release.',
+    inputSchema: obj({ install_id: { type: 'integer' } }, ['install_id']),
+    args: z.object({ install_id: z.number().int().positive() }),
+    run: (ctx, req, a) => keyApps.cleanup(ctx, req, a.install_id),
   },
   {
     name: 'update_site', title: 'Change site settings', gated: ['site.publish_mode_change'],

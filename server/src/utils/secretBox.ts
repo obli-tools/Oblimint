@@ -32,6 +32,8 @@ export type SecretPurpose = 'db-root' | 'notification' | 'pdns-api' | 'dbadmin'
   | 'site-preview'
   // Feature B: environment overrides of a preview's database clone (random passwords of rotated users).
   | 'site-preview-db'
+  // Application installer: admin password, kept sealed only while the operation may still need it.
+  | 'app-install'
   // Transactional e-mail sender of the platform (SMTP / platform mailbox password).
   | 'transactional-mail';
 
