@@ -8,6 +8,7 @@
 
 import type { TenantLimits } from './types';
 import type { AccessMode } from './access';
+import type { CmsGuardSiteSettings } from './cmsGuard';
 import type { DbEngine, DbTuningProfile, SiteDatabase } from './databases';
 import type { DnsZoneKind, DomainVerificationSummary } from './dns';
 import type { OverQuotaAction, OverQuotaState } from './usage';
@@ -640,6 +641,8 @@ export interface Site {
   /** Leak guard of the publications: policy and allowlisted paths (globs relative to the code root). */
   leakPolicy: LeakPolicy;
   leakAllowlist: string[];
+  /** Anti brute force of the CMS logins of this site (edge log → account ban). */
+  cmsGuard: CmsGuardSiteSettings;
   /** First domain routed to this site at '/', if any. */
   primaryDomain: string | null;
   /** Site detail only (GET /sites/:id): its databases (owned, then shared with it). */
@@ -677,6 +680,8 @@ export interface SiteUpdate {
   /** Relaxing the guard (block → warn, a new allowlist entry) takes the right to approve releases. */
   leakPolicy?: LeakPolicy;
   leakAllowlist?: string[];
+  /** Switching it off / tolerating more failures takes proxy.manage too. */
+  cmsGuard?: Partial<CmsGuardSiteSettings>;
 }
 
 export interface SiteDataPath {

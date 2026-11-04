@@ -45,3 +45,4 @@ export * from './siteErrors';
 // Sensitive actions (restrictions, pending confirmations / approvals) and IP security of the keys
 export * from './restrictions';
 export * from './keySecurity';
+export * from './cmsGuard';

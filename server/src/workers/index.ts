@@ -161,11 +161,12 @@ async function p4Workers(): Promise<Array<[string, Worker]>> {
  * worker 'edge', rebuilt by edge-robustness).
  */
 async function p4bWorkers(): Promise<Array<[string, Worker]>> {
-  const [segments, apps, proxy, bans, monitoring, uptime] = await Promise.all([
+  const [segments, apps, proxy, bans, cmsGuard, monitoring, uptime] = await Promise.all([
     import('../services/network/segments.service').then((m) => m.segmentService),
     import('../services/apps/apps.service').then((m) => m.appsService),
     import('../services/proxy/worker').then((m) => m.proxyWorker),
     import('../services/security/bans.service').then((m) => m.webBanService),
+    import('../services/security/cmsGuard.service').then((m) => m.cmsGuard),
     import('../services/monitoring/worker'),
     import('../services/monitoring/uptime.service').then((m) => m.uptimeService),
   ]);
@@ -174,6 +175,8 @@ async function p4bWorkers(): Promise<Array<[string, Worker]>> {
     ['apps', apps],
     ['proxy', proxy],
     ['bans', bans],
+    // CMS login brute force read from the edge log → account bans (after bans: same edge log follower).
+    ['cms-guard', cmsGuard],
     ['traffic', monitoring.trafficWorker],
     ['uptime', uptime],
     ['workflows', monitoring.workflowWorker],

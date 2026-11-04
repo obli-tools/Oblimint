@@ -1,5 +1,6 @@
 import type { DmarcPolicy, MtaStsMode, WebmailKind } from './mail';
 import { DEFAULT_KEY_SECURITY_SETTINGS, type KeySecuritySettings } from './keySecurity';
+import { CMS_GUARD_DEFAULT_MAX_FAILURES, CMS_GUARD_DEFAULT_WINDOW_MINUTES, type CmsGuardMode } from './cmsGuard';
 import { PENDING_ACTION_TTL_MINUTES, type RestrictionFloor } from './restrictions';
 
 // =============================================================================
@@ -255,6 +256,11 @@ export interface BansSettings {
   geoipMmdbPath: string | null;
   /** Inactive bans deleted after (days). */
   retentionDays: number;
+  /** Anti brute force of the CMS logins (cmsGuard.ts): platform switch, start of 'auto', thresholds. */
+  cmsGuardMode: CmsGuardMode;
+  cmsGuardAutoAt: string | null;
+  cmsGuardMaxFailures: number;
+  cmsGuardWindowMinutes: number;
 }
 
 /** P4b — monitoring + automation (docs/P4b-PLAN.md §10, §11). */
@@ -488,6 +494,10 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     geoipProvider: 'ip-api',
     geoipMmdbPath: null,
     retentionDays: 90,
+    cmsGuardMode: 'auto',
+    cmsGuardAutoAt: null,
+    cmsGuardMaxFailures: CMS_GUARD_DEFAULT_MAX_FAILURES,
+    cmsGuardWindowMinutes: CMS_GUARD_DEFAULT_WINDOW_MINUTES,
   },
   monitoring: {
     trafficMinuteDays: 7,

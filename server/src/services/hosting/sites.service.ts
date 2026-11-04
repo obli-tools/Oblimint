@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 import type { AppProfileId, PhpSettings, PlanLimits, Site, SiteBaseId, SiteDataPath, SiteRoute, SiteRuntime } from '@oblimint/shared';
-import { APP_PROFILES, HostingSocketEvents, appProfileDef, isSiteBaseId, normalizePathPrefix, normalizeRelPath } from '@oblimint/shared';
+import { APP_PROFILES, HostingSocketEvents, appProfileDef, cmsGuardRelaxes, isSiteBaseId, normalizePathPrefix, normalizeRelPath } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
@@ -22,7 +22,7 @@ import {
 import { previewHost } from './naming';
 import { platformSettings } from '../platformSettings';
 import {
-  json, planLimits, toSite, toSiteDataPath, toSiteRoute,
+  json, planLimits, siteCmsGuard, toSite, toSiteDataPath, toSiteRoute,
   type AccountRow, type DataPathRow, type RouteRow, type SiteRow, type SiteRuntimeRow,
 } from './rows';
 
@@ -364,10 +364,31 @@ export const sitesService = {
     }
     if (body.leakPolicy !== undefined && body.leakPolicy !== curPolicy) patch.leak_policy = body.leakPolicy;
     if (body.leakAllowlist !== undefined && JSON.stringify(body.leakAllowlist) !== JSON.stringify(curList)) patch.leak_allowlist = JSON.stringify(body.leakAllowlist);
+    // CMS login guard: tightening takes sites.manage; switching it off or tolerating more failures
+    // (higher threshold, shorter window) also takes proxy.manage, the right that manages the account's bans.
+    if (body.cmsGuard !== undefined) {
+      const cur = siteCmsGuard(row);
+      const next = {
+        enabled: body.cmsGuard.enabled ?? cur.enabled,
+        maxFailures: body.cmsGuard.maxFailures !== undefined ? body.cmsGuard.maxFailures : cur.maxFailures,
+        windowMinutes: body.cmsGuard.windowMinutes !== undefined ? body.cmsGuard.windowMinutes : cur.windowMinutes,
+      };
+      const bans = await platformSettings.section('bans');
+      if (cmsGuardRelaxes(cur, next, { maxFailures: bans.cmsGuardMaxFailures, windowMinutes: bans.cmsGuardWindowMinutes })
+        && !actorCan(actor, 'proxy.manage', { tenantId: row.tenant_id, accountId: row.account_id })) {
+        throw new AppError(403, 'Relaxing the CMS login protection requires the right to manage the bans of the account', 'cmsGuardRelaxForbidden');
+      }
+      if (next.enabled !== cur.enabled) patch.cms_guard_enabled = next.enabled;
+      if (next.maxFailures !== cur.maxFailures) patch.cms_guard_max_failures = next.maxFailures;
+      if (next.windowMinutes !== cur.windowMinutes) patch.cms_guard_window_minutes = next.windowMinutes;
+    }
     if (Object.keys(patch).length > 0) {
       patch.updated_at = db.fn.now();
       await db('sites').where({ id: row.id, tenant_id: row.tenant_id }).update(patch);
       await audit(req, row, 'site.update', { fields: Object.keys(patch).filter((k) => k !== 'updated_at') });
+      if (Object.keys(patch).some((k) => k.startsWith('cms_guard_'))) {
+        void import('../security/cmsGuard.service').then((m) => m.cmsGuard.siteChanged(row.id)).catch(() => undefined);
+      }
       emitSite(row, 'updated');
       requestSite(row.id, 'updated');
       // basePath / docroot do not change the edge, a name does not either; the

@@ -96,6 +96,8 @@ export interface WebBanRow {
   source: WebBanSource;
   reason: string | null;
   proxy_host_id: number | null;
+  /** migration 039: the attacked site of a cms-bruteforce ban (display). */
+  site_id?: number | null;
   banned_until: Date | string | null;
   hit_count: number;
   offense_level: number;
@@ -113,6 +115,7 @@ type ListedRow = WebBanRow & {
   account_username: string | null;
   proxy_host_name: string | null;
   proxy_host_tenant_id: number | null;
+  site_name?: string | null;
   geo_country_code?: string | null;
 };
 
@@ -605,6 +608,8 @@ interface OffenceInput {
   source: WebBanSource;
   reason: string | null;
   proxyHostId: number | null;
+  /** cms-bruteforce: the attacked site (web_bans.site_id). */
+  siteId?: number | null;
   hits: number;
   floorMinutes: number | null;
   /** Manual duration: undefined = ladder, null = permanent. */
@@ -664,6 +669,7 @@ async function applyOffence(input: OffenceInput, retry = true): Promise<{ kind: 
         source: input.source,
         reason: input.reason,
         proxy_host_id: input.proxyHostId,
+        ...(input.siteId ? { site_id: input.siteId } : {}),
         banned_until: until,
         hit_count: Math.max(1, input.hits),
         offense_level: level,
@@ -683,8 +689,11 @@ async function applyOffence(input: OffenceInput, retry = true): Promise<{ kind: 
   }
 }
 
+/** Automatic account bans that count towards a promotion (never manual ones). */
+const PROMOTABLE_SOURCES: WebBanSource[] = ['honeypot-path', 'honeypot-acl', 'cms-bruteforce'];
+
 /**
- * Honeypot bans (never manual ones) of the key on ≥ 3 accounts of ≥ 3
+ * Honeypot / CMS brute-force bans (never manual ones) of the key on ≥ 3 accounts of ≥ 3
  * independent principals within the window ⇒ platform ban (promotion,
  * escalation.ts). Returns it when created.
  */
@@ -692,7 +701,7 @@ async function maybePromote(key: string, from: WebBanRow, s: BansSettings, now: 
   const since = new Date(now.getTime() - s.escalationWindowDays * DAY_MS);
   const rows = await db('web_bans')
     .where({ ip: key, scope: 'account' })
-    .whereIn('source', ['honeypot-path', 'honeypot-acl'])
+    .whereIn('source', PROMOTABLE_SOURCES)
     .whereNotNull('account_id')
     .andWhere('last_seen_at', '>=', since)
     .distinct('account_id', 'tenant_id') as Array<{ account_id: number; tenant_id: number }>;
@@ -785,6 +794,67 @@ export async function banFromKeySurface(input: KeySurfaceBanInput): Promise<{ ki
   return outcome;
 }
 
+// ── CMS logins (cmsGuard.service.ts) ─────────────────────────────────────────
+
+export interface CmsBanInput {
+  /** Ban key (banKey: the IPv4 address or the IPv6 /64). */
+  key: string;
+  accountId: number;
+  tenantId: number;
+  siteId: number;
+  siteName: string;
+  accountUsername: string | null;
+  /** Failed logins counted in the window. */
+  hits: number;
+  reason: string;
+}
+
+/**
+ * Account ban of the CMS login guard (source cms-bruteforce): the escalation
+ * ladder of the account's offences (shared with the honeypot), nginx g-bans
+ * on the hosts of that account only, promotion when the address is banned on
+ * 3 accounts of 3 independent owners, security.banned to the account (one
+ * per account and hour, notify() deduplicates). null when the address may
+ * not be banned after all (never-ban rules, bans disabled).
+ */
+export async function banFromCmsGuard(input: CmsBanInput): Promise<OffenceOutcome | null> {
+  const s = await platformSettings.section('bans');
+  if (!s.enabled) return null;
+  if (refuseBanKey(input.key, await guardNow()) !== null) return null;
+  const now = backends.now();
+  const outcome = await applyOffence({
+    key: input.key, scope: 'account', accountId: input.accountId, tenantId: input.tenantId, source: 'cms-bruteforce',
+    reason: cleanText(input.reason), proxyHostId: null, siteId: input.siteId, hits: Math.max(1, input.hits), floorMinutes: null,
+    createdBy: null, now, settings: s,
+  });
+  let promoted: WebBanRow | null = null;
+  if (outcome.kind === 'banned') {
+    logger.warn({ ip: input.key, accountId: input.accountId, siteId: input.siteId, level: outcome.ban.offense_level }, 'Address banned on the hosts of an account (CMS login brute force)');
+    void geoipService.lookup(input.key);
+    void auditService.log({
+      tenantId: input.tenantId, action: 'bans.cmsBruteforce', resourceType: 'web_ban', resourcePath: `/bans/${outcome.ban.id}`,
+      details: { ip: input.key, accountId: input.accountId, siteId: input.siteId, level: outcome.ban.offense_level, until: iso(outcome.ban.banned_until), reason: outcome.ban.reason },
+      ipAddress: input.key.split('/')[0],
+    });
+    const until = outcome.ban.banned_until ? `jusqu'au ${toDate(outcome.ban.banned_until)!.toISOString().replace('T', ' ').slice(0, 16)} UTC` : 'de façon permanente';
+    const who = input.accountUsername ?? `#${input.accountId}`;
+    notify('security.banned', {
+      tenantId: input.tenantId,
+      accountId: input.accountId,
+      key: `cmsban:${input.accountId}`,
+      title: `Force brute sur une connexion CMS (${who})`,
+      message: `L'adresse ${input.key} est bannie ${until} des sites du compte ${who} (${input.siteName}) : ${outcome.ban.reason ?? input.reason}.`
+        + ' Les bans suivants de l\'heure ne sont pas notifiés un par un : voir Bannissements.',
+      severity: 'warning',
+      link: '/security/bans',
+    });
+    promoted = await maybePromote(input.key, outcome.ban, s, now);
+  }
+  emitBan(outcome.ban, outcome.kind === 'banned' ? 'created' : 'updated');
+  bansChanged(promoted !== null);
+  return { kind: outcome.kind, ban: outcome.ban, promoted };
+}
+
 /**
  * Lifts every active platform ban of an address (its ban key) — the CLI
  * escape hatch and "add to the trusted IPs". Audited, withdrawn from
@@ -863,6 +933,8 @@ function toApi(r: ListedRow, actor: HostingActor, geo: GeoInfo | null, now: Date
     reason: redact ? null : r.reason,
     proxyHostId: redact ? null : (r.proxy_host_id === null ? null : Number(r.proxy_host_id)),
     proxyHostName: redact ? null : r.proxy_host_name ?? null,
+    siteId: redact || r.site_id == null ? null : Number(r.site_id),
+    siteName: redact ? null : r.site_name ?? null,
     bannedUntil: until ? until.toISOString() : null,
     hitCount: Number(r.hit_count),
     offenseLevel: Number(r.offense_level),
@@ -880,6 +952,7 @@ function baseQuery(): Knex.QueryBuilder {
   return db('web_bans as b')
     .leftJoin('hosting_accounts as a', 'a.id', 'b.account_id')
     .leftJoin('proxy_hosts as ph', 'ph.id', 'b.proxy_host_id')
+    .leftJoin('sites as st', 'st.id', 'b.site_id')
     .leftJoin('ip_geo_cache as g', 'g.ip', 'b.ip');
 }
 
@@ -904,6 +977,7 @@ function applyFilters(qb: Knex.QueryBuilder, q: WebBanQuery, now: Date): Knex.Qu
   if (q.accountId !== undefined) qb.where('b.account_id', q.accountId);
   if (q.source) qb.where('b.source', q.source);
   if (q.proxyHostId !== undefined) qb.where('b.proxy_host_id', q.proxyHostId);
+  if (q.siteId !== undefined) qb.where('b.site_id', q.siteId);
   if (q.active === true) qb.where('b.is_active', true).andWhere((w) => w.whereNull('b.banned_until').orWhere('b.banned_until', '>', now));
   if (q.active === false) qb.where((w) => w.where('b.is_active', false).orWhere('b.banned_until', '<=', now));
   const text = cleanText(q.q, 100);
@@ -912,6 +986,7 @@ function applyFilters(qb: Knex.QueryBuilder, q: WebBanQuery, now: Date): Knex.Qu
     qb.where((w) => w
       .whereRaw('b.ip ILIKE ?', [like])
       .orWhereRaw('b.reason ILIKE ?', [like])
+      .orWhereRaw('st.name ILIKE ?', [like])
       .orWhereRaw('g.city ILIKE ?', [like])
       .orWhereRaw('g.org ILIKE ?', [like])
       .orWhereRaw('g.country_name ILIKE ?', [like]));
@@ -945,7 +1020,7 @@ async function attachGeo(rows: ListedRow[]): Promise<Map<string, GeoInfo | null>
 }
 
 const SELECT_COLS = [
-  'b.*', 'a.username as account_username', 'ph.name as proxy_host_name', 'ph.tenant_id as proxy_host_tenant_id',
+  'b.*', 'a.username as account_username', 'ph.name as proxy_host_name', 'ph.tenant_id as proxy_host_tenant_id', 'st.name as site_name',
   'g.country_code as g_country_code', 'g.country_name as g_country_name', 'g.city as g_city', 'g.latitude as g_latitude',
   'g.longitude as g_longitude', 'g.org as g_org', 'g.fetched_at as g_fetched_at',
 ];
@@ -1059,7 +1134,7 @@ export const webBanService = {
     const byScope = await live(scoped()).select('b.scope', 'b.source').count<{ scope: WebBanScope; source: WebBanSource; n: string | number }[]>({ n: '*' }).groupBy('b.scope', 'b.source');
     const [{ n: recent }] = await scoped().where('b.created_at', '>=', new Date(now.getTime() - DAY_MS)).count<{ n: string | number }[]>({ n: '*' });
     const bySource: Record<WebBanSource, number> = {
-      'honeypot-path': 0, 'honeypot-acl': 0, manual: 0, 'obliguard-sync': 0, promotion: 0, 'key-intrusion': 0, 'key-bruteforce': 0,
+      'honeypot-path': 0, 'honeypot-acl': 0, manual: 0, 'obliguard-sync': 0, promotion: 0, 'key-intrusion': 0, 'key-bruteforce': 0, 'cms-bruteforce': 0,
     };
     let platform = 0;
     let account = 0;

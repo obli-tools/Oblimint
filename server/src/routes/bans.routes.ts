@@ -13,7 +13,7 @@ import { gatePlatform } from '../services/restrictions/targets';
 // Account bans: read = member / staff read, manage = proxy.manage on the account. Platform bans: platform admin
 // (read + manage); tenant staff see the platform bans that hit their hosts (read-only, no other tenant's detail).
 //
-//   GET    /?scope&accountId&tenantId&active&source&proxyHostId&q&limit&offset → WebBanList        (read, scoped)
+//   GET    /?scope&accountId&tenantId&active&source&proxyHostId&siteId&q&limit&offset → WebBanList        (read, scoped)
 //   GET    /stats?accountId&tenantId                                         → WebBanStats       (read)
 //   GET    /honeypot-presets                                                 → HoneypotPreset[]  (read)
 //   POST   /                    WebBanCreate                                 → WebBan (201)      (account: proxy.manage; platform: admin)
@@ -27,7 +27,7 @@ const router = Router();
 
 const optId = z.coerce.number().int().positive().optional();
 const bool = z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1').optional();
-const SOURCES = ['honeypot-path', 'honeypot-acl', 'manual', 'obliguard-sync', 'promotion', 'key-intrusion', 'key-bruteforce'] as const;
+const SOURCES = ['honeypot-path', 'honeypot-acl', 'manual', 'obliguard-sync', 'promotion', 'key-intrusion', 'key-bruteforce', 'cms-bruteforce'] as const;
 
 const listQuery = z.object({
   scope: z.enum(['account', 'platform']).optional(),
@@ -36,6 +36,7 @@ const listQuery = z.object({
   active: bool,
   source: z.enum(SOURCES).optional(),
   proxyHostId: optId,
+  siteId: optId,
   q: z.string().trim().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).max(1_000_000).default(0),

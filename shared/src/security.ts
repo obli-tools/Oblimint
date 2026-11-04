@@ -17,7 +17,9 @@
 export type WebBanSource = 'honeypot-path' | 'honeypot-acl' | 'manual' | 'obliguard-sync' | 'promotion'
   // IP security of the access keys / MCP: an address outside every key (strict mode, permanent),
   // repeated bad keys from an allowed address (escalating).
-  | 'key-intrusion' | 'key-bruteforce';
+  | 'key-intrusion' | 'key-bruteforce'
+  // Repeated failed CMS logins on one site, read from the edge log (cmsGuard.ts): an account ban.
+  | 'cms-bruteforce';
 export type WebBanScope = 'account' | 'platform';
 export type ObliguardSyncStatus = 'disabled' | 'pending' | 'sent' | 'failed';
 
@@ -43,6 +45,9 @@ export interface WebBan {
   reason: string | null;
   proxyHostId: number | null;
   proxyHostName: string | null;
+  /** cms-bruteforce: the site whose logins were attacked (the ban covers every host of the account). */
+  siteId: number | null;
+  siteName: string | null;
   /** null = permanent. */
   bannedUntil: string | null;
   hitCount: number;
@@ -64,6 +69,7 @@ export interface WebBanQuery {
   active?: boolean;
   source?: WebBanSource;
   proxyHostId?: number;
+  siteId?: number;
   /** Search: IP, reason, city, org. */
   q?: string;
   limit?: number;

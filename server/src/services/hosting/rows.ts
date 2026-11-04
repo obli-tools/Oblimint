@@ -1,5 +1,5 @@
 import type {
-  AccessMode, DnsZoneKind, DomainVerificationMethod, DomainVerificationStatus, OverQuotaState,
+  AccessMode, CmsGuardSiteSettings, DnsZoneKind, DomainVerificationMethod, DomainVerificationStatus, OverQuotaState,
   AccountSshKey, AppProfileId, CertificateSummary, ClientCapability, CurrentReleaseVia, DataPathPolicy, Domain, HostingAccount, LeakPolicy, PhpSettings,
   Plan, PlanLimits, Release, ReleaseDetail, ReleaseLogLine, ScanSummary, Site, SiteBaseId, SiteDataPath, SiteRoute,
 } from '@oblimint/shared';
@@ -45,6 +45,8 @@ export interface SiteRow {
   current_release_key_id?: number | null; current_release_reason?: string | null; rolled_back_from_release_id?: number | null;
   /** migration 026: leak guard of the publications (policy, allowlist JSON). */
   leak_policy?: LeakPolicy | null; leak_allowlist?: unknown;
+  /** migration 039: anti brute force of the CMS logins (null thresholds = the platform's). */
+  cms_guard_enabled?: boolean | null; cms_guard_max_failures?: number | null; cms_guard_window_minutes?: number | null;
   /** joined */ account_username?: string; current_release_number?: number | null; primary_domain?: string | null;
   /** joined */ current_release_by_name?: string | null; rolled_back_from_number?: number | null;
 }
@@ -222,6 +224,7 @@ export function toSite(r: SiteRow, extras: { previewUrl?: string | null } = {}):
     customNginx: r.custom_nginx,
     leakPolicy: r.leak_policy === 'warn' ? 'warn' : 'block',
     leakAllowlist: json<unknown[]>(r.leak_allowlist, []).filter((x): x is string => typeof x === 'string'),
+    cmsGuard: siteCmsGuard(r),
     primaryDomain: r.primary_domain ?? null,
     createdAt: isoReq(r.created_at),
     updatedAt: isoReq(r.updated_at),
@@ -329,4 +332,10 @@ export function toReleaseDetail(r: ReleaseRow): ReleaseDetail {
 
 export function toSshKey(r: SshKeyRow): AccountSshKey {
   return { id: r.id, name: r.name, fingerprint: r.fingerprint, algorithm: r.algorithm, createdAt: isoReq(r.created_at) };
+}
+
+/** Per-site settings of the CMS login guard (migration 039; absent columns = defaults). */
+export function siteCmsGuard(r: Pick<SiteRow, 'cms_guard_enabled' | 'cms_guard_max_failures' | 'cms_guard_window_minutes'>): CmsGuardSiteSettings {
+  const n = (v: unknown): number | null => (v === null || v === undefined || !Number.isInteger(Number(v)) ? null : Number(v));
+  return { enabled: r.cms_guard_enabled !== false, maxFailures: n(r.cms_guard_max_failures), windowMinutes: n(r.cms_guard_window_minutes) };
 }

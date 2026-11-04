@@ -165,6 +165,10 @@ const sectionSchemas = {
     geoipProvider: z.enum(['off', 'ip-api', 'mmdb']),
     geoipMmdbPath: z.string().trim().min(1).max(1024).nullable(),
     retentionDays: z.number().int().min(1).max(3650),
+    cmsGuardMode: z.enum(['auto', 'off', 'log', 'on']),
+    cmsGuardAutoAt: z.string().datetime().nullable(),
+    cmsGuardMaxFailures: z.number().int().min(3).max(1000),
+    cmsGuardWindowMinutes: z.number().int().min(1).max(1440),
   }).strict(),
   monitoring: z.object({
     trafficMinuteDays: z.number().int().min(1).max(31),

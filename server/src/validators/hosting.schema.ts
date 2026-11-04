@@ -204,6 +204,11 @@ export const siteUpdateSchema = z.object({
   php: phpSettingsSchema.optional(),
   customNginx: z.string().max(64 * 1024).nullable().optional(),
   leakPolicy: z.enum(['warn', 'block']).optional(),
+  cmsGuard: z.object({
+    enabled: z.boolean().optional(),
+    maxFailures: z.number().int().min(3).max(1000).nullable().optional(),
+    windowMinutes: z.number().int().min(1).max(1440).nullable().optional(),
+  }).strict().optional(),
   leakAllowlist: z.array(z.string().max(LEAK_ALLOWLIST_ENTRY_MAX + 16)).max(LEAK_ALLOWLIST_MAX).transform((v, ctx) => {
     const out: string[] = [];
     for (const raw of v) {
