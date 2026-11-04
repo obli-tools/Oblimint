@@ -204,7 +204,7 @@ test('CMS login guard on PostgreSQL', { timeout: 300_000 }, async (t: TestContex
 
   // ── exclusions ─────────────────────────────────────────────────────────────
   const before = await count();
-  for (const ip of ['198.51.100.7', '203.0.113.250', '10.0.0.5', '172.17.0.9', 'fd00::1', 'garbage']) await feed(4, shop, ip);
+  for (const ip of ['198.51.100.7', '203.0.113.250', '10.20.30.5', '172.17.0.9', 'fd00::1', 'garbage']) await feed(4, shop, ip);
   assert.equal(await count(), before, 'never-ban, node, private, Docker, garbage: never banned');
   // Open panel sessions: a platform admin anywhere, a client user of the account.
   await session(platformAdmin, '203.0.113.60');
