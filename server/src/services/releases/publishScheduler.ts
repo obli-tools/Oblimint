@@ -114,6 +114,11 @@ async function fire(siteId: number): Promise<void> {
       logger.warn({ siteId, rolledBackFrom: d.rolledBackFrom, count: d.count }, 'Auto-publish held: the staging would undo a rollback');
       return;
     }
+    // A « propose » key wrote the staging: nothing goes live by itself until a human went forward (not re-armed).
+    if (err instanceof AppError && err.code === 'proposalHold') {
+      logger.info({ siteId }, 'Auto-publish held: the staging holds changes of a key in proposal mode');
+      return;
+    }
     if (err instanceof AppError && err.code === 'publicationProtected') {
       logger.info({ siteId }, 'Auto-publish skipped: release.publish is protected, a human publishes');
       return;

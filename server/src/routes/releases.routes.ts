@@ -59,6 +59,7 @@ const diffQuery = z.object({
 const approveBody = z.object({
   override: z.boolean().optional(),
   reason: z.string().max(500).nullable().optional(),
+  comment: z.string().max(500).nullable().optional(),
 }).strict();
 
 const rejectBody = z.object({
@@ -185,11 +186,16 @@ router.post('/:id/releases/:rid/approve', validate(approveBody), async (req, res
     }
     const reason = body.reason?.trim() ? body.reason.trim().slice(0, 500) : null;
     // Letting through a release the scan blocked: release.approve_override_scan.
-    if (body.override) {
-      await gateAction(req, { action: 'release.approve_override_scan', target: siteTarget(site), params: { releaseId: idParam(req, 'rid'), reason } });
-    }
-    const release = await releaseService.approve(site.id, idParam(req, 'rid'), userIdOf(req), {
-      override: body.override ? { reason } : null,
+    const rid = idParam(req, 'rid');
+    const comment = body.comment?.trim() ? body.comment.trim().slice(0, 500) : null;
+    const asked = await db('releases').where({ id: rid, site_id: site.id }).first('proposal') as { proposal: boolean } | undefined;
+    await gateStrictest(req, [
+      ...(body.override ? [{ action: 'release.approve_override_scan' as const, target: siteTarget(site), params: { releaseId: rid, reason } }] : []),
+      // A proposal skipped the release.publish gate (it put nothing live): this approval is what publishes.
+      ...(asked?.proposal ? [{ action: 'release.publish' as const, target: siteTarget(site), params: { releaseId: rid, comment } }] : []),
+    ]);
+    const release = await releaseService.approve(site.id, rid, userIdOf(req), {
+      override: body.override ? { reason } : null, comment,
     });
     await auditService.logReqAs(req, site.tenant_id, 'release.approve', {
       resourceType: 'release', resourcePath: String(release.id), details: { siteId: site.id, number: release.number },

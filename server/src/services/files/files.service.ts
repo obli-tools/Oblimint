@@ -38,6 +38,8 @@ export interface FilesDeps {
   uploadsBlocked(accountId: number): Promise<boolean>;
   sitesOf(accountId: number): Promise<Array<{ id: number; slug: string; label: string }>>;
   notifyChange(siteId: number): void;
+  /** A key in proposal mode wrote the staging: recorded, the scheduler is never told (sites.staging_proposal_at). */
+  markProposalStaging(siteId: number): Promise<void>;
   now(): number;
 }
 
@@ -63,6 +65,9 @@ const defaultDeps: FilesDeps = {
     void import('../releases/publishScheduler')
       .then(({ publishScheduler }) => publishScheduler.notifyChange(siteId))
       .catch((err) => logger.warn({ err, siteId }, 'publishScheduler.notifyChange failed'));
+  },
+  async markProposalStaging(siteId) {
+    await db('sites').where({ id: siteId }).update({ staging_proposal_at: db.fn.now() });
   },
   now: () => Date.now(),
 };
@@ -162,7 +167,11 @@ async function notifyStaging(a: AccountRow, paths: string[][]): Promise<void> {
   const slugs = new Set(paths.filter((s) => s[0] === 'staging' && s.length >= 2).map((s) => s[1]));
   if (!slugs.size) return;
   try {
-    for (const site of await deps.sitesOf(a.id)) if (slugs.has(site.slug)) deps.notifyChange(site.id);
+    for (const site of await deps.sitesOf(a.id)) {
+      if (!slugs.has(site.slug)) continue;
+      if (a.proposal_key) await deps.markProposalStaging(site.id);
+      else deps.notifyChange(site.id);
+    }
   } catch (err) {
     logger.warn({ err, accountId: a.id }, 'Files: site lookup for the publish scheduler failed');
   }

@@ -82,6 +82,8 @@ export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed> = {
   'files.read': 'files.manage',
   'files.write': 'files.manage',
   'releases.publish': 'releases.publish',
+  // Who may not publish does not delegate a proposal either; the scope itself gives no capability (SCOPE_CAP).
+  'releases.propose': 'releases.publish',
   // Feature B: a preview runs code that is not live yet — the creator must be able to publish.
   'previews.manage': 'releases.publish',
   'sites.manage': 'sites.manage',
@@ -103,6 +105,9 @@ const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
   'files.read': 'files.manage',
   'files.write': 'files.manage',
   'releases.publish': 'releases.publish',
+  // NEVER releases.publish: every service check (rollback, windows, adapters, auto mode…) must keep refusing this key.
+  // keyApi.publish alone knows the scope and only creates a release waiting for a human.
+  'releases.propose': null,
   // No capability of its own: the preview rights come from files.read (code.read) and releases.publish (staging).
   'previews.manage': null,
   'sites.manage': 'sites.manage',
@@ -270,6 +275,9 @@ async function normalize(actor: HostingActor, account: { id: number; tenant_id: 
     if (scopes.some((s) => !(API_KEY_SCOPES as readonly string[]).includes(s))) throw new AppError(400, 'Unknown scope', 'validation');
     const missing = scopes.filter((s) => !actorCan(actor, SCOPE_NEED[s], { tenantId: account.tenant_id, accountId: account.id }));
     if (missing.length) throw new AppError(403, `You cannot grant rights you do not hold (${missing.join(', ')})`, 'capabilityNotHeld', { missing });
+    if (scopes.includes('releases.propose') && scopes.includes('releases.publish')) {
+      throw new AppError(400, 'A key either proposes or publishes: releases.propose excludes releases.publish', 'scopesConflict');
+    }
     out.scopes = API_KEY_SCOPES.filter((s) => scopes.includes(s));
   }
   if (body.siteScope !== undefined || creating) {
@@ -666,7 +674,9 @@ async function contextFor(row: KeyWithAccount, userId: number, ip: string): Prom
   if (await twoFactorSetupRequired(userId)) return fail('ownerInactive');
   const target = { tenantId: row.tenant_id, accountId: row.account_id };
   if (!actorCan(user, 'read', target)) return fail('ownerInactive');
-  const scopes = heldScopes(user, target, scopesOf(row.scopes));
+  const held = heldScopes(user, target, scopesOf(row.scopes));
+  // normalize() refuses the pair; should a row hold both anyway, the narrower one wins.
+  const scopes = held.includes('releases.propose') ? held.filter((s) => s !== 'releases.publish') : held;
   const caps = new Set<ClientCapability>();
   for (const s of scopes) { const c = SCOPE_CAP[s]; if (c) caps.add(c); }
   const sites = await db('api_key_sites').where({ key_id: row.id }).pluck('site_id') as number[];

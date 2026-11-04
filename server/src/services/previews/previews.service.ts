@@ -61,6 +61,8 @@ export interface PreviewVia {
   keyId?: number | null;
   /** Keys only: return the gate header + value (audited preview.key). */
   includeKey?: boolean;
+  /** The key holds releases.propose: it may preview its own proposal (service: strictly that release, no link / gate key / clone). */
+  proposeKey?: boolean;
   /** Keys only: return a share link when the actor may create one. */
   withLink?: boolean;
   /** Keys only: databases the key reaches (scope databases.manage); absent = no database clone for a key. */
@@ -158,6 +160,19 @@ async function activeOrThrow(siteId: number, statuses: string[] = ACTIVE): Promi
   return row;
 }
 
+/**
+ * A running preview of an undecided or refused proposal, reached by someone who is no approver: 403 unless he
+ * is the key that proposed it, and then only to fetch pages (proposeKeyId; never a share link nor the gate key).
+ */
+async function assertProposalAccess(actor: HostingActor, site: SiteRow, row: PreviewRow, proposeKeyId: number | null): Promise<void> {
+  if (!row.release_id || actorCan(actor, 'releases.approve', siteTarget(site))) return;
+  const r = await db('releases').where({ id: row.release_id, site_id: site.id }).first('proposal', 'status', 'api_key_id') as
+    { proposal: boolean; status: string; api_key_id: number | null } | undefined;
+  if (!r?.proposal || !['awaiting_approval', 'rejected', 'failed'].includes(r.status)) return;
+  if (proposeKeyId !== null && Number(r.api_key_id) === proposeKeyId) return;
+  throw err(403, 'This preview shows a proposal no human approved', 'previewApprovalRequired');
+}
+
 export const previewService = {
   /** The latest preview of the site (any status), null when none. */
   async get(actor: HostingActor, siteId: number): Promise<SitePreview | null> {
@@ -179,11 +194,11 @@ export const previewService = {
     const keyId = via.keyId ?? null;
 
     // Target row first (its status decides the approval rule).
-    let release: { id: number; number: number; commit_sha: string | null; status: string; scan: unknown } | null = null;
+    let release: { id: number; number: number; commit_sha: string | null; status: string; scan: unknown; proposal: boolean; api_key_id: number | null } | null = null;
     if (input.target === 'release') {
       const rid = Number(input.releaseId);
       if (!Number.isInteger(rid) || rid <= 0) throw err(400, 'releaseId is required for a release preview', 'validation');
-      release = await db('releases').where({ id: rid, site_id: site.id }).first('id', 'number', 'commit_sha', 'status', 'scan') ?? null;
+      release = await db('releases').where({ id: rid, site_id: site.id }).first('id', 'number', 'commit_sha', 'status', 'scan', 'proposal', 'api_key_id') ?? null;
       if (!release) throw err(404, 'Release not found', 'notFound');
     } else if (input.target !== 'staging') {
       throw err(400, 'target must be release or staging', 'validation');
@@ -194,8 +209,19 @@ export const previewService = {
       throw err(403, 'Previewing the staging needs the right to publish', 'previewStagingForbidden');
     }
     const unapproved = input.target === 'staging' || ['awaiting_approval', 'rejected', 'failed'].includes(release!.status);
-    if (site.publish_mode === 'approval' && unapproved && !actorCan(actor, 'releases.approve', target)) {
+    const proposal = !!release?.proposal;
+    // The one exception to the approver rule: the proposal of THIS key, while it still holds the scope.
+    const ownProposal = proposal && unapproved && via.proposeKey === true && keyId !== null && Number(release!.api_key_id) === keyId;
+    const approver = actorCan(actor, 'releases.approve', target);
+    if ((site.publish_mode === 'approval' || proposal) && unapproved && !approver && !ownProposal) {
       throw err(403, 'This site publishes after approval: only an approver can preview code that was not approved', 'previewApprovalRequired');
+    }
+    // A key in proposal mode sees nothing unapproved but its proposal, in every publish mode.
+    if (via.proposeKey === true && unapproved && !ownProposal) {
+      throw err(403, 'A key in proposal mode only previews its own proposal', 'previewApprovalRequired');
+    }
+    if (ownProposal && !approver && (input.options?.database === 'clone' || input.options?.env === 'all' || input.options?.allowBlockedScan === true || via.includeKey === true)) {
+      throw err(403, 'The preview of a proposal has no database clone, secret or gate key: a human previews it fully', 'previewProposalRestricted');
     }
 
     // 3. Options weakening the isolation.
@@ -334,7 +360,8 @@ export const previewService = {
 
     // 9. Result.
     const result: PreviewStartResult = { preview: await onePreview(created.id), link: null };
-    if (via.withLink && canShare(actor, site)) {
+    // Nothing that opens unapproved code to someone else (the agent reads it through fetch).
+    if (via.withLink && canShare(actor, site) && !(ownProposal && !approver)) {
       const l = await createLink(created, 'share', actor, keyId);
       result.link = { url: claimUrl(created.host, l.token), expiresAt: l.expiresAt.toISOString(), kind: 'share' };
     }
@@ -351,6 +378,7 @@ export const previewService = {
     assertReadsCode(actor, site);
     const row = await activeOrThrow(site.id);
     assertCloneAccess(actor, site, row, reach);
+    await assertProposalAccess(actor, site, row, null);
     await auditService.logReqAs(req, site.tenant_id, 'preview.key', { resourceType: 'site', resourcePath: String(site.id), details: { previewId: row.id } });
     return { header: PREVIEW_KEY_HEADER, value: openSecret('site-preview', row.access_secret_sealed) };
   },
@@ -396,6 +424,7 @@ export const previewService = {
     if (!canShare(actor, site)) throw err(403, 'Share links need the right to manage the site', 'previewShareForbidden');
     const row = await activeOrThrow(site.id);
     assertCloneAccess(actor, site, row, reach);
+    await assertProposalAccess(actor, site, row, null);
     const l = await createLink(row, 'share', actor, keyId);
     await auditService.logReqAs(req, site.tenant_id, 'preview.link', { resourceType: 'site', resourcePath: String(site.id), details: { previewId: row.id, kind: 'share' } });
     return { url: claimUrl(row.host, l.token), expiresAt: l.expiresAt.toISOString(), kind: 'share' };
@@ -407,6 +436,7 @@ export const previewService = {
     assertReadsCode(actor, site);
     const row = await activeOrThrow(site.id, ['starting', 'running']);
     assertCloneAccess(actor, site, row);
+    await assertProposalAccess(actor, site, row, null);
     const l = await createLink(row, 'open', actor, null);
     await auditService.logReqAs(req, site.tenant_id, 'preview.link', { resourceType: 'site', resourcePath: String(site.id), details: { previewId: row.id, kind: 'open' } });
     return claimUrl(row.host, l.token);
@@ -415,7 +445,7 @@ export const previewService = {
   /** GET/HEAD of one path of the running preview (compare: + the live primary container, sites.manage). */
   async fetch(actor: HostingActor, siteId: number, q: {
     path: unknown; compare?: boolean; host?: 'preview' | 'live' | null; maxBytes?: number | null; method?: 'GET' | 'HEAD' | null;
-  }, reach?: DbReach): Promise<PreviewFetchResult> {
+  }, reach?: DbReach, proposeKeyId: number | null = null): Promise<PreviewFetchResult> {
     const site = await loadSite(actor, siteId, 'read');
     assertReadsCode(actor, site);
     const path = validatePreviewPath(q.path);
@@ -423,6 +453,7 @@ export const previewService = {
     if (q.compare && !actorCan(actor, 'sites.manage', siteTarget(site))) throw err(403, 'Comparing with the live site needs the right to manage the site', 'previewCompareForbidden');
     const row = await activePreviewOfSite(site.id);
     if (!row || row.status !== 'running') throw err(409, 'No preview is running for this site', 'previewNotRunning');
+    await assertProposalAccess(actor, site, row, proposeKeyId);
     assertCloneAccess(actor, site, row, reach);
     const maxBytes = q.maxBytes === undefined || q.maxBytes === null ? PREVIEW_FETCH_DEFAULT_BYTES : Number(q.maxBytes);
     if (!Number.isInteger(maxBytes) || maxBytes < PREVIEW_FETCH_MIN_BYTES || maxBytes > PREVIEW_FETCH_MAX_BYTES) {

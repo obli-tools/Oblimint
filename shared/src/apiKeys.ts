@@ -25,9 +25,17 @@ export type ApiKeyScope =
   | 'files.write'
   | 'releases.publish'
   /**
+   * Proposal mode: publish only creates a release waiting for a human, whatever the
+   * publish mode of the site; one open proposal per key and per site. The key never
+   * puts anything live: no rollback, no window, no automatic publication of what it
+   * writes. Excludes releases.publish.
+   */
+  | 'releases.propose'
+  /**
    * Live previews of a release (or of the staging with releases.publish too):
    * start, stop, fetch a path. Needs files.read as well (the code is run and read).
-   * Never code that was not approved on a site in approval mode.
+   * Never code that was not approved on a site in approval mode, except the key's own proposal
+   * (never another key's, without share link, gate key or database clone).
    */
   | 'previews.manage'
   | 'sites.manage'
@@ -67,7 +75,7 @@ export type ApiKeyScope =
   | 'dns.write';
 
 export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
-  'files.read', 'files.write', 'releases.publish', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain',
+  'files.read', 'files.write', 'releases.publish', 'releases.propose', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain',
   'dns.read', 'dns.write', 'logs.read', 'network.read',
 ];
 
@@ -188,7 +196,7 @@ export interface ApiKeyGrantable {
 // manageableDomain): a preset that asks for domains ('pick') therefore has no
 // routes.manage, or the key would route paths of the sites they serve.
 
-export type ApiKeyPresetId = 'readonly' | 'update' | 'site' | 'multisite' | 'autonomous' | 'all';
+export type ApiKeyPresetId = 'readonly' | 'update' | 'supervised' | 'site' | 'multisite' | 'autonomous' | 'all';
 
 export interface ApiKeyPreset {
   id: ApiKeyPresetId;
@@ -219,6 +227,9 @@ export const API_KEY_PRESETS: readonly ApiKeyPreset[] = [
   // CI: pushes files to staging and publishes; no setting (publish mode, env, data paths), cron, database, route or subdomain.
   // + previews.manage: check a release / the staging in a throw-away preview before publishing.
   { id: 'update', scopes: ['files.read', 'files.write', 'releases.publish', 'previews.manage'], siteScopes: ['selected'], minSites: 1, maxSites: null, domains: 'none' },
+  // Supervised agent: writes the staging, previews its own proposal, reads the logs; a human decides what goes live.
+  // No setting, cron, database or route: nothing that changes the live site without a human.
+  { id: 'supervised', scopes: ['files.read', 'files.write', 'releases.propose', 'previews.manage', 'logs.read'], siteScopes: ['selected'], minSites: 1, maxSites: null, domains: 'none' },
   // One site end to end; no site creation, no subdomain, no domain given (routes only on the domains serving it alone).
   { id: 'site', scopes: SITE_MANAGEMENT_SCOPES, siteScopes: ['selected'], minSites: 1, maxSites: 1, domains: 'none' },
   { id: 'multisite', scopes: SITE_MANAGEMENT_SCOPES, siteScopes: ['selected', 'all'], minSites: 2, maxSites: null, domains: 'optional' },
@@ -237,7 +248,8 @@ export function apiKeyPreset(id: ApiKeyPresetId): ApiKeyPreset {
 
 /** Scopes a preset checks for someone who may grant `grantable`, in API_KEY_SCOPES order. */
 export function apiKeyPresetScopes(preset: ApiKeyPreset, grantable: readonly ApiKeyScope[]): ApiKeyScope[] {
-  return API_KEY_SCOPES.filter((s) => grantable.includes(s) && (preset.scopes === 'all' || preset.scopes.includes(s)));
+  // 'all' never checks releases.propose: it excludes releases.publish and would take a right away.
+  return API_KEY_SCOPES.filter((s) => grantable.includes(s) && (preset.scopes === 'all' ? s !== 'releases.propose' : preset.scopes.includes(s)));
 }
 
 /** State of a key form, as the presets see it. */

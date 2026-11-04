@@ -1020,10 +1020,22 @@ export interface Release {
   /** Access key that published it (null: the panel, an automatic publication, or a key deleted since). */
   apiKeyId: number | null;
   apiKeyName: string | null;
+  /** Created by a key in proposal mode (releases.propose): it waits for a human whatever the publish mode. */
+  proposal: boolean;
+  /** The human decision, null while nobody decided (or when none was asked). */
+  decision: ReleaseDecision | null;
   /** Stable code of what stopped it (failed / blocked), null otherwise (RELEASE_ERROR_CODES). */
   errorCode: ReleaseErrorCode | null;
   /** Observation after it went live: verdict and facts (null: not observed). */
   observation: ReleaseObservation | null;
+}
+
+/** Decision on a release that waited for a human. by null: name hidden from a key, or an automatic dismissal. */
+export interface ReleaseDecision {
+  state: 'approved' | 'rejected';
+  by: string | null;
+  at: string | null;
+  comment: string | null;
 }
 
 export interface ReleaseDetail extends Release {
@@ -1185,6 +1197,8 @@ export interface ReleaseFileContent {
 export interface ApproveRequest {
   override?: boolean;
   reason?: string | null;
+  /** Word of the approver, read back by the agent (decision.comment). */
+  comment?: string | null;
 }
 
 export type DiffFileStatus = 'added' | 'modified' | 'deleted' | 'renamed' | 'typechange';
@@ -1254,7 +1268,7 @@ export interface StagingBase {
   matches: 'live' | 'latest' | null;
 }
 
-export type StagingWarningCode = 'stagingMissing' | 'nestedRepo' | 'symlink' | 'moreSymlinks' | 'liveOlderThanBase' | 'baseNotPublished' | 'autoPublishHeld';
+export type StagingWarningCode = 'stagingMissing' | 'nestedRepo' | 'symlink' | 'moreSymlinks' | 'liveOlderThanBase' | 'baseNotPublished' | 'autoPublishHeld' | 'autoPublishHeldProposal';
 
 export interface StagingWarning {
   code: StagingWarningCode;

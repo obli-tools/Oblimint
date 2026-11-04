@@ -69,6 +69,8 @@ export interface PublishOptions {
   message?: string | null;
   /** Access key that asked for it (releases.api_key_id: provenance of the live release). */
   apiKeyId?: number | null;
+  /** The key holds releases.propose: the release waits for a human whatever the publish mode; one open per key and site. */
+  proposal?: boolean;
   /**
    * 'refuse': 409 liveRolledBack when the staging still holds files of the
    * release a HUMAN rolled back from (keys, auto-publication, panel without
@@ -266,6 +268,7 @@ function releaseQuery() {
     .join('sites as s', 's.id', 'r.site_id')
     .leftJoin('users as au', 'au.id', 'r.author_user_id')
     .leftJoin('users as ap', 'ap.id', 'r.approved_by')
+    .leftJoin('users as dc', 'dc.id', 'r.decided_by')
     // The key that published it: one of the site's account (api_key_id is only ever set from it).
     .leftJoin('api_keys as k', function joinKey() { this.on('k.id', '=', 'r.api_key_id').andOn('k.account_id', '=', 's.account_id'); })
     // Observation after it went live (migration 040): one row at most per release, of the same site.
@@ -275,6 +278,7 @@ function releaseQuery() {
       'k.name as api_key_name',
       db.raw('COALESCE(au.display_name, au.username) as author_name'),
       db.raw('COALESCE(ap.display_name, ap.username) as approver_name'),
+      db.raw('COALESCE(dc.display_name, dc.username) as decider_name'),
       db.raw('(s.current_release_id = r.id) as is_current'),
       db.raw('CASE WHEN ro.id IS NULL THEN NULL ELSE to_jsonb(ro) END as observation'),
     );
@@ -564,8 +568,11 @@ async function scanGate(run: Run, scan: ScanSummary, opts: { approvedBy: number 
     }
     run.line('warn', `analyse bloquante levée par dérogation du staff (utilisateur #${opts.scanOverrideBy})`);
   }
-  if (!opts.approvedBy && (scan.verdict === 'suspicious' || ctx.site.publish_mode === 'approval')) {
-    const why = scan.verdict === 'suspicious' ? 'contenu suspect' : 'mode approbation';
+  // An automatic publication whose commit took in what a « propose » key wrote meanwhile (the mark precedes every such write).
+  const proposalDirty = release.trigger === 'auto' && !!(await db('sites').where({ id: ctx.site.id }).first('staging_proposal_at') as { staging_proposal_at: unknown } | undefined)?.staging_proposal_at;
+  if (!opts.approvedBy && (release.proposal || proposalDirty || scan.verdict === 'suspicious' || ctx.site.publish_mode === 'approval')) {
+    const why = release.proposal ? 'proposition d’une clé d’accès' : proposalDirty ? 'staging modifié par une clé en mode proposition'
+      : scan.verdict === 'suspicious' ? 'contenu suspect' : 'mode approbation';
     await run.step('info', `en attente d’approbation (${why})`, { status: 'awaiting_approval' });
     // A window's release is decided through its window (window.pendingReview tells the reviewers).
     if (!release.window_id) {
@@ -640,6 +647,8 @@ async function materialize(ctx: SiteContext, release: ReleaseRow, run: Run | nul
 /** Steps c–h of a release whose commit (and scan) are done. */
 async function deploy(run: Run): Promise<void> {
   const { ctx, release } = run;
+  // Never live without a human: whatever led here, a proposal needs its approval.
+  if (release.proposal && !release.approved_by) throw new PipelineError('proposition sans approbation : publication annulée');
   await run.save({ status: 'publishing' });
   await ensureStorageFor(ctx);
   // publishCommit without a precomputed scan materializes first (the scan reads the tree): no second pass.
@@ -665,6 +674,10 @@ async function deploy(run: Run): Promise<void> {
   });
   ctx.site.current_release_id = release.id;
   if (fromStaging) await clearHeld(ctx.site.id);
+  // A person went forward from this staging (not the scheduler alone): what a « propose » key wrote BEFORE this release no longer holds the site.
+  if (fromStaging && (release.trigger !== 'auto' || release.approved_by)) {
+    await db('sites').where({ id: ctx.site.id }).where('staging_proposal_at', '<=', release.created_at).update({ staging_proposal_at: null });
+  }
   await run.step('info', `release #${release.number} en ligne`, { status: 'ready' });
   if ((release.trigger === 'window' || release.trigger === 'adapter') && release.commit_sha) await fastForwardHeadTo(run, release.commit_sha);
   if (release.trigger !== 'manual' || release.approved_by) {
@@ -964,6 +977,24 @@ async function assertNoAdapterActivity(siteId: number): Promise<void> {
   if (row) throw new AppError(409, 'An application update runs on this site (adapter run in progress)', 'adapterBusy');
 }
 
+/**
+ * One open proposal per key and per site (409 proposalOpen with the release). One no human can let through
+ * any more (a newer release went live, or the scan blocks it) is dismissed: it would hold the agent for nothing.
+ */
+async function assertNoOpenProposal(siteId: number, keyId: number | null): Promise<void> {
+  if (!keyId) throw new AppError(400, 'A proposal comes from an access key', 'validation');
+  const open = await db('releases').where({ site_id: siteId, api_key_id: keyId, proposal: true, status: 'awaiting_approval' })
+    .first('id', 'number', 'scan') as { id: number; number: number; scan: unknown } | undefined;
+  if (!open) return;
+  const scan = json<ScanSummary | null>(open.scan, null);
+  const newer = await db('releases').where({ site_id: siteId, status: 'ready' }).where('number', '>', open.number).first('id');
+  if (newer || scan?.blocked === true || scan?.verdict === 'infected') {
+    await releaseService.dismissAwaiting(siteId, Number(open.id), newer ? 'remplacée : une release plus récente est en ligne' : 'remplacée : l’analyse la bloquait');
+    return;
+  }
+  throw new AppError(409, `Proposal #${open.number} of this key is still waiting for a human`, 'proposalOpen', { releaseId: Number(open.id), number: Number(open.number) });
+}
+
 function publishInProgress(): AppError {
   return new AppError(409, 'A publication is already in progress for this site', 'publishInProgress');
 }
@@ -1226,6 +1257,9 @@ export const releaseService = {
     const ctx = await loadContext(siteId);
     assertNotDeleting(ctx);
     if (ctx.account.status === 'suspended') throw new AppError(409, 'The hosting account is suspended', 'accountSuspended');
+    if (opts.trigger === 'auto' && ctx.site.publish_mode === 'auto' && ctx.site.staging_proposal_at) {
+      throw new AppError(409, 'The staging holds changes of a key in proposal mode: a human publishes', 'proposalHold');
+    }
     if (locks.has(siteId)) throw publishInProgress();
     locks.add(siteId);
     let started = false;
@@ -1233,6 +1267,7 @@ export const releaseService = {
       if (await hasInFlight(siteId)) throw publishInProgress();
       await assertNoWindow(siteId);
       await assertNoAdapterRun(siteId);
+      if (opts.proposal) await assertNoOpenProposal(siteId, opts.apiKeyId ?? null);
       const scan = scanStaging(ctx.paths.staging, dataPathList(ctx));
       if (scan.fileCount === 0) {
         throw new AppError(409, 'The staging directory of this site is empty', 'stagingEmpty');
@@ -1264,10 +1299,14 @@ export const releaseService = {
           message,
           author_user_id: opts.userId,
           api_key_id: opts.apiKeyId ?? null,
+          proposal: opts.proposal === true,
           log: JSON.stringify([]),
           on_disk: false,
         }).returning('id');
         return Number(typeof row === 'object' ? row.id : row);
+      }).catch((err: { code?: string; constraint?: string }) => {
+        if (err?.code === '23505' && err.constraint === 'releases_one_open_proposal') throw new AppError(409, 'This key already has an open proposal on this site', 'proposalOpen');
+        throw err;
       });
       const row = await fetchRelease(siteId, id);
       emitHosting(HostingSocketEvents.RELEASE_UPDATED, { siteId, releaseId: id, status: 'queued' }, { tenantId: ctx.site.tenant_id, accountId: ctx.account.id });
@@ -1286,7 +1325,7 @@ export const releaseService = {
    * ('release.approve.override'); the override is recorded in scan.override
    * and releases.scan_override_by/at. 409 riskBlocked {score, level} without.
    */
-  async approve(siteId: number, releaseId: number, userId: number, opts: { override?: { reason: string | null } | null } = {}): Promise<Release> {
+  async approve(siteId: number, releaseId: number, userId: number, opts: { override?: { reason: string | null } | null; comment?: string | null } = {}): Promise<Release> {
     const ctx = await loadContext(siteId);
     const row = await fetchRelease(siteId, releaseId);
     if (row.status !== 'awaiting_approval') throw new AppError(409, 'This release is not awaiting approval', 'releaseNotAwaitingApproval');
@@ -1321,7 +1360,10 @@ export const releaseService = {
           .whereRaw('o.commit_sha = n.commit_sha'))
         .first('n.id');
       if (newer) throw new AppError(409, 'A newer release has already been published', 'releaseSuperseded');
-      const patch: Record<string, unknown> = { approved_by: userId, approved_at: db.fn.now(), status: 'publishing', updated_at: db.fn.now() };
+      const comment = opts.comment?.trim() ? opts.comment.trim().slice(0, 500) : null;
+      const patch: Record<string, unknown> = {
+        approved_by: userId, approved_at: db.fn.now(), status: 'publishing', updated_at: db.fn.now(), decided_by: userId, decided_at: db.fn.now(), decision_comment: comment,
+      };
       if (blocked && scan && opts.override) {
         patch.scan = JSON.stringify({ ...scan, blocked: true, override: { by: await userName(userId), at: new Date().toISOString(), reason: opts.override.reason ?? null } });
         patch.scan_override_by = userId;
@@ -1331,10 +1373,10 @@ export const releaseService = {
       if (!n) throw new AppError(409, 'This release is not awaiting approval', 'releaseNotAwaitingApproval');
       started = true;
       void runInBackground(siteId, releaseId, 'deploy');
-      notify('release.approved', {
+      notify(row.proposal ? 'release.decided' : 'release.approved', {
         tenantId: ctx.site.tenant_id, accountId: ctx.account.id, key: `release:${releaseId}`, severity: 'info',
-        title: `Release approuvée : ${ctx.site.name}`,
-        message: `La release #${row.number} du site ${ctx.site.name} a été approuvée par ${await userName(userId)} ; sa mise en ligne a commencé.`,
+        title: `${row.proposal ? 'Proposition approuvée' : 'Release approuvée'} : ${ctx.site.name}`,
+        message: `La release #${row.number} du site ${ctx.site.name} a été approuvée par ${await userName(userId)} ; sa mise en ligne a commencé.${comment ? ` Commentaire : ${comment}` : ''}`,
         link: `/sites/${siteId}?tab=releases&release=${releaseId}`,
       });
       return toRelease(await fetchRelease(siteId, releaseId));
@@ -1351,12 +1393,12 @@ export const releaseService = {
     const why = reason?.trim() ? reason.trim().slice(0, 500) : null;
     run.line('warn', `rejetée par l’utilisateur #${userId}${why ? ` : ${why}` : ''}`);
     const n = await db('releases').where({ id: releaseId, status: 'awaiting_approval' })
-      .update({ status: 'rejected', error: why, updated_at: db.fn.now() });
+      .update({ status: 'rejected', error: why, updated_at: db.fn.now(), decided_by: userId, decided_at: db.fn.now(), decision_comment: why });
     if (!n) throw new AppError(409, 'This release is not awaiting approval', 'releaseNotAwaitingApproval');
     await run.save({ status: 'rejected' });
-    notify('release.rejected', {
+    notify(row.proposal ? 'release.decided' : 'release.rejected', {
       tenantId: ctx.site.tenant_id, accountId: ctx.account.id, key: `release:${releaseId}`, severity: 'warning',
-      title: `Release rejetée : ${ctx.site.name}`,
+      title: `${row.proposal ? 'Proposition rejetée' : 'Release rejetée'} : ${ctx.site.name}`,
       message: `La release #${row.number} du site ${ctx.site.name} a été rejetée par ${await userName(userId)}${why ? ` : ${why}` : '.'}`,
       link: `/sites/${siteId}?tab=releases&release=${releaseId}`,
     });
@@ -1375,7 +1417,7 @@ export const releaseService = {
     const why = reason.trim().slice(0, 500) || 'écartée';
     run.line('warn', `écartée automatiquement : ${why}`);
     const n = await db('releases').where({ id: releaseId, status: 'awaiting_approval' })
-      .update({ status: 'rejected', error: why, updated_at: db.fn.now() });
+      .update({ status: 'rejected', error: why, updated_at: db.fn.now(), decided_at: db.fn.now(), decision_comment: why });
     if (!n) return false;
     await run.save({ status: 'rejected' });
     return true;
@@ -1630,6 +1672,11 @@ export const releaseService = {
     if (held) {
       base.warnings.push(`publication automatique retenue : le staging remettrait en ligne ${held.count} fichier(s) de la release #${held.releaseNumber} annulée par un retour arrière`);
       base.warningItems.push({ code: 'autoPublishHeld', releaseNumber: held.releaseNumber, count: held.count });
+    }
+    // Read from the row: survives a restart, unlike the rollback hold above.
+    if (ctx.site.publish_mode === 'auto' && ctx.site.staging_proposal_at) {
+      base.warnings.push('publication automatique retenue : le staging contient des modifications d’une clé en mode proposition, non approuvées');
+      base.warningItems.push({ code: 'autoPublishHeldProposal' });
     }
     if (!fs.existsSync(ctx.paths.staging)) {
       base.warnings.push('dossier de staging absent');
@@ -2061,9 +2108,11 @@ async function applyRestore(ctx: SiteContext, target: ReleaseRow, changes: Chang
  * No line in the release log (C11), no notifyChange.
  */
 async function finishRestore(
-  ctx: SiteContext, target: ReleaseRow, who: { userId: number | null }, applied: { written: number; deleted: number; conflicts: string[] },
+  ctx: SiteContext, target: ReleaseRow, who: { userId: number | null; apiKeyId?: number | null }, applied: { written: number; deleted: number; conflicts: string[] },
   previousStagingCommit: string | null, input: TreeMatchInput, unchanged: boolean, execLost: string[],
 ): Promise<StagingRestoreResult> {
+  // Read BEFORE the check below: a later write of a « propose » key moves the mark, which is then not cleared.
+  const proposalMark = (await db('sites').where({ id: ctx.site.id }).first('staging_proposal_at') as { staging_proposal_at: Date | string | null } | undefined)?.staging_proposal_at ?? null;
   const nested = scanStaging(ctx.paths.staging, dataPathList(ctx), 200_000).nestedRepos;
   const remaining = await stagingDiffAgainst({ ...input, nestedRepos: nested });
   if (!remaining.entries.length) {
@@ -2078,6 +2127,10 @@ async function finishRestore(
   }
   await db('sites').where({ id: ctx.site.id }).update({ rolled_back_from_release_id: null, updated_at: db.fn.now() });
   await clearHeld(ctx.site.id);
+  // A person put the staging exactly on a published release: nothing of a « propose » key is left in it (unless it wrote again since the check).
+  if (!who.apiKeyId && remaining.entries.length === 0 && proposalMark) {
+    await db('sites').where({ id: ctx.site.id, staging_proposal_at: proposalMark }).update({ staging_proposal_at: null });
+  }
   // Copied from the live tree without their executable bit: still differing by their mode only.
   const lost = new Set(execLost);
   const modeLost = remaining.entries.filter((e) => lost.has(e.path) && e.status === 'modified' && e.oldMode === '100755' && e.newMode === '100644').map((e) => e.path);

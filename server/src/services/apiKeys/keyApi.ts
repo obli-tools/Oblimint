@@ -174,7 +174,24 @@ async function parentIds(ctx: ApiKeyContext): Promise<Set<number>> {
 
 async function filesAccount(ctx: ApiKeyContext, write: boolean): Promise<AccountRow> {
   requireScope(ctx, write ? 'files.write' : 'files.read');
-  return loadAccount(ctx.actor, ctx.accountId, 'files.manage');
+  const a = await loadAccount(ctx.actor, ctx.accountId, 'files.manage');
+  // Its writes never reach the publish scheduler (files.service notifyStaging).
+  return write && isProposer(ctx) ? { ...a, proposal_key: true } : a;
+}
+
+/** A key in proposal mode: never a direct publication (releases.propose gives no capability, see SCOPE_CAP). */
+function isProposer(ctx: Pick<ApiKeyContext, 'scopes'>): boolean {
+  return ctx.scopes.has('releases.propose');
+}
+
+/**
+ * Before any write of a key in proposal mode: the live data area is refused (its files are live at once), and
+ * the staging is marked FIRST, so an automatic publication can never take in a file written before the mark.
+ */
+async function proposerWrite(ctx: ApiKeyContext, siteId: number, area: SiteArea): Promise<void> {
+  if (!isProposer(ctx)) return;
+  if (area !== 'staging') throw new AppError(403, 'A key in proposal mode only writes the staging: the data area is live at once', 'proposeStagingOnly');
+  await db('sites').where({ id: siteId }).update({ staging_proposal_at: db.fn.now() });
 }
 
 /**
@@ -262,11 +279,12 @@ export async function withWaitSlot<T>(ctx: ApiKeyContext, req: Request | null, s
  */
 async function keyReleases<T extends Release & { log?: ReleaseLogLine[] }>(site: Pick<SiteRow, 'account_id'>, items: T[]): Promise<T[]> {
   if (!items.length) return items;
-  const approvers = await db('releases').whereIn('id', items.map((r) => r.id)).select('id', 'approved_by') as Array<{ id: number; approved_by: number | null }>;
+  const approvers = await db('releases').whereIn('id', items.map((r) => r.id)).select('id', 'approved_by', 'decided_by') as Array<{ id: number; approved_by: number | null; decided_by: number | null }>;
   const approverOf = new Map(approvers.map((a) => [Number(a.id), a.approved_by]));
+  const deciderOf = new Map(approvers.map((a) => [Number(a.id), a.decided_by ?? a.approved_by]));
   // Users named in the log lines ("dérogation du staff (utilisateur #12)", "rejetée par l’utilisateur #12 : …").
   const logged = items.flatMap((r) => (Array.isArray(r.log) ? r.log.flatMap((l) => loggedUserIds(l.message)) : []));
-  const hidden = await nonMembers(site.account_id, [...items.map((r) => r.authorUserId), ...approvers.map((a) => a.approved_by), ...logged]);
+  const hidden = await nonMembers(site.account_id, [...items.map((r) => r.authorUserId), ...approvers.flatMap((a) => [a.approved_by, a.decided_by]), ...logged]);
   return items.map((r) => {
     const approver = approverOf.get(r.id);
     const out: T = {
@@ -274,6 +292,12 @@ async function keyReleases<T extends Release & { log?: ReleaseLogLine[] }>(site:
       error: publicReleaseText(r.error),
       ...(r.authorUserId && hidden.has(r.authorUserId) ? { authorName: null } : {}),
       ...(approver && hidden.has(Number(approver)) ? { approvedBy: null } : {}),
+      // The comment is the human's word for the agent; a rejection without decision_comment falls back on the error: masked.
+      ...(r.decision ? { decision: {
+        ...r.decision,
+        by: hidden.has(Number(deciderOf.get(r.id))) ? null : r.decision.by,
+        comment: r.decision.comment === r.error ? publicReleaseText(r.decision.comment) : r.decision.comment,
+      } } : {}),
       // Only a staff member overrides a blocked scan (M5): never named to a key.
       ...(r.scan?.override ? { scan: { ...r.scan, override: { ...r.scan.override, by: 'staff' } } } : {}),
       // Observation after publication: no backend detail in a failed return / a failed probe.
@@ -306,9 +330,9 @@ export function keyNotificationFamilies(ctx: Pick<ApiKeyContext, 'scopes' | 'sit
   if (ctx.siteScope !== 'all') return [];
   const s = ctx.scopes;
   const out: NotificationFamily[] = [];
-  if (s.has('releases.publish')) out.push('releases');
+  if (s.has('releases.publish') || s.has('releases.propose')) out.push('releases');
   if (ctx.domainScope === 'all' && (s.has('routes.manage') || s.has('domains.subdomain') || s.has('sites.manage'))) out.push('domains', 'certificates');
-  if (s.has('files.write') || s.has('releases.publish') || s.has('sites.manage')) out.push('quota');
+  if (s.has('files.write') || s.has('releases.publish') || s.has('releases.propose') || s.has('sites.manage')) out.push('quota');
   if (s.has('cron.manage')) out.push('monitoring');
   return out;
 }
@@ -513,6 +537,7 @@ export const keyApi = {
     requireScope(ctx, 'files.read');
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
+    await proposerWrite(ctx, site.id, area);
     const virtual = areaPath(site, area, path);
     const r = await keyGated(ctx, req, {
       action: 'files.write', target: siteTarget(site), params: { op: 'edit', area, path: relOf(site, area, virtual), edits, expectedSha256 },
@@ -564,6 +589,12 @@ export const keyApi = {
   ): Promise<FileWriteResult> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
+    try {
+      await proposerWrite(ctx, site.id, area);
+    } catch (err) {
+      body.resume();
+      throw err;
+    }
     const virtual = areaPath(site, area, path);
     let expectedMtime: number | undefined;
     try {
@@ -615,6 +646,7 @@ export const keyApi = {
   ): Promise<FileUploadSession> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
+    await proposerWrite(ctx, site.id, area);
     const virtual = areaPath(site, area, path);
     if (contentSha256 === null && await actionLevel(asKeyRequest(req, ctx), 'files.write', siteTarget(site)) !== 'none') {
       throw new AppError(400, 'Writing files is a protected action here: declare the sha256 of the whole file (contentSha256) when opening the upload', 'contentSha256Required');
@@ -660,6 +692,7 @@ export const keyApi = {
   async mkdir(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, opts: { parents?: boolean } = {}): Promise<string> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
+    await proposerWrite(ctx, site.id, area);
     const virtual = areaPath(site, area, path);
     return keyGated(ctx, req, {
       action: 'files.write', target: siteTarget(site), params: { op: 'mkdir', area, path: relOf(site, area, virtual), parents: opts.parents === true },
@@ -677,6 +710,7 @@ export const keyApi = {
   async remove(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, paths: string[]): Promise<FileOpResult[]> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
+    await proposerWrite(ctx, site.id, area);
     const virtuals = paths.map((p) => areaPath(site, area, p));
     // A batch: one gate for the whole of it (spec §1.1).
     return keyGated(ctx, req, {
@@ -692,6 +726,7 @@ export const keyApi = {
   async move(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, items: Array<{ from: string; to: string }>, overwrite: boolean, copy = false): Promise<FileOpResult[]> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
+    await proposerWrite(ctx, site.id, area);
     const mapped = items.map((i) => ({ from: areaPath(site, area, i.from), to: areaPath(site, area, i.to) }));
     return keyGated(ctx, req, {
       action: 'files.write', target: siteTarget(site),
@@ -707,6 +742,7 @@ export const keyApi = {
   async extract(ctx: ApiKeyContext, req: Request, siteId: number, area: SiteArea, path: string, to: string | undefined, overwrite: boolean): Promise<FileExtractResult> {
     const a = await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
+    await proposerWrite(ctx, site.id, area);
     const archive = areaPath(site, area, path);
     const target = to === undefined ? undefined : areaPath(site, area, to);
     return keyGated(ctx, req, {
@@ -728,21 +764,26 @@ export const keyApi = {
   async publish(
     ctx: ApiKeyContext, req: Request, siteId: number, message: string | null, opts: { overrideRollback?: boolean; waitMs?: number } = {},
   ): Promise<ApiV1ReleaseResult> {
-    requireScope(ctx, 'releases.publish');
+    const proposer = isProposer(ctx);
+    if (!proposer) requireScope(ctx, 'releases.publish');
     const site = await keySite(ctx, siteId);
-    await loadSite(ctx.actor, site.id, 'releases.publish');
+    if (!proposer) await loadSite(ctx.actor, site.id, 'releases.publish');
     const waitMs = Math.min(PUBLISH_WAIT_MAX_MS, Math.max(0, Math.trunc(opts.waitMs ?? 0)));
     const override = opts.overrideRollback === true;
+    if (proposer && override) throw new AppError(403, 'Only a human goes against his own rollback: ask him', 'proposeNoOverride');
     // release.publish, and release.publish_override_rollback with the override: one gate, the strictest.
     const gates = [
       { action: 'release.publish', target: siteTarget(site), params: { message, overrideRollback: override } },
       ...(override ? [{ action: 'release.publish_override_rollback', target: siteTarget(site), params: { message, overrideRollback: true } }] : []),
     ];
     const go = async (signal: AbortSignal | null): Promise<ApiV1ReleaseResult> => {
-      const release = await keyGated(ctx, req, gates, () => releaseService.publish(site.id, {
-        trigger: 'manual', userId: ctx.creatorId, message, apiKeyId: ctx.id, rollbackGuard: override ? 'off' : 'refuse',
-      }));
-      await auditService.logReqAs(req, site.tenant_id, 'release.publish', {
+      // A proposal puts nothing live: the release.publish gate applies to the human who approves it (route approve).
+      const release = proposer
+        ? await releaseService.publish(site.id, { trigger: 'manual', userId: ctx.creatorId, message, apiKeyId: ctx.id, rollbackGuard: 'refuse', proposal: true })
+        : await keyGated(ctx, req, gates, () => releaseService.publish(site.id, {
+          trigger: 'manual', userId: ctx.creatorId, message, apiKeyId: ctx.id, rollbackGuard: override ? 'off' : 'refuse',
+        }));
+      await auditService.logReqAs(req, site.tenant_id, proposer ? 'release.propose' : 'release.publish', {
         resourceType: 'release', resourcePath: String(release.id),
         details: { siteId: site.id, number: release.number, ...(opts.overrideRollback ? { overrideRollback: true } : {}) },
       });
@@ -845,6 +886,7 @@ export const keyApi = {
     await filesAccount(ctx, true);
     const site = await keySite(ctx, siteId);
     assertReadsCode(ctx.actor, site);
+    await proposerWrite(ctx, site.id, 'staging');
     const rid = releaseIdOf(releaseId);
     const discardPending = opts.discardPending === true;
     const r = await keyGated(ctx, req, { action: 'release.restore_to_staging', target: siteTarget(site), params: { releaseId: rid, discardPending } },
@@ -876,13 +918,14 @@ export const keyApi = {
       throw new AppError(400, 'Give either release_id or staging: true', 'validation');
     }
     if (staging) requireScope(ctx, 'releases.publish');
+    const proposeKey = isProposer(ctx);
     // Database clone: + the databases.manage scope, only databases within the key's reach.
     const clone = body.database === 'clone';
     if (clone) requireScope(ctx, 'databases.manage');
     const start = async () => previewService.start(req, ctx.actor, site.id, {
       target: staging ? 'staging' : 'release', releaseId: body.releaseId ?? null, ttlMinutes: body.ttlMinutes ?? null,
       options: clone ? { database: 'clone' } : null, databaseIds: clone ? body.databaseIds ?? null : null,
-    }, { keyId: ctx.id, includeKey: body.includeKey === true, withLink: true, ...(clone ? { dbReach: await keyDbReach(ctx) } : {}) });
+    }, { keyId: ctx.id, includeKey: body.includeKey === true, withLink: true, proposeKey, ...(clone ? { dbReach: await keyDbReach(ctx) } : {}) });
     // A copy of production data in a preview: preview.db_clone.
     const r = clone
       ? await keyGated(ctx, req, {
@@ -930,7 +973,7 @@ export const keyApi = {
     previewScopes(ctx);
     if (q.compare) requireScope(ctx, 'sites.manage');
     const site = await keySite(ctx, siteId);
-    return previewService.fetch(ctx.actor, site.id, q, await keyDbReach(ctx));
+    return previewService.fetch(ctx.actor, site.id, q, await keyDbReach(ctx), isProposer(ctx) ? ctx.id : null);
   },
 
   // ── subdomains (scope domains.subdomain) ──

@@ -1,7 +1,7 @@
 import type {
   AccessMode, CmsGuardSiteSettings, DnsZoneKind, DomainVerificationMethod, DomainVerificationStatus, OverQuotaState,
   AccountSshKey, AppProfileId, CertificateSummary, ObservationMode, ClientCapability, CurrentReleaseVia, DataPathPolicy, Domain, HostingAccount, LeakPolicy, PhpSettings,
-  Plan, PlanLimits, Release, ReleaseDetail, ReleaseLogLine, ScanSummary, Site, SiteBaseId, SiteDataPath, SiteRoute,
+  Plan, PlanLimits, Release, ReleaseDecision, ReleaseDetail, ReleaseLogLine, ScanSummary, Site, SiteBaseId, SiteDataPath, SiteRoute,
 } from '@oblimint/shared';
 import { CLIENT_CAPABILITIES, DEFAULT_PLAN_LIMITS, OBSERVATION_WINDOW_DEFAULT_MINUTES } from '@oblimint/shared';
 import { releaseErrorCode } from '../releases/outcome';
@@ -20,6 +20,8 @@ export interface PlanRow {
 }
 
 export interface AccountRow {
+  /** Not a column: the row was loaded for a write by a key in proposal mode (keyApi.filesAccount). */
+  proposal_key?: boolean;
   id: number; tenant_id: number; node_id: number; plan_id: number; username: string; display_name: string | null;
   status: HostingAccount['status']; status_message: string | null; uid: number; gid: number;
   disk_used_bytes: number | string | null; quota_mode: 'xfs' | 'measured' | null; usage_checked_at: Date | string | null;
@@ -38,6 +40,8 @@ export interface AccountRow {
 export interface SiteRow {
   id: number; tenant_id: number; account_id: number; name: string; slug: string; base: SiteBaseId;
   app_profile: AppProfileId | null; docroot: string; base_path: string; publish_mode: Site['publishMode'];
+  /** migration 041: last write of a key in proposal mode in the staging (holds the auto publication). */
+  staging_proposal_at?: Date | string | null;
   publish_debounce_sec: number; healthcheck_path: string; status: Site['status']; status_message: string | null;
   current_release_id: number | null; preview_base: SiteBaseId | null; php_settings: unknown; custom_nginx: string | null;
   created_at: Date | string; updated_at: Date | string;
@@ -94,7 +98,9 @@ export interface ReleaseRow {
   window_id?: number | null; adapter_run_id?: number | null; scan_override_by?: number | null; scan_override_at?: Date | string | null;
   /** migration 016: access key that created it (Release.apiKeyId / apiKeyName: "via key X"). */
   api_key_id?: number | null;
-  /** joined */ author_name?: string | null; approver_name?: string | null; is_current?: boolean; api_key_name?: string | null;
+  /** migration 041: proposal of a key (releases.propose) and the human decision on it. */
+  proposal?: boolean; decided_by?: number | null; decided_at?: Date | string | null; decision_comment?: string | null;
+  /** joined */ author_name?: string | null; approver_name?: string | null; is_current?: boolean; api_key_name?: string | null; decider_name?: string | null;
   /** joined (migration 040): to_jsonb of its release_observations row, null when not observed. */
   observation?: unknown;
 }
@@ -303,6 +309,18 @@ export function toDomain(r: DomainRow, routes: SiteRoute[], cert: CertificateSum
   };
 }
 
+/** The human decision of a release (rows older than migration 041: from approved_at / the rejected status and its error). */
+function decisionOf(r: ReleaseRow): ReleaseDecision | null {
+  const approved = !!r.approved_at;
+  if (!approved && r.status !== 'rejected') return null;
+  return {
+    state: approved ? 'approved' : 'rejected',
+    by: r.decider_name ?? r.approver_name ?? null,
+    at: iso(r.decided_at ?? r.approved_at ?? null),
+    comment: r.decision_comment ?? (approved ? null : r.error),
+  };
+}
+
 export function toRelease(r: ReleaseRow): Release {
   const scan = json<ScanSummary | null>(r.scan, null);
   return {
@@ -329,6 +347,8 @@ export function toRelease(r: ReleaseRow): Release {
     // A key deleted since: its id is gone too (ON DELETE SET NULL); a name without its id is never shown.
     apiKeyId: r.api_key_id && r.api_key_name ? Number(r.api_key_id) : null,
     apiKeyName: r.api_key_id && r.api_key_name ? r.api_key_name : null,
+    proposal: r.proposal === true,
+    decision: decisionOf(r),
     errorCode: releaseErrorCode({ status: r.status, error: r.error, scan }),
     observation: observationOfJoined(r.observation),
   };
