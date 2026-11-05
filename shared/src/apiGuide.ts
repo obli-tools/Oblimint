@@ -87,7 +87,8 @@ Consequences:
 | \`files.read\` | List and read files (staging and data), see unpublished changes |
 | \`files.write\` | Write, create folders, move, copy, delete, extract archives, upload large files |
 | \`releases.publish\` | Publish staging (go live) and roll back |
-| \`previews.manage\` | Live previews of a release or of the staging (with \`releases.publish\`): start, fetch a page, stop. Needs \`files.read\` too. Never code awaiting a human's approval on a site in \`approval\` mode |
+| \`releases.propose\` | Proposal mode, excludes \`releases.publish\`: \`publish\` only creates a release waiting for a human, whatever the publish mode. No rollback, no live change (see §5 « Proposal mode ») |
+| \`previews.manage\` | Live previews of a release or of the staging (with \`releases.publish\`): start, fetch a page, stop. Needs \`files.read\` too. Never code awaiting a human's approval on a site in \`approval\` mode, except the key's own proposal (\`releases.propose\`) |
 | \`sites.manage\` | Change site settings: name, document root, publish mode, auto-publish delay, health-check path, PHP settings, **environment variables**, **data paths**, **secondary runtimes** |
 | \`sites.create\` | Create sites in the account (they join the key automatically) |
 | \`cron.manage\` | Scheduled tasks of its sites: create, change, run, read the output |
@@ -136,7 +137,7 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`extract_archive\` | Extract a \`.zip\` / \`.tar\` / \`.tar.gz\` already in the site | \`files.write\` |
 | \`staging_changes\` | Unpublished changes (\`pendingChanges\`, \`files\`), \`base\` / \`baseIsLive\`, \`liveChanges\` (what \`publish\` would change on the live site), \`rolledBack\`, \`warningItems\`, \`restore\` | \`files.read\` |
 | \`check_leaks\` | The leak guard of the publication run on the staging (see §5 « Secrets and leaks »): \`policy\`, \`blocked\`, \`critical\` / \`warn\`, \`findings\` (\`path\`, \`line\`, \`rule\`, \`severity\`, \`served\`; never the secret), \`allowlisted\` | \`files.read\` + code right |
-| \`publish\` | Publish (new live release), \`message?\`, \`override_rollback?\` (only on the human's explicit request), \`wait?\` (default true: waits ≤ 25 s and returns the release with its \`outcome\`, see §5 « After publishing ») | \`releases.publish\` |
+| \`publish\` | Publish (new live release), \`message?\`, \`override_rollback?\` (only on the human's explicit request), \`wait?\` (default true: waits ≤ 25 s and returns the release with its \`outcome\`, see §5 « After publishing ») | \`releases.publish\`, or \`releases.propose\` (creates a proposal) |
 | \`list_releases\` | Release history, newest first (\`limit\`); \`apiKeyName\` (the key that published it), \`errorCode\` | — |
 | \`get_release\` | One release: its pipeline log (French; backend details removed) and its \`outcome\` | — |
 | \`wait_for_release\` | Wait until a release is settled (\`timeout_s\` ≤ 60, default 30), then as \`get_release\`; \`until: "verdict"\` also waits for the end of its observation after publication (§5 « After publishing »); \`outcome.timedOut\`: call it again | — |
@@ -214,7 +215,7 @@ The idea: the agent develops on the platform, puts things live **only once the w
    - \`healthcheckFailed\`: the site did not answer its health check on the new code; the previous release is live again. \`get_release\` for the log, \`read_logs\` (\`source: "error"\`, \`since\`: the release's \`createdAt\`), fix, publish again.
    - \`reloadFailed\`: a container could not be reloaded; the previous release is live again. Retry later; tell the human if it happens again.
    - \`scanBlocked\`: the security scan blocks the release (\`awaiting_approval\`); only a staff override publishes it. Show the findings to the human.
-   - \`awaiting_approval\` without an error code: the site publishes with approval (or the content is suspicious): tell the human. The approvers get a notification, and \`list_notifications\` shows you \`release.approved\` / \`release.rejected\` once they decide.
+   - \`awaiting_approval\` without an error code: the site publishes with approval (or the content is suspicious): tell the human. The approvers get a notification, and \`list_notifications\` shows you \`release.approved\` / \`release.rejected\` (\`release.decided\` for a proposal) once they decide; \`get_release\` returns \`decision\` (state, by, at, comment).
 2. \`diff_release\` (\`against: "live"\` before, \`"previous"\` after) shows exactly what changed.
 3. Check that the site answers (its URL), then \`list_errors\` with \`release_id\` (the new release) and \`new_only: true\` a minute or two later: the PHP errors this release brought (collected every minute). \`get_error\` for the stack; \`read_logs\` (\`source: "error"\`, \`since\`) for the raw lines.
    - \`errorClass: "readOnlyWrite"\`: the code writes next to itself (cache, uploads): the live code is read-only. Declare that folder as a data path (\`add_data_path\`) and publish again.
@@ -248,6 +249,18 @@ Every release goes through a **leak guard** before it goes live. It reports the 
 - The site's \`policy\` (\`get_site\` → \`leakGuard\`): \`block\` (default of new sites; sites that existed before the guard start on \`warn\`) — a critical finding makes the release fail with \`leakBlocked\`, nothing goes live; \`warn\` — reported only (\`outcome.leaks\`, the release log). The human may allowlist paths (\`allowlist\`, \`allowlisted\` counts them); **a key can change neither the policy nor the allowlist**.
 - Secrets go into the site variables (\`set_env\`, \`secret: true\`), read with \`getenv()\`; database dumps go into the database (\`import_sql\`), then are deleted from the site.
 - **Run \`check_leaks\` before \`publish\`**: the same rules on the staging, as the next publication will see them.
+
+### Proposal mode (scope \`releases.propose\`, preset « Supervised agent »)
+
+For a key trusted to prepare work, not to put it live. A human decides everything that goes live.
+
+1. Write into the \`staging\` area only (\`proposeStagingOnly\` on \`data\`: it is live at once), in any publish mode: your writes never trigger an automatic publication. In \`auto\` mode the site's automatic publication is even held (\`autoPublishHeldProposal\`) until a human went forward.
+2. \`publish\` creates a release \`awaiting_approval\` with \`proposal: true\`, whatever the mode. Nothing goes live. The approvers are notified (\`release.pendingApproval\`).
+3. One open proposal per key and per site: \`proposalOpen\` (409, \`details.releaseId\`) until a human decides. One no human can let through any more (a newer release went live, or the scan blocks it) is dismissed by your next \`publish\`.
+4. Check it: \`start_preview\` with its \`release_id\`, then \`fetch_preview\`. That exception covers your own proposal only: no other key's (\`previewApprovalRequired\`), no share link (\`link\` is null), no \`include_key\`, no \`database: "clone"\` (\`previewProposalRestricted\`), no staging preview.
+5. Tell the human, then read the decision: \`get_release\` returns \`decision\` (\`state\` approved | rejected, \`by\`, \`at\`, \`comment\`), and the event is \`release.decided\`. Rejected: read the comment, change the staging, \`publish\` again.
+
+You never approve anything, roll back (\`keyScope\`), use \`override_rollback\` (\`proposeNoOverride\`), nor switch a site to \`auto\`. If publishing is a protected action, the human meets the protection when he approves; proposing stays free.
 
 ### Rollbacks by a human
 
@@ -460,7 +473,7 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | POST | \`/sites/:id/files/extract\` | \`{ path, to?, overwrite? }\` | \`files.write\` |
 | GET | \`/sites/:id/staging\` | unpublished changes, base vs live, rollback pending | \`files.read\` |
 | GET | \`/sites/:id/leak-check\` | leak guard on the staging (as \`check_leaks\`) | \`files.read\` + code right |
-| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| seconds ≤ 25 }\` (message ≤ 500 characters); with \`wait\`: the release + \`outcome\` | \`releases.publish\` |
+| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| seconds ≤ 25 }\` (message ≤ 500 characters); with \`wait\`: the release + \`outcome\` | \`releases.publish\`, or \`releases.propose\` (creates a proposal) |
 | GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | GET | \`/sites/:id/releases/:releaseId\` | the release, its log and its \`outcome\` | — |
 | GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (seconds ≤ 60, default 30), \`?until=\` (\`settled\` default, or \`verdict\`: also the end of its observation after publication): as above once settled (\`outcome.timedOut\` otherwise) | — |
@@ -568,6 +581,8 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`planLimit\` · \`cronTooFrequent\` (409) | Plan limit (number of databases, cron jobs, minimum interval…) | Stay within the limits, or ask the human |
 | \`instanceNotRunning\` / \`siteNotRunning\` (409) | Database server or site not started | Wait (\`list_databases\`, \`get_site\`), retry |
 | \`previewApprovalRequired\` (403) | Site in \`approval\` mode: code not approved yet cannot be previewed by a key | Ask the human (an approver previews it in the panel) |
+| \`proposalOpen\` (409) | A proposal of this key waits for a human on this site (\`details.releaseId\`) | Tell the human; read \`decision\` with \`get_release\` |
+| \`proposeStagingOnly\` (403) · \`proposeNoOverride\` (403) · \`previewProposalRestricted\` (403) | Key in proposal mode: writes only the staging · never overrides a rollback · its proposal is previewed without database clone nor \`include_key\` | Ask the human |
 | \`previewStagingForbidden\` (403) · \`previewCompareForbidden\` (403) · \`previewShareForbidden\` (403) | Staging preview needs \`releases.publish\` · compare needs \`sites.manage\` · share links need the creator to manage the site | Ask the human |
 | \`previewNotRunning\` (409) | No running preview (still starting, failed, expired, stopped) | \`get_preview\`; start one |
 | \`previewDatabaseForbidden\` (403) · \`previewDatabaseChoice\` (409) · \`previewNoDatabase\` (409) | A database clone (or a preview holding one) needs \`databases.manage\` and the databases within the key's reach · several databases possible: \`details.candidates\` · the account has none | Ask the human · pass \`database_ids\` · start without \`database\` |
@@ -666,7 +681,8 @@ Conséquences :
 | \`files.read\` | Lister et lire les fichiers (staging et data), voir les changements non publiés |
 | \`files.write\` | Écrire, créer des dossiers, déplacer, copier, supprimer, extraire des archives, envoyer de gros fichiers |
 | \`releases.publish\` | Publier le staging (mise en ligne) et revenir à une release précédente |
-| \`previews.manage\` | Aperçus en direct d'une release ou du staging (avec \`releases.publish\`) : démarrer, récupérer une page, arrêter. Demande aussi \`files.read\`. Jamais du code en attente de validation humaine sur un site en mode \`approval\` |
+| \`releases.propose\` | Mode proposition, exclut \`releases.publish\` : \`publish\` crée seulement une release qui attend un humain, quel que soit le mode de publication. Ni retour arrière, ni changement en ligne (voir §5 « Mode proposition ») |
+| \`previews.manage\` | Aperçus en direct d'une release ou du staging (avec \`releases.publish\`) : démarrer, récupérer une page, arrêter. Demande aussi \`files.read\`. Jamais du code en attente de validation humaine sur un site en mode \`approval\`, sauf la propre proposition de la clé (\`releases.propose\`) |
 | \`sites.manage\` | Modifier les réglages des sites : nom, racine web, mode de publication, délai de publication auto, chemin de contrôle de santé, réglages PHP, **variables d'environnement**, **chemins de données**, **runtimes secondaires** |
 | \`sites.create\` | Créer des sites dans le compte (ils rejoignent automatiquement la clé) |
 | \`cron.manage\` | Tâches planifiées de ses sites : créer, modifier, lancer, lire le résultat |
@@ -793,7 +809,7 @@ L'idée : l'agent développe sur la plateforme, ne met en ligne **qu'une fois le
    - \`healthcheckFailed\` : le site n'a pas répondu à son contrôle de santé sur le nouveau code ; la release précédente est de nouveau en ligne. \`get_release\` pour le journal, \`read_logs\` (\`source: "error"\`, \`since\` : le \`createdAt\` de la release), corrige, republie.
    - \`reloadFailed\` : un conteneur n'a pas pu être rechargé ; la release précédente est de nouveau en ligne. Réessaie plus tard ; préviens l'humain si ça recommence.
    - \`scanBlocked\` : l'analyse de sécurité bloque la release (\`awaiting_approval\`) ; seule une dérogation du staff la publie. Montre les détections à l'humain.
-   - \`awaiting_approval\` sans code d'erreur : le site publie avec validation (ou le contenu est suspect) : préviens l'humain. Les approbateurs reçoivent une notification, et \`list_notifications\` te montre \`release.approved\` / \`release.rejected\` une fois la décision prise.
+   - \`awaiting_approval\` sans code d'erreur : le site publie avec validation (ou le contenu est suspect) : préviens l'humain. Les approbateurs reçoivent une notification, et \`list_notifications\` te montre \`release.approved\` / \`release.rejected\` (\`release.decided\` pour une proposition) une fois la décision prise ; \`get_release\` renvoie \`decision\` (state, by, at, comment).
 2. \`diff_release\` (\`against: "live"\` avant, \`"previous"\` après) montre exactement ce qui a changé.
 3. Vérifie que le site répond (son URL), puis \`list_errors\` avec \`release_id\` (la nouvelle release) et \`new_only: true\` une à deux minutes plus tard : les erreurs PHP apportées par cette release (collectées chaque minute). \`get_error\` pour la pile d'appels ; \`read_logs\` (\`source: "error"\`, \`since\`) pour les lignes brutes.
    - \`errorClass: "readOnlyWrite"\` : le code écrit à côté de lui-même (cache, uploads) alors que le code en ligne est en lecture seule. Déclare ce dossier comme chemin de données (\`add_data_path\`) et republie.
@@ -827,6 +843,18 @@ Chaque release passe par une **garde anti-fuite** avant d'aller en ligne. Elle i
 - La \`policy\` du site (\`get_site\` → \`leakGuard\`) : \`block\` (par défaut pour un nouveau site ; les sites antérieurs à la garde démarrent en \`warn\`) — une détection critique fait échouer la release avec \`leakBlocked\`, rien ne part en ligne ; \`warn\` — signalé seulement (\`outcome.leaks\`, journal de la release). L'humain peut mettre des chemins en exception (\`allowlist\`, comptés dans \`allowlisted\`) ; **une clé ne peut changer ni la politique ni les exceptions**.
 - Les secrets vont dans les variables du site (\`set_env\`, \`secret: true\`), lues avec \`getenv()\` ; un dump de base va dans la base (\`import_sql\`), puis est supprimé du site.
 - **Lance \`check_leaks\` avant \`publish\`** : les mêmes règles sur le staging, comme la prochaine publication les verra.
+
+### Mode proposition (droit \`releases.propose\`, préréglage « Agent supervisé »)
+
+Pour une clé à qui l'on confie la préparation, pas la mise en ligne. Un humain décide de tout ce qui part en ligne.
+
+1. Écris dans la zone \`staging\` seulement (\`proposeStagingOnly\` sur \`data\` : elle est en ligne aussitôt), quel que soit le mode de publication : tes écritures ne déclenchent jamais de publication automatique. En mode \`auto\`, la publication automatique du site est même retenue (\`autoPublishHeldProposal\`) jusqu'à ce qu'un humain soit passé.
+2. \`publish\` crée une release \`awaiting_approval\` avec \`proposal: true\`, quel que soit le mode. Rien ne part en ligne. Les approbateurs sont prévenus (\`release.pendingApproval\`).
+3. Une seule proposition ouverte par clé et par site : \`proposalOpen\` (409, \`details.releaseId\`) tant qu'un humain n'a pas décidé. Celle qu'aucun humain ne peut plus laisser passer (une release plus récente est en ligne, ou l'analyse la bloque) est écartée par ton \`publish\` suivant.
+4. Vérifie-la : \`start_preview\` avec son \`release_id\`, puis \`fetch_preview\`. Cette exception couvre ta propre proposition seulement : pas celle d'une autre clé (\`previewApprovalRequired\`), pas de lien de partage (\`link\` vaut null), pas de \`include_key\`, pas de \`database: "clone"\` (\`previewProposalRestricted\`), pas d'aperçu du staging.
+5. Préviens l'humain, puis lis la décision : \`get_release\` renvoie \`decision\` (\`state\` approved | rejected, \`by\`, \`at\`, \`comment\`), et l'événement est \`release.decided\`. Refusée : lis le commentaire, modifie le staging, refais \`publish\`.
+
+Tu n'approuves jamais rien, ne reviens pas en arrière (\`keyScope\`), n'utilises pas \`override_rollback\` (\`proposeNoOverride\`) et ne passes pas un site en \`auto\`. Si la publication est une action protégée, l'humain rencontre la protection au moment d'approuver ; proposer reste libre.
 
 ### Retours arrière par un humain
 
@@ -1039,7 +1067,7 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | POST | \`/sites/:id/files/extract\` | \`{ path, to?, overwrite? }\` | \`files.write\` |
 | GET | \`/sites/:id/staging\` | changements non publiés, base comparée à la release en ligne, retour arrière en attente | \`files.read\` |
 | GET | \`/sites/:id/leak-check\` | garde anti-fuite sur le staging (comme \`check_leaks\`) | \`files.read\` + droit sur le code |
-| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| secondes ≤ 25 }\` (message ≤ 500 caractères) ; avec \`wait\` : la release + \`outcome\` | \`releases.publish\` |
+| POST | \`/sites/:id/publish\` | \`{ message?, overrideRollback?, wait?: true \\| secondes ≤ 25 }\` (message ≤ 500 caractères) ; avec \`wait\` : la release + \`outcome\` | \`releases.publish\`, ou \`releases.propose\` (crée une proposition) |
 | GET | \`/sites/:id/releases\` | \`?limit=&offset=\` | — |
 | GET | \`/sites/:id/releases/:releaseId\` | la release, son journal et son \`outcome\` | — |
 | GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (secondes ≤ 60, 30 par défaut), \`?until=\` (\`settled\` par défaut, ou \`verdict\` : aussi la fin de sa surveillance après publication) : comme ci-dessus une fois terminée (\`outcome.timedOut\` sinon) | — |
@@ -1147,6 +1175,8 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`planLimit\` · \`cronTooFrequent\` (409) | Limite du plan (nombre de bases, de crons, intervalle minimal…) | Rester dans les limites, ou demander à l'humain |
 | \`instanceNotRunning\` / \`siteNotRunning\` (409) | Serveur de bases ou site pas démarré | Attendre (\`list_databases\`, \`get_site\`), réessayer |
 | \`previewApprovalRequired\` (403) | Site en mode \`approval\` : du code pas encore approuvé ne peut pas être prévisualisé par une clé | Demander à l'humain (un approbateur le prévisualise dans le panel) |
+| \`proposalOpen\` (409) | Une proposition de cette clé attend un humain sur ce site (\`details.releaseId\`) | Prévenir l'humain ; lire \`decision\` avec \`get_release\` |
+| \`proposeStagingOnly\` (403) · \`proposeNoOverride\` (403) · \`previewProposalRestricted\` (403) | Clé en mode proposition : n'écrit que le staging · ne passe jamais outre un retour arrière · sa proposition se prévisualise sans clone de base ni \`include_key\` | Demander à l'humain |
 | \`previewStagingForbidden\` (403) · \`previewCompareForbidden\` (403) · \`previewShareForbidden\` (403) | L'aperçu du staging demande \`releases.publish\` · la comparaison demande \`sites.manage\` · les liens de partage demandent que le créateur gère le site | Demander à l'humain |
 | \`previewNotRunning\` (409) | Aucun aperçu en marche (encore au démarrage, échoué, expiré, arrêté) | \`get_preview\` ; en démarrer un |
 | \`previewDatabaseForbidden\` (403) · \`previewDatabaseChoice\` (409) · \`previewNoDatabase\` (409) | Une copie de base (ou un aperçu qui en a une) demande \`databases.manage\` et des bases à la portée de la clé · plusieurs bases possibles : \`details.candidates\` · le compte n'en a aucune | Demander à l'humain · passer \`database_ids\` · démarrer sans \`database\` |

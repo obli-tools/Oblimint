@@ -905,7 +905,7 @@ export const keyApi = {
    * Starts a preview of a release (releaseId) or of a scanned snapshot of the
    * staging. wait: polls until running / failed (≤ 25 s). include_key: the gate
    * header (audited preview.key). Never options that weaken the isolation, never
-   * unapproved code on a site in approval mode (a key has no releases.approve).
+   * unapproved code on a site in approval mode (a key has no releases.approve), except its own proposal (previewService.start).
    */
   async previewStart(ctx: ApiKeyContext, req: Request, siteId: number, body: {
     releaseId?: number | null; staging?: boolean; ttlMinutes?: number | null; wait?: boolean; includeKey?: boolean;

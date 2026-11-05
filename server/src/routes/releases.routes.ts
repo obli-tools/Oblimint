@@ -26,7 +26,7 @@ import { siteTarget } from '../services/restrictions/targets';
 //                                    stats; the patches need code.read — files.manage or client releases.approve, staff sites.manage too —,
 //                                    contentHidden otherwise and ?file= → 403 codeReadForbidden)
 //   POST /:id/releases/:rid/rollback → Site (releases.publish)
-//   POST /:id/releases/:rid/approve  ApproveRequest { override?, reason? } → Release (releases.approve;
+//   POST /:id/releases/:rid/approve  ApproveRequest { override?, reason?, comment? } → Release (releases.approve; a proposal: + the release.publish gate;
 //                                    P3: a BLOCKED scan → 409 riskBlocked {score, level} unless override by a STAFF
 //                                    member holding releases.approve, 403 overrideForbidden for anyone else; audited
 //                                    'release.approve.override')

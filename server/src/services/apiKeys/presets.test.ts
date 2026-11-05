@@ -12,6 +12,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALL = [...API_KEY_SCOPES];
+const EVERYTHING = ALL.filter((s) => s !== 'releases.propose');
 const scopesOf = (id: Parameters<typeof apiKeyPreset>[0]) => apiKeyPresetScopes(apiKeyPreset(id), ALL);
 const lacks = (id: Parameters<typeof apiKeyPreset>[0], ...out: ApiKeyScope[]) => {
   const s = scopesOf(id);
@@ -22,7 +23,7 @@ const state = (p: Partial<ApiKeyPresetState>): ApiKeyPresetState => ({
 });
 
 test('the presets are well-formed', () => {
-  assert.deepEqual(API_KEY_PRESETS.map((p) => p.id), ['readonly', 'update', 'site', 'multisite', 'autonomous', 'all']);
+  assert.deepEqual(API_KEY_PRESETS.map((p) => p.id), ['readonly', 'update', 'supervised', 'site', 'multisite', 'autonomous', 'all']);
   for (const p of API_KEY_PRESETS) {
     if (p.scopes !== 'all') for (const s of p.scopes) assert.ok(ALL.includes(s), `${p.id}: unknown scope ${s}`);
     assert.ok(p.siteScopes.length > 0);
@@ -92,8 +93,25 @@ test('DNS records: only « Everything » gives them; no read-only or site preset
   lacks('readonly', 'dns.read');
 });
 
-test('everything is every grantable scope, never more', () => {
-  assert.deepEqual(scopesOf('all'), ALL);
+test('supervised agent: proposes, previews its proposal, reads; never publishes nor changes the live site', () => {
+  assert.deepEqual(scopesOf('supervised'), ['files.read', 'files.write', 'releases.propose', 'previews.manage', 'logs.read']);
+  lacks('supervised', 'releases.publish', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain');
+  const p = apiKeyPreset('supervised');
+  assert.deepEqual(p.siteScopes, ['selected'], 'chosen sites only');
+  assert.equal(p.minSites, 1);
+  assert.equal(p.domains, 'none');
+  assert.equal(matchApiKeyPreset(state({ scopes: scopesOf('supervised'), siteCount: 2 }), ALL, true), 'supervised');
+});
+
+test('no preset holds both releases.publish and releases.propose', () => {
+  for (const p of API_KEY_PRESETS) {
+    const s = apiKeyPresetScopes(p, ALL);
+    assert.ok(!(s.includes('releases.publish') && s.includes('releases.propose')), p.id);
+  }
+});
+
+test('everything is every grantable scope but the narrower releases.propose, never more', () => {
+  assert.deepEqual(scopesOf('all'), EVERYTHING);
   const held: ApiKeyScope[] = ['files.read', 'logs.read', 'sites.manage'];
   assert.deepEqual(apiKeyPresetScopes(apiKeyPreset('all'), held), ['files.read', 'sites.manage', 'logs.read']);
   for (const p of API_KEY_PRESETS) {
@@ -113,9 +131,9 @@ test('a form state matches its preset; any change makes it custom', () => {
   assert.equal(matchApiKeyPreset(state({ scopes: site, siteCount: 1, domainCount: 1 }), ALL, true), null, 'one site with a domain given');
   assert.equal(matchApiKeyPreset(state({ scopes: scopesOf('autonomous'), siteCount: 0, domainCount: 2 }), ALL, true), 'autonomous');
   assert.equal(matchApiKeyPreset(state({ scopes: scopesOf('autonomous'), siteCount: 1 }), ALL, true), null, 'autonomous: no existing site');
-  assert.equal(matchApiKeyPreset(state({ scopes: ALL, siteScope: 'all', domainScope: 'all' }), ALL, true), 'all');
-  assert.equal(matchApiKeyPreset(state({ scopes: ALL, siteScope: 'all' }), ALL, true), null, 'everything gives every domain when the user may');
-  assert.equal(matchApiKeyPreset(state({ scopes: ALL, siteScope: 'all' }), ALL, false), 'all', 'and none when he may not');
+  assert.equal(matchApiKeyPreset(state({ scopes: EVERYTHING, siteScope: 'all', domainScope: 'all' }), ALL, true), 'all');
+  assert.equal(matchApiKeyPreset(state({ scopes: EVERYTHING, siteScope: 'all' }), ALL, true), null, 'everything gives every domain when the user may');
+  assert.equal(matchApiKeyPreset(state({ scopes: EVERYTHING, siteScope: 'all' }), ALL, false), 'all', 'and none when he may not');
   assert.equal(matchApiKeyPreset(state({ scopes: [...scopesOf('update'), 'logs.read'] }), ALL, true), null, 'an extra right: custom');
   // Cut down to what the user holds: the preset still matches.
   const held: ApiKeyScope[] = ['files.read', 'files.write', 'logs.read'];
