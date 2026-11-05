@@ -13,6 +13,7 @@ import { open as openSecret } from '../../utils/secretBox';
 import { errText } from '../setup/docker';
 import { tail } from '../adapters/common';
 import { toolsContainerSpec } from '../adapters/toolsSpec';
+import { assertNotContained } from '../containment/guard';
 import { auditService } from '../audit.service';
 import type { HostingActor } from '../hosting/access';
 import { hostPaths, localPaths } from '../hosting/paths';
@@ -412,6 +413,8 @@ export async function runInstall(id: number, caller: InstallCaller, deps: Instal
     for (const key of APP_INSTALL_STEPS) {
       const row = await load(id);
       if (!row || row.status !== 'running') return;
+      // A containment that falls during the operation stops it before its next step (the publication included).
+      await assertNotContained(row.account_id);
       const step = stepsOf(row).find((s) => s.key === key);
       if (!step || step.status === 'done' || step.status === 'skipped') continue;
       current = key;

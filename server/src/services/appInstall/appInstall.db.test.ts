@@ -91,6 +91,7 @@ test('application installer on PostgreSQL', { timeout: 300_000 }, async (t: Test
   const toolSpecs: Docker.ContainerCreateOptions[] = [];
   let toolFailure: ((spec: Docker.ContainerCreateOptions) => string | null) = () => null;
   const calls: string[] = [];
+  let onDownload: (() => Promise<unknown>) | null = null;
   const archive = path.join(dataRoot, 'archive.tar.gz');
   fs.writeFileSync(archive, 'archive');
   setInstallDepsForTests({
@@ -121,7 +122,7 @@ test('application installer on PostgreSQL', { timeout: 300_000 }, async (t: Test
     deleteInstance: async (_r, _a, id) => { calls.push('deleteInstance'); await db('db_instances').where({ id }).del(); },
     removeSite: async (_r, _a, id) => { calls.push('removeSite'); await db('sites').where({ id }).del(); },
     latestOffer: async () => ({ version: '7.1.4', phpVersion: '7.4' }),
-    ensureArchive: async () => archive,
+    ensureArchive: async () => { await onDownload?.(); return archive; },
     verifyCore: async () => ({ available: true, checked: 3, mismatched: [] }),
     officialChecksums: async () => new Map([['index.php', 'abc']]),
     runTools: async (_n, spec) => {
@@ -508,10 +509,43 @@ test('application installer on PostgreSQL', { timeout: 300_000 }, async (t: Test
     await db('app_installs').where({ id: row.id }).del();
   });
 
+  await t.test('containment: nothing starts, resumes or publishes; a running operation stops before its next step', async () => {
+    const contain = (at: Date | null) => db('hosting_accounts').where({ id: acme }).update({ contained_at: at });
+
+    await contain(new Date());
+    const refused = await call('POST', '/app-installs', staffA, tA, start('cont0'));
+    assert.deepEqual([refused.status, refused.json.code], [423, 'accountContained']);
+    assert.equal(await db('sites').where({ slug: 'cont0' }).first('id'), undefined);
+    await contain(null);
+
+    calls.length = 0;
+    onDownload = () => contain(new Date());
+    const r = await call('POST', '/app-installs', staffA, tA, start('cont1'));
+    assert.equal(r.status, 201, JSON.stringify(r.json));
+    const id = r.json.data.install.id;
+    await wait();
+    onDownload = null;
+    const row = await db('app_installs').where({ id }).first();
+    assert.deepEqual([row.status, row.error_code], ['failed', 'accountContained']);
+    assert.ok(!calls.includes('publish'), 'never published');
+
+    const retried = await call('POST', `/app-installs/${id}/retry`, staffA, tA);
+    assert.deepEqual([retried.status, retried.json.code], [423, 'accountContained']);
+    await db('app_installs').where({ id }).update({ status: 'preview_ready' });
+    const published = await call('POST', `/app-installs/${id}/publish`, staffA, tA);
+    assert.deepEqual([published.status, published.json.code], [423, 'accountContained']);
+    assert.ok(!calls.includes('publish'));
+    assert.equal((await db('app_installs').where({ id }).first('status')).status, 'preview_ready');
+    await contain(null);
+    await db('app_installs').where({ id }).update({ status: 'failed' });
+    calls.length = 0;
+  });
+
   await t.test('migration 043 is reversible', async () => {
-    await db.migrate.down();
+    const m = await import('../../db/migrations/043_app_installs');
+    await m.down(db);
     assert.equal(await db.schema.hasTable('app_installs'), false);
-    await db.migrate.latest();
+    await m.up(db);
     assert.equal(await db.schema.hasTable('app_installs'), true);
   });
 });

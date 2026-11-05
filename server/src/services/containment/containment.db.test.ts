@@ -565,11 +565,12 @@ test('containment of an account', { timeout: 300_000 }, async (t: TestContext) =
   });
 
   await t.test('migration 042 is reversible', async () => {
+    const m = await import('../../db/migrations/042_account_containment');
     await db('containment_audit_freeze').del();
-    await db.migrate.down();
+    await m.down(db);
     assert.equal(await db.schema.hasColumn('hosting_accounts', 'contained_at'), false);
     assert.equal(await db.schema.hasTable('account_containments'), false);
-    await db.migrate.latest();
+    await m.up(db);
     assert.equal(await db.schema.hasColumn('hosting_accounts', 'contained_at'), true);
   });
 });

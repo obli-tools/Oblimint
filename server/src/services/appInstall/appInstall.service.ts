@@ -9,6 +9,7 @@ import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { seal } from '../../utils/secretBox';
 import { errText } from '../setup/docker';
+import { assertNotContained } from '../containment/guard';
 import { actorCan, loadAccount, loadSite, scopeToActor, type HostingActor } from '../hosting/access';
 import { json, planLimits, type AccountRow } from '../hosting/rows';
 import { platformSettings } from '../platformSettings';
@@ -147,6 +148,7 @@ export interface InstallPreflight {
 async function preflight(actor: HostingActor, body: AppInstallStartRequest): Promise<InstallPreflight> {
   const account = await loadAccount(actor, body.accountId, 'sites.manage');
   assertRights(actor, account);
+  await assertNotContained(account.id);
   if (account.status === 'suspended') throw conflict('The hosting account is suspended', 'accountSuspended');
   if (account.status === 'deleting') throw conflict('The hosting account is being deleted', 'accountDeleting');
   if (body.app !== 'wordpress') throw new AppError(400, 'Only WordPress can be installed for now', 'validation', { field: 'app' });
@@ -260,6 +262,7 @@ export const appInstallService = {
   async retry(req: Request, actor: HostingActor, id: number, via: InstallVia = {}): Promise<AppInstallRetryResult> {
     const row = await loadRow(actor, id);
     assertRights(actor, { tenant_id: row.tenant_id, id: row.account_id });
+    await assertNotContained(row.account_id);
     if (ownRuns.has(id) || row.status !== 'failed') throw conflict('Only a failed installation can be resumed', 'appInstallState', { status: row.status });
     if (!row.site_id) throw conflict('The site of this installation was deleted', 'appInstallSiteGone');
     const account = await db('hosting_accounts').where({ id: row.account_id }).first('id', 'node_id') as Pick<AccountRow, 'id' | 'node_id'>;
@@ -290,6 +293,7 @@ export const appInstallService = {
   async publishAfterPreview(req: Request, actor: HostingActor, id: number, via: InstallVia = {}): Promise<AppInstall> {
     const row = await loadRow(actor, id);
     assertRights(actor, { tenant_id: row.tenant_id, id: row.account_id });
+    await assertNotContained(row.account_id);
     if (!row.site_id) throw conflict('The site of this installation was deleted', 'appInstallSiteGone');
     await loadSite(actor, row.site_id, 'releases.publish');
     if (row.status !== 'preview_ready') throw conflict('This installation is not waiting for a publication', 'appInstallState', { status: row.status });
