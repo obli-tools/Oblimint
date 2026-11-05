@@ -253,7 +253,7 @@ const TOOLS: ToolDef[] = [
     run: (ctx, _req, a) => keyApps.get(ctx, a.install_id),
   },
   {
-    name: 'retry_app_install', title: 'Resume a failed installation', gated: ['app.install', 'release.publish'], heavy: true,
+    name: 'retry_app_install', title: 'Resume a failed installation', gated: ['app.install', 'db.attach', 'site.env_write', 'release.publish'], heavy: true,
     description: 'Resumes a failed installation at the step that failed (the steps done are not run again). Keeps the admin password given by install_app, unless the answer holds a new adminPassword (the first one had been purged after 7 days): shown once as well.',
     inputSchema: obj({ install_id: { type: 'integer' } }, ['install_id']),
     args: z.object({ install_id: z.number().int().positive() }),

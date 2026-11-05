@@ -25,6 +25,8 @@ import { TENANT_SECCOMP_OPT } from '../docker/seccomp';
 //   work/<runId>/tree → /srv/app   (rw; ro for 'check' and post-deploy)
 //   data/<slug>       → /srv/data  (rw: the release's data links point there)
 //   DB socket dirs    → /run/oblimint-db, /run/mysqld, /run/postgresql (ro, as the sites)
+// Sole exception: the application installer (input.installer) works on the staging of a site it
+// just created (no tenant code yet), with no network, plus one read-only directory it generated.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const TOOLS_PIDS_LIMIT = 512;

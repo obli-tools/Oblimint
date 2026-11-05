@@ -149,6 +149,7 @@ export function createPrePublishScanner(deps: PrePublishDeps): PrePublishScanner
         tree,
         files,
         dataPaths: site?.dataPaths ?? [],
+        ...(ctx.verifiedFiles ? { verifiedFiles: ctx.verifiedFiles } : {}),
       }, { baseCodeDir: base && site?.liveReleaseDir ? baseCodeDirProbe(site.liveReleaseDir, base) : null });
       return analysis.scan;
     },

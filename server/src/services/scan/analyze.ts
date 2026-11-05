@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import type {
   ChangeAnalysisSummary, ChangedFileFinding, FindingEngine, ScanFinding, ScannerSettings, WindowChangeCounts,
 } from '@oblimint/shared';
@@ -184,7 +185,10 @@ export async function analyzeChanges(input: AnalyzeInput, deps: AnalyzeDeps): Pr
       const head = data ? data.subarray(0, HEURISTIC_MAX_BYTES) : null;
       if (head) base.binary = isBinary(head);
       if (read) base.size = read.size;
-      const findings = keep(runHeuristics({ path: f.path, change: f.change, data: head, mode }, ctx));
+      // Bytes known in advance (AnalyzeInput.verifiedFiles): a heuristic has nothing to say about them; the engines still read them.
+      const expected = input.verifiedFiles?.get(f.path);
+      const verified = !!expected && !!data && !!read && !read.truncated && crypto.createHash('md5').update(data).digest('hex') === expected;
+      const findings = verified ? [] : keep(runHeuristics({ path: f.path, change: f.change, data: head, mode }, ctx));
       /** The engines (ClamAV / YARA) read the WHOLE file and answered. */
       let engineCovered = false;
 

@@ -77,7 +77,11 @@ export interface PublishOptions {
    * confirmation). A comfort guard, not a security boundary. Default 'off'.
    */
   rollbackGuard?: 'refuse' | 'off';
+  /** Application installer: AnalyzeInput.verifiedFiles of this publication (kept in memory: a restart only loses the comfort, never the check). */
+  verifiedFiles?: ReadonlyMap<string, string>;
 }
+
+const verifiedFilesOfRelease = new Map<number, ReadonlyMap<string, string>>();
 
 const IN_FLIGHT: ReleaseStatus[] = ['queued', 'scanning', 'publishing'];
 /** waitForRelease polling period. */
@@ -487,7 +491,9 @@ async function commitAndScan(run: Run): Promise<boolean> {
   const scanner = getScanner();
   const summary = normalizeScan(await scanner.scan({
     siteId: ctx.site.id, accountId: ctx.account.id, stagingDir: ctx.paths.staging, commitSha: sha, changedFiles: stats.changed,
+    verifiedFiles: verifiedFilesOfRelease.get(release.id),
   }));
+  verifiedFilesOfRelease.delete(release.id);
   summary.leaks = await leakGuard(ctx, sha, stats.changed);
   return scanGate(run, summary, { approvedBy: null, scanOverrideBy: null, notifyThreat: true });
 }
@@ -1350,6 +1356,7 @@ export const releaseService = {
       const row = await fetchRelease(siteId, id);
       emitHosting(HostingSocketEvents.RELEASE_UPDATED, { siteId, releaseId: id, status: 'queued' }, { tenantId: ctx.site.tenant_id, accountId: ctx.account.id });
       started = true;
+      if (opts.verifiedFiles) verifiedFilesOfRelease.set(id, opts.verifiedFiles);
       void runInBackground(siteId, id, 'full');
       return toRelease(row);
     } finally {

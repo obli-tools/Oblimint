@@ -39,7 +39,6 @@ async function ownRow(ctx: ApiKeyContext, id: number): Promise<AppInstallRow> {
 export const keyApps = {
   async install(ctx: ApiKeyContext, req: Request, body: Omit<AppInstallStartRequest, 'accountId'>): Promise<AppInstallStartResult> {
     scopes(ctx);
-    if (body.publishMode === 'approval') requireScope(ctx, 'releases.publish');
     if (body.previewFirst) requireScope(ctx, 'previews.manage');
     const full: AppInstallStartRequest = { ...body, accountId: ctx.accountId };
     const pre = await appInstallService.preflight(ctx.actor, full);

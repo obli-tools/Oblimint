@@ -6,7 +6,7 @@ import os from 'os';
 import path from 'path';
 import { toolsContainerSpec } from '../adapters/toolsSpec';
 import {
-  ADMIN_PASSWORD_ENV, archiveFileName, archiveUrl, ensureArchive, phpSatisfies, pickOffer, scrubSecrets, setDistGetForTests, verifyCoreFiles, wpConfigPhp, wpHtaccess, wpInstallCommands, WordPressDistError,
+  ADMIN_PASSWORD_ENV, archiveFileName, archiveUrl, ensureArchive, phpSatisfies, pickOffer, scrubSecrets, setDistGetForTests, verifiedFilesOf, verifyCoreFiles, wpConfigPhp, wpHtaccess, wpInstallCommands, WordPressDistError,
 } from './wordpress';
 import { setChecksumHttpGetForTests } from '../checksums/fetch';
 import { initialSteps } from './machine';
@@ -86,6 +86,14 @@ test('verifyCoreFiles: a changed or missing core file is named; wp-content is no
   assert.deepEqual(v.mismatched.sort(), ['wp-includes/gone.php', 'wp-includes/version.php']);
   setChecksumHttpGetForTests(async () => ({ status: 500, location: null, body: Buffer.alloc(0) }));
   assert.equal((await verifyCoreFiles(dir, '7.1.4', 'en_US')).available, false);
+});
+
+test('known bytes for the first analysis: official list + generated files', () => {
+  const m = verifiedFilesOf(new Map([['wp-login.php', 'aaa']]));
+  assert.equal(m.get('wp-login.php'), 'aaa');
+  assert.equal(m.get('wp-config.php'), crypto.createHash('md5').update(wpConfigPhp()).digest('hex'));
+  assert.equal(m.get('.htaccess'), crypto.createHash('md5').update(wpHtaccess()).digest('hex'));
+  assert.equal(verifiedFilesOf(null).size, 2);
 });
 
 test('wp-config.php holds no secret and reads the environment', () => {

@@ -33,6 +33,7 @@ export interface InstallDeps {
   /** Local path of the verified archive. */
   ensureArchive(dir: string, version: string, locale: string): Promise<string>;
   verifyCore(stagingDir: string, version: string, locale: string): Promise<CoreVerification>;
+  officialChecksums(version: string, locale: string): Promise<ReadonlyMap<string, string> | null>;
   runTools(nodeId: number, spec: Docker.ContainerCreateOptions, opts: ToolsRunOptions): Promise<ToolsStepResult>;
   startPreview(req: Request, actor: HostingActor, siteId: number, via: PreviewVia): Promise<PreviewStartResult>;
   getPreview(actor: HostingActor, siteId: number): Promise<SitePreview | null>;
@@ -64,6 +65,7 @@ function defaultDeps(): InstallDeps {
     latestOffer: async (locale) => (await import('./wordpress')).latestOffer(locale),
     ensureArchive: async (dir, version, locale) => (await import('./wordpress')).ensureArchive(dir, version, locale),
     verifyCore: async (dir, version, locale) => (await import('./wordpress')).verifyCoreFiles(dir, version, locale),
+    officialChecksums: async (version, locale) => (await import('./wordpress')).officialChecksums(version, locale),
     runTools: async (nodeId, spec, opts) => {
       const [{ engineFor }, { runToolsContainer }] = await Promise.all([import('../docker/engine'), import('../adapters/toolsRunner')]);
       return runToolsContainer(await engineFor(nodeId), spec, opts);

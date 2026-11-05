@@ -58,6 +58,8 @@ export interface RunJob {
     appProfile: AppProfileId | null; healthcheckPath: string; php: string;
   };
   account: { id: number; nodeId: number; uid: number; gid: number; limits: Pick<PlanLimits, 'memoryMb' | 'cpuCores'> };
+  /** The site's variables: the CLI boots the application, whose configuration may read them (a wp-config.php of the installer does). */
+  siteEnv?: Record<string, string>;
   base: { releaseId: number; number: number; commit: string };
   dataPaths: AnalysisDataPath[];
   /** workspaceLocal: as this process sees it (ContentTree, git); the others: Docker host paths. */
@@ -240,7 +242,7 @@ function createEnv(job: RunJob, deps: AdapterDeps, rec: RunRecord): RunEnv {
       const spec = toolsContainerSpec({
         runId: job.runId, step: step.toLowerCase(), accountId: job.account.id, siteId: job.site.id, uid: job.account.uid, gid: job.account.gid,
         php: job.site.php, workspaceDir: job.paths.workspaceHost, dataDir: job.paths.dataHost, dbSockets: job.paths.dbSockets,
-        workspaceReadOnly: readOnly, argv, env: opts?.env, memoryMb: job.settings.memoryMb, limits: job.account.limits,
+        workspaceReadOnly: readOnly, argv, env: { ...job.siteEnv, ...opts?.env }, memoryMb: job.settings.memoryMb, limits: job.account.limits,
       });
       const timeoutMs = Math.min(job.settings.stepTimeoutMs, opts?.timeoutMs ?? job.settings.stepTimeoutMs);
       const started = Date.now();

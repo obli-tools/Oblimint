@@ -123,6 +123,7 @@ test('application installer on PostgreSQL', { timeout: 300_000 }, async (t: Test
     latestOffer: async () => ({ version: '7.1.4', phpVersion: '7.4' }),
     ensureArchive: async () => archive,
     verifyCore: async () => ({ available: true, checked: 3, mismatched: [] }),
+    officialChecksums: async () => new Map([['index.php', 'abc']]),
     runTools: async (_n, spec) => {
       toolSpecs.push(spec);
       const out = toolFailure(spec);
@@ -131,8 +132,10 @@ test('application installer on PostgreSQL', { timeout: 300_000 }, async (t: Test
     startPreview: async () => { calls.push('startPreview'); return { preview: { id: 77 } } as never; },
     getPreview: async () => ({ id: 77, status: 'running' }) as never,
     stopPreview: async () => { calls.push('stopPreview'); },
-    publish: async (siteId) => {
+    publish: async (siteId, opts) => {
       calls.push('publish');
+      assert.equal(opts.verifiedFiles?.get('index.php'), 'abc');
+      assert.ok(opts.verifiedFiles?.has('wp-config.php'));
       const id = idOf((await db('releases').insert({ site_id: siteId, number: 1, status: 'ready', trigger: 'manual', on_disk: true }).returning('id'))[0]);
       return { id, number: 1 } as never;
     },

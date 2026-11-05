@@ -253,7 +253,7 @@ export const appInstallService = {
   retryGates(row: AppInstallRow): GateSpec[] {
     const params = { installId: Number(row.id), slug: row.site_slug };
     const target = row.site_id ? { tenantId: Number(row.tenant_id), accountId: Number(row.account_id), siteId: Number(row.site_id) } : accountTarget({ tenant_id: row.tenant_id, id: row.account_id });
-    return [{ action: 'app.install', target, params }, { action: 'release.publish', target, params }];
+    return (['app.install', 'db.attach', 'site.env_write', 'release.publish'] as const).map((action) => ({ action, target, params }));
   },
 
   /** Starts again from the step that failed. A new password only when the first one was purged (returned once, too). */

@@ -160,6 +160,11 @@ export interface AnalyzeInput {
   dataPaths: AnalysisDataPath[];
   /** Optional: stop early (window closed / run cancelled). */
   signal?: AbortSignal;
+  /**
+   * Application installer: path → md5 of bytes known in advance (official list of the application, files the
+   * panel generated). A file whose EXACT content matches skips the heuristics, never ClamAV / YARA.
+   */
+  verifiedFiles?: ReadonlyMap<string, string>;
 }
 
 export interface FileAnalysis {

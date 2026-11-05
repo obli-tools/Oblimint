@@ -28,6 +28,8 @@ export interface ScanContext {
   commitSha: string;
   /** Relative POSIX paths added or modified by this commit. */
   changedFiles: string[];
+  /** AnalyzeInput.verifiedFiles (application installer). */
+  verifiedFiles?: ReadonlyMap<string, string>;
 }
 
 export interface PrePublishScanner {

@@ -7,6 +7,7 @@ import {
   type AppInstallLogLine, type AppInstallStep, type AppInstallStepKey, type AppInstallStatus, type DbEngine, type PlanLimits, type SiteBaseId, type PublishMode, siteBaseDef,
 } from '@oblimint/shared';
 import { db } from '../../db';
+import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { open as openSecret } from '../../utils/secretBox';
 import { errText } from '../setup/docker';
@@ -19,7 +20,7 @@ import { json, planLimits } from '../hosting/rows';
 import { platformSettings } from '../platformSettings';
 import type { InstallDeps } from './deps';
 import {
-  ADMIN_PASSWORD_ENV, ADMIN_USER_ENV, ARCHIVE_IN_DIST, isApacheBase, phpSatisfies, scrubSecrets, WP_SALT_NAMES, wpConfigPhp, wpHtaccess, wpInstallCommands,
+  ADMIN_PASSWORD_ENV, ADMIN_USER_ENV, ARCHIVE_IN_DIST, isApacheBase, phpSatisfies, scrubSecrets, verifiedFilesOf, WordPressDistError, WP_SALT_NAMES, wpConfigPhp, wpHtaccess, wpInstallCommands,
 } from './wordpress';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,7 +138,8 @@ async function tool(env: Env, step: string, label: string, argv: string[], extra
   const php = siteBaseDef(options.base).php;
   if (!php) throw new InstallStepError('adapterNotDetected', 'Une base PHP est nécessaire');
   const settings = await platformSettings.section('maintenance');
-  const siteEnv = Object.fromEntries(await env.deps.siteEnv(siteId));
+  // Only WP-CLI reads the configuration: tar and cp get none of the site's secrets.
+  const siteEnv = argv[0] === 'wp' ? Object.fromEntries(await env.deps.siteEnv(siteId)) : {};
   const spec = toolsContainerSpec({
     runId: row.id, step: `ai-${step}`, accountId: account.id, siteId, uid: Number(account.uid), gid: Number(account.gid), php,
     workspaceDir: hostPaths.siteStaging(account.id, row.site_slug), dataDir: hostPaths.siteData(account.id, row.site_slug),
@@ -370,6 +372,7 @@ async function stepPublish(env: Env): Promise<'succeeded' | 'awaiting_approval'>
     const release = await deps.publish(siteId, {
       trigger: caller.apiKeyId ? 'api' : 'manual', userId: caller.actor.userId ?? null, apiKeyId: caller.apiKeyId,
       message: `Installation de WordPress ${row.version ?? ''}`.trim(),
+      verifiedFiles: verifiedFilesOf(await deps.officialChecksums(String(row.version), options.locale)),
     });
     releaseId = release.id;
     await save(row.id, { release_id: releaseId });
@@ -437,7 +440,9 @@ export async function runInstall(id: number, caller: InstallCaller, deps: Instal
     const message = known?.message ?? (err instanceof Error ? err.message : 'Échec de l\'installation');
     const row = await load(id).catch(() => undefined);
     const password = row?.admin_password_sealed ? (() => { try { return openSecret('app-install', row.admin_password_sealed!); } catch { return ''; } })() : '';
-    const detail = scrubSecrets(known?.detail ?? (known ? '' : errText(err)), [password, env.dbPassword ?? '']).slice(0, 2000) || null;
+    // A refusal of a service (plan limit, no such locale…) is already its own public text: no raw cause to add.
+    const refusal = known || err instanceof AppError || err instanceof WordPressDistError;
+    const detail = scrubSecrets(known?.detail ?? (refusal ? '' : errText(err)), [password, env.dbPassword ?? '']).slice(0, 2000) || null;
     logger.warn({ installId: id, step: current, code }, 'App install: step failed');
     try {
       if (current) await setStep(id, current, 'failed');

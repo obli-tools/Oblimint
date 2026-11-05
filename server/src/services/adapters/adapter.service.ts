@@ -31,6 +31,7 @@ import {
 } from './runMachine';
 import { nextAdapterRunAt, validateAdapterSchedule } from './schedule';
 import { removeToolsContainers } from './toolsRunner';
+import { siteEnvFor } from '../hosting/siteEnv.service';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Application adapters (ARCHITECTURE §2.3, docs/P3-PLAN.md §11). OWNED BY
@@ -258,8 +259,10 @@ async function buildJob(
   const php = siteBaseDef(site.base).php;
   if (php === null) throw conflict('Adapters need a PHP base (static site)', 'adapterNotDetected', { adapter: run.adapter, reason: 'staticBase' });
   const dataPaths = await db('site_data_paths').where({ site_id: site.id }).orderBy('path') as DataPathRow[];
+  const siteEnv = Object.fromEntries((await siteEnvFor([site.id])).get(site.id) ?? []);
   return {
     ...run,
+    siteEnv,
     site: {
       id: site.id, tenantId: site.tenant_id, accountId: site.account_id, name: site.name, slug: site.slug, docroot: safeDocroot(site.docroot),
       appProfile: site.app_profile, healthcheckPath: site.healthcheck_path, php,

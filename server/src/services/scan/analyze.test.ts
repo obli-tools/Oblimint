@@ -1,5 +1,6 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -112,6 +113,26 @@ test('analyze: heuristics + YARA + ClamAV, skipped big file, counts, blocked', a
     assert.deepEqual(a.scan.risk, { score: 100, level: 'critical' });
   } finally {
     await fake.close();
+  }
+});
+
+test('analyze: verifiedFiles skips the heuristics only for the exact bytes, never the engines', async () => {
+  const packed = `<?php ${'$a=1;'.repeat(1100)}`;
+  const root = makeTree({ 'a.php': packed, 'b.php': packed, 'notes/eicar.txt': EICAR });
+  const md5 = (b: string | Buffer) => crypto.createHash('md5').update(b).digest('hex');
+  const scand = await fakeScand(scandAnswer);
+  try {
+    const r = await analyzeChanges({
+      origin: 'publish', siteId: 1, accountId: 1, appProfile: 'wordpress', tree: localContentTree(root), dataPaths: [],
+      files: ['a.php', 'b.php', 'notes/eicar.txt'].map((p) => ({ path: p, change: 'added' as const, type: 'file' as const, size: null, mode: null })),
+      verifiedFiles: new Map([['a.php', md5(packed)], ['b.php', md5('other bytes')], ['notes/eicar.txt', md5(EICAR)]]),
+    }, { settings: SETTINGS, engine: createScandClient({ baseUrl: scand.url, key: KEY }) });
+    const of = (p: string) => r.files.find((f) => f.path === p)!;
+    assert.deepEqual(of('a.php').findings.filter((x) => x.engine === 'heuristic'), [], 'known bytes: no heuristic');
+    assert.ok(of('b.php').findings.some((x) => x.rule === 'php.one-liner'), 'other bytes under a known path: the normal heuristics');
+    assert.ok(of('notes/eicar.txt').findings.some((x) => x.engine === 'clamav'), 'the engines still read a known file');
+  } finally {
+    await scand.close();
   }
 });
 

@@ -202,6 +202,31 @@ export async function latestOffer(locale: string): Promise<WpOffer> {
   return offer;
 }
 
+/** Path → md5 of the official list of a build (null: unavailable). */
+export async function officialChecksums(version: string, locale: string): Promise<Map<string, string> | null> {
+  let doc: unknown;
+  try {
+    doc = await fetchChecksumJson(`https://api.wordpress.org/core/checksums/1.0/?version=${encodeURIComponent(version)}&locale=${encodeURIComponent(locale)}`);
+  } catch {
+    return null;
+  }
+  const list = (doc as { checksums?: unknown } | null)?.checksums;
+  if (!list || typeof list !== 'object') return null;
+  const out = new Map<string, string>();
+  for (const [rel, md5] of Object.entries(list as Record<string, unknown>)) if (typeof md5 === 'string') out.set(rel, md5.toLowerCase());
+  return out;
+}
+
+/**
+ * What the first publication may take as known bytes (AnalyzeInput.verifiedFiles): the official list
+ * and the files the panel generated. The analysis compares them with the commit being published: a file
+ * changed meanwhile simply gets the normal heuristics. ClamAV / YARA and the leak guard always apply.
+ */
+export function verifiedFilesOf(official: ReadonlyMap<string, string> | null): Map<string, string> {
+  const md5 = (s: string) => crypto.createHash('md5').update(s).digest('hex');
+  return new Map([...(official ?? []), ['wp-config.php', md5(wpConfigPhp())], ['.htaccess', md5(wpHtaccess())]]);
+}
+
 export interface CoreVerification {
   /** false: the official list could not be read (the archive hash still held). */
   available: boolean;
@@ -211,22 +236,16 @@ export interface CoreVerification {
 
 /** Every file of the official list (wp-content/ excepted, as `wp core verify-checksums`) against the staging, no link followed. */
 export async function verifyCoreFiles(stagingDir: string, version: string, locale: string): Promise<CoreVerification> {
-  let doc: unknown;
-  try {
-    doc = await fetchChecksumJson(`https://api.wordpress.org/core/checksums/1.0/?version=${encodeURIComponent(version)}&locale=${encodeURIComponent(locale)}`);
-  } catch {
-    return { available: false, checked: 0, mismatched: [] };
-  }
-  const list = (doc as { checksums?: unknown } | null)?.checksums;
-  if (!list || typeof list !== 'object') return { available: false, checked: 0, mismatched: [] };
+  const list = await officialChecksums(version, locale);
+  if (!list) return { available: false, checked: 0, mismatched: [] };
   const tree = localContentTree(stagingDir);
   const mismatched: string[] = [];
   let checked = 0;
-  for (const [rel, md5] of Object.entries(list as Record<string, unknown>)) {
-    if (rel.startsWith('wp-content/') || typeof md5 !== 'string') continue;
+  for (const [rel, md5] of list) {
+    if (rel.startsWith('wp-content/')) continue;
     checked++;
     const f = await tree.read(rel, ARCHIVE_MAX_BYTES);
-    if (!f || f.truncated || crypto.createHash('md5').update(f.data).digest('hex') !== md5.toLowerCase()) mismatched.push(rel);
+    if (!f || f.truncated || crypto.createHash('md5').update(f.data).digest('hex') !== md5) mismatched.push(rel);
   }
   return { available: true, checked, mismatched };
 }
