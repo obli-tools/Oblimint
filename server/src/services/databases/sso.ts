@@ -139,6 +139,13 @@ function forgetAccountSessions(accountId: number): void {
   }
 }
 
+/** Containment: the phpMyAdmin / Adminer sessions of the account end now; returns how many. The worker drops their users. */
+export function endAccountSsoSessions(accountId: number): number {
+  const n = accountSessionCount(accountId);
+  forgetAccountSessions(accountId);
+  return n;
+}
+
 /**
  * Account deletion (docker module, BEFORE removing the account network): its
  * SSO sessions end and both admin containers leave its network — Docker

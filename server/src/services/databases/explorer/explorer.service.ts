@@ -199,6 +199,13 @@ async function sweep(): Promise<void> {
   if (!sessions.size && sweeper) { clearInterval(sweeper); sweeper = null; }
 }
 
+/** Containment: closes the explorer sessions of an account; returns how many. */
+export async function closeAccountExplorerSessions(accountId: number): Promise<number> {
+  const keys = [...sessions].filter(([, e]) => e.accountId === accountId).map(([k]) => k);
+  for (const key of keys) await closeSession(key);
+  return keys.length;
+}
+
 /** Tests / shutdown: closes every session. */
 export async function closeAllExplorerSessions(): Promise<void> {
   for (const key of [...sessions.keys()]) await closeSession(key);

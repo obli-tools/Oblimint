@@ -542,6 +542,7 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | Code | Meaning | What to do |
 |---|---|---|
 | \`invalidKey\` (401) | Invalid, expired or revoked key, or source address not allowed | Ask for a new key |
+| \`accountContained\` (423) | The account is contained after a security incident: every key and token is cut, the sites keep serving | Stop and tell the human. Do not retry: only the staff lifts it, and your key will have to be replaced |
 | \`rateLimited\` (429) | Too many requests | Slow down, retry a bit later |
 | \`keyScope\` (403) | The key lacks the right (e.g. switching to \`auto\` without \`releases.publish\`) | Ask the human to add it |
 | \`codeReadForbidden\` (403) | Reading code content needs the right to manage the files (or to approve releases) | Ask the human |
@@ -1136,6 +1137,7 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | Code | Sens | Que faire |
 |---|---|---|
 | \`invalidKey\` (401) | Clé invalide, expirée, révoquée, ou adresse IP non autorisée | Demander une nouvelle clé |
+| \`accountContained\` (423) | Le compte est confiné après un incident de sécurité : toutes les clés et tous les jetons sont coupés, les sites continuent de servir | Arrêter et prévenir l'humain. Ne pas réessayer : seul le staff lève le confinement, et ta clé devra être remplacée |
 | \`rateLimited\` (429) | Trop de requêtes | Ralentir, réessayer un peu plus tard |
 | \`keyScope\` (403) | Droit manquant sur la clé (ex. passer en \`auto\` sans \`releases.publish\`) | Demander à l'humain d'ajouter le droit |
 | \`codeReadForbidden\` (403) | Lire le contenu du code demande le droit de gérer les fichiers (ou d'approuver les releases) | Demander à l'humain |

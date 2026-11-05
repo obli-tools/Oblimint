@@ -74,6 +74,8 @@ export interface ContainmentDeps {
   syncFirewall(accountId: number): Promise<void>;
   stopPreviews(accountId: number): Promise<number>;
   closeConsoles(accountId: number): Promise<number>;
+  /** phpMyAdmin / Adminer and explorer sessions: their ephemeral SQL users, never the users the sites connect with. */
+  closeDbSessions(accountId: number): Promise<number>;
   closeWindow(siteId: number, windowId: number, who: { userId: number | null; ip: string | null }): Promise<unknown>;
   freezeSite(siteId: number, containmentId: number): Promise<SiteFreezeResult>;
   notify(event: 'account.contained' | 'account.containmentLifted', payload: NotificationPayload): void;
@@ -99,6 +101,13 @@ const defaultDeps: ContainmentDeps = {
   async closeConsoles(accountId) {
     const { closeAccountConsoles } = await import('../apps/socketHandlers');
     return closeAccountConsoles(accountId, 'contained');
+  },
+  async closeDbSessions(accountId) {
+    const { closeAccountExplorerSessions } = await import('../databases/explorer/explorer.service');
+    const { endAccountSsoSessions, expireSsoSessions } = await import('../databases/sso');
+    const n = await closeAccountExplorerSessions(accountId) + endAccountSsoSessions(accountId);
+    await expireSsoSessions();
+    return n;
   },
   async closeWindow(siteId, windowId, who) {
     const { windowService } = await import('../windows/window.service');
@@ -285,9 +294,9 @@ const STEPS: Record<ContainmentStepKey, (run: Run) => Promise<number>> = {
       .update({ status: 'cancelled', decided_at: new Date(), reason: 'Compte confiné' }));
   },
 
-  /** App consoles, and the webmail opened from the panel. A mailbox's own password keeps working (the mail is part of the service). */
+  /** App consoles, database admin sessions, and the webmail opened from the panel. A mailbox's own password keeps working (the mail is part of the service). */
   async consoles(run) {
-    const consoles = await deps.closeConsoles(run.accountId);
+    const consoles = await deps.closeConsoles(run.accountId) + await deps.closeDbSessions(run.accountId);
     const sessions = Number(await db('webmail_sessions').where({ account_id: run.accountId, tenant_id: run.tenantId, method: 'sso' }).del());
     await db('mail_app_passwords').where({ account_id: run.accountId }).whereNull('revoked_at').update({ revoked_at: new Date(), updated_at: new Date() });
     return consoles + sessions;

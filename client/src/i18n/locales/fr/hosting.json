@@ -222,7 +222,7 @@
         "firewall": "Ports SFTP et SQL externe fermés",
         "previews": "Aperçus et liens partagés arrêtés",
         "pendingActions": "Approbations en attente annulées",
-        "consoles": "Consoles et webmail du panel fermés",
+        "consoles": "Consoles, sessions d'administration de base et webmail du panel fermés",
         "publishMode": "Sites en mode approbation",
         "windows": "Fenêtres ouvertes fermées",
         "evidenceStaging": "Diff staging / release figé",
