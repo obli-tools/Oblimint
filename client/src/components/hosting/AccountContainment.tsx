@@ -36,7 +36,7 @@ export function ContainModal({ account, open, onClose, onDone }: {
   };
   const effects = [
     t('accounts.containment.effects.credentials') || 'Revokes the access keys, connectors and window tokens, and ends the client sessions.',
-    t('accounts.containment.effects.sftp') || 'Cuts SFTP: new unknown password, SSH keys removed, ports closed (SQL from outside too).',
+    t('accounts.containment.effects.sftp') || 'Cuts SFTP: new unknown password, SSH keys removed, ports closed (SQL from outside too), and ends the external SQL connections already open. The site\'s are never touched.',
     t('accounts.containment.effects.publish') || 'Puts the sites in approval mode and closes the open windows: their changes wait for a review.',
     t('accounts.containment.effects.evidence') || 'Freezes the staging / release diff and the audit over ±72 h.',
     t('accounts.containment.effects.serving') || 'The sites keep serving, and their database passwords do not change. Only the staff can lift it.',
@@ -144,6 +144,7 @@ export function AccountContainmentPanel({ account, isStaff, canManage, onChanged
   if (!report || (!contained && !isStaff)) return notice;
 
   const failed = report.steps.filter((s) => s.status !== 'done').length;
+  const sqlUnreliable = report.sqlSessions.filter((i) => i.state === 'unreliable');
   const done = report.steps.length - failed;
   const live = report.status !== 'lifted';
   return (
@@ -180,6 +181,11 @@ export function AccountContainmentPanel({ account, isStaff, canManage, onChanged
           </p>
         )}
         {report.liftWarnings.map((w) => <p key={w} className="mt-1 text-xs text-amber-400">{w}</p>)}
+        {sqlUnreliable.length > 0 && (
+          <p className="mt-1 text-xs text-amber-400">
+            {t('accounts.containment.sql.title') || 'External SQL connections'} ({sqlUnreliable.map((i) => i.name).join(', ')}) : {t('accounts.containment.sql.unreliable') || 'site / external could not be told apart: nothing was ended on this engine, check by hand'}
+          </p>
+        )}
         {expanded && (
           <div className="mt-3 grid gap-4 lg:grid-cols-2">
             <div>
@@ -219,6 +225,25 @@ export function AccountContainmentPanel({ account, isStaff, canManage, onChanged
                   <h3 className="mb-1 text-xs font-medium text-text-secondary">{t('accounts.containment.rules') || 'Allow-list rules to review before lifting'}</h3>
                   <ul className="flex flex-col gap-1">
                     {report.accessRules.map((r) => <li key={r.cidr} className="break-words font-mono text-xs text-text-primary">{r.cidr}{r.note ? ` (${r.note})` : ''}</li>)}
+                  </ul>
+                </div>
+              )}
+              {report.sqlSessions.length > 0 && (
+                <div>
+                  <h3 className="mb-2 text-xs font-medium text-text-secondary">{t('accounts.containment.sql.title') || 'External SQL connections'}</h3>
+                  <ul className="flex flex-col gap-1.5">
+                    {report.sqlSessions.map((i) => (
+                      <li key={i.instanceId} className="break-words text-xs text-text-primary">
+                        {i.name} <span className="text-text-muted">({i.engine})</span>{' '}
+                        <span className={i.state === 'unreliable' || i.state === 'failed' ? 'text-amber-400' : 'text-text-muted'}>
+                          {t(`accounts.containment.sql.${i.state}`, { killed: i.killed, kept: i.kept, defaultValue: i.state })}
+                        </span>
+                        {i.error && <span className="block break-words text-red-400">{i.error}</span>}
+                        {i.sessions.length > 0 && (
+                          <span className="block font-mono text-[11px] text-text-muted">{i.sessions.map((s) => `${s.user}@${s.ip}`).join(', ')}</span>
+                        )}
+                      </li>
+                    ))}
                   </ul>
                 </div>
               )}

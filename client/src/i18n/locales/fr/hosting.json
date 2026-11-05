@@ -194,7 +194,7 @@
       "auditFailed": "Impossible de lire l'audit figé",
       "effects": {
         "credentials": "Révoque les clés d'accès, les connecteurs et les jetons de fenêtre, et met fin aux sessions des clients.",
-        "sftp": "Coupe le SFTP : nouveau mot de passe inconnu, clés SSH retirées, ports fermés (SQL depuis l'extérieur aussi).",
+        "sftp": "Coupe le SFTP : nouveau mot de passe inconnu, clés SSH retirées, ports fermés (SQL depuis l'extérieur aussi), et met fin aux connexions SQL externes déjà établies. Celles du site ne sont jamais touchées.",
         "publish": "Passe les sites en mode approbation et ferme les fenêtres ouvertes : leurs changements attendent une revue.",
         "evidence": "Fige le diff staging / release et l'audit sur ±72 h.",
         "serving": "Les sites continuent de servir et leurs mots de passe de base ne changent pas. Seul le staff peut lever le confinement."
@@ -220,6 +220,7 @@
         "sessions": "Sessions des clients terminées",
         "sftp": "SFTP coupé, mot de passe changé, clés SSH retirées",
         "firewall": "Ports SFTP et SQL externe fermés",
+        "sqlSessions": "Connexions SQL externes coupées",
         "previews": "Aperçus et liens partagés arrêtés",
         "pendingActions": "Approbations en attente annulées",
         "consoles": "Consoles, sessions d'administration de base et webmail du panel fermés",
@@ -237,6 +238,14 @@
         "connector": "Connecteur",
         "siteToken": "Jeton de fenêtre",
         "sshKey": "Clé SSH"
+      },
+      "sql": {
+        "title": "Connexions SQL externes",
+        "closed": "{{killed}} coupée(s), {{kept}} du site conservée(s)",
+        "notExposed": "pas de port externe",
+        "stopped": "serveur arrêté",
+        "unreliable": "distinction site / extérieur non fiable : rien n'a été coupé sur ce moteur, vérifiez à la main",
+        "failed": "échec : l'étape reprend ici"
       },
       "frozenDiff": "Diff staging / release figé",
       "frozenCount": "{{count}} chemin(s) diffèrent",

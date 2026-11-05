@@ -10,7 +10,7 @@ export const ACCOUNT_CONTAINED_CODE = 'accountContained';
 
 /** Steps, in execution order. Each one is idempotent; a resume only runs what is not done. */
 export const CONTAINMENT_STEPS = [
-  'keys', 'siteTokens', 'sessions', 'sftp', 'firewall', 'previews', 'pendingActions', 'consoles', 'publishMode', 'windows',
+  'keys', 'siteTokens', 'sessions', 'sftp', 'firewall', 'sqlSessions', 'previews', 'pendingActions', 'consoles', 'publishMode', 'windows',
   'evidenceStaging', 'evidenceAudit', 'verify',
 ] as const;
 export type ContainmentStepKey = typeof CONTAINMENT_STEPS[number];
@@ -60,6 +60,40 @@ export interface ContainmentSiteFreeze {
   frozenAt: string;
 }
 
+/**
+ * External SQL sessions of one instance (step sqlSessions).
+ * closed: the sessions through the external port are ended; notExposed: no external port;
+ * stopped: the server is not running (its sessions died with it); unreliable: site and external
+ * sessions could not be told apart on this engine, NOTHING was killed on it;
+ * failed: the step comes back to it on the resume.
+ */
+export type ContainmentSqlState = 'closed' | 'notExposed' | 'stopped' | 'unreliable' | 'failed';
+/** unknownNetwork: networks of the container not readable; unreadableSession: a session whose address cannot be read; sameEngine: another instance of the engine is in one of these cases. */
+export type ContainmentSqlReason = 'unknownNetwork' | 'unreadableSession' | 'sameEngine';
+
+/** A session that was ended, for the investigation. */
+export interface ContainmentSqlSession {
+  user: string;
+  ip: string;
+}
+
+export interface ContainmentSqlInstance {
+  instanceId: number;
+  name: string;
+  engine: 'mariadb' | 'mysql' | 'postgresql';
+  state: ContainmentSqlState;
+  reason: ContainmentSqlReason | null;
+  /** External sessions ended, over the runs of the step. */
+  killed: number;
+  /** Sessions left alone: sockets, account network, threads of the server. */
+  kept: number;
+  /** External sessions still there after the attempt. */
+  remaining: number;
+  /** The first ones ended (the count above stays exact). */
+  sessions: ContainmentSqlSession[];
+  error: string | null;
+}
+
 export interface AccountContainment {
   id: number;
   tenantId: number;
@@ -78,6 +112,8 @@ export interface AccountContainment {
   /** Allow-list rules of the account when contained: one may be the attacker's, they apply again after the lift. */
   accessRules: Array<{ cidr: string; note: string | null; createdAt: string | null }>;
   sites: ContainmentSiteFreeze[];
+  /** External SQL sessions, per instance of the account. */
+  sqlSessions: ContainmentSqlInstance[];
   auditFrom: string;
   auditUntil: string;
   auditCount: number;

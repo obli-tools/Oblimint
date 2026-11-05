@@ -2,7 +2,7 @@ import type { Request } from 'express';
 import {
   CONTAINMENT_AUDIT_HOURS, CONTAINMENT_STEPS, HostingSocketEvents,
   type AccountContainment, type ContainmentAuditRow, type ContainmentCredential, type ContainmentSiteFreeze, type ContainmentStatus,
-  type ContainmentStep, type ContainmentStepKey,
+  type ContainmentSqlInstance, type ContainmentStep, type ContainmentStepKey,
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
@@ -15,6 +15,7 @@ import { emitHosting } from '../hosting/events';
 import type { HostingActor } from '../hosting/access';
 import type { AccountRow } from '../hosting/rows';
 import { notify, type NotificationPayload } from '../usage/notifications.service';
+import { mergeSqlReports } from './sqlReports';
 import { credentialHash } from './guard';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,7 +48,7 @@ interface ContainmentRow {
   started_by: number | null; started_at: Date | string; completed_at: Date | string | null;
   lifted_by: number | null; lifted_at: Date | string | null; lift_note: string | null;
   steps: ContainmentStep[]; previous: Previous; credentials: ContainmentCredential[];
-  access_rules: AccountContainment['accessRules']; lift_warnings: string[];
+  access_rules: AccountContainment['accessRules']; lift_warnings: string[]; sql_sessions: ContainmentSqlInstance[];
   audit_from: Date | string; audit_until: Date | string;
 }
 
@@ -76,6 +77,8 @@ export interface ContainmentDeps {
   closeConsoles(accountId: number): Promise<number>;
   /** phpMyAdmin / Adminer and explorer sessions: their ephemeral SQL users, never the users the sites connect with. */
   closeDbSessions(accountId: number): Promise<number>;
+  /** Ends the SQL sessions opened through the external port, never the site's. Never throws: each instance reports its state. */
+  closeExternalSql(accountId: number): Promise<ContainmentSqlInstance[]>;
   closeWindow(siteId: number, windowId: number, who: { userId: number | null; ip: string | null }): Promise<unknown>;
   freezeSite(siteId: number, containmentId: number): Promise<SiteFreezeResult>;
   notify(event: 'account.contained' | 'account.containmentLifted', payload: NotificationPayload): void;
@@ -109,6 +112,10 @@ const defaultDeps: ContainmentDeps = {
     await expireSsoSessions();
     return n;
   },
+  async closeExternalSql(accountId) {
+    const { closeAccountExternalSessions } = await import('../databases/externalSessions');
+    return closeAccountExternalSessions(accountId);
+  },
   async closeWindow(siteId, windowId, who) {
     const { windowService } = await import('../windows/window.service');
     return windowService.closeInternal(siteId, windowId, 'policy', who);
@@ -140,7 +147,7 @@ interface Run {
 async function save(run: Run, patch: Record<string, unknown> = {}): Promise<void> {
   await db(CONTAINMENTS).where({ id: run.row.id }).update({
     steps: JSON.stringify(run.row.steps), previous: JSON.stringify(run.row.previous),
-    credentials: JSON.stringify(run.row.credentials), access_rules: JSON.stringify(run.row.access_rules), ...patch,
+    credentials: JSON.stringify(run.row.credentials), access_rules: JSON.stringify(run.row.access_rules), sql_sessions: JSON.stringify(run.row.sql_sessions), ...patch,
   });
 }
 
@@ -283,6 +290,24 @@ const STEPS: Record<ContainmentStepKey, (run: Run) => Promise<number>> = {
     return rules.length;
   },
 
+  /**
+   * The SQL sessions the firewall only froze: they stay on the server and would work
+   * again after the lift. After the firewall on purpose: a session killed before the
+   * ports close comes back. So while the firewall step has not passed, this one does
+   * not pass either, and runs again on the resume. Nothing is killed on an engine
+   * where the distinction is not reliable: the step passes and the report says so.
+   */
+  async sqlSessions(run) {
+    const found = await deps.closeExternalSql(run.accountId);
+    run.row.sql_sessions = mergeSqlReports(run.row.sql_sessions, found);
+    await save(run);
+    const failed = found.filter((i) => i.state === 'failed');
+    if (failed.length) throw new Error(failed.map((i) => `instance #${i.instanceId}: ${i.error ?? 'failed'}`).join('; '));
+    const reachable = found.some((i) => i.state === 'closed' || i.state === 'unreliable');
+    if (reachable && run.row.steps.find((s) => s.key === 'firewall')?.status !== 'done') throw new Error('the external ports are not closed yet: sessions can come back');
+    return run.row.sql_sessions.reduce((n, i) => n + i.killed, 0);
+  },
+
   /** Previews (they run the staging code on a public host) and their shared links. */
   async previews(run) {
     return deps.stopPreviews(run.accountId);
@@ -407,7 +432,7 @@ async function toReport(row: ContainmentRow): Promise<AccountContainment> {
     id: row.id, tenantId: row.tenant_id, accountId: row.account_id, username: row.username, status: row.status, reason: row.reason,
     startedAt: iso(row.started_at) as string, startedByName: nameOf(row.started_by), completedAt: iso(row.completed_at),
     liftedAt: iso(row.lifted_at), liftedByName: nameOf(row.lifted_by), liftNote: row.lift_note,
-    steps: row.steps, credentials: row.credentials, accessRules: row.access_rules,
+    steps: row.steps, credentials: row.credentials, accessRules: row.access_rules, sqlSessions: row.sql_sessions,
     sites: freezes.map((f) => ({
       siteId: f.site_id, siteName: f.site_name, liveReleaseNumber: f.live_release_number, liveCommit: f.live_commit, stagingCommit: f.staging_commit,
       entries: f.entries, total: f.total, truncated: f.truncated, note: f.note, frozenAt: iso(f.frozen_at) as string,
@@ -487,6 +512,8 @@ export const containmentService = {
         emitChanged(account);
       }
       if (row.status === 'active') return toReport(row);
+      // A containment started by an older version has no row for a newer step.
+      row.steps = CONTAINMENT_STEPS.map((key) => row.steps.find((s) => s.key === key) ?? { key, status: 'pending', count: null, error: null, at: null });
 
       const run: Run = { row, accountId: account.id, tenantId: account.tenant_id, who: { userId: actor.userId, ip: clientIp(req) || null } };
       if (row.status === 'partial') await save(run, { status: 'running' });
@@ -514,7 +541,7 @@ export const containmentService = {
       await save(run, { status, completed_at: run.row.completed_at });
       const summary = run.row.steps.map((s) => ({ key: s.key, status: s.status, count: s.count, error: s.error }));
       await auditService.logReqAs(req, account.tenant_id, 'account.contain_report', {
-        resourceType: 'account', resourcePath: String(account.id), details: { accountId: account.id, containmentId: row.id, status, steps: summary },
+        resourceType: 'account', resourcePath: String(account.id), details: { accountId: account.id, containmentId: row.id, status, steps: summary, sqlSessions: run.row.sql_sessions },
       });
       // The rows this report and the last steps wrote belong to the evidence too.
       await freezeAudit(run.row);
