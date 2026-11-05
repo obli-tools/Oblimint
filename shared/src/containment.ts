@@ -94,6 +94,34 @@ export interface ContainmentSqlInstance {
   error: string | null;
 }
 
+/**
+ * A client whose password the lift expires. The password belongs to the login, not to the account:
+ * it is expired whatever other accounts the client has. selfService: he can get a link himself
+ * (verified address, e-mail sender configured); otherwise the staff sets a new password.
+ */
+export interface ContainmentClientReset {
+  userId: number;
+  username: string;
+  selfService: boolean;
+  /** Accounts of this login not contained, which it also cannot reach until the reset. */
+  otherAccounts: number;
+  otherContained: number;
+  /** After the lift: the link sent. null before the lift. */
+  mail: 'sent' | 'unavailable' | 'failed' | null;
+}
+
+/** A window not decided yet: its content stays served until the staff rejects it. */
+export interface ContainmentOpenWindow {
+  windowId: number;
+  number: number;
+  siteId: number;
+  siteName: string;
+  status: string;
+  closedAt: string | null;
+  /** Page of the review, in the panel. */
+  reviewPath: string;
+}
+
 export interface AccountContainment {
   id: number;
   tenantId: number;
@@ -114,6 +142,10 @@ export interface AccountContainment {
   sites: ContainmentSiteFreeze[];
   /** External SQL sessions, per instance of the account. */
   sqlSessions: ContainmentSqlInstance[];
+  /** Before the lift: who it will concern. After: who it concerned. */
+  clientPasswordResets: ContainmentClientReset[];
+  /** Windows of the account not decided, read when the report is asked. */
+  reviewWindows: ContainmentOpenWindow[];
   auditFrom: string;
   auditUntil: string;
   auditCount: number;

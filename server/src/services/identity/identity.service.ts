@@ -5,11 +5,11 @@ import type {
   EmailChangeResult, EmailState, PasswordResetTokenState, RecoveryCodesGenerated, RecoveryCodesStatus,
 } from '@oblimint/shared';
 import {
-  EMAIL_CHANGE_TTL_HOURS, MASTER_TENANT_ID, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_RESET_TTL_MINUTES, RECOVERY_CODE_COUNT,
+  EMAIL_CHANGE_TTL_HOURS, MASTER_TENANT_ID, PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, PASSWORD_RESET_TTL_MINUTES, PASSWORD_REUSED_CODE, RECOVERY_CODE_COUNT,
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
-import { hashPassword } from '../../utils/crypto';
+import { comparePassword, hashPassword } from '../../utils/crypto';
 import { clientIp } from '../../utils/clientIp';
 import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
@@ -19,7 +19,7 @@ import { deliverAccountNotice } from '../usage/userNotifications.service';
 import { killSessionsForUser } from '../userSessions.service';
 import { isLocalAccount } from '../userRow';
 import {
-  emailChangeRequestedMail, emailChangedNotice, emailConfirmMail, langOf, noticeMail, passwordResetMail, passwordResetNotice,
+  emailChangeRequestedMail, emailChangedNotice, emailConfirmMail, forcedPasswordResetMail, langOf, noticeMail, passwordResetMail, passwordResetNotice,
   recoveryCodeUsedNotice, type Lang,
 } from './messages';
 import { linkTokenHash, newLinkToken, newRecoveryCodes, recoveryCodeHash } from './secrets';
@@ -70,10 +70,11 @@ interface IdentityRow {
   preferred_language: string | null;
   totp_enabled: boolean;
   totp_secret: string | null;
+  password_reset_required_at: Date | string | null;
 }
 
 const IDENTITY_COLUMNS = ['id', 'username', 'email', 'email_verified_for', 'kind', 'role', 'is_active', 'password_hash', 'foreign_source',
-  'preferred_language', 'totp_enabled', 'totp_secret'] as const;
+  'preferred_language', 'totp_enabled', 'totp_secret', 'password_reset_required_at'] as const;
 
 async function userRow(userId: number): Promise<IdentityRow | undefined> {
   return db('users').where({ id: userId }).first(...IDENTITY_COLUMNS) as Promise<IdentityRow | undefined>;
@@ -188,6 +189,41 @@ async function resetTarget(email: string): Promise<IdentityRow | null> {
 }
 
 export const identityService = {
+  /** Can this account get a reset link by itself (verified address, sender and host configured)? Never throws. */
+  async canSelfReset(userId: number): Promise<boolean> {
+    try {
+      const u = await userRow(userId);
+      if (!u?.is_active || !u.email) return false;
+      if ((await resetTarget(lower(u.email)!))?.id !== u.id) return false;
+      return !!(await accountOrigin(u.kind)) && await transactionalMailReady();
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * The lift of a containment expired this password: the same single-use link as a
+   * forgotten password, with its own words. Never throws; the link appears nowhere but in the mail.
+   */
+  async sendForcedPasswordReset(userId: number, ip: string | null): Promise<'sent' | 'unavailable' | 'failed'> {
+    try {
+      if (!(await this.canSelfReset(userId))) {
+        await audit(userId, 'user.password_reset_forced', ip, { outcome: 'unavailable' });
+        return 'unavailable';
+      }
+      const u = await userRow(userId) as IdentityRow;
+      const origin = await accountOrigin(u.kind) as string;
+      const token = await issueToken(u.id, 'password_reset', lower(u.email)!, PASSWORD_RESET_TTL_MINUTES * 60_000, ip);
+      const mail = forcedPasswordResetMail(langOf(u.preferred_language), u.username, `${origin}/reset-password?token=${encodeURIComponent(token)}`);
+      const r = await sendTransactional({ to: u.email!, kind: 'account', userId: u.id, ...mail });
+      await audit(u.id, 'user.password_reset_forced', ip, { outcome: r.ok ? 'sent' : 'failed' });
+      return r.ok ? 'sent' : 'failed';
+    } catch (err) {
+      logger.warn({ err: (err as Error).message, userId }, 'forced password reset mail failed');
+      return 'failed';
+    }
+  },
+
   /**
    * POST /api/auth/password-reset. Never throws, never tells the caller what
    * happened (the route answers the same thing in every case; the outcome is
@@ -252,6 +288,10 @@ export const identityService = {
       const u = await trx('users').where({ id: t.user_id }).forUpdate().first(...IDENTITY_COLUMNS) as IdentityRow | undefined;
       // The account changed since the link was sent: disabled, now SSO, another address.
       if (!u || !u.is_active || !isLocal(u) || lower(u.email) !== t.email) throw invalidToken();
+      // Throws inside the transaction: the link stays usable for a better password.
+      if (u.password_reset_required_at && u.password_hash && await comparePassword(pw.data, u.password_hash)) {
+        throw new AppError(400, 'This password was expired after a security incident: choose another one', PASSWORD_REUSED_CODE, { field: 'newPassword' });
+      }
       // credential_version moves (trigger): every session stamped before is refused by sessionUserGuard.
       await trx('users').where({ id: u.id }).update({ password_hash: passwordHash, updated_at: new Date() });
       await retireLinks(trx, { user_id: u.id, purpose: 'password_reset' });

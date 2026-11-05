@@ -23,6 +23,7 @@
       "mismatch": "The passwords do not match.",
       "tooShort": "At least {{count}} characters.",
       "failed": "The password could not be changed.",
+      "reused": "This password expired after a security incident: choose another one.",
       "invalidToken": "This link is invalid, has expired or was already used.",
       "askAgain": "Ask for a new link",
       "successTitle": "Password changed",

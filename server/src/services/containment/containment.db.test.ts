@@ -197,6 +197,7 @@ test('containment of an account', { timeout: 300_000 }, async (t: TestContext) =
     },
     stopPreviews: async () => { calls.previews += 1; return 0; },
     closeConsoles: async () => { calls.consoles += 1; return 0; },
+    closeExternalSql: async () => [],
     closeWindow: async (siteId, windowId) => {
       calls.closed.push(windowId);
       await db('maintenance_windows').where({ id: windowId, site_id: siteId }).update({ status: 'closing', overlay: 'ro' });
@@ -567,7 +568,7 @@ test('containment of an account', { timeout: 300_000 }, async (t: TestContext) =
     assert.equal(twice.status, 409);
     assert.equal(twice.body.code, 'accountNotContained');
     const login = await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'client-a', password: PLAIN_LOGIN }) });
-    assert.notEqual(login.status, 423, 'the client signs in again');
+    assert.deepEqual([login.status, (await login.json() as Json).code], [403, 'passwordResetRequired'], 'no longer contained, but this password expired');
   });
 
   await t.test('the evidence outlives the lift, and a new containment starts a new one', async () => {

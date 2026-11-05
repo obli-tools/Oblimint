@@ -54,6 +54,18 @@ export function passwordResetMail(lang: Lang, username: string, url: string): Ma
   return { subject: '[Oblimint] Password reset', text: text(lines, url, footer), html: html(lines, { url, label: 'Choose a new password' }, footer) };
 }
 
+/** Sent by the lift of a containment: unlike a request, it cannot be ignored, the old password no longer works. */
+export function forcedPasswordResetMail(lang: Lang, username: string, url: string): MailContent {
+  if (lang === 'fr') {
+    const lines = ['Nouveau mot de passe obligatoire', `Après un incident de sécurité, l’ancien mot de passe du compte « ${username} » ne fonctionne plus.`, `Ce lien choisit un nouveau mot de passe. Il est valable ${PASSWORD_RESET_TTL_MINUTES} minutes et ne sert qu’une fois ; une fois expiré, demandez-en un autre depuis la page de connexion.`];
+    const footer = 'Ne réutilisez pas l’ancien mot de passe. La double authentification reste demandée à la connexion.';
+    return { subject: '[Oblimint] Nouveau mot de passe obligatoire', text: text(lines, url, footer), html: html(lines, { url, label: 'Choisir un nouveau mot de passe' }, footer) };
+  }
+  const lines = ['New password required', `After a security incident, the old password of the account "${username}" no longer works.`, `This link sets a new password. It is valid for ${PASSWORD_RESET_TTL_MINUTES} minutes and works once; after that, ask for another one from the sign-in page.`];
+  const footer = 'Do not reuse the old password. Two-factor authentication is still asked at sign-in.';
+  return { subject: '[Oblimint] New password required', text: text(lines, url, footer), html: html(lines, { url, label: 'Choose a new password' }, footer) };
+}
+
 export function emailConfirmMail(lang: Lang, username: string, url: string): MailContent {
   if (lang === 'fr') {
     const lines = ['Confirmez votre adresse e-mail', `Cette adresse a été indiquée pour le compte « ${username} ».`, `Ouvrez ce lien pour la confirmer (valable ${EMAIL_CHANGE_TTL_HOURS} heures, une seule fois).`];

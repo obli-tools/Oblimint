@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import {
-  CONTAINMENT_AUDIT_HOURS, CONTAINMENT_STEPS, HostingSocketEvents,
-  type AccountContainment, type ContainmentAuditRow, type ContainmentCredential, type ContainmentSiteFreeze, type ContainmentStatus,
+  CONTAINMENT_AUDIT_HOURS, CONTAINMENT_STEPS, HostingSocketEvents, WINDOW_ACTIVE_STATUSES,
+  type AccountContainment, type ContainmentAuditRow, type ContainmentClientReset, type ContainmentCredential, type ContainmentOpenWindow, type ContainmentSiteFreeze, type ContainmentStatus,
   type ContainmentSqlInstance, type ContainmentStep, type ContainmentStepKey,
 } from '@oblimint/shared';
 import { db } from '../../db';
@@ -48,7 +48,7 @@ interface ContainmentRow {
   started_by: number | null; started_at: Date | string; completed_at: Date | string | null;
   lifted_by: number | null; lifted_at: Date | string | null; lift_note: string | null;
   steps: ContainmentStep[]; previous: Previous; credentials: ContainmentCredential[];
-  access_rules: AccountContainment['accessRules']; lift_warnings: string[]; sql_sessions: ContainmentSqlInstance[];
+  access_rules: AccountContainment['accessRules']; lift_warnings: string[]; sql_sessions: ContainmentSqlInstance[]; client_resets: ContainmentClientReset[];
   audit_from: Date | string; audit_until: Date | string;
 }
 
@@ -81,6 +81,10 @@ export interface ContainmentDeps {
   closeExternalSql(accountId: number): Promise<ContainmentSqlInstance[]>;
   closeWindow(siteId: number, windowId: number, who: { userId: number | null; ip: string | null }): Promise<unknown>;
   freezeSite(siteId: number, containmentId: number): Promise<SiteFreezeResult>;
+  /** Can the client get a reset link by itself? Never throws. */
+  canSelfReset(userId: number): Promise<boolean>;
+  /** Sends the link of a password the lift expired. Never throws. */
+  sendForcedReset(userId: number, ip: string | null): Promise<'sent' | 'unavailable' | 'failed'>;
   notify(event: 'account.contained' | 'account.containmentLifted', payload: NotificationPayload): void;
 }
 
@@ -123,6 +127,14 @@ const defaultDeps: ContainmentDeps = {
   async freezeSite(siteId, containmentId) {
     const { releaseService } = await import('../releases/release.service');
     return releaseService.freezeStagingDiff(siteId, containmentId);
+  },
+  async canSelfReset(userId) {
+    const { identityService } = await import('../identity/identity.service');
+    return identityService.canSelfReset(userId);
+  },
+  async sendForcedReset(userId, ip) {
+    const { identityService } = await import('../identity/identity.service');
+    return identityService.sendForcedPasswordReset(userId, ip);
   },
   notify: (event, payload) => notify(event, payload),
 };
@@ -419,6 +431,37 @@ const STEPS: Record<ContainmentStepKey, (run: Run) => Promise<number>> = {
 
 // ── Report ───────────────────────────────────────────────────────────────────
 
+/**
+ * The clients the lift concerns. The password belongs to the login: a stolen one
+ * opens every account of that login, so it expires whatever other accounts it has,
+ * contained or not. Those accounts lose nothing but the sign-in until the reset.
+ */
+async function clientResetsOf(accountId: number): Promise<ContainmentClientReset[]> {
+  const clients = await db('account_users as au').join('users as u', 'u.id', 'au.user_id')
+    .where('au.account_id', accountId).andWhere('u.kind', 'client').whereNull('u.foreign_source').orderBy('u.id').select('u.id', 'u.username') as Array<{ id: number; username: string }>;
+  const out: ContainmentClientReset[] = [];
+  for (const c of clients) {
+    const others = await db('account_users as o').join('hosting_accounts as a', 'a.id', 'o.account_id')
+      .where('o.user_id', c.id).whereNot('o.account_id', accountId).select('a.contained_at') as Array<{ contained_at: Date | null }>;
+    const otherContained = others.filter((o) => o.contained_at).length;
+    out.push({ userId: c.id, username: c.username, selfService: await deps.canSelfReset(c.id), otherAccounts: others.length - otherContained, otherContained, mail: null });
+  }
+  return out;
+}
+
+/** Windows whose content is still served while nobody decided: closing a window does not take its content back. */
+async function reviewWindowsOf(row: Pick<ContainmentRow, 'account_id' | 'tenant_id'>): Promise<ContainmentOpenWindow[]> {
+  if (row.account_id === null) return [];
+  const rows = await db('maintenance_windows as w').join('sites as s', 's.id', 'w.site_id')
+    .where({ 'w.account_id': row.account_id, 'w.tenant_id': row.tenant_id }).whereIn('w.status', WINDOW_ACTIVE_STATUSES as string[]).orderBy('w.id')
+    .select('w.id', 'w.number', 'w.site_id', 'w.status', 'w.closed_at', 's.name as site_name') as Array<{
+      id: number; number: number; site_id: number; status: string; closed_at: Date | string | null; site_name: string;
+    }>;
+  return rows.map((w) => ({
+    windowId: w.id, number: w.number, siteId: w.site_id, siteName: w.site_name, status: w.status, closedAt: iso(w.closed_at), reviewPath: `/sites/${w.site_id}/windows/${w.id}`,
+  }));
+}
+
 async function toReport(row: ContainmentRow): Promise<AccountContainment> {
   const ids = [row.started_by, row.lifted_by].filter((v): v is number => v !== null);
   const users = ids.length ? await db('users').whereIn('id', ids).select('id', db.raw('COALESCE(display_name, username) AS name')) as Array<{ id: number; name: string }> : [];
@@ -433,6 +476,8 @@ async function toReport(row: ContainmentRow): Promise<AccountContainment> {
     startedAt: iso(row.started_at) as string, startedByName: nameOf(row.started_by), completedAt: iso(row.completed_at),
     liftedAt: iso(row.lifted_at), liftedByName: nameOf(row.lifted_by), liftNote: row.lift_note,
     steps: row.steps, credentials: row.credentials, accessRules: row.access_rules, sqlSessions: row.sql_sessions,
+    clientPasswordResets: row.status !== 'lifted' && row.account_id !== null ? await clientResetsOf(row.account_id) : row.client_resets,
+    reviewWindows: await reviewWindowsOf(row),
     sites: freezes.map((f) => ({
       siteId: f.site_id, siteName: f.site_name, liveReleaseNumber: f.live_release_number, liveCommit: f.live_commit, stagingCommit: f.staging_commit,
       entries: f.entries, total: f.total, truncated: f.truncated, note: f.note, frozenAt: iso(f.frozen_at) as string,
@@ -546,12 +591,14 @@ export const containmentService = {
       // The rows this report and the last steps wrote belong to the evidence too.
       await freezeAudit(run.row);
       const failedSteps = run.row.steps.filter((s) => s.status === 'failed').map((s) => s.key);
+      const served = (await reviewWindowsOf(run.row)).length;
+      const servedText = served ? ` Attention : le contenu de ${served} fenêtre(s) non décidée(s) reste servi tant que le staff ne les rejette pas.` : '';
       deps.notify('account.contained', {
         tenantId: account.tenant_id, accountId: account.id, key: `containment:${row.id}:${status}`, severity: 'critical', platform: true,
         title: `Compte confiné : ${account.username}`,
         message: status === 'active'
-          ? `Le compte ${account.username} est confiné : clés, connecteurs, jetons, sessions et SFTP sont coupés, les sites continuent de servir. Seul le staff peut lever le confinement.`
-          : `Le confinement du compte ${account.username} est incomplet (étapes en échec : ${failedSteps.join(', ')}). La barrière est en place : reprenez l'opération depuis la fiche du compte.`,
+          ? `Le compte ${account.username} est confiné : clés, connecteurs, jetons, sessions et SFTP sont coupés, les sites continuent de servir. Seul le staff peut lever le confinement.${servedText}`
+          : `Le confinement du compte ${account.username} est incomplet (étapes en échec : ${failedSteps.join(', ')}). La barrière est en place : reprenez l'opération depuis la fiche du compte.${servedText}`,
         link: `/accounts/${account.id}?tab=overview`,
       });
       emitChanged(account);
@@ -564,21 +611,44 @@ export const containmentService = {
   /**
    * Lifts the containment (staff, checked by the route). The publish modes and
    * the file server mode come back. Keys, tokens, sessions, the SFTP password
-   * and the SSH keys do not: they were burnt, new ones are created.
+   * and the SSH keys do not: they were burnt, new ones are created. The password
+   * of each client login expires too, in the transaction of the lift: there is
+   * no moment when the account is open again and a stolen password still works.
    */
   async lift(req: Request, actor: HostingActor, account: AccountRow, note: string | null): Promise<AccountContainment> {
     if (inFlight.has(account.id)) throw new AppError(409, 'The containment of this account is still running', 'containmentBusy');
+    const resets = await clientResetsOf(account.id);
     const row = await db.transaction(async (trx) => {
       await trx('hosting_accounts').where({ id: account.id, tenant_id: account.tenant_id }).forUpdate().first('id');
       const live = await trx(CONTAINMENTS).where({ account_id: account.id, tenant_id: account.tenant_id }).whereNot('status', 'lifted').first('id') as { id: number } | undefined;
       if (!live) throw new AppError(409, 'This account is not contained', 'accountNotContained');
       await trx('containment_credentials').where({ containment_id: live.id }).del();
+      const clientIds = resets.map((c) => c.userId);
+      if (clientIds.length) {
+        // credential_version: a session opened meanwhile through another account of the login ends with the old password.
+        await trx('users').whereIn('id', clientIds).update({ password_reset_required_at: trx.fn.now(), credential_version: trx.raw('credential_version + 1'), updated_at: trx.fn.now() });
+        // A link issued before the lift does not get around it: the mail below sends a new one.
+        await trx('user_action_tokens').whereIn('user_id', clientIds).where({ purpose: 'password_reset' }).whereNull('used_at').where('expires_at', '>', trx.fn.now()).update({ expires_at: trx.fn.now() });
+      }
       await trx('hosting_accounts').where({ id: account.id, tenant_id: account.tenant_id }).update({ contained_at: null, updated_at: trx.fn.now() });
-      const [updated] = await trx(CONTAINMENTS).where({ id: live.id }).update({ status: 'lifted', lifted_at: new Date(), lifted_by: actor.userId, lift_note: note }).returning('*') as ContainmentRow[];
+      const [updated] = await trx(CONTAINMENTS).where({ id: live.id }).update({ status: 'lifted', lifted_at: new Date(), lifted_by: actor.userId, lift_note: note, client_resets: JSON.stringify(resets) }).returning('*') as ContainmentRow[];
       return updated;
     });
 
     const warnings: string[] = [];
+    const ip = clientIp(req) || null;
+    for (const c of resets) {
+      try {
+        await deps.killSessions(c.userId);
+      } catch (err) {
+        warnings.push(`sessions of ${c.username}: ${errorText(err)}`);
+      }
+      c.mail = c.selfService ? await deps.sendForcedReset(c.userId, ip) : 'unavailable';
+    }
+    if (resets.length) {
+      await db(CONTAINMENTS).where({ id: row.id }).update({ client_resets: JSON.stringify(resets) });
+      row.client_resets = resets;
+    }
     const modes = row.previous.publishModes ?? {};
     for (const [siteId, mode] of Object.entries(modes)) {
       // A site the staff set otherwise meanwhile keeps what the staff chose.
@@ -602,12 +672,12 @@ export const containmentService = {
       row.lift_warnings = warnings;
     }
     await auditService.logReqAs(req, account.tenant_id, 'account.contain_lift', {
-      resourceType: 'account', resourcePath: String(account.id), details: { accountId: account.id, username: account.username, containmentId: row.id, note, warnings },
+      resourceType: 'account', resourcePath: String(account.id), details: { accountId: account.id, username: account.username, containmentId: row.id, note, warnings, clientResets: resets.map((c) => ({ userId: c.userId, username: c.username, otherAccounts: c.otherAccounts, mail: c.mail })) },
     });
     deps.notify('account.containmentLifted', {
       tenantId: account.tenant_id, accountId: account.id, key: `containment:${row.id}:lifted`, severity: 'warning', platform: true,
       title: `Confinement levé : ${account.username}`,
-      message: `Le confinement du compte ${account.username} est levé. Les anciennes clés, les anciens jetons et l'ancien mot de passe SFTP restent révoqués : créez-en de nouveaux.`,
+      message: `Le confinement du compte ${account.username} est levé. Les anciennes clés, les anciens jetons et l'ancien mot de passe SFTP restent révoqués : créez-en de nouveaux. Les clients du compte (${resets.length}) doivent choisir un nouveau mot de passe.`,
       link: `/accounts/${account.id}?tab=overview`,
     });
     emitChanged(account);

@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { CheckCircle2, ChevronDown, ChevronRight, CircleDashed, RotateCw, ShieldAlert, ShieldOff, XCircle } from 'lucide-react';
-import type { AccountContainment, ContainmentAuditRow, ContainmentStatus, ContainmentStep, HostingAccount } from '@oblimint/shared';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, ExternalLink, RotateCw, ShieldAlert, ShieldOff, XCircle } from 'lucide-react';
+import type {
+  AccountContainment, ContainmentAuditRow, ContainmentClientReset, ContainmentOpenWindow, ContainmentStatus, ContainmentStep, HostingAccount, WindowStatus,
+} from '@oblimint/shared';
 import { accountsApi } from '@/api/accounts.api';
 import { Button } from '@/components/common/Button';
 import { Modal } from '@/components/common/Modal';
 import { Pill, type Tone } from '@/components/common/Pill';
 import { Card, toastHostingError } from '@/components/hosting/hostingUi';
+import { WindowStatusBadge } from '@/components/maintenance/MaintenanceBadges';
 
 const STATUS_TONE: Record<ContainmentStatus, Tone> = { running: 'blue', partial: 'orange', active: 'red', lifted: 'muted' };
 const TEXTAREA = 'w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none';
@@ -37,7 +41,7 @@ export function ContainModal({ account, open, onClose, onDone }: {
   const effects = [
     t('accounts.containment.effects.credentials') || 'Revokes the access keys, connectors and window tokens, and ends the client sessions.',
     t('accounts.containment.effects.sftp') || 'Cuts SFTP: new unknown password, SSH keys removed, ports closed (SQL from outside too), and ends the external SQL connections already open. The site\'s are never touched.',
-    t('accounts.containment.effects.publish') || 'Puts the sites in approval mode and closes the open windows: their changes wait for a review.',
+    t('accounts.containment.effects.publish') || 'Puts the sites in approval mode and closes the open windows: their changes wait for a review and stay served until the staff rejects them.',
     t('accounts.containment.effects.evidence') || 'Freezes the staging / release diff and the audit over ±72 h.',
     t('accounts.containment.effects.serving') || 'The sites keep serving, and their database passwords do not change. Only the staff can lift it.',
   ];
@@ -67,6 +71,53 @@ function StepIcon({ step }: { step: ContainmentStep }) {
   if (step.status === 'done') return <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-status-up" />;
   if (step.status === 'failed') return <XCircle size={14} className="mt-0.5 shrink-0 text-red-400" />;
   return <CircleDashed size={14} className="mt-0.5 shrink-0 text-text-muted" />;
+}
+
+/** Closing a window takes nothing back: said wherever the staff decides, with the way to the review. */
+function ServedWindows({ windows }: { windows: ContainmentOpenWindow[] }) {
+  const { t } = useTranslation();
+  return (
+    <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-500/5 p-3 text-xs">
+      <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-400" />
+      <div className="min-w-0">
+        <p className="font-medium text-amber-400">{t('accounts.containment.windows.title') || 'Window content still served'}</p>
+        <p className="mb-1.5 text-text-secondary">{t('accounts.containment.windows.warning') || 'The content of a closed window stays served until the staff rejects it. Closing a window takes nothing back from the site.'}</p>
+        <ul className="flex flex-col gap-1">
+          {windows.map((w) => (
+            <li key={w.windowId} className="flex flex-wrap items-center gap-2 text-text-primary">
+              {t('accounts.containment.windows.item', { number: w.number, site: w.siteName, defaultValue: 'Window #{{number}} of {{site}}' })}
+              <WindowStatusBadge status={w.status as WindowStatus} />
+              <Link to={w.reviewPath} className="inline-flex items-center gap-1 text-accent hover:underline">
+                {t('accounts.containment.windows.review') || 'Open the review'}<ExternalLink size={12} />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function ClientResets({ resets }: { resets: ContainmentClientReset[] }) {
+  const { t } = useTranslation();
+  return (
+    <ul className="flex flex-col gap-1">
+      {resets.map((c) => (
+        <li key={c.userId} className="break-words text-xs text-text-primary">
+          <span className="font-mono">{c.username}</span>{' '}
+          <span className={c.mail === 'sent' || (c.mail === null && c.selfService) ? 'text-text-muted' : 'text-amber-400'}>
+            {c.mail
+              ? t(`accounts.containment.resets.mail.${c.mail}`) || c.mail
+              : c.selfService
+                ? t('accounts.containment.resets.selfService') || 'gets a link by e-mail'
+                : t('accounts.containment.resets.staffOnly') || 'no link possible (address not verified or sending not configured): the staff sets a password'}
+          </span>
+          {c.otherAccounts > 0 && <span className="text-text-muted">, {t('accounts.containment.resets.others', { count: c.otherAccounts, defaultValue: '{{count}} other account(s) not contained' })}</span>}
+          {c.otherContained > 0 && <span className="text-text-muted">, {t('accounts.containment.resets.othersContained', { count: c.otherContained, defaultValue: '{{count}} other account(s) still contained, reset asked again when they are lifted' })}</span>}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /** The account's containment: a notice for everyone, the report and its actions for the staff. */
@@ -186,6 +237,13 @@ export function AccountContainmentPanel({ account, isStaff, canManage, onChanged
             {t('accounts.containment.sql.title') || 'External SQL connections'} ({sqlUnreliable.map((i) => i.name).join(', ')}) : {t('accounts.containment.sql.unreliable') || 'site / external could not be told apart: nothing was ended on this engine, check by hand'}
           </p>
         )}
+        {report.reviewWindows.length > 0 && <ServedWindows windows={report.reviewWindows} />}
+        {report.status === 'lifted' && report.clientPasswordResets.length > 0 && (
+          <div className="mt-3">
+            <h3 className="mb-1 text-xs font-medium text-text-secondary">{t('accounts.containment.resets.title') || 'Client passwords'}</h3>
+            <ClientResets resets={report.clientPasswordResets} />
+          </div>
+        )}
         {expanded && (
           <div className="mt-3 grid gap-4 lg:grid-cols-2">
             <div>
@@ -296,6 +354,13 @@ export function AccountContainmentPanel({ account, isStaff, canManage, onChanged
           </>
         )}
       >
+        <div className="mb-3 rounded-lg border border-amber-400/30 bg-amber-500/5 p-3">
+          <p className="mb-2 text-sm text-text-primary">{t('accounts.containment.resets.effect') || 'The lift forces a password reset for each client of the account: the old one is refused, sessions and connectors end. The password belongs to the login: access to its other accounts also waits for this reset.'}</p>
+          {report.clientPasswordResets.length === 0
+            ? <p className="text-xs text-text-muted">{t('accounts.containment.resets.none') || 'No client on this account.'}</p>
+            : <ClientResets resets={report.clientPasswordResets} />}
+        </div>
+        {report.reviewWindows.length > 0 && <div className="mb-3"><ServedWindows windows={report.reviewWindows} /></div>}
         <p className="mb-3 text-sm text-text-secondary">
           {t('accounts.containment.liftConfirm') || 'The publish modes and the file server come back. Old keys, tokens, SSH keys and the SFTP password stay revoked. Review the frozen diff and the allow-list rules first. A fresh second-factor code is asked.'}
         </p>

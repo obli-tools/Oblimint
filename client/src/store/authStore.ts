@@ -84,6 +84,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         throw Object.assign(new Error(serverMessage ?? 'This account is contained.'), { code: 'accountContained' });
       }
 
+      if (status === 403 && axiosErr?.response?.data?.code === 'passwordResetRequired') {
+        throw Object.assign(new Error(serverMessage ?? 'This password expired: set a new one.'), { code: 'passwordResetRequired' });
+      }
       if (status === 403 && axiosErr?.response?.data?.code === 'noTenantAccess') {
         throw Object.assign(new Error(serverMessage ?? 'This account has no access to any tenant.'), { code: 'noTenantAccess' });
       }

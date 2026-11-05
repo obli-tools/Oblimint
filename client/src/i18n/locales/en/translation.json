@@ -209,6 +209,7 @@
       "goAdmin": "Go to the panel",
       "ssoOnClientSpace": "Single sign-on is not available on the client space."
     },
+    "passwordResetRequired": "After a security incident, this password no longer works. Choose a new one with the link you received by e-mail or \"Forgot your password\"; without a verified address, contact your host.",
     "accountContained": "Your access is suspended after a security incident on your account. Your sites keep serving. Contact your host."
   },
   "nav": {

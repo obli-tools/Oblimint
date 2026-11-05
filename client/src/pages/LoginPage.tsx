@@ -153,6 +153,7 @@ export function LoginPage() {
         setError(noTenantMessage);
         return;
       }
+      if (code === 'passwordResetRequired') { setError(t('login.passwordResetRequired', 'After a security incident, this password no longer works. Choose a new one with the link you received by e-mail or "Forgot your password"; without a verified address, contact your host.')); return; }
       if (code === 'accountContained') { setError(t('login.accountContained', 'Your access is suspended after a security incident on your account. Your sites keep serving. Contact your host.')); return; }
       if (code === 'invalidCredentials') { setError(t('login.invalidCredentials', 'Invalid username or password')); return; }
       if (code === 'tooManyAttempts') { setError(t('login.tooManyAttempts', 'Too many login attempts, please try again later')); return; }

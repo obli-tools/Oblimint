@@ -48,6 +48,7 @@ export function ResetPasswordPage() {
     } catch (err) {
       const code = (err as { response?: { data?: { code?: string } } } | null)?.response?.data?.code;
       if (code === 'invalidToken') setTokenValid(false);
+      else if (code === 'passwordReused') setError(t('identity.reset.reused') || 'This password expired after a security incident: choose another one.');
       else setError(t('identity.reset.failed') || 'The password could not be changed.');
     } finally {
       setSubmitting(false);

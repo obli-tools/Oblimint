@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { MASTER_TENANT_ID } from '@oblimint/shared';
+import { MASTER_TENANT_ID, PASSWORD_RESET_REQUIRED_CODE } from '@oblimint/shared';
 import { regenerateSession, stampCredentialVersion } from '../utils/session';
 import { clientIp } from '../utils/clientIp';
 import { authService } from '../services/auth.service';
@@ -83,6 +83,18 @@ export const authController = {
           });
           throw accountContained();
         }
+      }
+
+      // The lift of a containment expired this password: the right one opens nothing until it is changed.
+      // Checked once the password is proven (no enumeration).
+      const expiry = await db('users').where({ id: user.id }).first('password_reset_required_at') as { password_reset_required_at: Date | null } | undefined;
+      if (expiry?.password_reset_required_at) {
+        const tenant = await tenantService.getFirstTenantForUser(user.id);
+        await auditService.log({
+          tenantId: tenant?.id ?? MASTER_TENANT_ID, userId: user.id, action: 'auth.login_refused', resourceType: 'user', resourcePath: String(user.id),
+          details: { username: user.username, reason: 'password_reset_required', via: 'password' }, ipAddress: clientIp(req) || undefined,
+        });
+        throw new AppError(403, 'This password expired after a security incident: set a new one', PASSWORD_RESET_REQUIRED_CODE);
       }
 
       // New session id once the password is proven (session fixation).

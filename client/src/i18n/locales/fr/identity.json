@@ -23,6 +23,7 @@
       "mismatch": "Les mots de passe ne correspondent pas.",
       "tooShort": "Au moins {{count}} caractères.",
       "failed": "Le mot de passe n’a pas pu être changé.",
+      "reused": "Ce mot de passe a expiré après un incident de sécurité : choisissez-en un autre.",
       "invalidToken": "Ce lien est invalide, a expiré ou a déjà servi.",
       "askAgain": "Demander un nouveau lien",
       "successTitle": "Mot de passe changé",

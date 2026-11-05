@@ -1,6 +1,8 @@
 import type { User, UserKind, UserRole, UserTenantAssignment } from '@oblimint/shared';
+import { PASSWORD_REUSED_CODE } from '@oblimint/shared';
+import { AppError } from '../middleware/errorHandler';
 import { db } from '../db';
-import { hashPassword } from '../utils/crypto';
+import { comparePassword, hashPassword } from '../utils/crypto';
 import { rowToUser, type UserRow } from './userRow';
 
 export const userService = {
@@ -66,6 +68,10 @@ export const userService = {
   },
 
   async changePassword(id: number, newPassword: string): Promise<boolean> {
+    const current = await db('users').where({ id }).first('password_hash', 'password_reset_required_at') as { password_hash: string | null; password_reset_required_at: Date | null } | undefined;
+    if (current?.password_reset_required_at && current.password_hash && await comparePassword(newPassword, current.password_hash)) {
+      throw new AppError(400, 'This password was expired after a security incident: choose another one', PASSWORD_REUSED_CODE, { field: 'password' });
+    }
     const passwordHash = await hashPassword(newPassword);
     const count = await db('users').where({ id }).update({ password_hash: passwordHash, updated_at: new Date() });
     return count > 0;

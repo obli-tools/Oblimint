@@ -195,7 +195,7 @@
       "effects": {
         "credentials": "Révoque les clés d'accès, les connecteurs et les jetons de fenêtre, et met fin aux sessions des clients.",
         "sftp": "Coupe le SFTP : nouveau mot de passe inconnu, clés SSH retirées, ports fermés (SQL depuis l'extérieur aussi), et met fin aux connexions SQL externes déjà établies. Celles du site ne sont jamais touchées.",
-        "publish": "Passe les sites en mode approbation et ferme les fenêtres ouvertes : leurs changements attendent une revue.",
+        "publish": "Passe les sites en mode approbation et ferme les fenêtres ouvertes : leurs changements attendent une revue et restent servis tant que le staff ne les rejette pas.",
         "evidence": "Fige le diff staging / release et l'audit sur ±72 h.",
         "serving": "Les sites continuent de servir et leurs mots de passe de base ne changent pas. Seul le staff peut lever le confinement."
       },
@@ -212,7 +212,7 @@
         "lifted": "Levé"
       },
       "summary": "Lancé le {{date}} par {{by}} : {{done}} étapes sur {{total}} terminées.",
-      "liftedSummary": "Levé le {{date}} par {{by}}. Les anciennes clés, les anciens jetons et l'ancien mot de passe SFTP restent révoqués : créez-en de nouveaux.",
+      "liftedSummary": "Levé le {{date}} par {{by}}. Les anciennes clés, les anciens jetons et l'ancien mot de passe SFTP restent révoqués : créez-en de nouveaux. Les clients doivent choisir un nouveau mot de passe.",
       "stepsTitle": "Étapes",
       "steps": {
         "keys": "Clés d'accès et connecteurs révoqués",
@@ -257,6 +257,26 @@
       "auditSpan": "{{count}} entrées, du {{from}} au {{until}}",
       "showAudit": "Afficher",
       "liftTitle": "Lever le confinement",
+      "windows": {
+        "title": "Contenu de fenêtres encore servi",
+        "warning": "Le contenu d'une fenêtre fermée reste servi tant que le staff ne la rejette pas. Fermer une fenêtre ne retire rien du site.",
+        "item": "Fenêtre n°{{number}} de {{site}}",
+        "review": "Ouvrir la revue"
+      },
+      "resets": {
+        "title": "Mot de passe des clients",
+        "effect": "La levée force la réinitialisation du mot de passe de chaque client du compte : l'ancien est refusé, sessions et connecteurs sont fermés. Le mot de passe appartient à l'identifiant : l'accès à ses autres comptes attend aussi cette réinitialisation.",
+        "none": "Aucun client sur ce compte.",
+        "selfService": "reçoit un lien par e-mail",
+        "staffOnly": "pas de lien possible (adresse non vérifiée ou envoi non configuré) : le staff lui définit un mot de passe",
+        "others": "{{count}} autre(s) compte(s) non confiné(s)",
+        "othersContained": "{{count}} autre(s) compte(s) encore confiné(s), réinitialisation redemandée à leur levée",
+        "mail": {
+          "sent": "lien envoyé",
+          "unavailable": "aucun lien envoyé : le staff lui définit un mot de passe",
+          "failed": "échec de l'envoi : il peut redemander un lien depuis la page de connexion"
+        }
+      },
       "liftConfirm": "Les modes de publication et le serveur de fichiers reviennent. Les anciennes clés, les anciens jetons, les clés SSH et le mot de passe SFTP restent révoqués. Revoyez d'abord le diff figé et les règles de la liste d'accès. Un nouveau code de second facteur est demandé."
     }
   },

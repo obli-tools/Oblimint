@@ -195,7 +195,7 @@
       "effects": {
         "credentials": "Revokes the access keys, connectors and window tokens, and ends the client sessions.",
         "sftp": "Cuts SFTP: new unknown password, SSH keys removed, ports closed (SQL from outside too), and ends the external SQL connections already open. The site's are never touched.",
-        "publish": "Puts the sites in approval mode and closes the open windows: their changes wait for a review.",
+        "publish": "Puts the sites in approval mode and closes the open windows: their changes wait for a review and stay served until the staff rejects them.",
         "evidence": "Freezes the staging / release diff and the audit over ±72 h.",
         "serving": "The sites keep serving, and their database passwords do not change. Only the staff can lift it."
       },
@@ -212,7 +212,7 @@
         "lifted": "Lifted"
       },
       "summary": "Started {{date}} by {{by}}: {{done}} of {{total}} steps done.",
-      "liftedSummary": "Lifted {{date}} by {{by}}. Old keys, tokens and SFTP password stay revoked: create new ones.",
+      "liftedSummary": "Lifted {{date}} by {{by}}. Old keys, tokens and SFTP password stay revoked: create new ones. Clients must choose a new password.",
       "stepsTitle": "Steps",
       "steps": {
         "keys": "Access keys and connectors revoked",
@@ -257,6 +257,26 @@
       "auditSpan": "{{count}} entries, {{from}} to {{until}}",
       "showAudit": "Show",
       "liftTitle": "Lift the containment",
+      "windows": {
+        "title": "Window content still served",
+        "warning": "The content of a closed window stays served until the staff rejects it. Closing a window takes nothing back from the site.",
+        "item": "Window #{{number}} of {{site}}",
+        "review": "Open the review"
+      },
+      "resets": {
+        "title": "Client passwords",
+        "effect": "The lift forces a password reset for each client of the account: the old one is refused, sessions and connectors end. The password belongs to the login: access to its other accounts also waits for this reset.",
+        "none": "No client on this account.",
+        "selfService": "gets a link by e-mail",
+        "staffOnly": "no link possible (address not verified or sending not configured): the staff sets a password",
+        "others": "{{count}} other account(s) not contained",
+        "othersContained": "{{count}} other account(s) still contained, reset asked again when they are lifted",
+        "mail": {
+          "sent": "link sent",
+          "unavailable": "no link sent: the staff sets a password",
+          "failed": "sending failed: they can ask for a link from the sign-in page"
+        }
+      },
       "liftConfirm": "The publish modes and the file server come back. Old keys, tokens, SSH keys and the SFTP password stay revoked. Review the frozen diff and the allow-list rules first. A fresh second-factor code is asked."
     }
   },

@@ -19,6 +19,11 @@ export const RECOVERY_LOGIN_GRACE_MINUTES = 15;
 export const PASSWORD_MIN_LENGTH = 12;
 export const PASSWORD_MAX_LENGTH = 128;
 
+/** Code of a sign-in refused with the right password: the lift of a containment expired it (HTTP 403). */
+export const PASSWORD_RESET_REQUIRED_CODE = 'passwordResetRequired';
+/** Code of a new password equal to the one that was expired (HTTP 400). */
+export const PASSWORD_REUSED_CODE = 'passwordReused';
+
 /** Personal notices of the notification center (family 'account', always delivered, never configurable). */
 export type AccountNotificationEvent =
   | 'account.recoveryCodeUsed'   // someone signed in with one of the recovery codes

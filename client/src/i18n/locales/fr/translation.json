@@ -209,6 +209,7 @@
       "goAdmin": "Aller sur le panel",
       "ssoOnClientSpace": "La connexion unique (SSO) n'est pas disponible sur l'espace client."
     },
+    "passwordResetRequired": "Après un incident de sécurité, ce mot de passe ne fonctionne plus. Choisissez-en un nouveau avec le lien reçu par e-mail ou « Mot de passe oublié » ; sans adresse vérifiée, contactez votre hébergeur.",
     "accountContained": "Vos accès sont suspendus après un incident de sécurité sur votre compte. Vos sites continuent de servir. Contactez votre hébergeur."
   },
   "nav": {
