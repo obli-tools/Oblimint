@@ -96,7 +96,7 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   // ── Sites and accounts ──
   // Immutable application installer: creates a site, a database, its variables, and publishes.
   { key: 'app.install', category: 'sites', need: 'sites.manage', alsoNeed: 'databases.manage', scopable: 'account', surfaces: PK },
-  { key: 'site.delete', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: P },
+  { key: 'site.delete', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: PK },
   { key: 'site.stop', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: P },
   { key: 'site.publish_mode_change', category: 'sites', need: 'releases.approve', scopable: 'site', surfaces: PK },
   { key: 'site.data_path_remove', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: PK },
@@ -123,7 +123,7 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'files.delete', category: 'files', need: 'files.manage', scopable: 'account', surfaces: PK },
   { key: 'files.write', category: 'files', need: 'files.manage', scopable: 'account', surfaces: PK },
   // ── Databases ──
-  { key: 'db.instance_drop', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: P },
+  { key: 'db.instance_drop', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'db.external_access', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: P },
   { key: 'db.drop', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'db.import', category: 'databases', need: 'databases.manage', scopable: 'account', surfaces: PK },
