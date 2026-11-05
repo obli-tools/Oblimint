@@ -14,7 +14,7 @@ import { config } from '../../config';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
-import { isAccountContained } from '../containment/guard';
+import { assertNotContained, isAccountContained } from '../containment/guard';
 import { siteDeletions } from '../hosting/deletions';
 import { dataPathForbiddenError } from '../hosting/hostingValidation.service';
 import { localPaths } from '../hosting/paths';
@@ -1455,6 +1455,43 @@ export const releaseService = {
   },
 
   /**
+   * The key that made a proposal takes it back, while no human decided. No right to
+   * publish is needed: this puts nothing live. It closes the proposal and nothing else:
+   * the commit stays in the history and sites.staging_proposal_at stays, the staging
+   * still holds what no human looked at. While the scan runs the pipeline owns the
+   * row (409 proposalStillScanning, it settles by itself).
+   * One atomic UPDATE decides against an approval, a rejection, a containment.
+   */
+  async withdrawProposal(siteId: number, releaseId: number, keyId: number, reason?: string | null): Promise<Release> {
+    const ctx = await loadContext(siteId);
+    const row = await fetchRelease(siteId, releaseId);
+    if (!row.proposal) throw new AppError(409, 'This release is not a proposal', 'notAProposal');
+    if (Number(row.api_key_id) !== keyId) throw new AppError(403, 'Only the key that made a proposal withdraws it', 'proposalOfAnotherKey');
+    if (row.status === 'queued' || row.status === 'scanning') throw new AppError(409, 'The proposal is still being scanned: wait for it, then withdraw', 'proposalStillScanning');
+    const notOpen = (status: string) => new AppError(409, `This proposal is no longer open (${status})`, 'proposalNotOpen', { status });
+    if (row.status !== 'awaiting_approval' || row.decided_at) throw notOpen(row.status);
+    await assertNotContained(ctx.account.id);
+    const why = reason?.trim() ? reason.trim().slice(0, 500) : null;
+    const run = new Run(ctx, row);
+    run.line('info', `retirée par la clé d’accès #${keyId}${why ? ` : ${why}` : ''}`);
+    const n = await db('releases').where({ id: releaseId, status: 'awaiting_approval', proposal: true, api_key_id: keyId }).whereNull('decided_at')
+      .whereNotExists(db('hosting_accounts').where({ id: ctx.account.id }).whereNotNull('contained_at').select(db.raw('1')))
+      .update({ status: 'withdrawn', updated_at: db.fn.now() });
+    if (!n) {
+      await assertNotContained(ctx.account.id);
+      throw notOpen((await fetchRelease(siteId, releaseId)).status);
+    }
+    await run.save({ status: 'withdrawn' });
+    notify('release.withdrawn', {
+      tenantId: ctx.site.tenant_id, accountId: ctx.account.id, key: `release:${releaseId}`, severity: 'info',
+      title: `Proposition retirée : ${ctx.site.name}`,
+      message: `La proposition #${row.number} du site ${ctx.site.name} a été retirée par la clé qui l’avait soumise${why ? ` : ${why}` : '.'} Plus aucune décision n’est attendue ; le staging reste retenu.`,
+      link: `/sites/${siteId}?tab=releases&release=${releaseId}`,
+    });
+    return toRelease(await fetchRelease(siteId, releaseId));
+  },
+
+  /**
    * Internal (module windows): a release left awaiting approval is rejected
    * (no user). false when it was not awaiting approval any more.
    */
@@ -1783,7 +1820,7 @@ export const releaseService = {
       base.warnings.push(`retour arrière : la release en ligne #${st.live.number} est plus ancienne que #${st.rolledBackFrom.number}, dont le staging contient encore du code`);
       base.warningItems.push({ code: 'liveOlderThanBase', releaseNumber: st.live.number, baseNumber: st.rolledBackFrom.number });
     }
-    if (baseRow && ['failed', 'rejected', 'awaiting_approval'].includes(baseRow.status) && base.baseIsLive === false) {
+    if (baseRow && ['failed', 'rejected', 'awaiting_approval', 'withdrawn'].includes(baseRow.status) && base.baseIsLive === false) {
       base.warnings.push(`la base du staging (release #${baseRow.number}) n’est pas en ligne (${baseRow.status})`);
       base.warningItems.push({ code: 'baseNotPublished', baseNumber: baseRow.number, status: baseRow.status });
     }

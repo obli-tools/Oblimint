@@ -536,6 +536,88 @@ test('Proposal mode: the agent submits, a human decides', { timeout: 300_000 }, 
     assert.equal((await decide(p.body.data.id, 'reject', {})).status, 200);
   });
 
+  await t.test('withdraw: only the key that proposed, only while no human decided', async () => {
+    await setMode('manual');
+    put('to withdraw');
+    const p = await post(`/sites/${siteId}/publish`, {}, kWide.key!);
+    assert.equal(p.status, 201, JSON.stringify(p.body));
+    const rid = p.body.data.id as number;
+    await settle(rid);
+    const held = new Date();
+    await db('sites').where({ id: siteId }).update({ staging_proposal_at: held });
+    const live = await liveId();
+
+    // Another key of the same account, proposing or publishing: no.
+    assert.deepEqual(await post(`/sites/${siteId}/releases/${rid}/withdraw`, {}, kB.key!).then((r) => [r.status, r.body.code]), [403, 'proposalOfAnotherKey']);
+    assert.deepEqual(await post(`/sites/${siteId}/releases/${rid}/withdraw`, {}, kPub.key!).then((r) => [r.status, r.body.code]), [403, 'keyScope']);
+    const other = await tool('withdraw_proposal', { site_id: siteId, release_id: rid }, kB.key!);
+    assert.equal(other.isError, true);
+    assert.match(other.text, /proposalOfAnotherKey/);
+    // The release of a human is no proposal; an unknown release answers 404.
+    assert.deepEqual(await post(`/sites/${siteId}/releases/${r1.id}/withdraw`, {}, kWide.key!).then((r) => [r.status, r.body.code]), [409, 'notAProposal']);
+    assert.equal((await post(`/sites/${siteId}/releases/999999/withdraw`, {}, kWide.key!)).status, 404);
+
+    // The scan is not finished: the pipeline owns the row.
+    await db('releases').where({ id: rid }).update({ status: 'scanning' });
+    assert.deepEqual(await post(`/sites/${siteId}/releases/${rid}/withdraw`, {}, kWide.key!).then((r) => [r.status, r.body.code]), [409, 'proposalStillScanning']);
+    await db('releases').where({ id: rid }).update({ status: 'awaiting_approval' });
+
+    // During a containment: 423, even with the key still alive (the barrier falls before the revocation), and from the service.
+    await db('hosting_accounts').where({ id: acc }).update({ contained_at: new Date() });
+    assert.deepEqual(await post(`/sites/${siteId}/releases/${rid}/withdraw`, {}, kWide.key!).then((r) => [r.status, r.body.code]), [423, 'accountContained']);
+    assert.equal(await codeOf(releaseService.withdrawProposal(siteId, rid, kWide.id, null)), '423 accountContained');
+    assert.equal((await db('releases').where({ id: rid }).first('status')).status, 'awaiting_approval', 'evidence left as it was');
+    await db('hosting_accounts').where({ id: acc }).update({ contained_at: null });
+
+    // Its own key, through MCP, needs no right to publish.
+    const res = await tool('withdraw_proposal', { site_id: siteId, release_id: rid, reason: 'I found a bug' }, kWide.key!);
+    assert.equal(res.isError, false, res.text);
+    const out = JSON.parse(res.text);
+    assert.equal(out.status, 'withdrawn');
+    assert.equal(out.decision, null, 'no human decided');
+    assert.equal(out.proposal, true);
+    assert.match(out.outcome.hint, /withdrew/);
+    assert.equal(out.outcome.settled, true);
+    const row = await db('releases').where({ id: rid }).first();
+    assert.deepEqual([row.status, row.decided_by, row.decided_at, row.decision_comment, row.approved_by], ['withdrawn', null, null, null, null]);
+    assert.equal(await liveId(), live, 'nothing went live');
+    assert.equal((await mark())?.getTime(), held.getTime(), 'the staging stays held');
+
+    // Audit and event say the same thing.
+    const audit = await db('audit_logs').where({ action: 'release.withdraw', resource_path: String(rid) }).first('details');
+    assert.equal(audit.details.reason, 'I found a bug');
+    assert.equal(audit.details.apiKey?.id, kWide.id, 'attributed to the key');
+    assert.ok((await notified('release.withdrawn', rid)).includes(approver), 'the approvers are told');
+    assert.deepEqual((await db('user_notifications').where({ event: 'release.decided', dedup_key: `release:${rid}` }).select('id')), [], 'not a decision');
+
+    // Final: neither a second withdrawal nor a human decision.
+    const again = await post(`/sites/${siteId}/releases/${rid}/withdraw`, {}, kWide.key!);
+    assert.deepEqual([again.status, again.body.code, again.body.details?.status], [409, 'proposalNotOpen', 'withdrawn']);
+    assert.equal((await decide(rid, 'approve', {})).status, 409);
+    assert.equal((await decide(rid, 'reject', {})).status, 409);
+
+    // The key proposes again at once.
+    put('fixed');
+    const next = await post(`/sites/${siteId}/publish`, {}, kWide.key!);
+    assert.equal(next.status, 201, JSON.stringify(next.body));
+    assert.equal(next.body.data.proposal, true);
+    await settle(next.body.data.id);
+
+    // Once a human decided, it is his.
+    assert.equal((await decide(next.body.data.id, 'reject', { reason: 'no' })).status, 200);
+    const late = await post(`/sites/${siteId}/releases/${next.body.data.id}/withdraw`, {}, kWide.key!);
+    assert.deepEqual([late.status, late.body.code, late.body.details?.status], [409, 'proposalNotOpen', 'rejected']);
+    put('approved one');
+    const third = await post(`/sites/${siteId}/publish`, {}, kWide.key!);
+    assert.equal(third.status, 201, JSON.stringify(third.body));
+    await settle(third.body.data.id);
+    assert.equal((await decide(third.body.data.id, 'approve', {})).status, 200, 'approved');
+    await settle(third.body.data.id);
+    const approved = await post(`/sites/${siteId}/releases/${third.body.data.id}/withdraw`, {}, kWide.key!);
+    assert.deepEqual([approved.status, approved.body.code], [409, 'proposalNotOpen']);
+    assert.notEqual((await db('releases').where({ id: third.body.data.id }).first('status')).status, 'withdrawn');
+  });
+
   // The migration goes back and forth.
   await t.test('migration 041 is reversible', async () => {
     const m = await import('../../db/migrations/041_release_proposals');

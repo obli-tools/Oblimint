@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EMAIL_CHANGE_TTL_HOURS, PASSWORD_RESET_TTL_MINUTES } from '@oblimint/shared';
 import {
-  emailChangeRequestedMail, emailChangedNotice, emailConfirmMail, langOf, noticeMail, passwordResetMail, passwordResetNotice, recoveryCodeUsedNotice,
+  emailChangeRequestedMail, emailChangedNotice, emailConfirmMail, forcedPasswordResetMail, langOf, noticeMail, passwordResetMail, passwordResetNotice, recoveryCodeUsedNotice,
 } from './messages';
 
 test('language: French for a French preference, English otherwise', () => {
@@ -49,4 +49,15 @@ test('personal notices', () => {
   const mail = noticeMail('en', passwordResetNotice('en'), { url: 'https://panel.example.com/profile' });
   assert.equal(mail.subject, '[Oblimint] Password reset');
   assert.ok(mail.html.includes('https://panel.example.com/profile'));
+});
+
+test('forced reset mail: says the old password no longer works, carries the link, in both languages', () => {
+  const url = 'https://panel.example.test/reset-password?token=abc';
+  for (const [lang, words] of [['fr', /ne fonctionne plus/], ['en', /no longer works/]] as const) {
+    const m = forcedPasswordResetMail(lang, 'client-a', url);
+    assert.match(m.text, words);
+    assert.ok(m.text.includes(url));
+    assert.ok(m.html?.includes('client-a'));
+    assert.ok(!/ignore/i.test(m.text), 'it cannot be ignored, unlike a request');
+  }
 });

@@ -169,7 +169,7 @@ async function assertProposalAccess(actor: HostingActor, site: SiteRow, row: Pre
   if (!row.release_id || actorCan(actor, 'releases.approve', siteTarget(site))) return;
   const r = await db('releases').where({ id: row.release_id, site_id: site.id }).first('proposal', 'status', 'api_key_id') as
     { proposal: boolean; status: string; api_key_id: number | null } | undefined;
-  if (!r?.proposal || !['awaiting_approval', 'rejected', 'failed'].includes(r.status)) return;
+  if (!r?.proposal || !['awaiting_approval', 'rejected', 'failed', 'withdrawn'].includes(r.status)) return;
   if (proposeKeyId !== null && Number(r.api_key_id) === proposeKeyId) return;
   throw err(403, 'This preview shows a proposal no human approved', 'previewApprovalRequired');
 }
@@ -210,7 +210,7 @@ export const previewService = {
     if (input.target === 'staging' && !actorCan(actor, 'releases.publish', target)) {
       throw err(403, 'Previewing the staging needs the right to publish', 'previewStagingForbidden');
     }
-    const unapproved = input.target === 'staging' || ['awaiting_approval', 'rejected', 'failed'].includes(release!.status);
+    const unapproved = input.target === 'staging' || ['awaiting_approval', 'rejected', 'failed', 'withdrawn'].includes(release!.status);
     const proposal = !!release?.proposal;
     // The one exception to the approver rule: the proposal of THIS key, while it still holds the scope.
     const ownProposal = proposal && unapproved && via.proposeKey === true && keyId !== null && Number(release!.api_key_id) === keyId;

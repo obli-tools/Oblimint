@@ -116,6 +116,7 @@ export const EVENT_LABELS_FR: Record<NotificationEvent | 'test', string> = {
   'release.approved': 'Release approuvée',
   'release.rejected': 'Release rejetée',
   'release.decided': 'Décision sur une proposition',
+  'release.withdrawn': 'Proposition retirée',
   'release.degraded': 'Release dégradée après sa mise en ligne',
   'release.failedObservation': 'Release en échec après sa mise en ligne',
   'domain.verified': 'Propriété du domaine vérifiée',

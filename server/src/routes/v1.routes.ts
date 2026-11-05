@@ -368,6 +368,11 @@ router.get('/sites/:id/releases/:rid/diff', heavyOpLimiter, h(async (req, res) =
   const q = parseBody(diffQuery, req.query);
   ok(res, await keyApi.diffRelease(ctxOf(req), siteId(req), req.params.rid, q.against, q.file ?? null));
 }));
+const withdrawBody = z.object({ reason: z.string().trim().max(500).nullable().optional() }).strict();
+router.post('/sites/:id/releases/:rid/withdraw', h(async (req, res) => {
+  const body = parseBody(withdrawBody, req.body ?? {});
+  ok(res, await keyApi.withdrawProposal(ctxOf(req), req, siteId(req), idParam(req, 'rid'), body.reason ?? null));
+}));
 router.post('/sites/:id/releases/:rid/rollback', h(async (req, res) => {
   await keyApi.rollback(ctxOf(req), req, siteId(req), idParam(req, 'rid'));
   ok(res, { rolledBack: true });

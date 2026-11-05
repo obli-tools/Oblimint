@@ -144,7 +144,7 @@ export function usePublishModeLabel(): (m: PublishMode) => string {
 // ── Release status ───────────────────────────────────────────────────────────
 
 const RELEASE_TONE: Record<ReleaseStatus, Tone> = {
-  queued: 'muted', scanning: 'blue', awaiting_approval: 'amber', publishing: 'blue', ready: 'green', failed: 'red', rejected: 'orange',
+  queued: 'muted', scanning: 'blue', awaiting_approval: 'amber', publishing: 'blue', ready: 'green', failed: 'red', rejected: 'orange', withdrawn: 'muted',
 };
 
 export const RELEASE_IN_FLIGHT: readonly ReleaseStatus[] = ['queued', 'scanning', 'publishing'];
@@ -158,6 +158,7 @@ export function useReleaseStatusLabel(): (s: ReleaseStatus) => string {
     publishing: t('releases.status.publishing') || 'Publishing',
     ready: t('releases.status.ready') || 'Ready',
     failed: t('releases.status.failed') || 'Failed',
+    withdrawn: t('releases.status.withdrawn') || 'Withdrawn',
     rejected: t('releases.status.rejected') || 'Rejected',
   })[s];
 }

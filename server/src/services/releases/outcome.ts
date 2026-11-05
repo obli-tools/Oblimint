@@ -92,6 +92,7 @@ export function releaseOutcome(
   let hint: string | null = errorCode ? ((switched && !autoReverted ? NOT_REVERTED_HINTS[errorCode] : undefined) ?? HINTS[errorCode]) : null;
   if (!hint && r.status === 'awaiting_approval' && r.proposal) hint = 'Proposal submitted: nothing went live. A human decides in the panel (notified): call get_release later and read decision (state, comment). No other proposal of this key on this site until then.';
   else if (!hint && r.status === 'rejected' && r.proposal) hint = 'A human rejected this proposal: read decision.comment, change the staging and propose again.';
+  else if (!hint && r.status === 'withdrawn') hint = 'You withdrew this proposal: nothing went live and no human decided. The staging keeps its changes and stays held. Change it if needed and propose again.';
   else if (!hint && r.status === 'awaiting_approval') hint = 'The release waits for a human approval in the panel (publish mode "approval" or suspicious content): tell the human.';
   else if (!hint && r.status === 'rejected') hint = 'A human rejected this release: ask them why before publishing again.';
   else if (!hint && !settled) hint = 'Still running: call wait_for_release again.';

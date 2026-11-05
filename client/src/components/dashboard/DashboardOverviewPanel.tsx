@@ -17,7 +17,7 @@ import { cn } from '@/utils/cn';
 // GET /api/dashboard/overview, scoped server side to what the caller may see.
 
 const RELEASE_TONE: Record<string, 'green' | 'amber' | 'red' | 'blue' | 'muted'> = {
-  ready: 'green', awaiting_approval: 'amber', failed: 'red', rejected: 'red', publishing: 'blue', scanning: 'blue', queued: 'muted',
+  ready: 'green', awaiting_approval: 'amber', failed: 'red', rejected: 'red', withdrawn: 'muted', publishing: 'blue', scanning: 'blue', queued: 'muted',
 };
 
 function Attention({ icon, label, count, to, tone }: { icon: ReactNode; label: string; count: number; to: string; tone: 'red' | 'amber' }) {

@@ -796,6 +796,21 @@ export const keyApi = {
     return waitMs ? withWaitSlot(ctx, req, site.id, go) : go(null);
   },
 
+  /**
+   * Takes back the open proposal of THIS key (scope releases.propose, no right to publish needed: nothing goes
+   * live). 423 while the account is contained: the proposal is evidence, and nothing moves during an incident.
+   */
+  async withdrawProposal(ctx: ApiKeyContext, req: Request, siteId: number, releaseId: unknown, reason: string | null): Promise<ApiV1ReleaseDetail> {
+    requireScope(ctx, 'releases.propose');
+    const site = await keySite(ctx, siteId);
+    const rid = releaseIdOf(releaseId);
+    const release = await releaseService.withdrawProposal(site.id, rid, ctx.id, reason);
+    await auditService.logReqAs(req, site.tenant_id, 'release.withdraw', {
+      resourceType: 'release', resourcePath: String(rid), details: { siteId: site.id, number: release.number, reason },
+    });
+    return releaseDetail(site, rid);
+  },
+
   /** Releases, newest first; the name of a platform staff member is never shown (author, approver). */
   async releases(ctx: ApiKeyContext, siteId: number, limit: number, offset: number): Promise<{ items: Release[]; total: number }> {
     const site = await keySite(ctx, siteId);

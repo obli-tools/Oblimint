@@ -866,7 +866,8 @@ export interface DomainUpdate {
 
 // ─── RELEASES (ARCHITECTURE §1) ──────────────────────────────────────────────
 
-export type ReleaseStatus = 'queued' | 'scanning' | 'awaiting_approval' | 'publishing' | 'ready' | 'failed' | 'rejected';
+/** withdrawn: a proposal its own access key took back (no human decided). */
+export type ReleaseStatus = 'queued' | 'scanning' | 'awaiting_approval' | 'publishing' | 'ready' | 'failed' | 'rejected' | 'withdrawn';
 /** P3: 'window' = validated modification window, 'adapter' = application adapter run (docs/P3-PLAN.md). */
 export type ReleaseTrigger = 'auto' | 'manual' | 'api' | 'window' | 'adapter';
 /** How the live release of a site became live: publication, human rollback, automatic revert (adapter), rebuild (data paths changed). */

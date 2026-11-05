@@ -164,7 +164,8 @@
       "queued": "Queued",
       "ready": "Ready",
       "rejected": "Rejected",
-      "scanning": "Scanning"
+      "scanning": "Scanning",
+      "withdrawn": "Withdrawn"
     },
     "trigger": {
       "api": "API",

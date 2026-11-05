@@ -175,6 +175,7 @@ export type NotificationEvent =
   | 'release.approved'       // a release awaiting approval was approved (it goes live)
   | 'release.rejected'       // a release awaiting approval was rejected
   | 'release.decided'        // a proposal of an access key was approved or rejected (replaces approved / rejected for a proposal)
+  | 'release.withdrawn'      // a proposal was taken back by the access key that made it
   | 'release.degraded'       // observation after publication: the new release answers worse than the previous one
   | 'release.failedObservation' // observation after publication: the new release is broken (alert, or reverted automatically)
   | 'domain.verified'        // the ownership of a domain is proven (it can go live)
@@ -205,7 +206,7 @@ export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   'certificate.expiringSoon', 'uptime.down', 'uptime.up', 'app.updateAvailable', 'app.updated', 'app.updateFailed', 'app.deployFailed',
   'edge.unitQuarantined', 'edge.rollback', 'workflow.failed',
   'platform.updateAvailable', 'platform.updated', 'platform.updateFailed',
-  'release.pendingApproval', 'release.approved', 'release.rejected', 'release.decided', 'release.degraded', 'release.failedObservation', 'domain.verified', 'domain.reclaimed',
+  'release.pendingApproval', 'release.approved', 'release.rejected', 'release.decided', 'release.withdrawn', 'release.degraded', 'release.failedObservation', 'domain.verified', 'domain.reclaimed',
   'action.confirmationRequired', 'action.approvalRequired', 'action.approved', 'action.denied', 'action.expired',
   'security.keyRegimeChanged', 'security.keyAbuse', 'account.contained', 'account.containmentLifted',
   'platform.componentDown', 'platform.componentUp', 'node.diskLow', 'node.diskOk', 'backup.failed', 'backup.recovered',

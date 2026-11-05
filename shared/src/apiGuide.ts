@@ -141,6 +141,7 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`staging_changes\` | Unpublished changes (\`pendingChanges\`, \`files\`), \`base\` / \`baseIsLive\`, \`liveChanges\` (what \`publish\` would change on the live site), \`rolledBack\`, \`warningItems\`, \`restore\` | \`files.read\` |
 | \`check_leaks\` | The leak guard of the publication run on the staging (see §5 « Secrets and leaks »): \`policy\`, \`blocked\`, \`critical\` / \`warn\`, \`findings\` (\`path\`, \`line\`, \`rule\`, \`severity\`, \`served\`; never the secret), \`allowlisted\` | \`files.read\` + code right |
 | \`publish\` | Publish (new live release), \`message?\`, \`override_rollback?\` (only on the human's explicit request), \`wait?\` (default true: waits ≤ 25 s and returns the release with its \`outcome\`, see §5 « After publishing ») | \`releases.publish\`, or \`releases.propose\` (creates a proposal) |
+| \`withdraw_proposal\` | Take back this key's own open proposal while no human decided (\`releases.propose\`), \`reason?\`; nothing goes live, the staging stays held |
 | \`list_releases\` | Release history, newest first (\`limit\`); \`apiKeyName\` (the key that published it), \`errorCode\` | — |
 | \`get_release\` | One release: its pipeline log (French; backend details removed) and its \`outcome\` | — |
 | \`wait_for_release\` | Wait until a release is settled (\`timeout_s\` ≤ 60, default 30), then as \`get_release\`; \`until: "verdict"\` also waits for the end of its observation after publication (§5 « After publishing »); \`outcome.timedOut\`: call it again | — |
@@ -259,9 +260,10 @@ For a key trusted to prepare work, not to put it live. A human decides everythin
 
 1. Write into the \`staging\` area only (\`proposeStagingOnly\` on \`data\`: it is live at once), in any publish mode: your writes never trigger an automatic publication. In \`auto\` mode the site's automatic publication is even held (\`autoPublishHeldProposal\`) until a human went forward.
 2. \`publish\` creates a release \`awaiting_approval\` with \`proposal: true\`, whatever the mode. Nothing goes live. The approvers are notified (\`release.pendingApproval\`).
-3. One open proposal per key and per site: \`proposalOpen\` (409, \`details.releaseId\`) until a human decides. One no human can let through any more (a newer release went live, or the scan blocks it) is dismissed by your next \`publish\`.
+3. One open proposal per key and per site: \`proposalOpen\` (409, \`details.releaseId\`) until a human decides or you withdraw it. One no human can let through any more (a newer release went live, or the scan blocks it) is dismissed by your next \`publish\`.
 4. Check it: \`start_preview\` with its \`release_id\`, then \`fetch_preview\`. That exception covers your own proposal only: no other key's (\`previewApprovalRequired\`), no share link (\`link\` is null), no \`include_key\`, no \`database: "clone"\` (\`previewProposalRestricted\`), no staging preview.
 5. Tell the human, then read the decision: \`get_release\` returns \`decision\` (\`state\` approved | rejected, \`by\`, \`at\`, \`comment\`), and the event is \`release.decided\`. Rejected: read the comment, change the staging, \`publish\` again.
+6. Changed your mind while no human decided: \`withdraw_proposal\` (REST: \`POST /sites/:id/releases/:releaseId/withdraw\`, optional \`reason\`). Only the key that proposed; no right to publish needed. The status becomes \`withdrawn\`, \`decision\` stays null, the event is \`release.withdrawn\`. Nothing goes live, the staging keeps your changes and stays held in \`auto\` mode, and you can \`publish\` a new proposal right away. Refused: \`proposalOfAnotherKey\` (403), \`proposalNotOpen\` (409, a human decided: \`details.status\`), \`proposalStillScanning\` (409: \`wait_for_release\`, then retry), \`accountContained\` (423).
 
 You never approve anything, roll back (\`keyScope\`), use \`override_rollback\` (\`proposeNoOverride\`), nor switch a site to \`auto\`. If publishing is a protected action, the human meets the protection when he approves; proposing stays free.
 
@@ -495,6 +497,7 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/sites/:id/releases/:releaseId\` | the release, its log and its \`outcome\` | — |
 | GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (seconds ≤ 60, default 30), \`?until=\` (\`settled\` default, or \`verdict\`: also the end of its observation after publication): as above once settled (\`outcome.timedOut\` otherwise) | — |
 | GET | \`/sites/:id/releases/:releaseId/diff\` | \`?against=previous\\|live\\|empty\\|<releaseId>&file=\` (one patch ≤ 256 KB) | \`files.read\` + code right |
+| POST | \`/sites/:id/releases/:releaseId/withdraw\` | \`{ reason? }\` (≤ 500 characters): takes back the key's own open proposal; the release + \`outcome\` | \`releases.propose\` |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
 | GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` + code right |
 | GET | \`/sites/:id/releases/:releaseId/files/text\` | \`?path=&encoding=utf8\\|base64&offset=\` (≤ 2 MB text, 8 MB base64) | \`files.read\` + code right |
@@ -599,7 +602,8 @@ Archive over 8 MB: \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "size": <
 | \`planLimit\` · \`cronTooFrequent\` (409) | Plan limit (number of databases, cron jobs, minimum interval…) | Stay within the limits, or ask the human |
 | \`instanceNotRunning\` / \`siteNotRunning\` (409) | Database server or site not started | Wait (\`list_databases\`, \`get_site\`), retry |
 | \`previewApprovalRequired\` (403) | Site in \`approval\` mode: code not approved yet cannot be previewed by a key | Ask the human (an approver previews it in the panel) |
-| \`proposalOpen\` (409) | A proposal of this key waits for a human on this site (\`details.releaseId\`) | Tell the human; read \`decision\` with \`get_release\` |
+| \`proposalOpen\` (409) | A proposal of this key waits for a human on this site (\`details.releaseId\`) | Tell the human; read \`decision\` with \`get_release\`, or \`withdraw_proposal\` |
+| \`proposalOfAnotherKey\` (403) · \`proposalNotOpen\` · \`proposalStillScanning\` · \`notAProposal\` (409) | \`withdraw_proposal\`: another key proposed it · a human decided, or already withdrawn (\`details.status\`) · the scan still runs · not a proposal | Leave it · read \`decision\` · \`wait_for_release\`, retry · check the release id |
 | \`proposeStagingOnly\` (403) · \`proposeNoOverride\` (403) · \`previewProposalRestricted\` (403) | Key in proposal mode: writes only the staging · never overrides a rollback · its proposal is previewed without database clone nor \`include_key\` | Ask the human |
 | \`previewStagingForbidden\` (403) · \`previewCompareForbidden\` (403) · \`previewShareForbidden\` (403) | Staging preview needs \`releases.publish\` · compare needs \`sites.manage\` · share links need the creator to manage the site | Ask the human |
 | \`previewNotRunning\` (409) | No running preview (still starting, failed, expired, stopped) | \`get_preview\`; start one |
@@ -753,6 +757,7 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`staging_changes\` | Changements non publiés (\`pendingChanges\`, \`files\`), \`base\` / \`baseIsLive\`, \`liveChanges\` (ce que \`publish\` changerait sur le site en ligne), \`rolledBack\`, \`warningItems\`, \`restore\` | \`files.read\` |
 | \`check_leaks\` | La garde anti-fuite de la publication lancée sur le staging (voir §5 « Secrets et fuites ») : \`policy\`, \`blocked\`, \`critical\` / \`warn\`, \`findings\` (\`path\`, \`line\`, \`rule\`, \`severity\`, \`served\` ; jamais le secret), \`allowlisted\` | \`files.read\` + droit sur le code |
 | \`publish\` | Publier (nouvelle release en ligne), \`message?\`, \`override_rollback?\` (seulement à la demande explicite de l'humain), \`wait?\` (true par défaut : attend 25 s au plus et renvoie la release avec son \`outcome\`, voir §5 « Après publication ») | \`releases.publish\` |
+| \`withdraw_proposal\` | Retire la proposition ouverte de cette clé tant qu'aucun humain n'a décidé (\`releases.propose\`), \`reason?\` ; rien ne part en ligne, le staging reste retenu |
 | \`list_releases\` | Historique des releases, la plus récente en premier (\`limit\`) ; \`apiKeyName\` (la clé qui l'a publiée), \`errorCode\` | — |
 | \`get_release\` | Une release : son journal de publication (en français, sans détail technique interne) et son \`outcome\` | — |
 | \`wait_for_release\` | Attendre qu'une release soit terminée (\`timeout_s\` ≤ 60, 30 par défaut), puis comme \`get_release\` ; \`until: "verdict"\` attend aussi la fin de sa surveillance après publication (§5 « Après publication ») ; \`outcome.timedOut\` : rappelle-le | — |
@@ -871,9 +876,10 @@ Pour une clé à qui l'on confie la préparation, pas la mise en ligne. Un humai
 
 1. Écris dans la zone \`staging\` seulement (\`proposeStagingOnly\` sur \`data\` : elle est en ligne aussitôt), quel que soit le mode de publication : tes écritures ne déclenchent jamais de publication automatique. En mode \`auto\`, la publication automatique du site est même retenue (\`autoPublishHeldProposal\`) jusqu'à ce qu'un humain soit passé.
 2. \`publish\` crée une release \`awaiting_approval\` avec \`proposal: true\`, quel que soit le mode. Rien ne part en ligne. Les approbateurs sont prévenus (\`release.pendingApproval\`).
-3. Une seule proposition ouverte par clé et par site : \`proposalOpen\` (409, \`details.releaseId\`) tant qu'un humain n'a pas décidé. Celle qu'aucun humain ne peut plus laisser passer (une release plus récente est en ligne, ou l'analyse la bloque) est écartée par ton \`publish\` suivant.
+3. Une seule proposition ouverte par clé et par site : \`proposalOpen\` (409, \`details.releaseId\`) tant qu'un humain n'a pas décidé et que tu ne l'as pas retirée. Celle qu'aucun humain ne peut plus laisser passer (une release plus récente est en ligne, ou l'analyse la bloque) est écartée par ton \`publish\` suivant.
 4. Vérifie-la : \`start_preview\` avec son \`release_id\`, puis \`fetch_preview\`. Cette exception couvre ta propre proposition seulement : pas celle d'une autre clé (\`previewApprovalRequired\`), pas de lien de partage (\`link\` vaut null), pas de \`include_key\`, pas de \`database: "clone"\` (\`previewProposalRestricted\`), pas d'aperçu du staging.
 5. Préviens l'humain, puis lis la décision : \`get_release\` renvoie \`decision\` (\`state\` approved | rejected, \`by\`, \`at\`, \`comment\`), et l'événement est \`release.decided\`. Refusée : lis le commentaire, modifie le staging, refais \`publish\`.
+6. Tu changes d'avis tant qu'aucun humain n'a décidé : \`withdraw_proposal\` (REST : \`POST /sites/:id/releases/:releaseId/withdraw\`, \`reason\` facultatif). Seule la clé qui a proposé ; aucun droit de publication requis. Le statut devient \`withdrawn\`, \`decision\` reste null, l'événement est \`release.withdrawn\`. Rien ne part en ligne, le staging garde tes changements et reste retenu en mode \`auto\`, et tu peux aussitôt refaire \`publish\`. Refus : \`proposalOfAnotherKey\` (403), \`proposalNotOpen\` (409, un humain a décidé : \`details.status\`), \`proposalStillScanning\` (409 : \`wait_for_release\`, puis réessaie), \`accountContained\` (423).
 
 Tu n'approuves jamais rien, ne reviens pas en arrière (\`keyScope\`), n'utilises pas \`override_rollback\` (\`proposeNoOverride\`) et ne passes pas un site en \`auto\`. Si la publication est une action protégée, l'humain rencontre la protection au moment d'approuver ; proposer reste libre.
 
@@ -1107,6 +1113,7 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET | \`/sites/:id/releases/:releaseId\` | la release, son journal et son \`outcome\` | — |
 | GET | \`/sites/:id/releases/:releaseId/wait\` | \`?timeout=\` (secondes ≤ 60, 30 par défaut), \`?until=\` (\`settled\` par défaut, ou \`verdict\` : aussi la fin de sa surveillance après publication) : comme ci-dessus une fois terminée (\`outcome.timedOut\` sinon) | — |
 | GET | \`/sites/:id/releases/:releaseId/diff\` | \`?against=previous\\|live\\|empty\\|<releaseId>&file=\` (un patch ≤ 256 Ko) | \`files.read\` + droit sur le code |
+| POST | \`/sites/:id/releases/:releaseId/withdraw\` | \`{ reason? }\` (≤ 500 caractères) : retire la proposition ouverte de la clé ; la release + \`outcome\` | \`releases.propose\` |
 | POST | \`/sites/:id/releases/:releaseId/rollback\` | | \`releases.publish\` |
 | GET | \`/sites/:id/releases/:releaseId/files\` | \`?path=&limit=&offset=\` (limit ≤ 5000) | \`files.read\` + droit sur le code |
 | GET | \`/sites/:id/releases/:releaseId/files/text\` | \`?path=&encoding=utf8\\|base64&offset=\` (≤ 2 Mo texte, 8 Mo base64) | \`files.read\` + droit sur le code |
@@ -1212,6 +1219,7 @@ Archive de plus de 8 Mo : \`POST /sites/12/uploads\` \`{ "path": "/site.zip", "s
 | \`instanceNotRunning\` / \`siteNotRunning\` (409) | Serveur de bases ou site pas démarré | Attendre (\`list_databases\`, \`get_site\`), réessayer |
 | \`previewApprovalRequired\` (403) | Site en mode \`approval\` : du code pas encore approuvé ne peut pas être prévisualisé par une clé | Demander à l'humain (un approbateur le prévisualise dans le panel) |
 | \`proposalOpen\` (409) | Une proposition de cette clé attend un humain sur ce site (\`details.releaseId\`) | Prévenir l'humain ; lire \`decision\` avec \`get_release\` |
+| \`proposalOfAnotherKey\` (403) · \`proposalNotOpen\` · \`proposalStillScanning\` · \`notAProposal\` (409) | \`withdraw_proposal\` : une autre clé l'a proposée · un humain a décidé, ou déjà retirée (\`details.status\`) · l'analyse tourne encore · pas une proposition | Laisse-la · lis \`decision\` · \`wait_for_release\`, réessaie · vérifie l'identifiant |
 | \`proposeStagingOnly\` (403) · \`proposeNoOverride\` (403) · \`previewProposalRestricted\` (403) | Clé en mode proposition : n'écrit que le staging · ne passe jamais outre un retour arrière · sa proposition se prévisualise sans clone de base ni \`include_key\` | Demander à l'humain |
 | \`previewStagingForbidden\` (403) · \`previewCompareForbidden\` (403) · \`previewShareForbidden\` (403) | L'aperçu du staging demande \`releases.publish\` · la comparaison demande \`sites.manage\` · les liens de partage demandent que le créateur gère le site | Demander à l'humain |
 | \`previewNotRunning\` (409) | Aucun aperçu en marche (encore au démarrage, échoué, expiré, arrêté) | \`get_preview\` ; en démarrer un |
