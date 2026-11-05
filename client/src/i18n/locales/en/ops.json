@@ -440,6 +440,7 @@
       "releasePendingApproval": "Release waiting for approval",
       "releaseApproved": "Release approved",
       "releaseRejected": "Release rejected",
+      "releaseDecided": "Decision on a proposal",
       "releaseDegraded": "Release degraded after going live",
       "releaseFailedObservation": "Release failed after going live",
       "domainVerified": "Domain ownership verified",

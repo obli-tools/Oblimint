@@ -56,6 +56,10 @@
         }
       },
       "releases": {
+        "propose": {
+          "label": "Propose",
+          "hint": "Submit a release that a human approves or rejects: nothing goes live without him, whatever the publish mode. Excludes Publish. Writes the staging only."
+        },
         "publish": {
           "label": "Publish",
           "hint": "Publish the code as a new release (live) and roll back."
@@ -175,6 +179,10 @@
       "update": {
         "label": "Updates only",
         "hint": "For a CI: writes the files and publishes them. No site setting (publish mode, environment, data paths), cron job, database, route or subdomain. On a site in automatic publication the writes go live at once, and so do the files written in the data area."
+      },
+      "supervised": {
+        "label": "Supervised agent",
+        "hint": "For an AI agent on a site in production: writes the code, previews its own proposal, reads the logs. Nothing goes live without a human approving it, whatever the publish mode. No setting, cron job, database or route."
       },
       "site": {
         "label": "Manage one site",

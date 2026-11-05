@@ -513,6 +513,8 @@ function stagingWarningTexts(t: TFunction, staging: StagingStatus): string[] {
         || `The staging was last committed as release #${w.baseNumber ?? '?'}, which is not live (${w.status ?? ''}).`;
       case 'autoPublishHeld': return t('sites.staging.warnings.autoPublishHeld', { count: w.count ?? 0, releaseNumber: w.releaseNumber ?? '?' })
         || `Automatic publication held: the staging would put back online ${w.count ?? 0} file(s) of release #${w.releaseNumber ?? '?'}, undone by a rollback. Publish manually or copy the live release into the staging.`;
+      case 'autoPublishHeldProposal': return t('sites.staging.warnings.autoPublishHeldProposal')
+        || 'Automatic publication held: the staging holds changes of a key in proposal mode that no human approved. Approve its proposal, publish manually or copy the live release into the staging.';
       default: return staging.warnings[i] ?? '';
     }
   }).filter(Boolean);

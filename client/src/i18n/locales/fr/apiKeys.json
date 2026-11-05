@@ -56,6 +56,10 @@
         }
       },
       "releases": {
+        "propose": {
+          "label": "Proposer",
+          "hint": "Soumettre une release qu’un humain approuve ou refuse : rien ne part en ligne sans lui, quel que soit le mode de publication. Exclut Publier. N’écrit que le staging."
+        },
         "publish": {
           "label": "Publier",
           "hint": "Publier le code en nouvelle release (en ligne) et revenir en arrière."
@@ -175,6 +179,10 @@
       "update": {
         "label": "Mise à jour seulement",
         "hint": "Pour une CI : écrit les fichiers et les publie. Aucun paramètre de site (mode de publication, environnement, chemins de données), ni tâche cron, base de données, route ou sous-domaine. Sur un site en publication automatique, les écritures partent aussitôt en ligne, comme les fichiers écrits dans la zone data."
+      },
+      "supervised": {
+        "label": "Agent supervisé",
+        "hint": "Pour un agent IA sur un site en production : écrit le code, prévisualise sa propre proposition, lit les journaux. Rien ne part en ligne sans l’approbation d’un humain, quel que soit le mode de publication. Ni paramètre, ni tâche cron, ni base de données, ni route."
       },
       "site": {
         "label": "Gestion d'un site",

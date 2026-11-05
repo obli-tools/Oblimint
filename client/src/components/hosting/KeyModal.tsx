@@ -27,6 +27,7 @@ export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'files.read': ['Read files', 'List, search and read (whole or by range) the files of its sites (code and data).'],
   'files.write': ['Write files', 'Create, replace, edit by exact replacements (with Read files), move, delete, extract archives in its sites. A write with an expected hash never overwrites a file changed meanwhile (SFTP included).'],
   'releases.publish': ['Publish', 'Publish the code as a new release (live) and roll back.'],
+  'releases.propose': ['Propose', 'Submit a release that a human approves or rejects: nothing goes live without him, whatever the publish mode. Excludes Publish. Writes the staging only.'],
   'previews.manage': ['Live previews', 'Start, fetch and stop a preview of a release or of the staging; needs files.read too (staging: releases.publish).'],
   'sites.manage': ['Site settings', 'Change the settings of its sites: name, docroot, publish mode, PHP, environment variables, data paths, secondary runtimes.'],
   'sites.create': ['Create sites', 'Create sites in the account: they join the key automatically.'],
@@ -43,6 +44,7 @@ export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
 // Presets of the key form (API_KEY_PRESETS, shared/src/apiKeys.ts): label, what it gives and leaves out.
 const PRESET_FALLBACK: Record<ApiKeyPresetId, [string, string]> = {
   readonly: ['Read only', 'Reads the files and the logs of the chosen sites; writes nothing.'],
+  supervised: ['Supervised agent', 'For an AI agent on a site in production: writes the code, previews its own proposal, reads the logs. Nothing goes live without a human approving it, whatever the publish mode. No setting, cron job, database or route.'],
   update: ['Updates only', 'For a CI: writes the files, previews them and publishes them. No site setting (publish mode, environment, data paths), cron job, database, route or subdomain. On a site in automatic publication the writes go live at once, and so do the files written in the data area.'],
   site: ['Manage one site', 'Everything on exactly one site: files, publication, settings, logs, databases, cron jobs, routes of the domains serving it alone. No site creation, no subdomain, no domain given.'],
   multisite: ['Manage several sites', 'The same rights on several sites, or on every site. No domain given by default: give some below only if the key must route them.'],
@@ -244,7 +246,12 @@ export function KeyModal({ accountId, sites: sitesProp, domains: domainsProp, ki
           label={t('apiKeys.rights') || 'Rights'}
           items={API_KEY_SCOPES.map((sc) => ({ id: sc, label: t(`apiKeys.scopes.${sc}.label`) || SCOPE_FALLBACK[sc][0], hint: t(`apiKeys.scopes.${sc}.hint`) || SCOPE_FALLBACK[sc][1] }))}
           value={scopes}
-          onChange={(next) => setScopesM(new Set(next))}
+          onChange={(next) => {
+            const s = new Set(next);
+            // Publish and Propose exclude each other (server: scopesConflict): the one just ticked stays.
+            if (s.has('releases.propose') && s.has('releases.publish')) s.delete(scopes.has('releases.publish') ? 'releases.publish' : 'releases.propose');
+            setScopesM(s);
+          }}
           grantable={grantList}
           notGrantableHint={t('apiKeys.notHeldHint') || 'You do not hold this right on the account: you cannot grant it.'}
           footer={t('apiKeys.neverHint') || 'Never granted to a key: deleting a site, a database it did not create or a database server, adding a root domain, other accounts, users.'}

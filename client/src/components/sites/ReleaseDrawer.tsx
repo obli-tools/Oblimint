@@ -121,6 +121,17 @@ export function ReleaseDrawer({ siteId, releaseId, releases, tick, onClose, rend
     [t('releases.fields.created') || 'Created', formatDateTime(release.createdAt, i18n.language)],
     [t('releases.fields.published') || 'Published', formatDateTime(release.publishedAt, i18n.language)],
     [t('releases.fields.approvedBy') || 'Approved by', release.approvedBy ? `${release.approvedBy} · ${formatDateTime(release.approvedAt, i18n.language)}` : '—'],
+    ...(release.proposal ? [[t('releases.proposal.field') || 'Proposal', release.apiKeyName
+      ? t('releases.proposal.byKey', { name: release.apiKeyName, defaultValue: 'submitted by the key {{name}}, a human decides' })
+      : (t('releases.proposal.byDeletedKey') || 'submitted by an access key deleted since, a human decides')] as [string, ReactNode]] : []),
+    ...(release.decision ? [[t('releases.fields.decision') || 'Decision', (
+      <span className="break-words">
+        {release.decision.state === 'approved' ? (t('releases.decision.approved') || 'Approved') : (t('releases.decision.rejected') || 'Rejected')}
+        {release.decision.by ? ` · ${release.decision.by}` : ''}
+        {release.decision.at ? ` · ${formatDateTime(release.decision.at, i18n.language)}` : ''}
+        {release.decision.comment && <span className="block text-text-muted">{release.decision.comment}</span>}
+      </span>
+    )] as [string, ReactNode]] : []),
     [t('releases.fields.onDisk') || 'On disk', release.onDisk ? (t('releases.onDiskYes') || 'yes') : (t('releases.onDiskNo') || 'no (pruned, rebuilt from git on restore)')],
     [t('releases.fields.changes') || 'Changes', (
       <span className="font-mono">

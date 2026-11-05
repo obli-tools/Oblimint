@@ -73,6 +73,19 @@
     },
     "current": "current",
     "viaKey": "via key {{name}}",
+    "proposal": {
+      "badge": "proposal",
+      "field": "Proposal",
+      "byKey": "submitted by the key {{name}}, a human decides",
+      "byDeletedKey": "submitted by an access key deleted since, a human decides",
+      "approveTitle": "Approve proposal #{{number}}",
+      "approveMessage": "It will be published right away. Comment for the agent (optional):",
+      "rejectMessage": "The proposal will never be published. Reason (optional, read back by the agent):"
+    },
+    "decision": {
+      "approved": "Approved",
+      "rejected": "Rejected"
+    },
     "diff": {
       "added": "Added",
       "binary": "binary",
@@ -104,6 +117,7 @@
     "fields": {
       "actions": "Actions",
       "approvedBy": "Approved by",
+      "decision": "Decision",
       "author": "Author",
       "changes": "Changes",
       "commit": "Commit",
@@ -467,7 +481,8 @@
         "moreSymlinks": "… and {{count}} more symbolic link(s)",
         "liveOlderThanBase": "Rollback: the live release #{{releaseNumber}} is older than #{{baseNumber}}, whose code the staging still holds. Publishing it as is would undo the rollback: copy the live release into the staging first.",
         "baseNotPublished": "The staging was last committed as release #{{baseNumber}}, which is not live ({{status}}).",
-        "autoPublishHeld": "Automatic publication held: the staging would put back online {{count}} file(s) of release #{{releaseNumber}}, undone by a rollback. Publish manually or copy the live release into the staging."
+        "autoPublishHeld": "Automatic publication held: the staging would put back online {{count}} file(s) of release #{{releaseNumber}}, undone by a rollback. Publish manually or copy the live release into the staging.",
+        "autoPublishHeldProposal": "Automatic publication held: the staging holds changes of a key in proposal mode that no human approved. Approve its proposal, publish manually or copy the live release into the staging."
       },
       "restore": {
         "running": "Copying release #{{number}} into the staging…",

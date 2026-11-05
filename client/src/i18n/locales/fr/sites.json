@@ -73,6 +73,19 @@
     },
     "current": "courante",
     "viaKey": "via la clé {{name}}",
+    "proposal": {
+      "badge": "proposition",
+      "field": "Proposition",
+      "byKey": "soumise par la clé {{name}}, un humain décide",
+      "byDeletedKey": "soumise par une clé d’accès supprimée depuis, un humain décide",
+      "approveTitle": "Approuver la proposition n°{{number}}",
+      "approveMessage": "Elle sera publiée immédiatement. Commentaire pour l’agent (facultatif) :",
+      "rejectMessage": "La proposition ne sera jamais publiée. Motif (facultatif, relu par l’agent) :"
+    },
+    "decision": {
+      "approved": "Approuvée",
+      "rejected": "Refusée"
+    },
     "diff": {
       "added": "Ajouté",
       "binary": "binaire",
@@ -104,6 +117,7 @@
     "fields": {
       "actions": "Actions",
       "approvedBy": "Approuvée par",
+      "decision": "Décision",
       "author": "Auteur",
       "changes": "Modifications",
       "commit": "Commit",
@@ -467,7 +481,8 @@
         "moreSymlinks": "… et {{count}} autre(s) lien(s) symbolique(s)",
         "liveOlderThanBase": "Retour arrière : la release en ligne #{{releaseNumber}} est plus ancienne que la #{{baseNumber}}, dont le staging contient encore le code. Le publier tel quel annulerait le retour arrière : copiez d’abord la release en ligne dans le staging.",
         "baseNotPublished": "Le dernier commit du staging est la release #{{baseNumber}}, qui n’est pas en ligne ({{status}}).",
-        "autoPublishHeld": "Publication automatique retenue : le staging remettrait en ligne {{count}} fichier(s) de la release #{{releaseNumber}} annulée par un retour arrière. Publiez manuellement ou copiez la release en ligne dans le staging."
+        "autoPublishHeld": "Publication automatique retenue : le staging remettrait en ligne {{count}} fichier(s) de la release #{{releaseNumber}} annulée par un retour arrière. Publiez manuellement ou copiez la release en ligne dans le staging.",
+        "autoPublishHeldProposal": "Publication automatique retenue : le staging contient des modifications d’une clé en mode proposition, qu’aucun humain n’a approuvées. Approuvez sa proposition, publiez à la main ou copiez la release en ligne dans le staging."
       },
       "restore": {
         "running": "Copie de la release #{{number}} dans le staging…",

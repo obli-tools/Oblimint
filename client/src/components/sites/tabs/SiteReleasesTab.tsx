@@ -56,7 +56,7 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
   }, [deepRelease]);
   const canPreview = (r: Release) => !!r.commitSha && !r.isCurrent && canReadCode
     && (PREVIEWABLE_RELEASE_STATUSES as readonly string[]).includes(r.status)
-    && (site.publishMode !== 'approval' || r.status === 'ready' || canApprove)
+    && (r.proposal ? r.status === 'ready' || canApprove : site.publishMode !== 'approval' || r.status === 'ready' || canApprove)
     && (!isScanBlocked(r) || staffManager);
 
   const [items, setItems] = useState<Release[]>([]);
@@ -96,14 +96,26 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
   };
 
   const approve = async (r: Release) => {
-    if (!(await confirm({
+    // A proposal: the word of the approver goes back to the agent.
+    let comment: string | null = null;
+    if (r.proposal) {
+      comment = await prompt({
+        title: t('releases.proposal.approveTitle', { number: r.number, defaultValue: 'Approve proposal #{{number}}' }),
+        message: t('releases.proposal.approveMessage') || 'It will be published right away. Comment for the agent (optional):',
+        multiline: true,
+        maxLength: REJECT_REASON_MAX,
+        plain: false,
+        confirmLabel: t('releases.actions.approve') || 'Approve',
+      });
+      if (comment === null) return;
+    } else if (!(await confirm({
       title: t('releases.actions.approve') || 'Approve',
       message: t('releases.actions.approveConfirm', { number: r.number, defaultValue: 'Approve release #{{number}}? It will be published right away.' }),
       confirmLabel: t('releases.actions.approve') || 'Approve',
     }))) return;
     setBusyId(r.id);
     try {
-      await releasesApi.approve(site.id, r.id);
+      await releasesApi.approve(site.id, r.id, comment?.trim() ? { comment: comment.trim() } : {});
       toast.success(t('releases.actions.approved', { number: r.number, defaultValue: 'Release #{{number}} approved' }));
       await afterAction();
     } catch (err) {
@@ -116,7 +128,9 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
   const reject = async (r: Release) => {
     const reason = await prompt({
       title: t('releases.actions.rejectTitle', { number: r.number, defaultValue: 'Reject release #{{number}}' }),
-      message: t('releases.actions.rejectMessage') || 'The release will never be published. Reason (optional, kept in its log):',
+      message: r.proposal
+        ? (t('releases.proposal.rejectMessage') || 'The proposal will never be published. Reason (optional, read back by the agent):')
+        : (t('releases.actions.rejectMessage') || 'The release will never be published. Reason (optional, kept in its log):'),
       multiline: true,
       maxLength: REJECT_REASON_MAX,
       plain: false,
@@ -303,6 +317,7 @@ export function SiteReleasesTab({ site, reloadSite, onPublish, tick }: SiteTabPr
             { id: 'status', header: t('releases.fields.status') || 'Status', sort: (r) => r.status, cell: (r) => (
                 <span className="inline-flex flex-wrap items-center gap-1">
                   <ReleaseStatusBadge status={r.status} />
+                  {r.proposal && <Pill tone="accent" className="text-[10px]">{t('releases.proposal.badge') || 'proposal'}</Pill>}
                   <ReleaseVerdictBadge observation={r.observation} />
                 </span>
               ) },

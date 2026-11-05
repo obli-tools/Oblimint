@@ -50,6 +50,7 @@ export function eventLabel(t: TFunction, e: NotificationEvent | AccountNotificat
     'release.pendingApproval': 'Release waiting for approval',
     'release.approved': 'Release approved',
     'release.rejected': 'Release rejected',
+    'release.decided': 'Decision on a proposal',
     'release.degraded': 'Release degraded after going live',
     'release.failedObservation': 'Release failed after going live',
     'domain.verified': 'Domain ownership verified',
