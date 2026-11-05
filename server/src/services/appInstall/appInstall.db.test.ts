@@ -92,6 +92,7 @@ test('application installer on PostgreSQL', { timeout: 300_000 }, async (t: Test
   let toolFailure: ((spec: Docker.ContainerCreateOptions) => string | null) = () => null;
   const calls: string[] = [];
   let onDownload: (() => Promise<unknown>) | null = null;
+  let onPublish: ((releaseId: number) => Promise<unknown>) | null = null;
   const archive = path.join(dataRoot, 'archive.tar.gz');
   fs.writeFileSync(archive, 'archive');
   setInstallDepsForTests({
@@ -138,6 +139,7 @@ test('application installer on PostgreSQL', { timeout: 300_000 }, async (t: Test
       assert.equal(opts.verifiedFiles?.get('index.php'), 'abc');
       assert.ok(opts.verifiedFiles?.has('wp-config.php'));
       const id = idOf((await db('releases').insert({ site_id: siteId, number: 1, status: 'ready', trigger: 'manual', on_disk: true }).returning('id'))[0]);
+      await onPublish?.(id);
       return { id, number: 1 } as never;
     },
     waitForRelease: async (_s, id) => (await db('releases').where({ id }).first('id', 'status', 'error')) as never,
@@ -538,6 +540,22 @@ test('application installer on PostgreSQL', { timeout: 300_000 }, async (t: Test
     assert.equal((await db('app_installs').where({ id }).first('status')).status, 'preview_ready');
     await contain(null);
     await db('app_installs').where({ id }).update({ status: 'failed' });
+    calls.length = 0;
+
+    // During the publication itself: the release service holds it back, the operation stops the same way.
+    onPublish = async (releaseId) => {
+      await contain(new Date());
+      await db('releases').where({ id: releaseId }).update({ status: 'awaiting_approval' });
+    };
+    const during = await call('POST', '/app-installs', staffA, tA, start('cont2'));
+    assert.equal(during.status, 201, JSON.stringify(during.json));
+    await wait();
+    onPublish = null;
+    const held = await db('app_installs').where({ id: during.json.data.install.id }).first();
+    assert.deepEqual([held.status, held.error_code], ['failed', 'accountContained']);
+    assert.equal((await db('releases').where({ id: held.release_id }).first('status')).status, 'awaiting_approval');
+    await contain(null);
+    await db('app_installs').where({ id: held.id }).update({ status: 'failed' });
     calls.length = 0;
   });
 

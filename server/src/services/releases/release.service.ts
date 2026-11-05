@@ -14,6 +14,7 @@ import { config } from '../../config';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
 import { auditService } from '../audit.service';
+import { isAccountContained } from '../containment/guard';
 import { siteDeletions } from '../hosting/deletions';
 import { dataPathForbiddenError } from '../hosting/hostingValidation.service';
 import { localPaths } from '../hosting/paths';
@@ -576,8 +577,10 @@ async function scanGate(run: Run, scan: ScanSummary, opts: { approvedBy: number 
   }
   // An automatic publication whose commit took in what a « propose » key wrote meanwhile (the mark precedes every such write).
   const proposalDirty = release.trigger === 'auto' && !!(await db('sites').where({ id: ctx.site.id }).first('staging_proposal_at') as { staging_proposal_at: unknown } | undefined)?.staging_proposal_at;
-  if (!opts.approvedBy && (release.proposal || proposalDirty || scan.verdict === 'suspicious' || ctx.site.publish_mode === 'approval')) {
-    const why = release.proposal ? 'proposition d’une clé d’accès' : proposalDirty ? 'staging modifié par une clé en mode proposition'
+  // A containment that fell during this publication: ctx is older than the barrier, the account publishes nothing without a human.
+  const contained = !opts.approvedBy && await isAccountContained(ctx.account.id);
+  if (!opts.approvedBy && (contained || release.proposal || proposalDirty || scan.verdict === 'suspicious' || ctx.site.publish_mode === 'approval')) {
+    const why = contained ? 'compte confiné' : release.proposal ? 'proposition d’une clé d’accès' : proposalDirty ? 'staging modifié par une clé en mode proposition'
       : scan.verdict === 'suspicious' ? 'contenu suspect' : 'mode approbation';
     await run.step('info', `en attente d’approbation (${why})`, { status: 'awaiting_approval' });
     // A window's release is decided through its window (window.pendingReview tells the reviewers).

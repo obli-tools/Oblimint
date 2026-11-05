@@ -380,6 +380,8 @@ async function stepPublish(env: Env): Promise<'succeeded' | 'awaiting_approval'>
   }
   const settled = await deps.waitForRelease(siteId, releaseId, deps.publishWaitMs);
   if (settled.status === 'ready') return 'succeeded';
+  // Held back by a containment that fell during this step (release service): the operation stops as at any other step.
+  await assertNotContained(row.account_id);
   if (settled.status === 'awaiting_approval') return 'awaiting_approval';
   throw new InstallStepError('publishFailed', `La publication a échoué (${settled.status})`, settled.error ?? null);
 }

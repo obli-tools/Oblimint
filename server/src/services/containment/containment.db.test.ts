@@ -262,6 +262,32 @@ test('containment of an account', { timeout: 300_000 }, async (t: TestContext) =
   const accountRow = () => db('hosting_accounts').where({ id: acct }).first();
   const mcpCall = { jsonrpc: '2.0', id: 1, method: 'tools/list' };
 
+  await t.test('a publication in flight when the barrier falls goes no further than a human', async () => {
+    const racing = await mkAccount(A, 'acmethree', 41003);
+    const siteRacing = await mkSite(racing, 'race', 'manual');
+    const dir = localPaths.siteStaging(racing, 'race');
+    fs.mkdirSync(dir, { recursive: true });
+    await releaseService.ensureSiteStorage(siteRacing);
+    fs.writeFileSync(path.join(dir, 'index.html'), 'race\n');
+    setScanner({
+      name: 'contains-during-the-scan',
+      async scan() {
+        await db('hosting_accounts').where({ id: racing }).update({ contained_at: new Date() });
+        return { scanner: 'none', verdict: 'clean', findings: [] };
+      },
+    });
+    t.after(() => setScanner(noopScanner));
+    const flying = await releaseService.publish(siteRacing, { trigger: 'manual', userId: STAFF });
+    for (const t0 = Date.now(); ;) {
+      const r = await db('releases').where({ id: flying.id }).first('status');
+      if (!['queued', 'scanning', 'publishing'].includes(r.status) && !__releaseInternals.locks.has(siteRacing)) { assert.equal(r.status, 'awaiting_approval'); break; }
+      if (Date.now() - t0 > 60_000) throw new Error('release stuck');
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    assert.equal((await db('sites').where({ id: siteRacing }).first('current_release_id')).current_release_id, null);
+    setScanner(noopScanner);
+  });
+
   await t.test('before: the credentials work', async () => {
     assert.equal((await bearer(key.key as string, '/api/v1/sites')).status, 200);
     assert.equal((await bearer(key.key as string, '/mcp', 'POST', mcpCall)).status, 200);
