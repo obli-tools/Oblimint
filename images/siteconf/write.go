@@ -28,7 +28,12 @@ func WriteOutput(dir string, res *Output) error {
 		if err := safeOutName(f.Name); err != nil {
 			return err
 		}
-		if err := writeAtomic(filepath.Join(dir, filepath.FromSlash(f.Name)), []byte(f.Content)); err != nil {
+		target := filepath.Join(dir, filepath.FromSlash(f.Name))
+		// litespeed: lsws/…, lsphp/… (sub-directories of the output directory).
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := writeAtomic(target, []byte(f.Content)); err != nil {
 			return err
 		}
 	}

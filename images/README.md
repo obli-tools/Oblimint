@@ -9,6 +9,7 @@ Images Docker que le panel déploie et pilote (P1 « Cœur immuable », `docs/P1
 |---|---|---|---|
 | `meejay/oblimint-apache-php7.4` … `-apache-php8.4` | `php/Dockerfile` (`ENGINE=apache`) | `php:<v>-fpm-alpine` + Apache 2.4 (Alpine) | site, `.htaccess` |
 | `meejay/oblimint-nginx-php8.1` … `-nginx-php8.4` | `php/Dockerfile` (`ENGINE=nginx`) | `php:<v>-fpm-alpine` + nginx (Alpine) | site |
+| `meejay/oblimint-litespeed-php8.1` … `-litespeed-php8.4` | `litespeed/Dockerfile` | `debian:bookworm-slim` (épinglé) + OpenLiteSpeed + LSPHP (dépôt officiel LiteSpeed, versions épinglées) | site, réécritures `.htaccess`, cache de pages LSCache |
 | `meejay/oblimint-nginx-static` | `nginx-static/Dockerfile` | `nginx:1.30.5-alpine` (épinglé) | site statique |
 | `meejay/oblimint-edge` | `edge/Dockerfile` | `nginx:1.30.5-alpine` (épinglé) | reverse proxy partagé, TLS, ACME |
 | `meejay/oblimint-filesrv` | `filesrv/Dockerfile` | `drakkan/sftpgo:v2.6.6-alpine` (épinglé) | SFTP par compte |
@@ -31,6 +32,7 @@ images/
     smoke/                 test de fumée exécuté PENDANT le build (jamais livré)
   php/Dockerfile           bases Apache/nginx + PHP-FPM
   php/oblimint_exec/       extension PHP (C) : PHP n'est compilé que depuis oblimint.exec_dirs (include/require compris)
+  litespeed/Dockerfile     bases OpenLiteSpeed + LSPHP + LSCache (même contrat, voir « Bases LiteSpeed »)
   nginx-static/Dockerfile  base statique
   edge/                    nginx.conf, pages d'erreur, entrypoint de l'edge
   filesrv/                 entrypoint SFTPGo + README des hooks
@@ -40,7 +42,7 @@ images/
 
 ```sh
 images/build.sh                       # tout (sites + edge + filesrv + hostd)
-images/build.sh sites                 # les 10 bases de site
+images/build.sh sites                 # les 15 bases de site (dont litespeed-php8.1 … 8.4)
 images/build.sh apache-php8.3 edge    # sélection
 TAG=0.2.0 images/build.sh --push      # tag + push (REPO=meejay par défaut)
 ```
@@ -61,6 +63,12 @@ Chaque build de base de site :
    (include d'un chemin de données, de /tmp ou via php://filter refusé ; release et cache éphémère OK). Un module Apache manquant,
    une directive inconnue ou une extension absente **cassent le build**.
 
+Bases LiteSpeed : `debian:bookworm-slim` épinglé par digest ; dépôt `rpms.litespeedtech.com/debian`
+(HTTPS, clé de signature vérifiée par empreinte `3E89 2522 DB44 E1B0 63D3  66C5 011A A62D EDA1 F085`
+avant tout usage) ; versions `openlitespeed` / `lsphpXY*` épinglées dans `build.sh` (`OLS_VERSION`,
+`lsphp_versions`). Ce dépôt ne garde que les dernières versions : quand un build échoue sur « version
+not found », relever les épingles (`apt-cache madison openlitespeed lsphp83 …`).
+
 Épinglage : `drakkan/sftpgo`, `nginx`, `mlocati/php-extension-installer` sont épinglés par tag +
 digest de manifeste (vérifiés sur Docker Hub le 09/10/2026). Les tags `php:<v>-fpm-alpine` et
 `golang:1.26-alpine` suivent les correctifs (pas de digest) : pour un build reproductible,
@@ -77,8 +85,8 @@ plus de correctifs : le panel les marque « runtime non maintenu ».
 | Durcissement attendu | `CapDrop ALL`, `no-new-privileges`, `ReadonlyRootfs`, tmpfs `/tmp` et `/run` (`noexec,nosuid,nodev`, **sans** `mode=`/`uid=` restrictif : le tmpfs doit rester `1777`), `PidsLimit`, mémoire sans swap, CPU |
 | Montages | `/srv/releases` **ro** (`current` → `<n>`, lien relatif) ; `/srv/data` rw ; `/etc/oblimint/site` ro |
 | Env | `OBLIMINT_SITE_CONFIG=/etc/oblimint/site/<primary\|secondary-<id>\|preview>.json` (`SiteRuntimeConfig`) |
-| Env de l'image | `OBLIMINT_ENGINE` (`apache\|nginx\|static`), `OBLIMINT_PHP` (`1\|0`), `OBLIMINT_RUN=/run/oblimint`, `HOME=/tmp` |
-| Écritures à l'exécution | uniquement `/run/oblimint/*` (configs rendues, pid, mutex Apache, arbre `www/`), `/run/php-fpm.sock`, `/tmp/nginx/*` (temp nginx), `/tmp/sessions` (sessions PHP), `/tmp` (uploads PHP) |
+| Env de l'image | `OBLIMINT_ENGINE` (`apache\|nginx\|static\|litespeed`), `OBLIMINT_PHP` (`1\|0`), `OBLIMINT_RUN=/run/oblimint`, `HOME=/tmp` (litespeed : `OBLIMINT_LSCACHE_DIR=/var/cache/lscache`) |
+| Écritures à l'exécution | uniquement `/run/oblimint/*` (configs rendues, pid, mutex Apache, arbre `www/`), `/run/php-fpm.sock`, `/tmp/nginx/*` (temp nginx), `/tmp/sessions` (sessions PHP), `/tmp` (uploads PHP) ; litespeed : `/run/oblimint/{lsws,lsphp}/`, `/run/oblimint/lsphp.sock`, `/tmp/lshttpd`, `/tmp/lsws/*` et le tmpfs `/var/cache/lscache` (borné, `noexec`) |
 | Logs | accès sur stdout, erreurs sur stderr (Apache, nginx, php-fpm, PHP) |
 | Santé | `GET /__oblimint/ping` → `200 ok` (servi par le serveur web, jamais PHP) ; `HEALTHCHECK` Docker via `wget` |
 | PID 1 | `tini` → `oblimint-entrypoint` |
@@ -218,10 +226,78 @@ démarre sans elle (message sur stderr) — jamais de boucle de crash. Bases Apa
   cohérente pendant une bascule) ; `HTTPS=on` et `SERVER_PORT=443` si `X-Forwarded-Proto: https`.
   Apache : `SetEnvIf X-Forwarded-Proto ^https$ HTTPS=on`, `mod_remoteip` (IP client réelle).
 
+## Bases LiteSpeed (`litespeed-php8.1` … `litespeed-php8.4`)
+
+OpenLiteSpeed (GPLv3) + LSPHP (paquets officiels LiteSpeed) + **LSCache**, le cache de pages intégré à
+OpenLiteSpeed, piloté par les extensions LSCache des CMS (en-têtes `X-LiteSpeed-Cache-Control`,
+`X-LiteSpeed-Purge`, `X-LiteSpeed-Vary`). Jamais LiteSpeed Enterprise, jamais QUIC.cloud ; pas de
+QUIC/HTTP3 (`quicEnable 0`), pas de WebAdmin (`disableWebAdmin 1`, fichiers retirés de l'image).
+Même contrat que les autres bases (port 8080, uid quelconque, racine RO, `CapDrop ALL`, montages,
+`guard.php`, `oblimint_exec` compilée pour lsphp, `php.ini` commun, test de fumée au build).
+
+- **Non-root.** OpenLiteSpeed démarre normalement en root (assistant suEXEC `lscgid`, workers qui
+  changent d'uid). Ici `openlitespeed -n` tourne sous l'uid du compte ; `user nobody` / `group nogroup`
+  ne servent qu'au parseur (jamais de changement d'uid sans capacité). lsphp n'est **jamais** lancé par
+  le serveur (`autoStart 0`) : l'entrypoint le démarre en mode LSAPI détaché sur
+  `/run/oblimint/lsphp.sock` (`PHP_LSAPI_CHILDREN=10`, OpenLiteSpeed n'ouvre que `maxConns 8`).
+  `$SERVER_ROOT/conf` est un lien vers `/run/oblimint/lsws`, `logs`, `tmp`, `cgid`… vers `/tmp/lsws/*`.
+- **Journaux.** OpenLiteSpeed détache ses processus des stdio du conteneur et remplace un journal
+  symlinké par un fichier : erreur et accès sont deux FIFO (`/tmp/lsws/logs/{error,access}.log`) lues
+  par des recopieurs de l'entrypoint (vers stderr / stdout, rouverts s'ils meurent) ; lsphp écrit dans
+  la FIFO d'erreurs (y compris celui lancé par `docker exec oblimint-reload`). Rien ne grossit dans `/tmp`.
+- **Supervision.** Un redémarrage gracieux d'OpenLiteSpeed crée un **nouveau** processus principal
+  (rattaché à tini) : l'entrypoint suit `/tmp/lshttpd/lshttpd.pid` et `/run/oblimint/lsphp.pid`
+  (3 absences consécutives ≈ 6 s → arrêt du conteneur, code 1). `SIGTERM` → arrêt < 3 s mesuré.
+- **Rechargement** (`oblimint-reload`) : rendu + `openlitespeed -t` (code 2 = erreur → refus ;
+  1 = avertissements seulement, ex. contrôle suEXEC de l'uid du docroot, sans objet ici), testé sur un
+  stockage de cache jetable sous `/tmp` ; puis un nouveau lsphp reprend le socket (opcache neuf),
+  redémarrage gracieux d'OpenLiteSpeed (`USR1` : nouvelle config, `.htaccess` relus), l'ancien lsphp
+  termine ses requêtes (`USR1`). `oblimint-reload --cache-only` : seulement un cache vide (bouton
+  « Vider le cache », API, MCP `purge_cache`).
+- **LSCache.** Stockage sur un tmpfs à lui (`/var/cache/lscache`, `noexec`, taille = ¼ de la mémoire du
+  site, 32–512 Mio, hors `open_basedir` et hors release), un **dossier de génération** par rendu
+  (`<gen>/pages`, `<gen>/static` pour les fichiers statiques compressés) : chaque publication, retour
+  arrière, changement de réglage ou purge sert un cache vide ; les générations précédentes sont
+  supprimées par l'entrypoint (> 1 min, les anciens workers ont fini). OpenLiteSpeed ne supprime jamais
+  les pages expirées et ses workers gardent les entrées ouvertes : à 80 % d'occupation l'entrypoint purge
+  (`--cache-only`, au plus toutes les 5 min) ; un fichier de réserve de 4 Mio est libéré juste avant
+  chaque redémarrage gracieux (sans place pour son index, un nouveau worker ne répond plus : constaté).
+  Rien n'est mis en cache sans en-tête de l'application (`enableCache 0`). Pages publiques : clé = URL
+  (+ `_lscache_vary`, posé par l'extension à la connexion). Pages « private » (visiteur connecté, si
+  l'extension le demande) : clé = URL + **tous** les cookies de la requête + adresse du client ; vérifié
+  sur WordPress : deux utilisateurs connectés depuis la même adresse n'obtiennent jamais la page de
+  l'autre, un anonyme jamais une page de connecté. Réglage par site `lscache.enabled` (`ls_enabled`).
+- **Chemins de données.** OpenLiteSpeed lit les **règles de réécriture** des `.htaccess` de chaque
+  dossier qu'il parcourt pour un contexte préfixe, et un `RewriteEngine On` y réactive la réécriture
+  même dans un contexte où elle est désactivée : un `.htaccess` écrit par PHP dans `/srv/data` serait
+  appliqué (redirections…). Les contextes **regex de la racine** du vhost sont évalués **avant** ce
+  parcours (`HttpReq::processContext` → `processMatchList`) : chaque chemin de données (et chaque lien
+  de la release vers `/srv/data`, trouvé par `datalinks.go`) est servi par `exp:^<préfixe>(.*)$`
+  (`location` = dossier de données, réécriture coupée), précédé d'un contexte qui refuse
+  `.php*/.phar/.phtml/.pht/.phps` (403). Les contextes sont triés par URI avant d'être évalués
+  (premier qui correspond) : fichiers cachés `exp:(?:/\.(?!well-known(/|$)))` d'abord, puis variantes
+  PHP, puis typés, puis données. Seul `.php` est confié à lsphp ; `guard.php` et `oblimint_exec` restent
+  les barrières (vérifié : un `.php` déposé dans `uploads` → 403, inclus → erreur fatale).
+- **lsphp** : `open_basedir`, `auto_prepend_file`, `oblimint.exec_dirs` dans un ini du dossier de scan
+  (`PHP_INI_SCAN_DIR=:/run/oblimint/lsphp`, niveau système) ; lsphp ne lit aucun `.user.ini`
+  (`LSPHP_ENABLE_USER_INI` jamais posé, et réservé avec `LSAPI_*`, `PHP_LSAPI*`, `LSWS_*` dans les
+  variables de site) et OpenLiteSpeed ne transmet aucun `php_value` de `.htaccess` (vérifié).
+- **`.htaccess`** : seules les règles de réécriture (`RewriteEngine/Base/Cond/Rule`) et les directives
+  LSCache (`CacheLookup`, `CacheKeyModify`…) s'appliquent, lues au premier accès d'un dossier puis à
+  chaque redémarrage gracieux (donc à chaque publication / retour arrière). **Ignorés** : `php_value`,
+  `Auth*`, `Require`, `Order/Allow/Deny`, `<Files>`, `Header`, `ErrorDocument`, `Options`,
+  `Expires*`, `SetEnv`, `Redirect`… L'avertissement de bascule (`htaccessPartial`) les liste.
+- **Divers** : `HTTPS=on` et `%{HTTPS}` des réécritures suivent `X-Forwarded-Proto` des proxys de
+  confiance — tout pair du réseau privé du compte, dernière adresse de `X-Forwarded-For` (`useIpInProxyHeader 4`,
+  comme `mod_remoteip` / `real_ip_recursive`) ; `SERVER_PORT` reste `8080` (Apache : port
+  de l'en-tête Host) ; `basePath` : arbre `www/` des bases nginx ; mode placeholder : réécriture
+  `R=503` + page d'attente, `Retry-After: 30`, `Cache-Control: no-store`.
+
 ## `siteconf` (`images/siteconf/`, Go, stdlib seule)
 
 ```
-siteconf render --config <file> --engine apache|nginx|static --out /run/oblimint [--php-fpm] [--no-custom]
+siteconf render --config <file> --engine apache|nginx|static|litespeed --out /run/oblimint [--php-fpm] [--no-custom]
+                 [--lscache-dir /var/cache/lscache --lscache-gen <n>]   (litespeed)
 siteconf check  --config <file>
 siteconf version
 ```
@@ -286,7 +362,7 @@ des hooks d'authentification et d'actions.
 
 | Image | User | Capacités | Racine | tmpfs | Ports |
 |---|---|---|---|---|---|
-| bases de site | uid:gid du compte | aucune (`CapDrop ALL`) | RO | `/tmp`, `/run` | 8080 (non publié) |
+| bases de site | uid:gid du compte | aucune (`CapDrop ALL`) | RO | `/tmp`, `/run` (+ `/var/cache/lscache` litespeed) | 8080 (non publié) |
 | filesrv | uid:gid du compte | aucune | RO | `/tmp` | 2022 → port hôte du compte |
 | edge | root (workers `nginx`) | `CHOWN`, `NET_BIND_SERVICE`, `SETGID`, `SETUID` | RO | `/var/cache/nginx`, `/run`, `/tmp` | 80, 443 publiés |
 | hostd | root, privilégié | (module hostd) | — | — | socket unix |

@@ -5,7 +5,7 @@
 #   images/build.sh [--push] [--no-pull] [name…]
 #
 #   name: apache-php5.6, apache-php7.4 … apache-php8.4, nginx-php8.1 … nginx-php8.4,
-#         nginx-static, edge, filesrv, hostd, pdns, phpmyadmin, adminer (P2),
+#         litespeed-php8.1 … litespeed-php8.4, nginx-static, edge, filesrv, hostd, pdns, phpmyadmin, adminer (P2),
 #         scanner, tools-php7.4 … tools-php8.4 (P3),
 #         mail-postfix, mail-rspamd, mail-stalwart, mail-relay,
 #         webmail-roundcube, webmail-snappymail (P4),
@@ -36,6 +36,21 @@ APACHE_PHP="5.6 7.4 8.1 8.2 8.3 8.4"
 # Tools images (WP-CLI, Composer): not for the legacy 5.6 base.
 TOOLS_PHP="7.4 8.1 8.2 8.3 8.4"
 NGINX_PHP="8.1 8.2 8.3 8.4"
+# OpenLiteSpeed + LSPHP (official LiteSpeed Debian repository, bookworm). The
+# repository only keeps the latest builds: bump these pins when a build fails
+# with "version not found" (apt-cache madison openlitespeed lsphp83 …).
+LITESPEED_PHP="8.1 8.2 8.3 8.4"
+OLS_VERSION="1.9.4-3+bookworm"
+# lsphp version + lsphpXY-common version (the common package is sometimes rebuilt alone).
+lsphp_versions() {
+	case "$1" in
+		8.1) echo "8.1.34-21+bookworm 8.1.34-21+bookworm" ;;
+		8.2) echo "8.2.35-1+bookworm 8.2.35-2+bookworm" ;;
+		8.3) echo "8.3.36-1+bookworm 8.3.36-2+bookworm" ;;
+		8.4) echo "8.4.27-1+bookworm 8.4.27-2+bookworm" ;;
+		*) return 1 ;;
+	esac
+}
 
 usage() {
 	sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'
@@ -55,6 +70,7 @@ done
 sites=""
 for v in $APACHE_PHP; do sites="$sites apache-php$v"; done
 for v in $NGINX_PHP; do sites="$sites nginx-php$v"; done
+for v in $LITESPEED_PHP; do sites="$sites litespeed-php$v"; done
 sites="$sites nginx-static"
 infra="edge filesrv hostd pdns phpmyadmin adminer scanner"
 # P3: adapter tools images (WP-CLI, Composer, drush launcher), one per PHP branch of the site bases.
@@ -106,6 +122,14 @@ for n in $expanded; do
 		nginx-php*)
 			v=${n#nginx-php}
 			build "$n" "$HERE" -f "$HERE/php/Dockerfile" --build-arg "PHP_VERSION=$v" --build-arg ENGINE=nginx
+			;;
+		litespeed-php*)
+			v=${n#litespeed-php}
+			vers=$(lsphp_versions "$v") || { echo "no LSPHP pin for PHP $v" >&2; exit 2; }
+			# shellcheck disable=SC2086
+			set -- $vers
+			build "$n" "$HERE" -f "$HERE/litespeed/Dockerfile" --build-arg "PHP_VERSION=$v" \
+				--build-arg "OLS_VERSION=$OLS_VERSION" --build-arg "LSPHP_VERSION=$1" --build-arg "LSPHP_COMMON_VERSION=$2"
 			;;
 		nginx-static) build nginx-static "$HERE" -f "$HERE/nginx-static/Dockerfile" ;;
 		edge) build edge "$HERE" -f "$HERE/edge/Dockerfile" ;;

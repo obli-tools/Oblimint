@@ -9,6 +9,10 @@
 #   3. supervise them: if either dies, stop the other and exit non-zero so
 #      Docker restarts the container; SIGTERM/SIGINT stop both gracefully;
 #      SIGHUP runs oblimint-reload.
+#
+# litespeed bases: lsphp (LSAPI) and OpenLiteSpeed. Both are followed through
+# their pid files: a graceful restart of OpenLiteSpeed starts a new main
+# process (re-parented to tini), oblimint-reload starts a new lsphp.
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
@@ -17,45 +21,87 @@ set -u
 
 check_env
 prepare_dirs
+if [ "$OBLIMINT_ENGINE" = "litespeed" ]; then
+	# Before anything opens them (openlitespeed -t included): a FIFO without
+	# a reader would block its writer.
+	start_log_pipe error || die "cannot create the log FIFO $LSWS_LOG_DIR/error.log"
+	start_log_pipe access || die "cannot create the log FIFO $LSWS_LOG_DIR/access.log"
+fi
 
 if ! render_and_test; then
 	die "unusable configuration for $OBLIMINT_SITE_CONFIG, refusing to start"
 fi
-log "starting $OBLIMINT_ENGINE (php-fpm: $OBLIMINT_PHP, mode: $(current_mode))"
+log "starting $OBLIMINT_ENGINE (php: $OBLIMINT_PHP, mode: $(current_mode))"
 
 FPM_PID=""
 WEB_PID=""
 
-if [ "$OBLIMINT_PHP" = "1" ]; then
-	php-fpm -F -y "$OBLIMINT_RUN/php-fpm.conf" &
-	FPM_PID=$!
-fi
+if [ "$OBLIMINT_ENGINE" = "litespeed" ]; then
+	lscache_reserve
+	start_lsphp || die "lsphp did not start"
+	(cd /tmp && exec "$LSWS_BIN" -n) &
+	i=0
+	while [ $i -lt 100 ]; do
+		WEB_PID=$(lsws_pid) && alive "$WEB_PID" && break
+		WEB_PID=""
+		sleep 0.1 2>/dev/null || sleep 1
+		i=$((i + 1))
+	done
+	[ -n "$WEB_PID" ] || die "OpenLiteSpeed did not start (no live pid in $LSWS_PIDFILE)"
+else
+	if [ "$OBLIMINT_PHP" = "1" ]; then
+		php-fpm -F -y "$OBLIMINT_RUN/php-fpm.conf" &
+		FPM_PID=$!
+	fi
 
-case "$OBLIMINT_ENGINE" in
-	apache) httpd -DFOREGROUND -f "$OBLIMINT_RUN/httpd.conf" & ;;
-	*) nginx -e stderr -c "$OBLIMINT_RUN/nginx.conf" -g 'daemon off;' & ;;
-esac
-WEB_PID=$!
+	case "$OBLIMINT_ENGINE" in
+		apache) httpd -DFOREGROUND -f "$OBLIMINT_RUN/httpd.conf" & ;;
+		*) nginx -e stderr -c "$OBLIMINT_RUN/nginx.conf" -g 'daemon off;' & ;;
+	esac
+	WEB_PID=$!
+fi
 
 stopping=0
 
+# Current pids (litespeed: from the pid files, they change at every reload).
+web_pid() {
+	if [ "$OBLIMINT_ENGINE" = "litespeed" ]; then lsws_pid; else echo "$WEB_PID"; fi
+}
+php_pid() {
+	if [ "$OBLIMINT_ENGINE" = "litespeed" ]; then read_pid "$OBLIMINT_RUN/lsphp.pid"; else echo "$FPM_PID"; fi
+}
+
 stop_all() {
 	stopping=1
-	# Graceful first: nginx QUIT, httpd WINCH (graceful-stop), php-fpm QUIT.
+	web=$(web_pid) || web=""
+	php=$(php_pid) || php=""
+	# Graceful first: nginx QUIT, httpd WINCH (graceful-stop), php-fpm QUIT,
+	# OpenLiteSpeed TERM (workers finish), lsphp TERM.
 	case "$OBLIMINT_ENGINE" in
-		apache) kill -WINCH "$WEB_PID" 2>/dev/null ;;
-		*) kill -QUIT "$WEB_PID" 2>/dev/null ;;
+		apache) kill -WINCH "$web" 2>/dev/null ;;
+		litespeed) kill -TERM "$web" 2>/dev/null ;;
+		*) kill -QUIT "$web" 2>/dev/null ;;
 	esac
-	[ -n "$FPM_PID" ] && kill -QUIT "$FPM_PID" 2>/dev/null
+	if [ -n "$php" ]; then
+		if [ "$OBLIMINT_ENGINE" = "litespeed" ]; then kill -TERM "$php" 2>/dev/null; else kill -QUIT "$php" 2>/dev/null; fi
+	fi
 	i=0
 	while [ $i -lt 16 ]; do
-		if ! alive "$WEB_PID" && { [ -z "$FPM_PID" ] || ! alive "$FPM_PID"; }; then
+		if ! alive "$web" && { [ -z "$php" ] || ! alive "$php"; }; then
 			break
 		fi
 		sleep 0.5 2>/dev/null || sleep 1
 		i=$((i + 1))
 	done
-	kill -TERM "$WEB_PID" ${FPM_PID:+"$FPM_PID"} 2>/dev/null
+	kill -TERM ${web:+"$web"} ${php:+"$php"} 2>/dev/null
+	if [ "$OBLIMINT_ENGINE" = "litespeed" ]; then
+		kill -KILL ${web:+"$web"} 2>/dev/null
+		# Log forwarders last (the servers' last lines are copied); they never
+		# end by themselves (they hold their FIFO open).
+		for f in error access; do
+			p=$(read_pid "$OBLIMINT_RUN/logpipe-$f.pid") && kill -TERM "$p" 2>/dev/null
+		done
+	fi
 	wait 2>/dev/null
 }
 
@@ -72,18 +118,55 @@ on_hup() {
 trap on_term TERM INT QUIT
 trap on_hup HUP
 
+# litespeed: a pid may be briefly unknown / gone during a reload (graceful
+# restart, lsphp swap): 3 consecutive misses (~6 s) before giving up.
+web_miss=0
+php_miss=0
+ticks=0
+last_purge=-150
 while :; do
-	if ! alive "$WEB_PID"; then
-		[ "$stopping" = "1" ] && exit 0
-		log "web server ($OBLIMINT_ENGINE, pid $WEB_PID) exited, stopping the container"
-		stop_all
-		exit 1
-	fi
-	if [ -n "$FPM_PID" ] && ! alive "$FPM_PID"; then
-		[ "$stopping" = "1" ] && exit 0
-		log "php-fpm (pid $FPM_PID) exited, stopping the container"
-		stop_all
-		exit 1
+	if [ "$OBLIMINT_ENGINE" = "litespeed" ]; then
+		if alive "$(lsws_pid)"; then web_miss=0; else web_miss=$((web_miss + 1)); fi
+		if alive "$(read_pid "$OBLIMINT_RUN/lsphp.pid")"; then php_miss=0; else php_miss=$((php_miss + 1)); fi
+		if [ $web_miss -ge 3 ]; then
+			[ "$stopping" = "1" ] && exit 0
+			log "OpenLiteSpeed exited, stopping the container"
+			stop_all
+			exit 1
+		fi
+		if [ $php_miss -ge 3 ]; then
+			[ "$stopping" = "1" ] && exit 0
+			log "lsphp exited, stopping the container"
+			stop_all
+			exit 1
+		fi
+		log_pipe_alive error || start_log_pipe error || true
+		log_pipe_alive access || start_log_pipe access || true
+		ticks=$((ticks + 1))
+		if [ $((ticks % 15)) -eq 0 ]; then
+			lscache_cleanup
+			lscache_reserve
+			# Nearly full page cache: purged (new generation), at most every 5 min.
+			used=$(lscache_usage)
+			if [ -n "$used" ] && [ "$used" -ge "${OBLIMINT_LSCACHE_PURGE_PCT:-80}" ] && [ $((ticks - last_purge)) -ge 150 ]; then
+				last_purge=$ticks
+				log "LSCache store ${used}% full: purging it"
+				oblimint-reload --cache-only >/dev/null || log "automatic LSCache purge failed"
+			fi
+		fi
+	else
+		if ! alive "$WEB_PID"; then
+			[ "$stopping" = "1" ] && exit 0
+			log "web server ($OBLIMINT_ENGINE, pid $WEB_PID) exited, stopping the container"
+			stop_all
+			exit 1
+		fi
+		if [ -n "$FPM_PID" ] && ! alive "$FPM_PID"; then
+			[ "$stopping" = "1" ] && exit 0
+			log "php-fpm (pid $FPM_PID) exited, stopping the container"
+			stop_all
+			exit 1
+		fi
 	fi
 	# `wait` on a background sleep: traps run immediately, and finished
 	# children get reaped (so alive() sees them gone).

@@ -43,6 +43,12 @@ type Options struct {
 	ApacheModulesDir string
 	ApacheMimeTypes  string
 	NginxMimeTypes   string
+	// litespeed bases: OpenLiteSpeed mime.properties, lsphp binary, LSCache
+	// tmpfs and the generation directory of this render (litespeed.go).
+	LswsMimeTypes string
+	LsphpBin      string
+	LSCacheDir    string
+	LSCacheGen    string
 }
 
 // OutFile is a file to write under Options.Out (Name is relative, no '/').
@@ -175,6 +181,17 @@ type templateData struct {
 	ApacheModules []apacheModule
 	ModulesDir    string
 	MimeTypes     string
+
+	// litespeed bases.
+	LsDocRoot     string
+	LsData        []lsDataView
+	LsGlobal      []lsContext
+	LsphpSocket   string
+	LsphpBin      string
+	LsphpChildren int
+	LSCache       bool
+	LSCacheStore  string
+	LsMaxCacheObj int
 }
 
 var (
@@ -233,7 +250,7 @@ func pathRegex(rel string) (string, error) {
 
 var templates = template.Must(template.New("siteconf").
 	Option("missingkey=error").
-	Funcs(template.FuncMap{"aq": aq, "ag": ag, "ns": ns, "joinExt": joinExt, "join": joinPath}).
+	Funcs(template.FuncMap{"aq": aq, "ag": ag, "ns": ns, "lsv": lsv, "joinExt": joinExt, "join": joinPath}).
 	ParseFS(templateFS, "templates/*.tmpl"))
 
 // Render produces the configuration of one site container.
@@ -242,7 +259,7 @@ func Render(cfg *SiteConfig, opt Options) (*Output, error) {
 		return nil, err
 	}
 	switch opt.Engine {
-	case EngineApache, EngineNginx, EngineStatic:
+	case EngineApache, EngineNginx, EngineStatic, EngineLitespeed:
 	default:
 		return nil, fmt.Errorf("unknown engine %q", opt.Engine)
 	}
@@ -305,10 +322,22 @@ func Render(cfg *SiteConfig, opt Options) (*Output, error) {
 	}
 	d.DataPaths = views
 	var linkRegexes []string
-	if opt.Engine == EngineApache && !out.Placeholder && opt.DataLinks != nil {
+	var warnings []string
+	var links []DataLink
+	if (opt.Engine == EngineApache || opt.Engine == EngineLitespeed) && !out.Placeholder && opt.DataLinks != nil {
 		found, warnings := opt.DataLinks(cfg.Docroot)
 		out.Warnings = append(out.Warnings, warnings...)
-		d.DataLinks, linkRegexes = dataLinkViews(cfg, found)
+		if opt.Engine == EngineApache {
+			d.DataLinks, linkRegexes = dataLinkViews(cfg, found)
+		} else {
+			links = found
+		}
+	}
+	if opt.Engine == EngineLitespeed {
+		if warnings, err = litespeedData(&d, cfg, opt, views, links, out.Placeholder); err != nil {
+			return nil, err
+		}
+		out.Warnings = append(out.Warnings, warnings...)
 	}
 	if d.ExecDirs, err = execDirs(cfg); err != nil {
 		return nil, err
@@ -327,9 +356,15 @@ func Render(cfg *SiteConfig, opt Options) (*Output, error) {
 
 	// Custom nginx rules (nginx engines only).
 	custom := CheckCustomNginx(cfg.CustomNginx)
-	if opt.Engine == EngineApache {
+	switch opt.Engine {
+	case EngineApache:
 		if custom.Content != "" || custom.Rejected != "" {
 			out.Warnings = append(out.Warnings, "customNginx ignored: this base runs Apache (use .htaccess)")
+		}
+		custom = CustomRules{}
+	case EngineLitespeed:
+		if custom.Content != "" || custom.Rejected != "" {
+			out.Warnings = append(out.Warnings, "customNginx ignored: this base runs OpenLiteSpeed (use .htaccess rewrite rules)")
 		}
 		custom = CustomRules{}
 	}
@@ -337,11 +372,15 @@ func Render(cfg *SiteConfig, opt Options) (*Output, error) {
 		out.CustomRejected = custom.Rejected
 		out.Warnings = append(out.Warnings, "custom nginx rules disabled: "+custom.Rejected)
 	}
-	if opt.Engine != EngineApache {
+	if opt.Engine == EngineNginx || opt.Engine == EngineStatic {
 		d.CustomIncluded = custom.Content != "" && !out.Placeholder
 		d.AppLocationOverridden = d.CustomIncluded && custom.DefinesLocation(cfg.BasePath)
 		d.RootLocationOverridden = d.CustomIncluded && custom.DefinesLocation("/")
 		out.Files = append(out.Files, OutFile{Name: "custom.conf", Content: customFileContent(custom)})
+	}
+
+	if opt.Engine == EngineLitespeed {
+		return renderLitespeed(out, cfg, opt, d)
 	}
 
 	// Main web server config.

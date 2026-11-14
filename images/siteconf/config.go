@@ -30,10 +30,16 @@ const (
 	phpFpmSocket   = "/run/php-fpm.sock"
 	nginxTempDir   = "/tmp/nginx"
 	sessionsDir    = "/tmp/sessions"
-	maxConfigBytes = 256 * 1024
-	maxDataPaths   = 64
-	maxExtensions  = 128
-	maxPrefixes    = 64
+	// litespeed bases: LSAPI socket of lsphp (started by the entrypoint, never
+	// by OpenLiteSpeed: its suEXEC helper needs root), relative to --out.
+	lsphpSocketName = "lsphp.sock"
+	// Default LSCache / compressed-static storage (its own size-bounded,
+	// noexec tmpfs in the container spec; never under open_basedir).
+	defaultLSCacheDir = "/var/cache/lscache"
+	maxConfigBytes    = 256 * 1024
+	maxDataPaths      = 64
+	maxExtensions     = 128
+	maxPrefixes       = 64
 )
 
 type DataPolicy string
@@ -72,7 +78,18 @@ type SiteConfig struct {
 	PHP             PhpSettings `json:"php"`
 	CustomNginx     *string     `json:"customNginx"`
 	HealthcheckPath string      `json:"healthcheckPath"`
+	// LSCache: OpenLiteSpeed page cache (litespeed bases only). Absent = enabled
+	// (a panel that predates the field chose a litespeed base for its cache).
+	LSCache *LSCacheSettings `json:"lscache"`
 }
+
+// LSCacheSettings: the site's LSCache switch (shared SiteRuntimeConfig.lscache).
+type LSCacheSettings struct {
+	Enabled bool `json:"enabled"`
+}
+
+// LSCacheEnabled: the page cache answers / stores pages (default on).
+func (c *SiteConfig) LSCacheEnabled() bool { return c.LSCache == nil || c.LSCache.Enabled }
 
 // Engine of the image the renderer runs in.
 type Engine string
@@ -81,21 +98,27 @@ const (
 	EngineApache Engine = "apache"
 	EngineNginx  Engine = "nginx"
 	EngineStatic Engine = "static"
+	// EngineLitespeed: OpenLiteSpeed + LSPHP (LSAPI), LSCache built in.
+	EngineLitespeed Engine = "litespeed"
 )
 
 // siteBases mirrors SITE_BASES (shared/src/hosting.ts): base id → engine.
 var siteBases = map[string]Engine{
-	"apache-php5.6": EngineApache,
-	"apache-php7.4": EngineApache,
-	"apache-php8.1": EngineApache,
-	"apache-php8.2": EngineApache,
-	"apache-php8.3": EngineApache,
-	"apache-php8.4": EngineApache,
-	"nginx-php8.1":  EngineNginx,
-	"nginx-php8.2":  EngineNginx,
-	"nginx-php8.3":  EngineNginx,
-	"nginx-php8.4":  EngineNginx,
-	"nginx-static":  EngineStatic,
+	"apache-php5.6":    EngineApache,
+	"apache-php7.4":    EngineApache,
+	"apache-php8.1":    EngineApache,
+	"apache-php8.2":    EngineApache,
+	"apache-php8.3":    EngineApache,
+	"apache-php8.4":    EngineApache,
+	"nginx-php8.1":     EngineNginx,
+	"nginx-php8.2":     EngineNginx,
+	"nginx-php8.3":     EngineNginx,
+	"nginx-php8.4":     EngineNginx,
+	"nginx-static":     EngineStatic,
+	"litespeed-php8.1": EngineLitespeed,
+	"litespeed-php8.2": EngineLitespeed,
+	"litespeed-php8.3": EngineLitespeed,
+	"litespeed-php8.4": EngineLitespeed,
 }
 
 var (

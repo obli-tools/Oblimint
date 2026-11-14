@@ -4,7 +4,7 @@
 #   RUN --mount=type=bind,source=common/smoke,target=/smoke sh /smoke/smoke-test.sh
 # so it never ships in the image. Fails the build when:
 #   - siteconf cannot render the sample configs (site AND placeholder modes);
-#   - httpd -t / nginx -t / php-fpm -t refuse the rendered configs (missing
+#   - httpd -t / nginx -t / php-fpm -t / openlitespeed -t refuse the rendered configs (missing
 #     module, wrong path, syntax error…);
 #   - a required PHP extension is missing;
 #   - the guard does not refuse a main script outside the release (data, /tmp);
@@ -19,6 +19,17 @@ PHP=${OBLIMINT_PHP:?}
 OUT=/tmp/smoke-run
 FPM_FLAG=""
 [ "$PHP" = "1" ] && FPM_FLAG="--php-fpm"
+# litespeed: $SERVER_ROOT/conf is a link to /run/oblimint/lsws (openlitespeed -t
+# reads it there), the pool settings are lsphp/site.ini.
+POOL="$OUT/php-fpm.conf"
+EXEC_RE='s/^php_admin_value\[oblimint\.exec_dirs\] = "\(.*\)"$/\1/p'
+if [ "$ENGINE" = "litespeed" ]; then
+	OUT=/run/oblimint
+	POOL="$OUT/lsphp/site.ini"
+	EXEC_RE='s/^oblimint\.exec_dirs = "\(.*\)"$/\1/p'
+	mkdir -p /tmp/lshttpd /tmp/lsws/logs /tmp/lsws/tmp /tmp/lsws/cgid /tmp/lsws/autoupdate /tmp/lsws/cachedata \
+		/tmp/lsws/admin-tmp /tmp/lsws/admin-logs /tmp/lsws/admin-cgid
+fi
 
 fail() {
 	echo "SMOKE TEST FAILED: $*" >&2
@@ -36,10 +47,27 @@ check() {
 	[ "$mode" = "mode=$expect" ] || fail "$cfg: expected mode=$expect, got $mode"
 	case "$ENGINE" in
 		apache) httpd -t -f "$OUT/httpd.conf" || fail "httpd -t ($cfg, $expect)" ;;
+		litespeed)
+			# As an unprivileged uid, like at run time (as root, -t also checks the
+			# suEXEC ownership of the docroot, never used here).
+			# Exit code: 0 clean, 1 warnings only (e.g. "Uid of the docroot is
+			# smaller than minimum": suEXEC, unused), 2 an [ERROR] (unknown
+			# directive, invalid value, unbalanced block…).
+			chmod -R a+rwX "$OUT" /tmp/lshttpd /tmp/lsws
+			rc=0
+			(cd /tmp && setpriv --reuid=65534 --regid=65534 --clear-groups /usr/local/lsws/bin/openlitespeed -t) || rc=$?
+			[ "$rc" -le 1 ] || fail "openlitespeed -t ($cfg, $expect): exit $rc"
+			;;
 		*) nginx -e stderr -t -c "$OUT/nginx.conf" || fail "nginx -t ($cfg, $expect)" ;;
 	esac
 	if [ "$PHP" = "1" ]; then
-		php-fpm -R -t -y "$OUT/php-fpm.conf" || fail "php-fpm -t ($cfg, $expect)"
+		if [ "$ENGINE" = "litespeed" ]; then
+			[ -s "$POOL" ] || fail "lsphp settings not rendered ($cfg, $expect)"
+			PHP_INI_SCAN_DIR=":$OUT/lsphp" php -r 'exit(ini_get("auto_prepend_file") === "/opt/oblimint/guard.php" ? 0 : 1);' ||
+				fail "lsphp settings not applied ($cfg, $expect)"
+		else
+			php-fpm -R -t -y "$OUT/php-fpm.conf" || fail "php-fpm -t ($cfg, $expect)"
+		fi
 	fi
 	echo "smoke: $cfg ($ENGINE, $expect) OK"
 }
@@ -80,8 +108,12 @@ if [ "$PHP" = "1" ]; then
 	# behind a wrapper is never compiled (not even its functions declared);
 	# release code and the ephemeral code cache still run.
 	php -m | grep -qx oblimint_exec || fail "oblimint_exec extension not loaded"
+	if [ "$ENGINE" = "litespeed" ]; then
+		lsphp -i | grep -q '^oblimint\.exec_dirs ' || fail "oblimint_exec extension not loaded in lsphp"
+		/usr/local/lsws/bin/openlitespeed -v | grep -q 'cache ' || fail "OpenLiteSpeed without the cache module (LSCache)"
+	fi
 	siteconf render --config /smoke/site.json --engine "$ENGINE" --out "$OUT" --php-fpm >/dev/null || fail "siteconf render (exec dirs)"
-	dirs=$(sed -n 's/^php_admin_value\[oblimint\.exec_dirs\] = "\(.*\)"$/\1/p' "$OUT/php-fpm.conf")
+	dirs=$(sed -n "$EXEC_RE" "$POOL")
 	case ":$dirs:" in *:/srv/releases/:*) ;; *) fail "pool exec dirs without the release: '$dirs'" ;; esac
 	case ":$dirs:" in *:/srv/data/cache/:*) ;; *) fail "pool exec dirs without the ephemeral cache: '$dirs'" ;; esac
 	case ":$dirs:" in *:/srv/data/uploads/:* | *:/tmp/*) fail "pool exec dirs allow data or /tmp: '$dirs'" ;; esac
@@ -120,5 +152,5 @@ EOF
 	echo "smoke: PHP extensions + guard + oblimint_exec OK"
 fi
 
-rm -rf "$OUT" /tmp/nginx /tmp/sessions /tmp/smoke-inc.php /srv/releases/* /srv/data/*
+rm -rf "$OUT" /tmp/nginx /tmp/sessions /tmp/smoke-inc.php /tmp/lshttpd /tmp/lsws /srv/releases/* /srv/data/*
 echo "smoke: all checks passed"

@@ -21,6 +21,10 @@ func testOptions(engine Engine, php bool, docrootExists bool) Options {
 		ApacheModulesDir: "/usr/lib/apache2",
 		ApacheMimeTypes:  "/etc/apache2/mime.types",
 		NginxMimeTypes:   "/etc/nginx/mime.types",
+		LswsMimeTypes:    "/usr/local/lsws/share/mime.properties",
+		LsphpBin:         "/usr/local/bin/lsphp",
+		LSCacheDir:       "/var/cache/lscache",
+		LSCacheGen:       "g1",
 	}
 }
 
@@ -58,6 +62,17 @@ func TestGolden(t *testing.T) {
 		{"placeholder-apache", "wordpress.json", EngineApache, true, false, nil},
 		{"placeholder-nginx", "laravel-blog.json", EngineNginx, true, false, nil},
 		{"placeholder-static", "static.json", EngineStatic, false, false, nil},
+		// litespeed bases (OpenLiteSpeed + lsphp, LSCache).
+		{"litespeed-wordpress", "litespeed-wordpress.json", EngineLitespeed, true, true, nil},
+		{"litespeed-prestashop-typed-nocache", "litespeed-prestashop.json", EngineLitespeed, true, true, nil},
+		{"litespeed-laravel-basepath", "litespeed-laravel-blog.json", EngineLitespeed, true, true, nil},
+		{"litespeed-wordpress-data-links", "litespeed-wordpress.json", EngineLitespeed, true, true, []DataLink{
+			{Dir: "wp-content/uploads", DataRel: "wp-content/uploads"},
+			{Dir: "media", DataRel: "wp-content/uploads"},
+			{Dir: "wp-admin", DataRel: "wp-content/uploads/x.htaccess", HtaccessOnly: true},
+			{Dir: "we ird", DataRel: "wp-content/uploads"},
+		}},
+		{"placeholder-litespeed", "litespeed-wordpress.json", EngineLitespeed, true, false, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,23 +106,38 @@ func TestGolden(t *testing.T) {
 					t.Fatal(err)
 				}
 				for name, content := range got {
-					if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+					target := filepath.Join(dir, filepath.FromSlash(name))
+					if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
 						t.Fatal(err)
 					}
 				}
 				return
 			}
-			entries, err := os.ReadDir(dir)
-			if err != nil {
+			if _, err := os.Stat(dir); err != nil {
 				t.Fatalf("golden dir missing (run go test -update): %v", err)
 			}
 			want := map[string]string{}
-			for _, e := range entries {
-				b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-				if err != nil {
-					t.Fatal(err)
+			// Nested names (litespeed: lsws/…, lsphp/…) use '/' like OutFile.Name.
+			err = filepath.WalkDir(dir, func(p string, e os.DirEntry, err error) error {
+				if err != nil || e.IsDir() {
+					return err
 				}
-				want[e.Name()] = strings.ReplaceAll(string(b), "\r\n", "\n")
+				b, err := os.ReadFile(p)
+				if err != nil {
+					return err
+				}
+				rel, err := filepath.Rel(dir, p)
+				if err != nil {
+					return err
+				}
+				want[filepath.ToSlash(rel)] = strings.ReplaceAll(string(b), "\r\n", "\n")
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
 			}
 			for name, w := range want {
 				g, ok := got[name]

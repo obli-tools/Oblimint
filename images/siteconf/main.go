@@ -3,7 +3,7 @@
 // (OBLIMINT_SITE_CONFIG, written by the panel). It is compiled into every site
 // base image and called by oblimint-entrypoint and oblimint-reload.
 //
-//	siteconf render --config <file> --engine apache|nginx|static --out /run/oblimint [--php-fpm] [--no-custom]
+//	siteconf render --config <file> --engine apache|nginx|static|litespeed --out /run/oblimint [--php-fpm] [--no-custom]
 //	siteconf check  --config <file>
 //	siteconf version
 //
@@ -52,7 +52,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func usage(w io.Writer) {
 	fmt.Fprint(w, `usage:
-  siteconf render --config <file> --engine apache|nginx|static --out <dir> [--php-fpm] [--no-custom]
+  siteconf render --config <file> --engine apache|nginx|static|litespeed --out <dir> [--php-fpm] [--no-custom]
   siteconf check  --config <file>
   siteconf version
 `)
@@ -85,7 +85,7 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("render", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", os.Getenv("OBLIMINT_SITE_CONFIG"), "SiteRuntimeConfig JSON file")
-	engine := fs.String("engine", os.Getenv("OBLIMINT_ENGINE"), "apache | nginx | static")
+	engine := fs.String("engine", os.Getenv("OBLIMINT_ENGINE"), "apache | nginx | static | litespeed")
 	out := fs.String("out", "/run/oblimint", "output directory (container path)")
 	phpFpm := fs.Bool("php-fpm", false, "also render the php-fpm pool")
 	noCustom := fs.Bool("no-custom", false, "render without the custom nginx rules (fallback after a failed nginx -t)")
@@ -93,6 +93,10 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 	modules := fs.String("apache-modules", "/usr/lib/apache2", "Apache modules directory")
 	apacheMime := fs.String("apache-mime-types", "/etc/apache2/mime.types", "Apache mime.types")
 	nginxMime := fs.String("nginx-mime-types", "/etc/nginx/mime.types", "nginx mime.types")
+	lswsMime := fs.String("lsws-mime-types", "/usr/local/lsws/share/mime.properties", "OpenLiteSpeed mime.properties (litespeed)")
+	lsphpBin := fs.String("lsphp", "/usr/local/bin/lsphp", "lsphp binary (litespeed)")
+	lscacheDir := fs.String("lscache-dir", defaultLSCacheDir, "LSCache storage tmpfs (litespeed)")
+	lscacheGen := fs.String("lscache-gen", "0", "LSCache generation directory of this render, [A-Za-z0-9]{1,32} (litespeed)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -123,6 +127,10 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 		ApacheModulesDir: *modules,
 		ApacheMimeTypes:  *apacheMime,
 		NginxMimeTypes:   *nginxMime,
+		LswsMimeTypes:    *lswsMime,
+		LsphpBin:         *lsphpBin,
+		LSCacheDir:       *lscacheDir,
+		LSCacheGen:       *lscacheGen,
 	}
 	res, err := Render(cfg, opt)
 	if err != nil {

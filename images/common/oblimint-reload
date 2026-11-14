@@ -8,6 +8,10 @@
 #      are dropped, never fatal);
 #   3. web server: graceful reload; then, only once it succeeded, php-fpm: USR2
 #      (graceful re-exec: opcache + realpath cache flushed, pool config re-read).
+#      litespeed bases: a new lsphp takes the LSAPI socket over (fresh opcache,
+#      new ini), OpenLiteSpeed restarts gracefully (new configuration, .htaccess
+#      rewrite rules re-read, NEW empty LSCache generation = cache purged), the
+#      previous lsphp finishes its requests and exits.
 #
 # Exit 0 on success ("reloaded mode=site|placeholder" on stdout). Failures:
 #   - unusable new configuration, or web server reload refused: the previous
@@ -24,6 +28,19 @@ set -u
 . "${OBLIMINT_LIB:-/usr/local/lib/oblimint/lib.sh}"
 
 check_env
+
+# --cache-only (litespeed bases): only a new, empty LSCache generation (the
+# "purge the cache" action of the panel, and the automatic purge of a nearly
+# full cache store): OpenLiteSpeed restarts gracefully, lsphp is kept.
+CACHE_ONLY=0
+case "${1:-}" in
+	"") ;;
+	--cache-only)
+		[ "$OBLIMINT_ENGINE" = "litespeed" ] || die "--cache-only: this base has no page cache (engine $OBLIMINT_ENGINE)"
+		CACHE_ONLY=1
+		;;
+	*) die "usage: oblimint-reload [--cache-only]" ;;
+esac
 
 LOCK="$OBLIMINT_RUN/reload.lock"
 PREV="$OBLIMINT_RUN/.prev"
@@ -43,21 +60,26 @@ done
 trap 'rm -rf "$LOCK"' EXIT
 trap 'exit 130' INT TERM
 
+# Rendered files (litespeed: lsws/ and lsphp/ directories, cache generation).
+RENDERED="httpd.conf nginx.conf php-fpm.conf custom.conf placeholder www lsws lsphp lscache-gen"
+
 # Backup of the current rendered files (restored if the new ones are unusable).
 rm -rf "$PREV"
 mkdir -p "$PREV"
-for f in httpd.conf nginx.conf php-fpm.conf custom.conf placeholder www; do
+for f in $RENDERED; do
 	[ -e "$OBLIMINT_RUN/$f" ] || [ -L "$OBLIMINT_RUN/$f" ] || continue
 	cp -a "$OBLIMINT_RUN/$f" "$PREV/" || die "cannot back up $OBLIMINT_RUN/$f"
 done
 
 restore() {
-	for f in httpd.conf nginx.conf php-fpm.conf custom.conf placeholder www; do
+	for f in $RENDERED; do
 		rm -rf "$OBLIMINT_RUN/$f"
 		[ -e "$PREV/$f" ] || [ -L "$PREV/$f" ] || continue
 		cp -a "$PREV/$f" "$OBLIMINT_RUN/" || log "cannot restore $f"
 	done
 }
+
+[ "$OBLIMINT_ENGINE" = "litespeed" ] && lscache_free
 
 if ! render_and_test; then
 	restore
@@ -68,6 +90,38 @@ fi
 # (php-fpm not signalled yet) and the previous files are put back, so disk and
 # running processes stay consistent.
 case "$OBLIMINT_ENGINE" in
+	litespeed)
+		# lsphp first: a new lsphp (fresh opcache, new ini) takes the socket
+		# over; then the OpenLiteSpeed graceful restart (new main process and
+		# workers: new configuration, .htaccess re-read, empty page cache
+		# generation); the old lsphp is told to finish (USR1: its children end
+		# their current request). The entrypoint follows both pid files.
+		old_php=$(read_pid "$OBLIMINT_RUN/lsphp.pid") || old_php=""
+		web=$(lsws_pid) || web=""
+		if [ -z "$web" ] || ! alive "$web"; then
+			restore
+			die "reload refused: OpenLiteSpeed is not running (previous configuration kept)"
+		fi
+		if [ "$CACHE_ONLY" = "1" ]; then
+			old_php=""
+		elif ! start_lsphp; then
+			# The configuration is valid (tested) but lsphp died at start: the
+			# previous lsphp no longer owns the socket path. The entrypoint
+			# restarts the container (its lsphp pid is gone).
+			die "reload failed: the new lsphp did not start"
+		fi
+		# Room for the cache index of the new generation (see lscache_reserve).
+		lscache_release_reserve
+		if ! kill -USR1 "$web" 2>/dev/null; then
+			die "reload failed: cannot signal OpenLiteSpeed (pid $web)"
+		fi
+		if [ -n "$old_php" ] && alive "$old_php"; then
+			kill -USR1 "$old_php" 2>/dev/null || true
+		fi
+		rm -rf "$PREV"
+		if [ "$CACHE_ONLY" = "1" ]; then echo "purged lscache"; else echo "reloaded mode=$(current_mode)"; fi
+		exit 0
+		;;
 	apache)
 		# Graceful: children finish their current request, then the new config applies.
 		if ! out=$(httpd -k graceful -f "$OBLIMINT_RUN/httpd.conf" 2>&1); then
