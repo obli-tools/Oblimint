@@ -685,24 +685,70 @@ func accessURLRegex(cfg *SiteConfig, dir string) (string, bool) {
 	return "", false
 }
 
-// fileCheck: a look-ahead body matching the basename of a <Files> pattern
-// (applied right after the last '/'); ok=false when it cannot be written.
+// fileCheck: a look-ahead body matching one path SEGMENT against a <Files>
+// pattern, applied at the start of a segment. The end of the name is "(?=/|$)",
+// not "$": a script is also reached with a PATH_INFO (/wp-config.php/x runs
+// wp-config.php), so the refused name may be followed by "/…". ok=false when
+// it cannot be written.
 func fileCheck(fp *FilePattern) (string, bool) {
 	switch fp.Kind {
 	case FilesName:
-		return bytesRegex(fp.Pattern) + "$", true
+		return bytesRegex(fp.Pattern) + segmentEnd, true
 	case FilesGlob:
-		return globRegex(fp.Pattern) + "$", true
+		return globRegex(fp.Pattern) + segmentEnd, true
 	case FilesRegex:
 		if !fileRegexSafe(fp.Pattern) {
 			return "", false
 		}
-		if strings.HasPrefix(fp.Pattern, "^") {
-			return fp.Pattern[1:], true
+		re := segmentDollar(fp.Pattern)
+		if strings.HasPrefix(re, "^") {
+			return re[1:], true
 		}
-		return "[^/]*?(?:" + fp.Pattern + ")", true
+		return "[^/]*?(?:" + re + ")", true
 	}
 	return "", false
+}
+
+// segmentEnd: the end of a path segment (the end of the URI, or a PATH_INFO).
+const segmentEnd = "(?=/|$)"
+
+// segmentDollar: every "$" anchor of a <FilesMatch> regex (outside escapes and
+// character classes) made the end of the segment.
+func segmentDollar(re string) string {
+	var b strings.Builder
+	inClass := false
+	for i := 0; i < len(re); i++ {
+		c := re[i]
+		switch {
+		case c == '\\' && i+1 < len(re):
+			b.WriteByte(c)
+			i++
+			b.WriteByte(re[i])
+			continue
+		case inClass:
+			if c == ']' {
+				inClass = false
+			}
+		case c == '[':
+			inClass = true
+			// "[^…" and a leading "]" belong to the class.
+			b.WriteByte(c)
+			if i+1 < len(re) && re[i+1] == '^' {
+				i++
+				b.WriteByte(re[i])
+			}
+			if i+1 < len(re) && re[i+1] == ']' {
+				i++
+				b.WriteByte(re[i])
+			}
+			continue
+		case c == '$':
+			b.WriteString(segmentEnd)
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // relUnder: path of p relative to dir ("" = dir is the release root), ok when p is strictly below.
@@ -769,7 +815,7 @@ func lsAccessContexts(cfg *SiteConfig, rules []AccessRule, dataDirs []string) []
 				if !ok {
 					continue
 				}
-				if !deny("exp:(?:^"+dre+bytesRegex(name)+"$)", comment) {
+				if !deny("exp:(?:^"+dre+bytesRegex(name)+"(?:/|$))", comment) {
 					addDir(dirRe, comment)
 				}
 			}
@@ -778,13 +824,16 @@ func lsAccessContexts(cfg *SiteConfig, rules []AccessRule, dataDirs []string) []
 		default:
 			check, ok := fileCheck(r.Files)
 			// Never served when it cannot be written: the whole folder.
-			if !ok || !deny("exp:(?:^"+dirRe+"(?:.*/)?(?="+check+")[^/]*$)", comment) {
+			// Any segment of the URI below the folder: the file itself, or a PATH_INFO after it.
+			if !ok || !deny("exp:(?:^"+dirRe+"(?:.*/)?(?="+check+"))", comment) {
 				addDir(dirRe, comment)
 			}
 		}
 	}
 
-	// Grants: only inside a refused folder, never weaker than a refusal.
+	// Grants: only inside a refused folder, never weaker than a refusal: no
+	// segment of the URI may be a refused file or a script (a PATH_INFO after
+	// x.php or wp-config.php would run it).
 	var negFiles []string
 	for _, r := range rules {
 		if r.Action == AccessAllow || r.Files == nil {
@@ -797,7 +846,11 @@ func lsAccessContexts(cfg *SiteConfig, rules []AccessRule, dataDirs []string) []
 		if !ok {
 			return out
 		}
-		negFiles = append(negFiles, "(?!"+check+")")
+		negFiles = append(negFiles, check)
+	}
+	noSegment := ""
+	if len(negFiles) > 0 {
+		noSegment = "(?!(?:[^/]*/)*(?:" + strings.Join(negFiles, "|") + "))"
 	}
 	for _, g := range grants {
 		if g.Files == nil || len(g.Paths) > 0 || globPath(g.Dir) != g.Dir {
@@ -838,7 +891,8 @@ func lsAccessContexts(cfg *SiteConfig, rules []AccessRule, dataDirs []string) []
 			sort.Strings(subs)
 			excl = "(?!(?:" + strings.Join(subs, "|") + ")(?:/|$))"
 		}
-		uri := "exp:(?:(?:^" + dirRe + excl + `((?!(?:[^/]*/)*\.)(?:.*/)?(?=` + check + ")" + strings.Join(negFiles, "") +
+		uri := "exp:(?:(?:^" + dirRe + excl + `((?!(?:[^/]*/)*\.)` + noSegment +
+			`(?!(?:[^/]*/)*(?i:[^/]*\.(?:php[0-9]?|phar|phtml|pht|phps))/)(?:.*/)?(?=` + check + ")" +
 			`(?!(?i:[^/]*\.(?:php[0-9]|phar|phtml|pht|phps)$))[^/]*)$))`
 		add(lsContext{
 			URI: uri, Location: location + "/$1", Allow: true, NoRewrite: true,

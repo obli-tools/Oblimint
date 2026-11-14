@@ -123,20 +123,18 @@ func accessMatch(t *testing.T, ctx []lsContext, uri string) bool {
 			}
 			continue
 		case strings.Contains(re, "(?="):
-			// (?:^D(?:.*/)?(?=X)[^/]*$): split on the look-ahead.
+			// (?:^D(?:.*/)?(?=X(?=/|$))): the look-ahead closes the regex, so
+			// it matches as X(?:/|$) would.
 			i := strings.Index(re, "(?=")
-			head := re[:i]
-			j := strings.LastIndex(re, ")[^/]*$)")
-			look := re[i+3 : j]
-			if m := regexp.MustCompile(head + ")").FindString(uri); m == "" {
-				continue
+			if !strings.HasSuffix(re, "))") {
+				t.Fatalf("unexpected file context: %s", re)
 			}
-			base := uri[strings.LastIndex(uri, "/")+1:]
-			if regexp.MustCompile("^" + look).MatchString(base) {
-				prefix := regexp.MustCompile(head + "[^/]*$)")
-				if prefix.MatchString(uri) {
-					return true
-				}
+			em := re[:i] + strings.ReplaceAll(re[i+3:len(re)-2], segmentEnd, "(?:/|$)") + ")"
+			if strings.Contains(em, "(?=") {
+				t.Fatalf("look-ahead left in %s", em)
+			}
+			if regexp.MustCompile(em).MatchString(uri) {
+				return true
 			}
 			continue
 		}
@@ -166,26 +164,34 @@ func TestHtaccessContexts(t *testing.T) {
 		}
 	}
 	for uri, want := range map[string]bool{
-		"/private":             true,
-		"/private/":            true,
-		"/private/a/b.php":     true,
-		"/privateer/x":         false,
-		"/xmlrpc.php":          true,
-		"/wp-admin/xmlrpc.php": true,
-		"/wp-config.php":       true,
-		"/wp-config.php.bak":   false,
-		"/admin/index.php":     true,
-		"/logs/2026/app.log":   true,
-		"/logs/app.txt":        false,
-		"/conf/db.ini":         true,
-		"/conf/sub/old.bak":    true,
-		"/conf/readme.md":      false,
-		"/x/secret.txt":        true,
-		"/x/my-secret.txt":     false,
-		"/y/a b.txt":           true,
-		"/index.php":           false,
-		"/hello-world/":        false,
-		"/__oblimint/ping":     false,
+		"/private":              true,
+		"/private/":             true,
+		"/private/a/b.php":      true,
+		"/privateer/x":          false,
+		"/xmlrpc.php":           true,
+		"/wp-admin/xmlrpc.php":  true,
+		"/wp-config.php":        true,
+		"/wp-config.php.bak":    false,
+		"/wp-config.php/":       true, // PATH_INFO: the refused script would run
+		"/wp-config.php/x":      true,
+		"/wp-admin/xmlrpc.php/": true,
+		"/wp-config.php.bak/x":  false,
+		"/logs/app.log/x":       true,
+		"/conf/db.ini/":         true,
+		"/x/secret/y":           true,
+		"/y/a b.txt/":           true,
+		"/admin/index.php":      true,
+		"/logs/2026/app.log":    true,
+		"/logs/app.txt":         false,
+		"/conf/db.ini":          true,
+		"/conf/sub/old.bak":     true,
+		"/conf/readme.md":       false,
+		"/x/secret.txt":         true,
+		"/x/my-secret.txt":      false,
+		"/y/a b.txt":            true,
+		"/index.php":            false,
+		"/hello-world/":         false,
+		"/__oblimint/ping":      false,
 	} {
 		if got := accessMatch(t, ctx, uri); got != want {
 			t.Errorf("%s: refused=%v, want %v", uri, got, want)
@@ -269,8 +275,8 @@ func TestHtaccessWalkAndRender(t *testing.T) {
 		"context exp:(?:^/private(?:/|$)) {",
 		"context exp:(?:^/alias(?:/|$)) {",
 		"context exp:(?:^/admin(?:/|$)) {",
-		`context exp:(?:^/logs/a\.log$) {`,
-		`context exp:(?:^/(?:.*/)?(?=xmlrpc\.php$)[^/]*$) {`,
+		`context exp:(?:^/logs/a\.log(?:/|$)) {`,
+		`context exp:(?:^/(?:.*/)?(?=xmlrpc\.php(?=/|$))) {`,
 	} {
 		if !strings.Contains(vhost, s) {
 			t.Errorf("missing %q in vhost:\n%s", s, vhost)
@@ -308,8 +314,9 @@ func TestHtaccessGrantsInsideRefusedFolder(t *testing.T) {
 	for _, s := range []string{
 		`exp:(?:(?:^/wp-content/plugins/akismet/(?!(?:cache|views)(?:/|$))(`, // sub-folder refused / data path: never re-allowed
 		`(?!(?:[^/]*/)*\.)`, // hidden paths
-		`(?=(form\.js|akismet(-frontend|-admin)?\.js|akismet(-admin)?(-rtl)?\.css)$)`,
-		`(?!xmlrpc\.php$)`, // any <Files> refusal wins
+		`(?=(form\.js|akismet(-frontend|-admin)?\.js|akismet(-admin)?(-rtl)?\.css)(?=/|$))`,
+		`(?!(?:[^/]*/)*(?:xmlrpc\.php(?=/|$)))`,                         // any <Files> refusal wins, on any segment
+		`(?!(?:[^/]*/)*(?i:[^/]*\.(?:php[0-9]?|phar|phtml|pht|phps))/)`, // never a PATH_INFO after a script
 		`(?!(?i:[^/]*\.(?:php[0-9]|phar|phtml|pht|phps)$))`,
 	} {
 		if !strings.Contains(grant.URI, s) {
@@ -330,5 +337,21 @@ func TestHtaccessGrantsInsideRefusedFolder(t *testing.T) {
 	// Grant syntax checked by the regexp engine minus the look-arounds Go lacks.
 	if _, err := regexp.Compile(strings.NewReplacer("(?!", "(", "(?=", "(").Replace(strings.TrimPrefix(grant.URI, "exp:"))); err != nil {
 		t.Errorf("grant regex: %v", err)
+	}
+}
+
+func TestSegmentDollar(t *testing.T) {
+	for in, want := range map[string]string{
+		`\.(ini|log)$`:     `\.(ini|log)(?=/|$)`,
+		`^wp-config\.php$`: `^wp-config\.php(?=/|$)`,
+		`a\$b`:             `a\$b`,
+		`[$]x$`:            `[$]x(?=/|$)`,
+		`[]$]$`:            `[]$](?=/|$)`,
+		`[^]$]`:            `[^]$]`,
+		`^secret`:          `^secret`,
+	} {
+		if got := segmentDollar(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
 	}
 }
