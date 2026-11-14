@@ -17,6 +17,7 @@ import { runtimeService } from '../services/docker/runtime.service';
 //   DELETE /:id/runtime/preview         → SiteRuntimeStatus (sites.manage)
 //   POST   /:id/runtime/restart         → SiteRuntimeStatus (sites.manage)
 //   POST   /:id/runtime/cache/purge     → { purged } (sites.manage; litespeed bases: LSCache emptied)
+//   GET    /:id/runtime/htaccess-access → HtaccessAccessReport (read; litespeed: .htaccess access rules enforced)
 // Access is checked BEFORE the body is parsed (an invisible site is a 404
 // whatever the body).
 
@@ -38,6 +39,7 @@ export const RUNTIME_NEEDS = {
   stopPreview: 'sites.manage',
   restart: 'sites.manage',
   purgeCache: 'sites.manage',
+  htaccessAccess: 'read',
 } as const satisfies Record<string, HostingNeed>;
 
 async function site(req: Request, need: HostingNeed): Promise<SiteRow> {
@@ -104,6 +106,13 @@ router.post('/:id/runtime/restart', async (req, res, next) => {
     const row = await site(req, RUNTIME_NEEDS.restart);
     await runtimeService.restartSite(row.id);
     res.json({ success: true, data: await runtimeService.status(row.id) });
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/runtime/htaccess-access', async (req, res, next) => {
+  try {
+    const row = await site(req, RUNTIME_NEEDS.htaccessAccess);
+    res.json({ success: true, data: await runtimeService.htaccessAccess(row.id) });
   } catch (err) { next(err); }
 });
 

@@ -268,7 +268,7 @@
       "staticBaseWithPhp": "La base statique n'exécute jamais de PHP, or la release contient des fichiers PHP.",
       "unmaintainedRuntime": "Cette branche de PHP ne reçoit plus de correctifs de sécurité.",
       "vulnerableRuntime": "Cette version de PHP a une faille critique connue qui ne sera jamais corrigée (PHPocalypse) : choisissez une version plus récente.",
-      "htaccessPartial": "OpenLiteSpeed ne lit que les règles de réécriture des fichiers .htaccess. Ignoré dans cette version : {{directives}}. Les restrictions d'accès (Require, Deny, Auth…) et les réglages PHP qui y sont écrits ne s'appliqueront plus : protégez ces zones autrement avant de basculer."
+      "htaccessPartial": "OpenLiteSpeed ne lit que les règles de réécriture des fichiers .htaccess ; ignoré dans cette version : {{directives}}. Les règles d’accès (Require, Deny, <Files>…) sont reproduites (403) ; une protection par mot de passe ou par IP (Auth*, Allow from <ip>…) ne peut pas l’être : ce dossier répondra 403 (fermé)."
     },
     "vulnerable": "Version faillée — {{name}}",
     "vulnerableShort": "FAILLÉE",
@@ -291,6 +291,13 @@
       "purge": "Vider le cache",
       "purgeConfirm": "Vider le cache de pages du site ? Les pages sont reconstruites par PHP à leur prochaine visite.",
       "purged": "Cache de pages vidé"
+    },
+    "htaccessAccess": {
+      "title": "Règles d’accès des fichiers .htaccess",
+      "explain": "OpenLiteSpeed ne lit pas les règles d’accès des fichiers .htaccess. Cette base refuse (403) ce qu’ils refusent, et FERME (403) les emplacements protégés d’une façon qu’elle ne sait pas reproduire (mot de passe, liste d’adresses IP) : ils ne sont jamais servis publiquement.",
+      "deny": "403 (reproduit)",
+      "closed": "403 (fermé)",
+      "closedHint": "Fermé : OpenLiteSpeed ne sait pas vérifier un mot de passe ni une liste d’adresses IP d’un .htaccess. Oblimint ne propose pas encore de protection par mot de passe ou par IP pour un chemin de site (les listes d’accès n’existent que pour les hôtes proxy) : pour garder cette protection telle quelle, passez le site sur une base Apache."
     }
   },
   "siteRoutes": {
@@ -503,7 +510,9 @@
         "liveOlderThanBase": "Retour arrière : la release en ligne #{{releaseNumber}} est plus ancienne que la #{{baseNumber}}, dont le staging contient encore le code. Le publier tel quel annulerait le retour arrière : copiez d’abord la release en ligne dans le staging.",
         "baseNotPublished": "Le dernier commit du staging est la release #{{baseNumber}}, qui n’est pas en ligne ({{status}}).",
         "autoPublishHeld": "Publication automatique retenue : le staging remettrait en ligne {{count}} fichier(s) de la release #{{releaseNumber}} annulée par un retour arrière. Publiez manuellement ou copiez la release en ligne dans le staging.",
-        "autoPublishHeldProposal": "Publication automatique retenue : le staging contient des modifications d’une clé en mode proposition, qu’aucun humain n’a approuvées. Approuvez sa proposition, publiez à la main ou copiez la release en ligne dans le staging."
+        "autoPublishHeldProposal": "Publication automatique retenue : le staging contient des modifications d’une clé en mode proposition, qu’aucun humain n’a approuvées. Approuvez sa proposition, publiez à la main ou copiez la release en ligne dans le staging.",
+        "htaccessAccessDeny": "OpenLiteSpeed : {{where}} sera refusé (403), comme le demande « {{directive}} » du .htaccess.",
+        "htaccessAccessClosed": "OpenLiteSpeed : {{where}} sera FERMÉ (403) : « {{directive}} » du .htaccess ne peut pas être reproduit (protection par mot de passe ou par IP). Oblimint ne propose pas encore cette protection pour un chemin de site ; une base Apache la conserve."
       },
       "restore": {
         "running": "Copie de la release #{{number}} dans le staging…",

@@ -146,7 +146,7 @@ test('planner on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: TestConte
   (bad.global as unknown as Record<string, unknown>).bogus = true;
   assert.equal((await call('PUT', `/plans/${plan.id}/choices`, bad)).code, 'validation');
   const badBase = structuredClone(choices);
-  badBase.accounts.acct1.domains!['example.tld'] = { as: 'site', base: 'apache-php5.6' as never };
+  badBase.accounts.acct1.domains!['example.tld'] = { as: 'site', base: 'apache-php5.5' as never };
   assert.equal((await call('PUT', `/plans/${plan.id}/choices`, badBase)).code, 'validation');
   const badPath = structuredClone(choices);
   badPath.accounts.acct1.domains!['example.tld'] = { as: 'site', sourceRoot: '/home/acct1/../../etc' };

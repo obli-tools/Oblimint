@@ -150,8 +150,8 @@ test('lswsIgnoredDirectives: rewrite / LSCache directives and IfModule kept, the
     'Header set X-Frame-Options SAMEORIGIN',
     '   ErrorDocument 404 /404.php',
   ].join('\r\n');
-  assert.deepEqual(lswsIgnoredDirectives(text),
-    ['php_value', 'php_flag', 'AuthType', 'Require', '<Files>', 'Order', 'Deny', 'Header', 'ErrorDocument']);
+  // Access control is handled by the base (reproduced or closed): never listed as ignored.
+  assert.deepEqual(lswsIgnoredDirectives(text), ['php_value', 'php_flag', 'Header', 'ErrorDocument']);
   assert.deepEqual(lswsIgnoredDirectives('RewriteEngine On\nRewriteRule ^x$ /y [R=301,L]\n'), []);
 });
 
@@ -162,7 +162,7 @@ test('scanReleaseFacts with htaccessDirectives: every .htaccess read (bounded), 
   fs.mkdirSync(path.join(root, 'admin'), { recursive: true });
   fs.writeFileSync(path.join(root, 'index.php'), '<?php');
   fs.writeFileSync(path.join(root, '.htaccess'), 'RewriteEngine On\nRewriteRule . /index.php [L]\n');
-  fs.writeFileSync(path.join(root, 'admin', '.htaccess'), 'AuthType Basic\nAuthUserFile /x\nRequire valid-user\n');
+  fs.writeFileSync(path.join(root, 'admin', '.htaccess'), 'AuthType Basic\nAuthUserFile /x\nRequire valid-user\nHeader set X-A b\n');
   fs.writeFileSync(path.join(base, 'outside.htaccess'), 'php_value auto_prepend_file /x\n');
   try {
     fs.mkdirSync(path.join(root, 'linked'));
@@ -171,7 +171,7 @@ test('scanReleaseFacts with htaccessDirectives: every .htaccess read (bounded), 
   const facts = await scanReleaseFacts(root, undefined, { htaccessDirectives: true });
   assert.equal(facts.hasHtaccess, true);
   assert.equal(facts.hasPhp, true);
-  assert.deepEqual(facts.htaccessIgnored, ['AuthType', 'AuthUserFile', 'Require']);
+  assert.deepEqual(facts.htaccessIgnored, ['Header']);
   // Without the option: the historical shape (no extra field).
   assert.deepEqual(await scanReleaseFacts(root), { hasHtaccess: true, hasPhp: true, truncated: false });
 });
@@ -200,4 +200,43 @@ test('migration: a source on LiteSpeed / with LSCache gets the litespeed base of
   // Not a LiteSpeed source: unchanged mapping; a staff choice always wins.
   assert.equal(selectBase(php('8.3'), {}).base, 'apache-php8.3');
   assert.equal(selectBase(php('8.3'), { litespeedSource: true, choice: 'nginx-php8.3' }).base, 'nginx-php8.3');
+});
+
+// ── .htaccess access rules (twin of images/siteconf/htaccess.go) ─────────────
+
+test('parseHtaccessAccess: same verdicts as siteconf (reproduced, closed, nothing)', async () => {
+  const { parseHtaccessAccess } = await import('@oblimint/shared');
+  const one = (s: string) => parseHtaccessAccess(s).map((r) => [r.action, r.directive, r.files?.kind ?? null, r.files?.pattern ?? null]);
+  assert.deepEqual(one('Require all denied\n'), [['deny', 'Require all denied', null, null]]);
+  assert.deepEqual(one('Order Deny,Allow\r\nDeny from all\r\n'), [['deny', 'Deny from all', null, null]]);
+  assert.deepEqual(one('Order allow,deny\n'), [['deny', 'Order allow,deny', null, null]]);
+  assert.deepEqual(one('<Files xmlrpc.php>\norder deny,allow\ndeny from all\n</Files>\n'), [['deny', 'Deny from all', 'name', 'xmlrpc.php']]);
+  assert.deepEqual(one('<FilesMatch "\.(ini|log)$">\nRequire all denied\n</FilesMatch>'), [['deny', 'Require all denied', 'regex', '\.(ini|log)$']]);
+  assert.deepEqual(one('<Files *.log>\nDeny from all\n</Files>'), [['deny', 'Deny from all', 'glob', '*.log']]);
+  assert.deepEqual(one('AuthType Basic\nAuthName "x"\nRequire valid-user\n'), [['closed', 'AuthType Basic', null, null]]);
+  assert.deepEqual(one('Order deny,allow\nDeny from all\nAllow from 203.0.113.9\n'), [['closed', 'Allow from 203.0.113.9', null, null]]);
+  assert.deepEqual(one('Require ip 10.1.2.0/24\n'.replace('10.1', '172.16')), [['closed', 'Require ip 172.16.2.0/24', null, null]]);
+  assert.deepEqual(one('<Limit GET POST>\nDeny from all\n</Limit>\n'), [['closed', '<limit> Deny from all', null, null]]);
+  assert.deepEqual(one('<Files secret.txt>\nDeny from all\n'), [['closed', '<files> non fermé', null, null]]);
+  for (const none of ['RewriteEngine On\nRewriteRule . /index.php [L]\n', 'Require all granted\n', 'Order allow,deny\nAllow from all\n', '<Limit GET>\nRequire all granted\n</Limit>\n', '# Deny from all\n']) {
+    assert.deepEqual(one(none), [], none);
+  }
+});
+
+test('htaccessAccessRules: walks real folders only, one rule per scope, French lines', async (t) => {
+  const { htaccessAccessRules, htaccessAccessLine, basesEnforceHtaccessAccess } = await import('./htaccessAccess');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oblimint-lsws-acc-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const mk = (rel: string, text: string) => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
+  mk('.htaccess', 'RewriteEngine On\n<Files xmlrpc.php>\nDeny from all\n</Files>\n');
+  mk('private/.htaccess', 'Deny from all\n');
+  mk('admin/.htaccess', 'AuthType Basic\nRequire valid-user\n');
+  mk('ok/.htaccess', 'Options -Indexes\n');
+  const { rules, truncated } = await htaccessAccessRules(root);
+  assert.equal(truncated, false);
+  assert.deepEqual(rules.map((r) => [r.dir, r.files?.pattern ?? null, r.action]), [['', 'xmlrpc.php', 'deny'], ['admin', null, 'closed'], ['private', null, 'deny']]);
+  assert.match(htaccessAccessLine(rules[1]), /admin\/ fermé \(403\)/);
+  assert.match(htaccessAccessLine(rules[2]), /private\/ refusé \(403\)/);
+  assert.equal(basesEnforceHtaccessAccess(['apache-php8.3', null]), false);
+  assert.equal(basesEnforceHtaccessAccess(['apache-php8.3', 'litespeed-php8.4']), true);
 });

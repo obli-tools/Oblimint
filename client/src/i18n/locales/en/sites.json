@@ -268,7 +268,7 @@
       "staticBaseWithPhp": "The static base never executes PHP, but the release contains PHP files.",
       "unmaintainedRuntime": "This PHP branch no longer receives security fixes.",
       "vulnerableRuntime": "This PHP version has a known critical flaw that will never be fixed (PHPocalypse): choose a newer version.",
-      "htaccessPartial": "OpenLiteSpeed only reads the rewrite rules of .htaccess files. Ignored in this release: {{directives}}. Access restrictions (Require, Deny, Auth…) and PHP settings written there will no longer apply: protect those areas another way before switching."
+      "htaccessPartial": "OpenLiteSpeed only reads the rewrite rules of .htaccess files; ignored in this release: {{directives}}. Access rules (Require, Deny, <Files>…) are reproduced (403); a password or IP protection (Auth*, Allow from <ip>…) cannot be: that folder will answer 403 (closed)."
     },
     "vulnerable": "Vulnerable version — {{name}}",
     "vulnerableShort": "VULNERABLE",
@@ -291,6 +291,13 @@
       "purge": "Empty the cache",
       "purgeConfirm": "Empty the page cache of the site? Pages are rebuilt by PHP on their next visit.",
       "purged": "Page cache emptied"
+    },
+    "htaccessAccess": {
+      "title": "Access rules of the .htaccess files",
+      "explain": "OpenLiteSpeed does not read the access rules of .htaccess files. This base refuses (403) what they refuse, and CLOSES (403) the places protected in a way it cannot reproduce (password, IP address list): they are never served publicly.",
+      "deny": "403 (reproduced)",
+      "closed": "403 (closed)",
+      "closedHint": "Closed: OpenLiteSpeed cannot check a password or an IP list from a .htaccess. Oblimint offers no password / IP protection for a path of a site yet (access lists exist for the proxy hosts only): to keep this protection as it is, run the site on an Apache base."
     }
   },
   "siteRoutes": {
@@ -503,7 +510,9 @@
         "liveOlderThanBase": "Rollback: the live release #{{releaseNumber}} is older than #{{baseNumber}}, whose code the staging still holds. Publishing it as is would undo the rollback: copy the live release into the staging first.",
         "baseNotPublished": "The staging was last committed as release #{{baseNumber}}, which is not live ({{status}}).",
         "autoPublishHeld": "Automatic publication held: the staging would put back online {{count}} file(s) of release #{{releaseNumber}}, undone by a rollback. Publish manually or copy the live release into the staging.",
-        "autoPublishHeldProposal": "Automatic publication held: the staging holds changes of a key in proposal mode that no human approved. Approve its proposal, publish manually or copy the live release into the staging."
+        "autoPublishHeldProposal": "Automatic publication held: the staging holds changes of a key in proposal mode that no human approved. Approve its proposal, publish manually or copy the live release into the staging.",
+        "htaccessAccessDeny": "OpenLiteSpeed: {{where}} will be refused (403), as « {{directive}} » of the .htaccess asks.",
+        "htaccessAccessClosed": "OpenLiteSpeed: {{where}} will be CLOSED (403): « {{directive}} » of the .htaccess cannot be reproduced (password or IP protection). Oblimint has no such protection for a site path yet; use an Apache base to keep it."
       },
       "restore": {
         "running": "Copying release #{{number}} into the staging…",

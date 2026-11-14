@@ -25,16 +25,19 @@ const HTACCESS_FILES_MAX = 200;
 const HTACCESS_READ_MAX = 256 * 1024;
 
 /**
- * What OpenLiteSpeed honours in a .htaccess: the mod_rewrite directives, the
- * LiteSpeed cache directives (LSCache plugins) and the <IfModule> wrappers
- * around them. Everything else (php_value / php_flag, Auth*, Require / Order /
- * Allow / Deny, <Files…>, Header, ErrorDocument, Options, Expires*, SetEnv,
- * Redirect, AddHandler…) is ignored.
+ * What a litespeed base honours in a .htaccess: the mod_rewrite directives, the
+ * LiteSpeed cache directives (LSCache plugins), the <IfModule> wrappers, and
+ * the access control (Require / Order / Allow / Deny / Auth* / <Files…>: not
+ * read by OpenLiteSpeed, reproduced or CLOSED by the image — htaccessAccess).
+ * Everything else (php_value / php_flag, Header, ErrorDocument, Options,
+ * Expires*, SetEnv, Redirect, AddHandler…) is ignored.
  */
 const LSWS_HTACCESS_SUPPORTED = new Set([
   'rewriteengine', 'rewritebase', 'rewritecond', 'rewriterule', 'rewriteoptions', 'rewritefile',
   'cachelookup', 'cacheengine', 'cachekeymodify', 'cachedisable', 'cacheenable',
   '<ifmodule', '</ifmodule>', '</ifmodule',
+  'require', 'order', 'allow', 'deny', 'satisfy', '<files', '<filesmatch', '<limit', '<limitexcept', '<if', '<else', '<elseif',
+  '<requireall', '<requireany', '<requirenone',
 ]);
 
 /** Distinct directive names of a .htaccess that OpenLiteSpeed ignores (as written, first spelling wins). */
@@ -47,7 +50,7 @@ export function lswsIgnoredDirectives(text: string): string[] {
     if (!m) continue;
     const name = m[1];
     const key = name.toLowerCase();
-    if (LSWS_HTACCESS_SUPPORTED.has(key) || key.startsWith('</')) continue;
+    if (LSWS_HTACCESS_SUPPORTED.has(key) || key.startsWith('</') || /^(auth|anonymous)/.test(key)) continue;
     if (!seen.has(key)) seen.set(key, name.startsWith('<') ? `${name}>` : name);
   }
   return [...seen.values()];
@@ -168,7 +171,7 @@ export function switchWarnings(input: SwitchWarningInput): RuntimeWarning[] {
       const list = ignored?.join(', ') ?? '';
       out.push({
         code: 'htaccessPartial',
-        message: `${tgt.id} (OpenLiteSpeed) only reads the rewrite rules of the .htaccess files${list ? `: ignored here: ${list}` : ''}. Access restrictions (Require, Deny, Auth…) and PHP settings (php_value…) written there no longer apply.`,
+        message: `${tgt.id} (OpenLiteSpeed) only reads the rewrite rules of the .htaccess files${list ? `: ignored here: ${list}` : ''}. Access rules (Require, Deny, <Files>…) are reproduced (403); a password or IP protection (Auth*, Allow from <ip>…) cannot be: that folder is closed (403).`,
         params: { directives: list },
       });
     }

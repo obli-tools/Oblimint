@@ -1304,7 +1304,9 @@ export interface StagingBase {
   matches: 'live' | 'latest' | null;
 }
 
-export type StagingWarningCode = 'stagingMissing' | 'nestedRepo' | 'symlink' | 'moreSymlinks' | 'liveOlderThanBase' | 'baseNotPublished' | 'autoPublishHeld' | 'autoPublishHeldProposal';
+export type StagingWarningCode = 'stagingMissing' | 'nestedRepo' | 'symlink' | 'moreSymlinks' | 'liveOlderThanBase' | 'baseNotPublished' | 'autoPublishHeld' | 'autoPublishHeldProposal'
+  // litespeed bases: an access rule of a .htaccess, reproduced (deny) or closed (403: cannot be reproduced).
+  | 'htaccessAccess';
 
 export interface StagingWarning {
   code: StagingWarningCode;
@@ -1318,6 +1320,10 @@ export interface StagingWarning {
   baseNumber?: number;
   /** baseNotPublished: status of that release. */
   status?: ReleaseStatus;
+  /** htaccessAccess: the deciding directive, the outcome, the files of a <Files> section. */
+  directive?: string;
+  action?: 'deny' | 'closed';
+  files?: string;
 }
 
 // ─── RUNTIME / CONTAINERS (ARCHITECTURE §3.1, §3.6) ──────────────────────────

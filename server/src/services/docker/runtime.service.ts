@@ -1,6 +1,6 @@
 import type Docker from 'dockerode';
 import type {
-  ContainerState, RuntimeContainerStatus, RuntimeRole, RuntimeSwitchCheck, SiteBaseId, SiteRuntimeStatus,
+  ContainerState, HtaccessAccessReport, RuntimeContainerStatus, RuntimeRole, RuntimeSwitchCheck, SiteBaseId, SiteRuntimeStatus,
 } from '@oblimint/shared';
 import { HostingSocketEvents, siteBaseDef } from '@oblimint/shared';
 import { db } from '../../db';
@@ -20,6 +20,7 @@ import { reconcileService, type ReconcileReport } from './reconcile.service';
 import { loadSiteContext, purgeSiteCache, reloadSiteContainers, siteHasPageCache, writeSiteRuntimeConfigs, type SiteContext } from './siteOps';
 import { siteContainerName } from './specs';
 import { scanReleaseFacts, switchWarnings, type ReleaseFacts } from './warnings';
+import { basesEnforceHtaccessAccess, htaccessAccessRules } from './htaccessAccess';
 import { withAccountLock } from './locks';
 import { applyRuntimeChange } from './runtimeSwitch';
 import { siteHealthcheck } from '../releases/release.service';
@@ -210,6 +211,20 @@ export const runtimeService = {
     const r = await purgeSiteCache(docker, ctx);
     if (!r.ok) throw new AppError(502, r.errors.join(' · ').slice(0, 500), 'backendUnavailable');
     return { purged: r.purged.length };
+  },
+
+  /**
+   * Access control of the .htaccess files of the live release, as the litespeed
+   * bases enforce it (reproduced refusals, closed folders). applies=false: no
+   * container of the site runs a litespeed base (Apache honours them, nginx ignores them).
+   */
+  async htaccessAccess(siteId: number): Promise<HtaccessAccessReport> {
+    const ctx = await requireContext(siteId);
+    const applies = basesEnforceHtaccessAccess([ctx.site.base, ctx.site.preview_base, ...ctx.runtimes.map((r) => r.base)]);
+    const number = await currentReleaseNumber(ctx.site.current_release_id);
+    if (number === null) return { applies, releaseNumber: null, rules: [], truncated: false };
+    const r = await htaccessAccessRules(localPaths.release(ctx.account.id, ctx.site.id, number));
+    return { applies, releaseNumber: number, ...r };
   },
 
   /** Restarts the existing containers of the site; missing ones are (re)created by a reconcile pass. */

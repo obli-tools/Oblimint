@@ -29,6 +29,7 @@ import { cardCls, fieldCls, sectionLabelCls } from '../styles';
 import type { SiteTabProps } from './types';
 import { PreviewCard, useSitePreview } from '../previews/PreviewCard';
 import { SiteLscacheCard, siteUsesLscache } from '../SiteLscacheCard';
+import { SiteHtaccessAccessCard } from '../SiteHtaccessAccessCard';
 
 /**
  * Bases the plan of the site's account allows (null = the whole catalog, or
@@ -152,6 +153,7 @@ export function SiteRuntimeTab({ site, onSiteChange, reloadSite, switchTo, onSwi
 
       {/* LSCache page cache (litespeed bases) */}
       {siteUsesLscache(site) && <SiteLscacheCard site={site} canManage={canManage} onSiteChange={onSiteChange} />}
+      {siteUsesLscache(site) && <SiteHtaccessAccessCard site={site} />}
 
       {/* Blue/green preview */}
       {previewBase && (

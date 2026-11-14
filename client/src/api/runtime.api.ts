@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ApiResponse, RuntimeSwitchCheck, RuntimeSwitchRequest, SiteBaseId, SiteCachePurgeResult, SiteRuntimeStatus } from '@oblimint/shared';
+import type { ApiResponse, HtaccessAccessReport, RuntimeSwitchCheck, RuntimeSwitchRequest, SiteBaseId, SiteCachePurgeResult, SiteRuntimeStatus } from '@oblimint/shared';
 
 // /api/sites/:id/runtime — docs/P1-PLAN.md §API. OWNED BY MODULE `ui-sites`.
 export const runtimeApi = {
@@ -31,6 +31,12 @@ export const runtimeApi = {
   /** LSCache (litespeed bases): empties the page cache of the site. */
   async purgeCache(siteId: number): Promise<SiteCachePurgeResult> {
     const res = await apiClient.post<ApiResponse<SiteCachePurgeResult>>(`/sites/${siteId}/runtime/cache/purge`);
+    return res.data.data!;
+  },
+
+  /** litespeed bases: the .htaccess access rules of the live release, as enforced. */
+  async htaccessAccess(siteId: number): Promise<HtaccessAccessReport> {
+    const res = await apiClient.get<ApiResponse<HtaccessAccessReport>>(`/sites/${siteId}/runtime/htaccess-access`);
     return res.data.data!;
   },
 

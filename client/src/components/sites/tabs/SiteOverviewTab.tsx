@@ -504,6 +504,13 @@ function stagingWarningTexts(t: TFunction, staging: StagingStatus): string[] {
   return items.map((w, i) => {
     switch (w.code) {
       case 'stagingMissing': return t('sites.staging.warnings.stagingMissing') || 'The staging folder does not exist yet.';
+      case 'htaccessAccess': {
+        const where = `${w.path ?? '/'}${w.files ? ` (${w.files})` : ''}`;
+        return w.action === 'deny'
+          ? t('sites.staging.warnings.htaccessAccessDeny', { where, directive: w.directive ?? '' }) || `OpenLiteSpeed: ${where} will be refused (403), as « ${w.directive ?? ''} » of the .htaccess asks.`
+          : t('sites.staging.warnings.htaccessAccessClosed', { where, directive: w.directive ?? '' })
+            || `OpenLiteSpeed: ${where} will be CLOSED (403): « ${w.directive ?? ''} » of the .htaccess cannot be reproduced (password or IP protection). Oblimint has no such protection for a site path yet; use an Apache base to keep it.`;
+      }
       case 'nestedRepo': return t('sites.staging.warnings.nestedRepo', { path: w.path ?? '' }) || `Nested git repository (excluded from publications): ${w.path ?? ''}`;
       case 'symlink': return t('sites.staging.warnings.symlink', { path: w.path ?? '' }) || `Symbolic link: ${w.path ?? ''}`;
       case 'moreSymlinks': return t('sites.staging.warnings.moreSymlinks', { count: w.count ?? 0 }) || `… and ${w.count ?? 0} more symbolic link(s)`;

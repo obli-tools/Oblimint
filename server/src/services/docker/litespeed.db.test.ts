@@ -111,6 +111,23 @@ test('litespeed bases: LSCache setting, runtime config, purge, API view, install
   docker.execResults.set(name, { exitCode: 1, stderr: 'boom' });
   await assert.rejects(runtimeService.purgeCache(lsId), (e: { statusCode: number }) => e.statusCode === 502);
 
+  // ── .htaccess access rules of the live release (litespeed: enforced; Apache site: reported, not applied) ──
+  const { localPaths } = await import('../hosting/paths');
+  const relDir = localPaths.release(accountId, lsId, 1);
+  fs.mkdirSync(path.join(relDir, 'private'), { recursive: true });
+  fs.mkdirSync(path.join(relDir, 'admin'), { recursive: true });
+  fs.writeFileSync(path.join(relDir, '.htaccess'), 'RewriteEngine On\n<Files xmlrpc.php>\nDeny from all\n</Files>\n');
+  fs.writeFileSync(path.join(relDir, 'private', '.htaccess'), 'Require all denied\n');
+  fs.writeFileSync(path.join(relDir, 'admin', '.htaccess'), 'AuthType Basic\nRequire valid-user\n');
+  const [rel] = await db('releases').insert({ site_id: lsId, number: 1, status: 'ready', trigger: 'manual', commit_sha: 'a'.repeat(40), on_disk: true }).returning('id');
+  await db('sites').where({ id: lsId }).update({ current_release_id: Number(rel.id ?? rel) });
+  const report = await runtimeService.htaccessAccess(lsId);
+  assert.equal(report.applies, true);
+  assert.equal(report.releaseNumber, 1);
+  assert.deepEqual(report.rules.map((r) => [r.dir, r.files?.pattern ?? null, r.action]), [['', 'xmlrpc.php', 'deny'], ['admin', null, 'closed'], ['private', null, 'deny']]);
+  const apReport = await runtimeService.htaccessAccess(apId);
+  assert.deepEqual([apReport.applies, apReport.releaseNumber, apReport.rules], [false, null, []]);
+
   // ── lsphp settings are never a site variable ──
   for (const name of ['LSPHP_ENABLE_USER_INI', 'LSAPI_CHILDREN', 'PHP_LSAPI_CHILDREN', 'LSWS_HOME']) {
     await assert.rejects(siteEnvService.replace(req, actor, lsId, [{ name, value: '1' }]), (e: { code: string }) => e.code === 'envNameReserved', name);

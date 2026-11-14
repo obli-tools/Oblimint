@@ -50,3 +50,4 @@ export * from './cmsGuard';
 export * from './releaseObservation';
 export * from './containment';
 export * from './appInstall';
+export * from './htaccessAccess';

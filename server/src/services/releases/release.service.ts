@@ -6,7 +6,7 @@ import type { Readable } from 'stream';
 import type { Knex } from 'knex';
 import type {
   CurrentReleaseVia, ProfileDetection, Release, ReleaseDetail, ReleaseDiff, ReleaseDiffFile, ReleaseFileContent, ReleaseFileList, ReleaseLogLine,
-  LeakReport, ReleaseStatus, ReleaseTrigger, ScanSummary, StagingRestoreResult, StagingRestoreRunning, StagingRestoreState, StagingStatus,
+  HtaccessAccessRule, LeakReport, ReleaseStatus, SiteBaseId, ReleaseTrigger, ScanSummary, StagingRestoreResult, StagingRestoreRunning, StagingRestoreState, StagingStatus,
 } from '@oblimint/shared';
 import { detectAppProfile, HostingSocketEvents, normalizeRelPath } from '@oblimint/shared';
 import { db } from '../../db';
@@ -37,6 +37,7 @@ import { getScanner } from './scan';
 import { liveStates } from './liveState';
 import { AUTO_REVERT_TEXT, AUTO_REVERT_TO_TEXT, HEALTHCHECK_FAILED_TEXT, HEALTHCHECK_OK_TEXT, INTERNAL_TEXT, INTERRUPTED_TEXT, LEAK_BLOCKED_TEXT, RELOAD_FAILED_TEXT, STAGING_EMPTY_TEXT } from './outcome';
 import { commitLeakReport, leakLogLines, leakSummaryLine } from '../scan/leakRelease';
+import { basesEnforceHtaccessAccess, htaccessAccessLine, htaccessAccessRules } from '../docker/htaccessAccess';
 import { REFLECT_BATCH, reflectToStaging } from './changeset';
 import { cleanReleasePath, pageEntries, readReleaseBlob, releaseTree, streamReleaseBlob, toFileEntry, utf8SafeCut, type ReleaseTreeEntry } from './releaseFiles';
 
@@ -414,11 +415,32 @@ async function switchAndVerify(ctx: SiteContext, number: number, run: Run): Prom
   await run.step('info', `bascule : current → ${number}`);
   const rl = await reload(ctx, run);
   const hc = rl.ok ? await healthcheck(ctx, run) : { ok: false, error: `${RELOAD_FAILED_TEXT} : ${rl.error}` };
-  if (hc.ok) return null;
+  if (hc.ok) {
+    await logHtaccessAccess(ctx, number, run);
+    return null;
+  }
   switchCurrent(ctx.paths.releases, prevExists ? prevNumber : null, deps.links);
   run.line('warn', prevExists ? `${AUTO_REVERT_TO_TEXT}${prevNumber}` : `${AUTO_REVERT_TEXT} : aucune release précédente`);
   await reload(ctx, run);
   return hc.error ?? HEALTHCHECK_FAILED_TEXT;
+}
+
+/** litespeed bases: the .htaccess access rules of the release now live, as enforced (publication log). Never throws. */
+async function logHtaccessAccess(ctx: SiteContext, number: number, run: Run): Promise<void> {
+  try {
+    if (!(await siteEnforcesHtaccessAccess(ctx.site))) return;
+    const { rules, truncated } = await htaccessAccessRules(path.posix.join(ctx.paths.releases, String(number)));
+    for (const r of rules.slice(0, 20)) run.line(r.action === 'closed' ? 'warn' : 'info', htaccessAccessLine(r));
+    if (rules.length > 20) run.line('info', `OpenLiteSpeed : … et ${rules.length - 20} autre(s) règle(s) d’accès .htaccess`);
+    if (truncated) run.line('warn', 'OpenLiteSpeed : release trop grande, règles d’accès .htaccess non toutes listées (elles sont appliquées)');
+  } catch (err) {
+    logger.debug({ err, siteId: ctx.site.id }, 'Release: .htaccess access report skipped');
+  }
+}
+
+async function siteEnforcesHtaccessAccess(site: Pick<SiteRow, 'id' | 'base' | 'preview_base'>): Promise<boolean> {
+  const runtimes = await db('site_runtimes').where({ site_id: site.id }).pluck('base') as SiteBaseId[];
+  return basesEnforceHtaccessAccess([site.base, site.preview_base, ...runtimes]);
 }
 
 /** A hostd call of the pipeline, retried with backoff while hostd answers busy / cancelled / unavailable. */
@@ -1754,6 +1776,14 @@ export const releaseService = {
     if (held && (!st?.rolledBack || ctx.site.publish_mode === 'manual')) {
       publishScheduler.clearHeld(siteId);
       held = null;
+    }
+    // litespeed bases: what the next publication will refuse or close (403) because of its .htaccess files.
+    if (await siteEnforcesHtaccessAccess(ctx.site).catch(() => false)) {
+      const { rules } = await htaccessAccessRules(ctx.paths.staging).catch(() => ({ rules: [] as HtaccessAccessRule[] }));
+      for (const r of rules.slice(0, 20)) {
+        base.warnings.push(htaccessAccessLine(r));
+        base.warningItems.push({ code: 'htaccessAccess', path: r.dir ? `${r.dir}/` : '/', directive: r.directive, action: r.action, ...(r.files ? { files: r.files.pattern } : {}) });
+      }
     }
     if (held) {
       base.warnings.push(`publication automatique retenue : le staging remettrait en ligne ${held.count} fichier(s) de la release #${held.releaseNumber} annulée par un retour arrière`);
