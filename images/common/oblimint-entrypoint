@@ -146,6 +146,7 @@ while :; do
 		if [ $((ticks % 15)) -eq 0 ]; then
 			lscache_cleanup
 			lscache_reserve
+			[ $((ticks % 900)) -eq 0 ] && lsws_quiet
 			# Nearly full page cache: purged (new generation), at most every 5 min.
 			used=$(lscache_usage)
 			if [ -n "$used" ] && [ "$used" -ge "${OBLIMINT_LSCACHE_PURGE_PCT:-80}" ] && [ $((ticks - last_purge)) -ge 150 ]; then

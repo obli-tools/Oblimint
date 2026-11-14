@@ -266,7 +266,12 @@ Même contrat que les autres bases (port 8080, uid quelconque, racine RO, `CapDr
   (+ `_lscache_vary`, posé par l'extension à la connexion). Pages « private » (visiteur connecté, si
   l'extension le demande) : clé = URL + **tous** les cookies de la requête + adresse du client ; vérifié
   sur WordPress : deux utilisateurs connectés depuis la même adresse n'obtiennent jamais la page de
-  l'autre, un anonyme jamais une page de connecté. Réglage par site `lscache.enabled` (`ls_enabled`).
+  l'autre, un anonyme jamais une page de connecté. Une requête **sans cookie identifiant** (aucun, ou
+  seulement ceux qu'OpenLiteSpeed sort de la clé : `__*`, `has_js`, `_lscache_vary`,
+  `wordpress_test_cookie`, `bb_forum_view`) partagerait l'entrée privée avec toute son adresse IP :
+  `guard.php` (bases litespeed) y change `X-LiteSpeed-Cache-Control: private` en `no-cache` avant
+  l'envoi des en-têtes (rappel d'en-têtes + tampon de sortie de 4 Kio) — jamais stockée ni servie
+  (OpenLiteSpeed n'a pas de réglage pour cela : sa recherche privée suit la publique). Réglage par site `lscache.enabled` (`ls_enabled`).
 - **Chemins de données.** OpenLiteSpeed lit les **règles de réécriture** des `.htaccess` de chaque
   dossier qu'il parcourt pour un contexte préfixe, et un `RewriteEngine On` y réactive la réécriture
   même dans un contexte où elle est désactivée : un `.htaccess` écrit par PHP dans `/srv/data` serait
@@ -284,9 +289,26 @@ Même contrat que les autres bases (port 8080, uid quelconque, racine RO, `CapDr
   variables de site) et OpenLiteSpeed ne transmet aucun `php_value` de `.htaccess` (vérifié).
 - **`.htaccess`** : seules les règles de réécriture (`RewriteEngine/Base/Cond/Rule`) et les directives
   LSCache (`CacheLookup`, `CacheKeyModify`…) s'appliquent, lues au premier accès d'un dossier puis à
-  chaque redémarrage gracieux (donc à chaque publication / retour arrière). **Ignorés** : `php_value`,
-  `Auth*`, `Require`, `Order/Allow/Deny`, `<Files>`, `Header`, `ErrorDocument`, `Options`,
-  `Expires*`, `SetEnv`, `Redirect`… L'avertissement de bascule (`htaccessPartial`) les liste.
+  chaque redémarrage gracieux (donc à chaque publication / retour arrière). Ignorés par OpenLiteSpeed :
+  `php_value`, `Header`, `ErrorDocument`, `Options`, `Expires*`, `SetEnv`, `Redirect`… (l'avertissement de
+  bascule `htaccessPartial` les liste).
+- **Contrôle d'accès des `.htaccess` : fermé par défaut** (`siteconf/htaccess.go`, à chaque rendu donc à
+  chaque publication / retour arrière). OpenLiteSpeed ignore `Require`, `Order/Allow/Deny`, `Auth*`,
+  `<Files>` : la release est parcourue et, pour chaque `.htaccess` (dossiers réels, liens internes
+  rattachés à leur cible, ancêtres du docroot = tout le site) — refus total reproduit (`Require all
+  denied`, `Deny from all`, `Order …` + `Deny from all`) → contexte 403 du dossier et de tout ce qui est
+  dessous ; `<Files x>` / `<Files *.ext>` / `<FilesMatch re>` / `<Files ~ re>` contenant un refus total →
+  403 pour ces fichiers (dossier et sous-dossiers ; une regex qui ne peut pas entrer dans la config est
+  remplacée par la liste des fichiers correspondants de la release, sinon le dossier entier) ; tout ce qui
+  ne se reproduit pas fidèlement (`Auth*` / `Require valid-user`, `Allow from <ip>`, `Require ip|host|env|
+  expr`, `<Limit>`, `<If>`, `<RequireAny>`…, section non fermée, `.htaccess` illisible ou > 256 Kio) →
+  le dossier (ou les fichiers de la section) répond **403**, avertissement sur stderr. Une ré-autorisation
+  plus bas n'est pas reproduite (le refus l'emporte). Exception reproduite : un `<Files>` / `<FilesMatch>` qui ré-autorise
+  tout dans un dossier refusé (ressources d'extension, ex. Akismet : `.js`, `.css`) est servi — jamais un
+  sous-dossier refusé à part, un fichier refusé par une autre règle, un chemin de données, un chemin
+  caché ni une variante PHP (ces contextes, `(?:(?:^…`, sont triés avant les refus). Les contextes commencent par `(?:` : triés avant
+  tous les autres, ils passent devant les chemins de données ; `/__oblimint/` (ping, 404) n'est jamais
+  fermé. Le panel montre ces règles (fiche site, staging avant publication, journal de publication).
 - **Divers** : `HTTPS=on` et `%{HTTPS}` des réécritures suivent `X-Forwarded-Proto` des proxys de
   confiance — tout pair du réseau privé du compte, dernière adresse de `X-Forwarded-For` (`useIpInProxyHeader 4`,
   comme `mod_remoteip` / `real_ip_recursive`) ; `SERVER_PORT` reste `8080` (Apache : port

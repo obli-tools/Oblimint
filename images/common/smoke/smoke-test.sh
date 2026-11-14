@@ -29,6 +29,9 @@ if [ "$ENGINE" = "litespeed" ]; then
 	EXEC_RE='s/^oblimint\.exec_dirs = "\(.*\)"$/\1/p'
 	mkdir -p /tmp/lshttpd /tmp/lsws/logs /tmp/lsws/tmp /tmp/lsws/cgid /tmp/lsws/autoupdate /tmp/lsws/cachedata \
 		/tmp/lsws/admin-tmp /tmp/lsws/admin-logs /tmp/lsws/admin-cgid
+	# No call out during the build either (see lsws_quiet in lib.sh).
+	: >/tmp/lsws/autoupdate/release
+	: >/tmp/lsws/tmp/download-quic-cloud-ips
 fi
 
 fail() {

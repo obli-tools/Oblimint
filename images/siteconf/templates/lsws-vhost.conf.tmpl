@@ -101,6 +101,27 @@ context exp:^/__oblimint/(404\.html)$ {
         enable              0
     }
 }
+{{- if .LsAccess}}
+
+# ── Access control of the .htaccess files (OpenLiteSpeed ignores it) ─────────
+# Reproduced (deny) or closed because it cannot be reproduced (closed): 403;
+# a file a <Files> section re-allows inside a refused folder is served.
+{{- end}}
+{{- range .LsAccess}}
+
+# {{.Comment}}
+context {{lsv .URI}} {
+{{- if .Location}}
+    location                {{lsv .Location}}
+{{- end}}
+    allowBrowse             {{if .Allow}}1{{else}}0{{end}}
+{{- if .NoRewrite}}
+    rewrite {
+        enable              0
+    }
+{{- end}}
+}
+{{- end}}
 {{range .LsGlobal}}
 # {{.Comment}}
 context {{lsv .URI}} {

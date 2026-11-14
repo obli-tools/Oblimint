@@ -57,12 +57,26 @@ prepare_dirs() {
 			/tmp/lsws/cgid /tmp/lsws/autoupdate /tmp/lsws/cachedata /tmp/lsws/admin-tmp \
 			/tmp/lsws/admin-logs /tmp/lsws/admin-cgid ||
 			die "cannot create the OpenLiteSpeed runtime directories under $OBLIMINT_RUN and /tmp"
+		lsws_quiet
 		if mkdir -p "$OBLIMINT_LSCACHE_DIR/.probe" 2>/dev/null; then
 			rmdir "$OBLIMINT_LSCACHE_DIR/.probe" 2>/dev/null || true
 		else
 			log "$OBLIMINT_LSCACHE_DIR is not writable (no LSCache tmpfs?): pages are not cached"
 		fi
 	fi
+}
+
+# OpenLiteSpeed calls out from its first worker every 30 minutes, and once
+# while loading its configuration: a version check (openlitespeed.org, with the
+# version and the OS) and the QUIC.cloud IP list (quic.cloud) — unless
+# $SERVER_ROOT/autoupdate/release and $SERVER_ROOT/tmp/download-quic-cloud-ips
+# are less than a day old. Both are kept fresh and EMPTY (no CDN address is
+# ever trusted): nothing is contacted. Without it, a site whose network cannot
+# reach them waited 10 s at every start and every reload (connect timeout).
+lsws_quiet() {
+	for f in /tmp/lsws/autoupdate/release /tmp/lsws/tmp/download-quic-cloud-ips; do
+		: >"$f" 2>/dev/null || log "cannot write $f: OpenLiteSpeed may call out"
+	done
 }
 
 # litespeed: a fresh LSCache generation directory name for every render: the

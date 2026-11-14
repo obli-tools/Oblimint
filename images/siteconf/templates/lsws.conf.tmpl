@@ -30,6 +30,8 @@ disableWebAdmin             1
 # (4: the edge appends the address it saw, like mod_remoteip / real_ip_recursive
 # take the rightmost one), and %{HTTPS} of the rewrite rules follows the proto.
 useIpInProxyHeader          4
+# Never trust (nor download) the QUIC.cloud / Cloudflare address lists.
+autoDetectCdn               0
 
 # Logs: FIFOs created by the entrypoint and copied to the container's stderr
 # (errors, with the lsphp output) / stdout (accesses): OpenLiteSpeed detaches

@@ -295,6 +295,21 @@ func litespeedData(d *templateData, cfg *SiteConfig, opt Options, views []dataPa
 		return nil, err
 	}
 	d.LsData = data
+	// Access control of the .htaccess files (htaccess.go): reproduced or closed.
+	if opt.HtaccessAccess != nil {
+		rules, w := opt.HtaccessAccess(cfg.Docroot)
+		warnings = append(warnings, w...)
+		dataDirs := make([]string, 0, len(cfg.DataPaths)+len(links))
+		for _, p := range cfg.DataPaths {
+			dataDirs = append(dataDirs, p.Path)
+		}
+		for _, k := range links {
+			if !k.HtaccessOnly && k.Dir != "" {
+				dataDirs = append(dataDirs, k.Dir)
+			}
+		}
+		d.LsAccess = lsAccessContexts(cfg, rules, dataDirs)
+	}
 	return warnings, nil
 }
 

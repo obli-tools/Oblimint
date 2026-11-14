@@ -49,3 +49,45 @@ call_user_func(static function () {
     }
     exit(PHP_SAPI === 'cli' ? 1 : 0);
 });
+
+/*
+ * litespeed bases (OpenLiteSpeed LSCache): a page the application marks
+ * "X-LiteSpeed-Cache-Control: private" is stored per visitor under a key made
+ * of the request's cookies + the client address. A request without any
+ * identifying cookie (none, or only the ones OpenLiteSpeed leaves out of that
+ * key: "__*", has_js, _lscache_vary, wordpress_test_cookie, bb_forum_view)
+ * would share that entry with every visitor of the same address (office NAT,
+ * mobile carrier): such a response is turned into "no-cache" — never stored
+ * as private, so never served from the private cache. OpenLiteSpeed has no
+ * setting for this (its private lookup follows the public one), hence here,
+ * just before the headers leave PHP (header callback, and a 4 KiB output
+ * buffer in case the application replaces that callback).
+ */
+call_user_func(static function () {
+    if (PHP_SAPI === 'cli' || getenv('OBLIMINT_ENGINE') !== 'litespeed') {
+        return;
+    }
+    $ignored = array('has_js', '_lscache_vary', 'wordpress_test_cookie', 'bb_forum_view');
+    foreach (array_keys($_COOKIE) as $name) {
+        $name = (string) $name;
+        if (strncmp($name, '__', 2) !== 0 && !in_array($name, $ignored, true)) {
+            return; // an identifying cookie: the private key is per visitor
+        }
+    }
+    $fix = static function () {
+        if (headers_sent()) {
+            return;
+        }
+        foreach (headers_list() as $h) {
+            if (stripos($h, 'x-litespeed-cache-control:') === 0 && stripos($h, 'private') !== false) {
+                header('X-LiteSpeed-Cache-Control: no-cache');
+                return;
+            }
+        }
+    };
+    header_register_callback($fix);
+    ob_start(static function ($buffer) use ($fix) {
+        $fix();
+        return $buffer;
+    }, 4096);
+});

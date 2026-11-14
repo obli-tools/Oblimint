@@ -124,6 +124,7 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 		},
 		// Release links into /srv/data (Apache only: per-directory overrides).
 		DataLinks:        newFSProbe(root).DataLinks,
+		HtaccessAccess:   newFSProbe(root).HtaccessAccess,
 		ApacheModulesDir: *modules,
 		ApacheMimeTypes:  *apacheMime,
 		NginxMimeTypes:   *nginxMime,

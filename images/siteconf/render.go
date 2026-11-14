@@ -49,6 +49,8 @@ type Options struct {
 	LsphpBin      string
 	LSCacheDir    string
 	LSCacheGen    string
+	// HtaccessAccess: refusals of the release .htaccess files (litespeed; nil = none).
+	HtaccessAccess func(docroot string) ([]AccessRule, []string)
 }
 
 // OutFile is a file to write under Options.Out (Name is relative, no '/').
@@ -186,6 +188,7 @@ type templateData struct {
 	LsDocRoot     string
 	LsData        []lsDataView
 	LsGlobal      []lsContext
+	LsAccess      []lsContext
 	LsphpSocket   string
 	LsphpBin      string
 	LsphpChildren int
