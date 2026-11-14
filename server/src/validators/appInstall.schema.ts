@@ -19,6 +19,8 @@ export const appInstallStartSchema = z.object({
   adminEmail: z.string().trim().email().max(200),
   locale: z.string().regex(APP_INSTALL_LOCALE_RE, 'A WordPress locale such as en_US or fr_FR').optional(),
   previewFirst: z.boolean().optional(),
+  /** litespeed bases: the LiteSpeed Cache plugin (default true). */
+  lscachePlugin: z.boolean().optional(),
 }).strict();
 
 export type AppInstallStartBody = z.infer<typeof appInstallStartSchema>;

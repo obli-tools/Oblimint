@@ -5,7 +5,7 @@ import { SITE_BASES, type SiteBaseDef, type SiteBaseId } from '@oblimint/shared'
 import { cn } from '@/utils/cn';
 import { PhpBranchBadges, Pill } from './SiteBadges';
 
-type Group = 'apache' | 'nginx' | 'static';
+type Group = 'apache' | 'nginx' | 'litespeed' | 'static';
 
 function groupOf(def: SiteBaseDef): Group {
   if (def.php === null) return 'static';
@@ -31,6 +31,7 @@ export function BasePicker({ value, onSelect, markers, isDisabled, compact = fal
   const groups: Array<{ id: Group; label: string; hint: string }> = [
     { id: 'apache', label: 'Apache + PHP-FPM', hint: t('runtime.groups.apacheHint') || 'Honours .htaccess files: the usual choice for WordPress, PrestaShop, Joomla.' },
     { id: 'nginx', label: 'nginx + PHP-FPM', hint: t('runtime.groups.nginxHint') || 'Faster, but ignores .htaccess files: rewrites go in the custom nginx rules.' },
+    { id: 'litespeed', label: 'OpenLiteSpeed + LSPHP', hint: t('runtime.groups.litespeedHint') || 'LSCache page cache (LSCache plugins); reads only the rewrite rules of .htaccess files.' },
     { id: 'static', label: t('runtime.groups.static') || 'Static (nginx)', hint: t('runtime.groups.staticHint') || 'HTML, CSS, JS and media only: PHP is never executed.' },
   ];
 
@@ -71,6 +72,12 @@ export function BasePicker({ value, onSelect, markers, isDisabled, compact = fal
                     <span className="font-mono text-[10px] text-text-muted">{b.id}</span>
                     <span className="flex flex-wrap gap-1">
                       {b.htaccess && <Pill tone="muted" className="text-[10px]">.htaccess</Pill>}
+                      {!b.htaccess && b.htaccessRewrite && (
+                        <Pill tone="muted" className="text-[10px]" title={t('runtime.htaccessRewriteHint') || 'Only the rewrite rules of .htaccess files are applied.'}>
+                          {t('runtime.htaccessRewrite') || '.htaccess (rewrite)'}
+                        </Pill>
+                      )}
+                      {b.lscache && <Pill tone="blue" className="text-[10px]">LSCache</Pill>}
                       {b.php && <PhpBranchBadges branch={b.php} compact />}
                       {markers?.(b.id)}
                     </span>

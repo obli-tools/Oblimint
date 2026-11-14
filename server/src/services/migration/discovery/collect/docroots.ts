@@ -18,6 +18,8 @@ import { effectivePhp } from './web';
 export const HTACCESS_DEPTH = 4;
 const PUBLIC_LAYOUT = new Set(['public', 'web', 'www']);
 const EXTRA_MARKERS = ['.git', 'package.json', 'composer.json', '.htaccess', '.user.ini'];
+/** LiteSpeed Cache plugin of WordPress: the site relies on LSCache (a litespeed base is proposed). */
+export const LSCACHE_PLUGIN_MARKER = 'wp-content/plugins/litespeed-cache';
 export const CWP_HOME_INTERNALS = new Set(['.conf', 'backupcwp', 'cwp_stats', '.trash', '.pki', 'tmp', 'logs', 'public_html', 'mail', 'etc', 'ssl']);
 
 export function appMarkers(): string[] {
@@ -49,7 +51,7 @@ export async function phaseDocroots(ctx: DiscoveryContext): Promise<void> {
   }
 
   // Markers (docroot + parent of public/ web/ www/).
-  const markers = [...appMarkers(), ...EXTRA_MARKERS];
+  const markers = [...appMarkers(), ...EXTRA_MARKERS, LSCACHE_PLUGIN_MARKER];
   const statPaths: string[] = [];
   for (const root of present) {
     for (const m of markers) statPaths.push(`${root}/${m}`);
@@ -82,6 +84,7 @@ export async function phaseDocroots(ctx: DiscoveryContext): Promise<void> {
       hasComposerJson: has(`${root}/composer.json`) || (parent !== null && has(`${parent}/composer.json`)),
       htaccess: has(`${root}/.htaccess`),
       userIni: has(`${root}/.user.ini`),
+      lscache: has(`${root}/${LSCACHE_PLUGIN_MARKER}`),
     });
     if (has(`${root}/.git`) || (parent !== null && has(`${parent}/.git`))) {
       const repo = has(`${root}/.git`) ? root : (parent as string);

@@ -157,7 +157,7 @@ const qPath = (req: Request) => relPath.parse(typeof req.query.path === 'string'
 
 const createSchema = siteCreateSchema.omit({ accountId: true });
 // The platform-only settings (custom nginx, base path, profile) stay in the panel.
-const updateSchema = siteUpdateSchema.pick({ name: true, docroot: true, publishMode: true, publishDebounceSec: true, healthcheckPath: true, php: true });
+const updateSchema = siteUpdateSchema.pick({ name: true, docroot: true, publishMode: true, publishDebounceSec: true, healthcheckPath: true, php: true, lscacheEnabled: true });
 const pathBody = z.object({ path: relPath.min(1), area: area.optional() }).strict();
 const pathsBody = z.object({ paths: z.array(relPath.min(1)).min(1).max(1000), area: area.optional() }).strict();
 const itemsBody = z.object({
@@ -348,6 +348,7 @@ router.post('/sites/:id/files/extract', h(async (req, res) => {
   ok(res, await keyApi.extract(ctxOf(req), req, siteId(req), areaOf(b.area), b.path, b.to, b.overwrite === true));
 }));
 
+router.post('/sites/:id/cache/purge', heavyOpLimiter, h(async (req, res) => ok(res, await keyApi.purgeCache(ctxOf(req), req, siteId(req)))));
 router.get('/sites/:id/staging', h(async (req, res) => ok(res, await keyApi.stagingStatus(ctxOf(req), siteId(req)))));
 router.get('/sites/:id/leak-check', heavyOpLimiter, h(async (req, res) => ok(res, await keyApi.checkLeaks(ctxOf(req), siteId(req)))));
 router.post('/sites/:id/publish', h(async (req, res) => {

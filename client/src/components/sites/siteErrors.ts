@@ -31,6 +31,7 @@ const SITE_ERROR_FALLBACKS = {
   releaseIsCurrent: 'This release is already the current one.',
   releaseNotReady: 'This release is not published (or not committed yet).',
   noPreview: 'This site has no preview running.',
+  noPageCache: 'This site runs no base with a page cache (LSCache: OpenLiteSpeed bases).',
   invalidPhpSettings: "PHP settings out of the allowed ranges (memory_limit is also capped by the plan's memory).",
   invalidCustomNginx: 'Invalid custom nginx rules (16 KiB max, no NUL character).',
   accountDeleting: 'The hosting account is being deleted.',

@@ -16,6 +16,7 @@ import { runtimeService } from '../services/docker/runtime.service';
 //   POST   /:id/runtime/preview/promote → SiteRuntimeStatus (sites.manage)
 //   DELETE /:id/runtime/preview         → SiteRuntimeStatus (sites.manage)
 //   POST   /:id/runtime/restart         → SiteRuntimeStatus (sites.manage)
+//   POST   /:id/runtime/cache/purge     → { purged } (sites.manage; litespeed bases: LSCache emptied)
 // Access is checked BEFORE the body is parsed (an invisible site is a 404
 // whatever the body).
 
@@ -36,6 +37,7 @@ export const RUNTIME_NEEDS = {
   promote: 'sites.manage',
   stopPreview: 'sites.manage',
   restart: 'sites.manage',
+  purgeCache: 'sites.manage',
 } as const satisfies Record<string, HostingNeed>;
 
 async function site(req: Request, need: HostingNeed): Promise<SiteRow> {
@@ -102,6 +104,15 @@ router.post('/:id/runtime/restart', async (req, res, next) => {
     const row = await site(req, RUNTIME_NEEDS.restart);
     await runtimeService.restartSite(row.id);
     res.json({ success: true, data: await runtimeService.status(row.id) });
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/runtime/cache/purge', heavyOpLimiter, async (req, res, next) => {
+  try {
+    const row = await site(req, RUNTIME_NEEDS.purgeCache);
+    const result = await runtimeService.purgeCache(row.id);
+    await audit(req, row, 'runtime.cache_purge', { purged: result.purged });
+    res.json({ success: true, data: result });
   } catch (err) { next(err); }
 });
 

@@ -202,7 +202,9 @@
       "outsideTooLarge": "An entry outside the docroot cited by the code is too large to be copied automatically: attach it in the site options if the site needs it.",
       "outsideInvalid": "An entry outside the docroot cannot be copied with this site (another site, outside the home, unknown entry or unsupported name).",
       "absoluteHomePaths": "The code writes absolute /home/<user>/ paths: they do not exist on Oblimint, change them to relative paths.",
-      "homeLeftovers": "Entries of the home cited by no site are not migrated (archives, copies…): attach one to a site if it is needed."
+      "homeLeftovers": "Entries of the home cited by no site are not migrated (archives, copies…): attach one to a site if it is needed.",
+      "litespeedSource": "Site served by LiteSpeed / LSCache on the source: OpenLiteSpeed + LSCache base proposed.",
+      "litespeedBaseHtaccess": "OpenLiteSpeed base: only the rewrite rules of .htaccess files apply (access restrictions, authentication and PHP settings are ignored)."
     },
     "commands": {
       "allPhases": "Every phase",

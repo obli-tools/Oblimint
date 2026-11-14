@@ -198,7 +198,8 @@
       "apacheHint": "Prend en compte les fichiers .htaccess : le choix habituel pour WordPress, PrestaShop, Joomla.",
       "nginxHint": "Plus rapide, mais ignore les .htaccess : les réécritures vont dans les règles nginx personnalisées.",
       "static": "Statique (nginx)",
-      "staticHint": "HTML, CSS, JS et médias uniquement : le PHP n'est jamais exécuté."
+      "staticHint": "HTML, CSS, JS et médias uniquement : le PHP n'est jamais exécuté.",
+      "litespeedHint": "Cache de pages LSCache (extensions LSCache des CMS) ; seules les règles de réécriture des fichiers .htaccess sont appliquées."
     },
     "noContainer": "Aucun conteneur pour le moment (site en cours de provisionnement ou arrêté).",
     "notInPlan": "hors forfait",
@@ -266,7 +267,8 @@
       "phpMajorChange": "Changement de version majeure de PHP : vérifiez la compatibilité de l'application et de ses extensions (prévisualisation conseillée).",
       "staticBaseWithPhp": "La base statique n'exécute jamais de PHP, or la release contient des fichiers PHP.",
       "unmaintainedRuntime": "Cette branche de PHP ne reçoit plus de correctifs de sécurité.",
-      "vulnerableRuntime": "Cette version de PHP a une faille critique connue qui ne sera jamais corrigée (PHPocalypse) : choisissez une version plus récente."
+      "vulnerableRuntime": "Cette version de PHP a une faille critique connue qui ne sera jamais corrigée (PHPocalypse) : choisissez une version plus récente.",
+      "htaccessPartial": "OpenLiteSpeed ne lit que les règles de réécriture des fichiers .htaccess. Ignoré dans cette version : {{directives}}. Les restrictions d'accès (Require, Deny, Auth…) et les réglages PHP qui y sont écrits ne s'appliqueront plus : protégez ces zones autrement avant de basculer."
     },
     "vulnerable": "Version faillée — {{name}}",
     "vulnerableShort": "FAILLÉE",
@@ -276,7 +278,20 @@
     "eolSoon": "Fin de vie le {{date}}",
     "eolSoonShort": "Fin de vie proche",
     "eolSoonHint": "Cette branche de PHP ne recevra plus de correctifs de sécurité à partir du {{date}} : prévoyez le passage à une version plus récente.",
-    "phpRunning": "Version de PHP exécutée dans le conteneur"
+    "phpRunning": "Version de PHP exécutée dans le conteneur",
+    "htaccessRewrite": ".htaccess (réécriture)",
+    "htaccessRewriteHint": "Seules les règles de réécriture des fichiers .htaccess sont appliquées (ni règles d'accès, ni authentification, ni réglages PHP).",
+    "lscache": {
+      "title": "Cache de pages (LSCache)",
+      "explain": "OpenLiteSpeed garde les pages que l'application déclare cachables (extension LSCache de WordPress, PrestaShop, Joomla…) et les sert sans exécuter PHP. Les pages des visiteurs connectés ne sont jamais partagées. Le cache est vidé à chaque publication et à chaque retour arrière.",
+      "toggle": "Servir les pages en cache",
+      "toggleHint": "Désactivé : chaque requête exécute PHP (les en-têtes de l'extension sont ignorés).",
+      "enabled": "Cache de pages activé",
+      "disabled": "Cache de pages désactivé",
+      "purge": "Vider le cache",
+      "purgeConfirm": "Vider le cache de pages du site ? Les pages sont reconstruites par PHP à leur prochaine visite.",
+      "purged": "Cache de pages vidé"
+    }
   },
   "siteRoutes": {
     "basePathNote": "Un sous-site doit savoir où il vit : le chemin de base de ce site est {{basePath}} (onglet Configuration).",
@@ -402,7 +417,8 @@
       "appInstallBusy": "Trop d'installations en cours : réessayez dans un instant.",
       "appInstallRights": "Installer une application demande aussi les droits de gérer les bases et de publier.",
       "appInstallState": "Cette installation n'est plus dans un état qui le permet.",
-      "appInstallSiteGone": "Le site de cette installation a été supprimé."
+      "appInstallSiteGone": "Le site de cette installation a été supprimé.",
+      "noPageCache": "Ce site n'utilise aucune base avec cache de pages (LSCache : bases OpenLiteSpeed)."
     },
     "fields": {
       "account": "Compte d'hébergement",
@@ -582,7 +598,9 @@
         "install": "Installation de WordPress",
         "preview": "Aperçu",
         "publish": "Publication de la release 1"
-      }
+      },
+      "lscachePlugin": "Installer l’extension LiteSpeed Cache",
+      "lscachePluginHint": "Pilote le cache de pages OpenLiteSpeed (LSCache) de cette base. Vérifiée avec sa liste officielle de fichiers ; installée et activée dans la release 1."
     }
   },
   "leakGuard": {

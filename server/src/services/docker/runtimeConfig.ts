@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import type { DataPathPolicy, PhpSettings, RuntimeRole, SiteBaseId, SiteRuntimeConfig } from '@oblimint/shared';
+import { siteBaseDef, type DataPathPolicy, type PhpSettings, type RuntimeRole, type SiteBaseId, type SiteRuntimeConfig } from '@oblimint/shared';
 import { CONTAINER_PATHS, runtimeConfigFile } from '../hosting/paths';
 import { json } from '../hosting/rows';
 
@@ -30,6 +30,8 @@ export interface RuntimeConfigSite {
   phpSettings: unknown;
   customNginx: string | null;
   healthcheckPath: string;
+  /** sites.lscache_enabled (litespeed bases; absent = enabled). */
+  lscacheEnabled?: boolean;
 }
 
 export interface RuntimeConfigInput {
@@ -94,7 +96,12 @@ function commonConfig(input: Pick<RuntimeConfigInput, 'site' | 'dataPaths'>): Om
  * no served prefix), written to previews/<id>/runtime/preview.json.
  */
 export function buildPreviewRuntimeConfig(input: Pick<RuntimeConfigInput, 'site' | 'dataPaths'>, base: SiteBaseId): RuntimeConfigFile {
-  return { file: runtimeConfigFile('preview', null), config: { ...commonConfig(input), role: 'preview', base, servedPrefixes: [] } };
+  return { file: runtimeConfigFile('preview', null), config: { ...commonConfig(input), role: 'preview', base, servedPrefixes: [], ...lscacheField(input.site, base) } };
+}
+
+/** litespeed bases only: the LSCache switch of the site (the other configs keep their exact bytes). */
+export function lscacheField(site: Pick<RuntimeConfigSite, 'lscacheEnabled'>, base: SiteBaseId): Pick<SiteRuntimeConfig, 'lscache'> {
+  return siteBaseDef(base).engine === 'litespeed' ? { lscache: { enabled: site.lscacheEnabled !== false } } : {};
 }
 
 /** One SiteRuntimeConfig per container of the site (primary, secondaries, preview). */
@@ -124,7 +131,7 @@ export function buildRuntimeConfigs(input: RuntimeConfigInput): RuntimeConfigFil
   };
   const make = (role: RuntimeRole, base: SiteBaseId, runtimeId: number | null, servedPrefixes: string[]): RuntimeConfigFile => ({
     file: runtimeConfigFile(role, runtimeId),
-    config: { ...common, role, base, servedPrefixes },
+    config: { ...common, role, base, servedPrefixes, ...lscacheField(site, base) },
   });
 
   const out: RuntimeConfigFile[] = [make('primary', site.base, null, [])];

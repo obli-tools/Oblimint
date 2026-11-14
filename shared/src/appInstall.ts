@@ -63,6 +63,12 @@ export interface AppInstallStartRequest {
   locale?: string;
   /** Stop in a preview (staging + disposable copy of the database) before publishing. */
   previewFirst?: boolean;
+  /**
+   * litespeed bases (OpenLiteSpeed): install and activate the LiteSpeed Cache
+   * plugin, verified against its official file list (default true; ignored on
+   * the other bases).
+   */
+  lscachePlugin?: boolean;
 }
 
 export interface AppInstallLogLine {
@@ -90,6 +96,8 @@ export interface AppInstall {
   adminUser: string;
   adminEmail: string;
   previewFirst: boolean;
+  /** The LiteSpeed Cache plugin is part of the installation (false when it could not be verified). */
+  lscachePlugin: boolean;
   previewId: number | null;
   releaseId: number | null;
   releaseNumber: number | null;

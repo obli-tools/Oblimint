@@ -39,6 +39,7 @@ const OTHER_SNAKE = new Set([
   'preview_ready', // an installation status (install_app)
   'insufficient_data', // a release verdict (observation after publication)
   'unix_socket', // PDO DSN parameter
+  'php_value', // .htaccess directive OpenLiteSpeed ignores (litespeed bases)
   'id_rsa', 'node_modules', 'pg_advisory_lock', // file and folder names, PostgreSQL function
   'host_ip', // compose key of a published port (§5 « Public ports »)
 ]);

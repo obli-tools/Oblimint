@@ -1,7 +1,7 @@
 import type Docker from 'dockerode';
-import type { PlanLimits } from '@oblimint/shared';
+import { siteBaseDef, type PlanLimits } from '@oblimint/shared';
 import { db } from '../../db';
-import { LABELS } from '../hosting/naming';
+import { LABELS, previewContainer, secondaryContainer, siteContainer } from '../hosting/naming';
 import { localPaths } from '../hosting/paths';
 import { planLimits, type AccountRow, type DataPathRow, type SiteRow, type SiteRuntimeRow } from '../hosting/rows';
 import { errText } from '../setup/docker';
@@ -52,6 +52,7 @@ export function runtimeConfigInput(ctx: Pick<SiteContext, 'site' | 'runtimes' | 
       phpSettings: s.php_settings,
       customNginx: s.custom_nginx,
       healthcheckPath: s.healthcheck_path,
+      lscacheEnabled: s.lscache_enabled !== false,
     },
     runtimes: ctx.runtimes.map((r) => ({ id: r.id, base: r.base })),
     dataPaths: ctx.dataPaths.map((d) => ({ path: d.path, policy: d.policy, allowedExtensions: d.allowed_extensions })),
@@ -95,4 +96,44 @@ export async function reloadSiteContainers(docker: Docker, siteId: number, skip:
     }
   }
   return { ok: errors.length === 0, errors, reloaded };
+}
+
+/** Containers of a site (primary, secondaries, preview) with the base each one runs. */
+export function siteContainerBases(ctx: Pick<SiteContext, 'site' | 'runtimes'>): Array<{ name: string; base: SiteRow['base'] }> {
+  return [
+    { name: siteContainer(ctx.site.id), base: ctx.site.base },
+    ...ctx.runtimes.map((r) => ({ name: secondaryContainer(ctx.site.id, r.id), base: r.base })),
+    ...(ctx.site.preview_base ? [{ name: previewContainer(ctx.site.id), base: ctx.site.preview_base }] : []),
+  ];
+}
+
+/** The site has at least one container on a base with a page cache (litespeed). */
+export function siteHasPageCache(ctx: Pick<SiteContext, 'site' | 'runtimes'>): boolean {
+  return siteContainerBases(ctx).some((c) => siteBaseDef(c.base).lscache);
+}
+
+/**
+ * Empties the LSCache page cache of every RUNNING litespeed container of the
+ * site (`oblimint-reload --cache-only`: new, empty cache generation and an
+ * OpenLiteSpeed graceful restart; PHP is kept). Publications, rollbacks and
+ * configuration changes already purge it (every oblimint-reload does).
+ */
+export async function purgeSiteCache(docker: Docker, ctx: Pick<SiteContext, 'site' | 'runtimes'>): Promise<{ ok: boolean; errors: string[]; purged: string[] }> {
+  const errors: string[] = [];
+  const purged: string[] = [];
+  const running = new Map((await listByLabel(docker, `${LABELS.site}=${ctx.site.id}`)).map((c) => [cleanName(c.Names?.[0]), c.State]));
+  for (const c of siteContainerBases(ctx)) {
+    if (!siteBaseDef(c.base).lscache || running.get(c.name) !== 'running') continue;
+    try {
+      const r = await execWith(docker, c.name, ['oblimint-reload', '--cache-only'], { timeoutMs: RELOAD_TIMEOUT_MS });
+      if (r.exitCode !== 0) {
+        errors.push(`${c.name}: oblimint-reload --cache-only exited ${r.exitCode}${r.stderr.trim() ? `: ${r.stderr.trim().slice(0, 300)}` : ''}`);
+      } else {
+        purged.push(c.name);
+      }
+    } catch (err) {
+      errors.push(`${c.name}: ${errText(err)}`);
+    }
+  }
+  return { ok: errors.length === 0, errors, purged };
 }

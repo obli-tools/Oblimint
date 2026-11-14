@@ -25,5 +25,6 @@ export const SITE_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 export function reservedEnvName(name: string): boolean {
   const n = name.toUpperCase();
   return ['PATH', 'HOME', 'HOSTNAME', 'USER', 'SHELL', 'PWD', 'TMPDIR', 'IFS', 'PHPRC', 'GCONV_PATH', 'HOSTALIASES', 'NLSPATH', 'PGHOST'].includes(n)
-    || /^(OBLIMINT_|LD_|PHP_INI|APACHE_|NGINX_|MALLOC_|GLIBC_|BASH_)/.test(n);
+    // LSAPI_ / PHP_LSAPI_ / LSPHP_: settings of lsphp (litespeed bases: process manager, .user.ini…).
+    || /^(OBLIMINT_|LD_|PHP_INI|APACHE_|NGINX_|MALLOC_|GLIBC_|BASH_|LSAPI_|PHP_LSAPI|LSPHP_|LSWS_)/.test(n);
 }

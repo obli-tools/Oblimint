@@ -356,6 +356,8 @@ export const sitesService = {
       }
       if (text !== row.custom_nginx) patch.custom_nginx = text;
     }
+    // LSCache (litespeed bases): rendered into their runtime config, purged at every change (reload).
+    if (body.lscacheEnabled !== undefined && body.lscacheEnabled !== (row.lscache_enabled !== false)) patch.lscache_enabled = body.lscacheEnabled;
     // Leak guard: tightening is free; relaxing it (block → warn, a new allowlisted path) is the
     // approvers' control, like leaving approval mode (a client must not wave its own leaks through).
     const curPolicy = row.leak_policy === 'warn' ? 'warn' : 'block';

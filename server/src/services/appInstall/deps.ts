@@ -9,6 +9,7 @@ import type { HostingActor } from '../hosting/access';
 import type { PublishOptions } from '../releases/release.service';
 import type { PreviewVia } from '../previews/previews.service';
 import type { CoreVerification, WpOffer } from './wordpress';
+import type { PluginFileSums, PluginOffer, PluginVerification } from './lscachePlugin';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Everything the installer touches outside its module, behind one injectable
@@ -34,6 +35,14 @@ export interface InstallDeps {
   ensureArchive(dir: string, version: string, locale: string): Promise<string>;
   verifyCore(stagingDir: string, version: string, locale: string): Promise<CoreVerification>;
   officialChecksums(version: string, locale: string): Promise<ReadonlyMap<string, string> | null>;
+  /** LiteSpeed Cache plugin (litespeed bases). Absent (tests): the plugin is skipped with a warning. */
+  lscachePlugin?: {
+    latest(): Promise<PluginOffer>;
+    /** Local path of the archive (checked file by file after extraction). */
+    ensureArchive(dir: string, version: string): Promise<string>;
+    checksums(version: string): Promise<ReadonlyMap<string, PluginFileSums> | null>;
+    verify(stagingDir: string, list: ReadonlyMap<string, PluginFileSums> | null): Promise<PluginVerification>;
+  };
   runTools(nodeId: number, spec: Docker.ContainerCreateOptions, opts: ToolsRunOptions): Promise<ToolsStepResult>;
   startPreview(req: Request, actor: HostingActor, siteId: number, via: PreviewVia): Promise<PreviewStartResult>;
   getPreview(actor: HostingActor, siteId: number): Promise<SitePreview | null>;
@@ -66,6 +75,12 @@ function defaultDeps(): InstallDeps {
     ensureArchive: async (dir, version, locale) => (await import('./wordpress')).ensureArchive(dir, version, locale),
     verifyCore: async (dir, version, locale) => (await import('./wordpress')).verifyCoreFiles(dir, version, locale),
     officialChecksums: async (version, locale) => (await import('./wordpress')).officialChecksums(version, locale),
+    lscachePlugin: {
+      latest: async () => { const m = await import('./lscachePlugin'); return m.latestPluginOffer(m.LSCACHE_PLUGIN_SLUG); },
+      ensureArchive: async (dir, version) => { const m = await import('./lscachePlugin'); return m.ensurePluginArchive(dir, m.LSCACHE_PLUGIN_SLUG, version); },
+      checksums: async (version) => { const m = await import('./lscachePlugin'); return m.pluginChecksums(m.LSCACHE_PLUGIN_SLUG, version); },
+      verify: async (dir, list) => { const m = await import('./lscachePlugin'); return m.verifyPluginFiles(dir, m.LSCACHE_PLUGIN_SLUG, list); },
+    },
     runTools: async (nodeId, spec, opts) => {
       const [{ engineFor }, { runToolsContainer }] = await Promise.all([import('../docker/engine'), import('../adapters/toolsRunner')]);
       return runToolsContainer(await engineFor(nodeId), spec, opts);

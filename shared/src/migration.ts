@@ -295,6 +295,12 @@ export interface CwpAppDetection {
   hasPackageJson: boolean;
   hasComposerJson: boolean;
   htaccess: boolean;
+  /**
+   * The LiteSpeed Cache plugin of WordPress is in the docroot
+   * (wp-content/plugins/litespeed-cache): the site was built for LiteSpeed /
+   * LSCache (optional: discoveries made before it lack the field).
+   */
+  lscache?: boolean;
   userIni: boolean;
 }
 

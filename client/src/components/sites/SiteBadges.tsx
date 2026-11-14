@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, ArrowRightLeft, FileDiff, FileMinus, FilePen, FilePlus, Loader2 } from 'lucide-react';
 import {
   PHP_ADVISORIES, PHP_BRANCH_EOL, phpAdvisoriesForVersion, phpAdvisoriesUnfixedOnBranch, phpBranchOf, phpEolState, siteBaseDef,
-  type DataPathPolicy, type DiffFileStatus, type PublishMode, type ReleaseStatus, type ScanVerdict, type SiteBaseId,
+  type DataPathPolicy, type DiffFileStatus, type SiteBaseDef, type PublishMode, type ReleaseStatus, type ScanVerdict, type SiteBaseId,
   type SiteStatus,
 } from '@oblimint/shared';
 import { Pill, type Tone } from '@/components/common/Pill';
@@ -40,12 +40,15 @@ export function SiteStatusBadge({ status, message }: { status: SiteStatus; messa
 
 // ── Base (engine + PHP) ──────────────────────────────────────────────────────
 
-/** "Apache · PHP 8.3" / "nginx · static". */
+/** Display name of a web server engine (proper nouns, not translated). */
+export const ENGINE_LABEL: Record<SiteBaseDef['engine'], string> = { apache: 'Apache', nginx: 'nginx', litespeed: 'OpenLiteSpeed' };
+
+/** "Apache · PHP 8.3" / "nginx · static" / "OpenLiteSpeed · PHP 8.3". */
 export function useBaseLabel(): (base: SiteBaseId) => string {
   const { t } = useTranslation();
   return (base) => {
     const def = siteBaseDef(base);
-    const engine = def.engine === 'apache' ? 'Apache' : 'nginx';
+    const engine = ENGINE_LABEL[def.engine];
     return def.php ? `${engine} · PHP ${def.php}` : `${engine} · ${t('runtime.static') || 'static'}`;
   };
 }

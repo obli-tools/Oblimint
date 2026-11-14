@@ -149,7 +149,7 @@ const toCron = (a: { name?: string; schedule?: string; command?: string; timeout
 });
 /** Same validation as POST /api/v1/sites (known base and profile, normalized docroot / base path, slug pattern). */
 const siteCreateArgs = siteCreateSchema.omit({ accountId: true });
-const siteUpdateArgs = siteUpdateSchema.pick({ name: true, docroot: true, publishMode: true, publishDebounceSec: true, healthcheckPath: true, php: true });
+const siteUpdateArgs = siteUpdateSchema.pick({ name: true, docroot: true, publishMode: true, publishDebounceSec: true, healthcheckPath: true, php: true, lscacheEnabled: true });
 
 const TOOLS: ToolDef[] = [
   {
@@ -201,7 +201,7 @@ const TOOLS: ToolDef[] = [
     inputSchema: obj({
       name: { type: 'string', description: 'Display name.' },
       slug: { type: 'string', description: 'Lower-case letters, digits and dashes (1-40): folder name /staging/<slug>.' },
-      base: { type: 'string', enum: [...SITE_BASE_IDS], description: 'Runtime: apache-php8.x (.htaccess), nginx-php8.x, nginx-static.' },
+      base: { type: 'string', enum: [...SITE_BASE_IDS], description: 'Runtime: apache-php8.x (.htaccess), nginx-php8.x, litespeed-php8.x (OpenLiteSpeed + LSCache page cache, .htaccess rewrite rules only), nginx-static.' },
       app_profile: { type: 'string', enum: APP_PROFILES.map((p) => p.id), description: 'Optional application profile (docroot, data paths).' },
       docroot: relPath('Optional document root inside the code (e.g. "public").'),
       base_path: { type: 'string', description: 'URL prefix the application expects when another domain path is routed to it (e.g. "/uploads/"); default "/".' },
@@ -227,15 +227,17 @@ const TOOLS: ToolDef[] = [
       base: { type: 'string', enum: [...SITE_BASE_IDS], description: 'A PHP base (default: the one recommended for WordPress).' },
       publish_mode: publishMode,
       preview_first: { type: 'boolean', description: 'Stop in a preview (staging + disposable copy of the database) before publishing; then publish_app_install or cleanup_app_install.' },
+      lscache_plugin: { type: 'boolean', description: 'litespeed-php8.x bases: install and activate the LiteSpeed Cache plugin, checked against its official file list (default true; ignored on the other bases).' },
     }, ['app', 'name', 'slug', 'admin_user', 'admin_email']),
     args: z.object({
       app: z.string(), name: z.string(), slug: z.string(), admin_user: z.string(), admin_email: z.string(), title: z.string().optional(), locale: z.string().optional(),
-      base: z.string().optional(), publish_mode: zPublishMode.optional(), preview_first: z.boolean().optional(),
+      base: z.string().optional(), publish_mode: zPublishMode.optional(), preview_first: z.boolean().optional(), lscache_plugin: z.boolean().optional(),
     }),
     run: (ctx, req, a) => keyApps.install(ctx, req, parseBody(appInstallStartSchema.omit({ accountId: true }), {
       app: a.app, name: a.name, slug: a.slug, adminUser: a.admin_user, adminEmail: a.admin_email,
       ...(a.title ? { title: a.title } : {}), ...(a.locale ? { locale: a.locale } : {}), ...(a.base ? { base: a.base } : {}),
       ...(a.publish_mode ? { publishMode: a.publish_mode } : {}), ...(a.preview_first !== undefined ? { previewFirst: a.preview_first } : {}),
+      ...(a.lscache_plugin !== undefined ? { lscachePlugin: a.lscache_plugin } : {}),
     })),
   },
   {
@@ -287,18 +289,27 @@ const TOOLS: ToolDef[] = [
         type: 'object', additionalProperties: false, description: 'PHP limits, within the account plan.',
         properties: { memoryLimitMb: { type: 'integer' }, uploadMaxFilesizeMb: { type: 'integer' }, postMaxSizeMb: { type: 'integer' }, maxExecutionTime: { type: 'integer' } },
       },
+      lscache_enabled: { type: 'boolean', description: 'LSCache page cache of a litespeed base (OpenLiteSpeed): serve the pages the application marks cacheable. Stored on any base, applied on litespeed-php8.x only.' },
     }, ['site_id']),
     args: z.object({
       site_id: zSite, name: z.string().optional(), docroot: z.string().optional(), publish_mode: zPublishMode.optional(),
       publish_debounce_sec: z.number().int().optional(), healthcheck_path: z.string().optional(),
       php: z.object({ memoryLimitMb: z.number().int().optional(), uploadMaxFilesizeMb: z.number().int().optional(), postMaxSizeMb: z.number().int().optional(), maxExecutionTime: z.number().int().optional() }).strict().optional(),
+      lscache_enabled: z.boolean().optional(),
     }),
     // Same validation as PATCH /api/v1/sites/:id (normalized docroot, debounce bounds…).
     run: (ctx, req, a) => keyApi.updateSite(ctx, req, a.site_id, parseBody(siteUpdateArgs, {
       ...(a.name !== undefined ? { name: a.name } : {}), ...(a.docroot !== undefined ? { docroot: a.docroot } : {}),
       ...(a.publish_mode ? { publishMode: a.publish_mode } : {}), ...(a.publish_debounce_sec !== undefined ? { publishDebounceSec: a.publish_debounce_sec } : {}),
       ...(a.healthcheck_path !== undefined ? { healthcheckPath: a.healthcheck_path } : {}), ...(a.php ? { php: a.php } : {}),
+      ...(a.lscache_enabled !== undefined ? { lscacheEnabled: a.lscache_enabled } : {}),
     })),
+  },
+  {
+    name: 'purge_cache', title: 'Empty the page cache', heavy: true,
+    description: 'Empties the LSCache page cache of a site on a litespeed base (OpenLiteSpeed): the next visits rebuild the pages through PHP. Publications and rollbacks already empty it; use it after a change made outside a release (database content, a setting of the CMS). 409 noPageCache when the site runs no litespeed base. Scope sites.manage.',
+    inputSchema: obj({ site_id: siteId }, ['site_id']), args: z.object({ site_id: zSite }),
+    run: (ctx, req, a) => keyApi.purgeCache(ctx, req, a.site_id),
   },
   {
     name: 'list_files', title: 'List a folder', readOnly: true,

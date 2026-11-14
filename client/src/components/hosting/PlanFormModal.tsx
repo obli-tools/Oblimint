@@ -10,7 +10,7 @@ import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { cn } from '@/utils/cn';
 import { inputCls, labelCls, sectionTitleCls, hostingErrorMessage, isStepUpHandled } from './hostingUi';
-import { PhpBranchBadges } from '@/components/sites/SiteBadges';
+import { ENGINE_LABEL, PhpBranchBadges } from '@/components/sites/SiteBadges';
 import { limitToField, parseLimitField } from './hostingFormat';
 
 // P2 non-numeric / non-nullable limits are edited separately (module ui-ops).
@@ -249,7 +249,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
     }
   };
 
-  const siteEngines: SiteEngine[] = ['apache', 'nginx'];
+  const siteEngines: SiteEngine[] = ['apache', 'nginx', 'litespeed'];
 
   const toggleEngine = (e: DbEngine) => setEngines((cur) => {
     const next = new Set(cur);
@@ -332,7 +332,7 @@ export function PlanFormModal({ open, plan, onClose, onSaved }: {
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {siteEngines.map((engine) => (
                 <div key={engine} className="rounded-lg bg-bg-primary p-3">
-                  <div className="mb-2 text-xs font-semibold text-text-secondary">{engine === 'apache' ? 'Apache' : 'nginx'}</div>
+                  <div className="mb-2 text-xs font-semibold text-text-secondary">{ENGINE_LABEL[engine]}</div>
                   <div className="space-y-1.5">
                     {SITE_BASES.filter((b) => b.engine === engine).map((b) => (
                       <label key={b.id} className="flex cursor-pointer items-center gap-2 text-sm text-text-primary coarse:min-h-10">

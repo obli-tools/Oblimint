@@ -1,4 +1,4 @@
-import { siteBaseDef, type CwpPhpInfo, type MigrationSeverity, type SiteBaseId } from '@oblimint/shared';
+import { litespeedBaseFor, siteBaseDef, type CwpPhpInfo, type MigrationSeverity, type SiteBaseId } from '@oblimint/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // D-PHP (docs/P5-PLAN.md §4): site base from the EFFECTIVE PHP version of the
@@ -12,6 +12,11 @@ import { siteBaseDef, type CwpPhpInfo, type MigrationSeverity, type SiteBaseId }
 //   5.x (D-PHP56)   → apache-php5.6 + phpLegacy (legacy base: no security fix,
 //                     the code is to be ported to PHP 8)
 //   none / static   → apache-php8.3
+// Source served by LiteSpeed (web_servers.conf) or using the LiteSpeed Cache
+// plugin (litespeedSource): the litespeed base of the same branch
+// (litespeed-php8.1 … 8.4, OpenLiteSpeed + LSCache) + litespeedSource info;
+// older PHP keeps its Apache base. litespeed + .htaccess → litespeedBaseHtaccess
+// (OpenLiteSpeed reads the rewrite rules only).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface BaseMessage {
@@ -27,6 +32,8 @@ export interface SelectBaseOptions {
   htaccess?: boolean;
   /** Plan restriction (null = the whole catalog). */
   allowedBases?: readonly SiteBaseId[] | null;
+  /** The source runs LiteSpeed or the site uses the LiteSpeed Cache plugin. */
+  litespeedSource?: boolean;
 }
 
 export interface SelectedBase {
@@ -68,6 +75,12 @@ export function selectBase(php: CwpPhpInfo | null, opts: SelectBaseOptions = {})
   } else {
     const mapped = mapPhpVersion(source);
     base = mapped.base;
+    const ls = opts.litespeedSource ? litespeedBaseFor(siteBaseDef(mapped.base).php) : null;
+    // The plan must allow it: else the Apache base (no blocking message for a mere preference).
+    if (ls && (!opts.allowedBases || opts.allowedBases.includes(ls))) {
+      base = ls;
+      warnings.push({ severity: 'info', code: 'litespeedSource', params: { base } });
+    }
     if (mapped.code === 'phpUnmaintained') warnings.push({ severity: 'info', code: 'phpUnmaintained', params: { version: source, base } });
     else if (mapped.code === 'phpUpgrade') warnings.push({ severity: 'warning', code: 'phpUpgrade', params: { version: source, base } });
     else if (mapped.code === 'phpLegacy') warnings.push({ severity: 'warning', code: 'phpLegacy', params: { version: source, base } });
@@ -75,6 +88,7 @@ export function selectBase(php: CwpPhpInfo | null, opts: SelectBaseOptions = {})
   const def = siteBaseDef(base);
   if (opts.choice && def.unmaintained) warnings.push({ severity: 'info', code: 'phpUnmaintained', params: { version: source, base } });
   if (def.engine === 'nginx' && opts.htaccess) warnings.push({ severity: 'warning', code: 'nginxBaseHtaccess', params: { base } });
+  if (def.engine === 'litespeed' && opts.htaccess) warnings.push({ severity: 'warning', code: 'litespeedBaseHtaccess', params: { base } });
   if (opts.allowedBases && !opts.allowedBases.includes(base)) {
     warnings.push({ severity: 'blocking', code: 'planLimitExceeded', params: { dimension: 'allowedBases', base } });
   }

@@ -46,6 +46,8 @@ export interface SiteRow {
   staging_proposal_at?: Date | string | null;
   publish_debounce_sec: number; healthcheck_path: string; status: Site['status']; status_message: string | null;
   current_release_id: number | null; preview_base: SiteBaseId | null; php_settings: unknown; custom_nginx: string | null;
+  /** Migration 045 (litespeed bases), default true. */
+  lscache_enabled?: boolean;
   created_at: Date | string; updated_at: Date | string;
   /** migration 016: provenance of the live release, release a human rolled back from. */
   current_release_at?: Date | string | null; current_release_by?: number | null; current_release_via?: CurrentReleaseVia | null;
@@ -236,6 +238,7 @@ export function toSite(r: SiteRow, extras: { previewUrl?: string | null } = {}):
     previewUrl: extras.previewUrl ?? null,
     php: json<PhpSettings>(r.php_settings, {}),
     customNginx: r.custom_nginx,
+    lscacheEnabled: r.lscache_enabled !== false,
     leakPolicy: r.leak_policy === 'warn' ? 'warn' : 'block',
     leakAllowlist: json<unknown[]>(r.leak_allowlist, []).filter((x): x is string => typeof x === 'string'),
     cmsGuard: siteCmsGuard(r),

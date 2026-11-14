@@ -2,7 +2,7 @@ import type Docker from 'dockerode';
 import type {
   ContainerState, RuntimeContainerStatus, RuntimeRole, RuntimeSwitchCheck, SiteBaseId, SiteRuntimeStatus,
 } from '@oblimint/shared';
-import { HostingSocketEvents } from '@oblimint/shared';
+import { HostingSocketEvents, siteBaseDef } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { logger } from '../../utils/logger';
@@ -17,7 +17,7 @@ import { phpVersionOfEnv } from './phpRuntime';
 import { containerState, ensureImage, imageExists, inspectContainer, isUnreachable, restartContainer } from './dockerOps';
 import { engineFor } from './engine';
 import { reconcileService, type ReconcileReport } from './reconcile.service';
-import { loadSiteContext, reloadSiteContainers, writeSiteRuntimeConfigs, type SiteContext } from './siteOps';
+import { loadSiteContext, purgeSiteCache, reloadSiteContainers, siteHasPageCache, writeSiteRuntimeConfigs, type SiteContext } from './siteOps';
 import { siteContainerName } from './specs';
 import { scanReleaseFacts, switchWarnings, type ReleaseFacts } from './warnings';
 import { withAccountLock } from './locks';
@@ -168,7 +168,7 @@ export const runtimeService = {
     const number = await currentReleaseNumber(ctx.site.current_release_id);
     let release: ReleaseFacts | null = null;
     if (number !== null) {
-      release = await scanReleaseFacts(localPaths.release(ctx.account.id, ctx.site.id, number)).catch(() => null);
+      release = await scanReleaseFacts(localPaths.release(ctx.account.id, ctx.site.id, number), undefined, { htaccessDirectives: siteBaseDef(base).engine === 'litespeed' }).catch(() => null);
     }
     const imageRef = siteImage(base);
     let imagePresent: boolean | null = null;
@@ -196,6 +196,20 @@ export const runtimeService = {
     } catch (err) {
       return { ok: false, errors: [errText(err)] };
     }
+  },
+
+  /**
+   * Empties the LSCache page cache of the site (litespeed bases: every running
+   * container on such a base). 409 noPageCache when no container of the site
+   * runs a base with a page cache. Publications / rollbacks purge it already.
+   */
+  async purgeCache(siteId: number): Promise<{ purged: number }> {
+    const ctx = await requireContext(siteId);
+    if (!siteHasPageCache(ctx)) throw new AppError(409, 'This site runs no base with a page cache (LSCache: litespeed bases)', 'noPageCache');
+    const docker = await engineFor(ctx.account.node_id).catch((err) => { throw backendError(err); });
+    const r = await purgeSiteCache(docker, ctx);
+    if (!r.ok) throw new AppError(502, r.errors.join(' · ').slice(0, 500), 'backendUnavailable');
+    return { purged: r.purged.length };
   },
 
   /** Restarts the existing containers of the site; missing ones are (re)created by a reconcile pass. */

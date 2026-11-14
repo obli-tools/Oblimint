@@ -86,6 +86,8 @@ export const CODES_FR: Readonly<Record<string, string>> = {
   mailStalwartMaildir: 'Moteur Stalwart : boîtes et mots de passe migrés, messages à synchroniser par IMAP.',
   mysqlUnavailable: 'MySQL / MariaDB injoignable sur la source.',
   nginxBaseHtaccess: 'Base nginx choisie : les fichiers .htaccess sont ignorés.',
+  litespeedSource: 'Site servi par LiteSpeed / LSCache à la source : base OpenLiteSpeed + LSCache proposée.',
+  litespeedBaseHtaccess: 'Base OpenLiteSpeed : seules les règles de réécriture des fichiers .htaccess sont appliquées (restrictions d’accès, authentification et réglages PHP ignorés).',
   nodeMissing: 'Le nœud choisi n’existe pas (ou plus) : choisissez-en un autre.',
   noPlan: 'Aucun plan cible pour ce compte.',
   phpDefaultAssumed: 'Version PHP par défaut du serveur supposée (illisible).',

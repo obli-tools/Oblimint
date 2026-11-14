@@ -6,10 +6,10 @@ import type {
   FileUploadChunkResult, FileUploadSession, LogQueryResult, Release, ReleaseDiff, ReleaseLogLine, SiteErrorGroupDetail, SiteErrorList,
   PreviewFetchResult, PreviewLink, PreviewStartResult, SitePreview,
   ReleaseFileContent, ReleaseFileList, SiteCreate, StagingRestoreResult, StagingRestoreRunning, StagingStatus, ApiGuideLang, ApiV1Route, ApiV1RouteDomain, SiteBaseId, SiteRuntime, CronJob, CronJobInput, CronRun, CronRunDetail, SiteDataPath,
-  NotificationFamily, UserNotificationPage,
+  NotificationFamily, UserNotificationPage, SiteCachePurgeResult,
 } from '@oblimint/shared';
 import { userNotificationService } from '../usage/userNotifications.service';
-import { apiKeyGuide, OBSERVATION_WINDOW_DEFAULT_MINUTES } from '@oblimint/shared';
+import { apiKeyGuide, isSiteBaseId, OBSERVATION_WINDOW_DEFAULT_MINUTES, siteBaseDef } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
 import { auditService } from '../audit.service';
@@ -34,6 +34,7 @@ import { releaseObservation } from '../releaseObservation/observation.service';
 import { previewService } from '../previews/previews.service';
 import { leakSettingsOf, stagingLeakReport } from '../scan/leakRelease';
 import { localPaths } from '../hosting/paths';
+import { runtimeService } from '../docker/runtime.service';
 import { actionLevel } from '../restrictions/gate';
 import { accountTarget, asKeyRequest, keyGated, siteTarget } from '../restrictions/targets';
 import { apiKeysService, keyAllowsDomain, keyAllowsSite, requireScope, type ApiKeyContext } from './apiKeys.service';
@@ -381,12 +382,13 @@ async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV
   const q = db('sites as s')
     .leftJoin('releases as r', 'r.id', 's.current_release_id')
     .where('s.account_id', ctx.accountId)
-    .select('s.id', 's.name', 's.slug', 's.status', 's.base', 's.docroot', 's.publish_mode', 's.leak_policy', 's.leak_allowlist', 's.observation_mode', 's.observation_window_minutes', 'r.number as release_number')
+    .select('s.id', 's.name', 's.slug', 's.status', 's.base', 's.docroot', 's.publish_mode', 's.leak_policy', 's.leak_allowlist', 's.observation_mode', 's.observation_window_minutes', 's.lscache_enabled', 'r.number as release_number')
     .orderBy('s.id');
   if (ids) q.whereIn('s.id', ids);
   const rows = (await q as Array<{
     id: number; name: string; slug: string; status: string; base: string; docroot: string; publish_mode: string; release_number: number | null;
     leak_policy: string | null; leak_allowlist: unknown; observation_mode: string | null; observation_window_minutes: number | null;
+    lscache_enabled: boolean | null;
   }>)
     .filter((r) => keyAllowsSite(ctx, r.id));
   if (!rows.length) return [];
@@ -417,6 +419,7 @@ async function siteViews(ctx: ApiKeyContext, ids: number[] | null): Promise<ApiV
       rolledBack: st?.rolledBack ?? false,
       rolledBackFrom: st?.rolledBackFrom ? { id: st.rolledBackFrom.id, number: st.rolledBackFrom.number } : null,
       leakGuard: { policy: leak.policy, allowlist: leak.allowlist },
+      lscache: { available: isSiteBaseId(r.base) && siteBaseDef(r.base).lscache, enabled: r.lscache_enabled !== false },
       observation: {
         mode: r.observation_mode === 'off' || r.observation_mode === 'revert' ? r.observation_mode : 'alert',
         windowMinutes: Number(r.observation_window_minutes ?? OBSERVATION_WINDOW_DEFAULT_MINUTES),
@@ -502,6 +505,15 @@ export const keyApi = {
     }
     const [v] = await siteViews(ctx, [site.id]);
     return v;
+  },
+
+  /** LSCache (litespeed bases): empties the page cache of the site (runtime.cache_purge). */
+  async purgeCache(ctx: ApiKeyContext, req: Request, siteId: number): Promise<SiteCachePurgeResult> {
+    requireScope(ctx, 'sites.manage');
+    const site = await keySite(ctx, siteId);
+    const result = await runtimeService.purgeCache(site.id);
+    await auditService.logReqAs(req, site.tenant_id, 'runtime.cache_purge', { resourceType: 'site', resourcePath: String(site.id), details: { siteName: site.name, purged: result.purged, viaKey: ctx.id } });
+    return result;
   },
 
   // ── files ──

@@ -28,6 +28,7 @@ import { useHostingEvent } from '../useHostingEvent';
 import { cardCls, fieldCls, sectionLabelCls } from '../styles';
 import type { SiteTabProps } from './types';
 import { PreviewCard, useSitePreview } from '../previews/PreviewCard';
+import { SiteLscacheCard, siteUsesLscache } from '../SiteLscacheCard';
 
 /**
  * Bases the plan of the site's account allows (null = the whole catalog, or
@@ -54,7 +55,7 @@ const STATE_TONE: Record<ContainerState, Tone> = {
   running: 'green', stopped: 'muted', missing: 'amber', restarting: 'blue', error: 'red', unknown: 'muted',
 };
 
-export function SiteRuntimeTab({ site, reloadSite, switchTo, onSwitchHandled }: SiteTabProps & {
+export function SiteRuntimeTab({ site, onSiteChange, reloadSite, switchTo, onSwitchHandled }: SiteTabProps & {
   /** Base proposed by another tab (?switchTo=<base>): opens the switch flow once. */
   switchTo: string | null;
   onSwitchHandled: () => void;
@@ -148,6 +149,9 @@ export function SiteRuntimeTab({ site, reloadSite, switchTo, onSwitchHandled }: 
           <p className="text-sm text-text-muted">{t('runtime.noContainer') || 'No container yet (the site is being provisioned or is stopped).'}</p>
         ) : status && <ContainersTable status={status} />}
       </div>
+
+      {/* LSCache page cache (litespeed bases) */}
+      {siteUsesLscache(site) && <SiteLscacheCard site={site} canManage={canManage} onSiteChange={onSiteChange} />}
 
       {/* Blue/green preview */}
       {previewBase && (
@@ -297,8 +301,9 @@ function SwitchModal({ siteId, from, to, previewRunning, onClose, onDone }: {
     return () => { cancelled = true; };
   }, [siteId, to, t]);
 
-  const warningText = (code: RuntimeWarningCode, fallback: string) => ({
+  const warningText = (code: RuntimeWarningCode, fallback: string, params?: Record<string, string>) => ({
     htaccessIgnored: t('runtime.warnings.htaccessIgnored') || fallback,
+    htaccessPartial: t('runtime.warnings.htaccessPartial', { directives: params?.directives || '—', defaultValue: fallback }),
     unmaintainedRuntime: t('runtime.warnings.unmaintainedRuntime') || fallback,
     vulnerableRuntime: t('runtime.warnings.vulnerableRuntime') || fallback,
     phpDowngrade: t('runtime.warnings.phpDowngrade') || fallback,
@@ -367,7 +372,7 @@ function SwitchModal({ siteId, from, to, previewRunning, onClose, onDone }: {
             {check.warnings.map((w) => (
               <li key={w.code} className="flex items-start gap-2 rounded-lg bg-amber-400/10 px-3 py-2 text-sm text-amber-400">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{warningText(w.code, w.message)}</span>
+                <span>{warningText(w.code, w.message, w.params)}</span>
               </li>
             ))}
           </ul>

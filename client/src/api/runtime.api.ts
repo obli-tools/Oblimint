@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { ApiResponse, RuntimeSwitchCheck, RuntimeSwitchRequest, SiteBaseId, SiteRuntimeStatus } from '@oblimint/shared';
+import type { ApiResponse, RuntimeSwitchCheck, RuntimeSwitchRequest, SiteBaseId, SiteCachePurgeResult, SiteRuntimeStatus } from '@oblimint/shared';
 
 // /api/sites/:id/runtime — docs/P1-PLAN.md §API. OWNED BY MODULE `ui-sites`.
 export const runtimeApi = {
@@ -25,6 +25,12 @@ export const runtimeApi = {
 
   async stopPreview(siteId: number): Promise<SiteRuntimeStatus> {
     const res = await apiClient.delete<ApiResponse<SiteRuntimeStatus>>(`/sites/${siteId}/runtime/preview`);
+    return res.data.data!;
+  },
+
+  /** LSCache (litespeed bases): empties the page cache of the site. */
+  async purgeCache(siteId: number): Promise<SiteCachePurgeResult> {
+    const res = await apiClient.post<ApiResponse<SiteCachePurgeResult>>(`/sites/${siteId}/runtime/cache/purge`);
     return res.data.data!;
   },
 

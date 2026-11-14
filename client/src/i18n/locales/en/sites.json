@@ -198,7 +198,8 @@
       "apacheHint": "Honours .htaccess files: the usual choice for WordPress, PrestaShop, Joomla.",
       "nginxHint": "Faster, but ignores .htaccess files: rewrites go in the custom nginx rules.",
       "static": "Static (nginx)",
-      "staticHint": "HTML, CSS, JS and media only: PHP is never executed."
+      "staticHint": "HTML, CSS, JS and media only: PHP is never executed.",
+      "litespeedHint": "LSCache page cache (LSCache plugins of the CMSs); only the rewrite rules of .htaccess files are applied."
     },
     "noContainer": "No container yet (the site is being provisioned or is stopped).",
     "notInPlan": "not in plan",
@@ -266,7 +267,8 @@
       "phpMajorChange": "Major PHP version change: check the compatibility of the application and its extensions (a preview is recommended).",
       "staticBaseWithPhp": "The static base never executes PHP, but the release contains PHP files.",
       "unmaintainedRuntime": "This PHP branch no longer receives security fixes.",
-      "vulnerableRuntime": "This PHP version has a known critical flaw that will never be fixed (PHPocalypse): choose a newer version."
+      "vulnerableRuntime": "This PHP version has a known critical flaw that will never be fixed (PHPocalypse): choose a newer version.",
+      "htaccessPartial": "OpenLiteSpeed only reads the rewrite rules of .htaccess files. Ignored in this release: {{directives}}. Access restrictions (Require, Deny, Auth…) and PHP settings written there will no longer apply: protect those areas another way before switching."
     },
     "vulnerable": "Vulnerable version — {{name}}",
     "vulnerableShort": "VULNERABLE",
@@ -276,7 +278,20 @@
     "eolSoon": "End of life {{date}}",
     "eolSoonShort": "EOL soon",
     "eolSoonHint": "This PHP branch stops receiving security fixes on {{date}}: plan a move to a newer version.",
-    "phpRunning": "PHP version running in the container"
+    "phpRunning": "PHP version running in the container",
+    "htaccessRewrite": ".htaccess (rewrite)",
+    "htaccessRewriteHint": "Only the rewrite rules of .htaccess files are applied (no access rules, authentication or PHP settings).",
+    "lscache": {
+      "title": "Page cache (LSCache)",
+      "explain": "OpenLiteSpeed stores the pages the application marks as cacheable (LSCache plugin of WordPress, PrestaShop, Joomla…) and serves them without running PHP. Pages of logged-in visitors are never shared. The cache is emptied at every publication and rollback.",
+      "toggle": "Serve cached pages",
+      "toggleHint": "Off: every request runs PHP (the plugin headers are ignored).",
+      "enabled": "Page cache enabled",
+      "disabled": "Page cache disabled",
+      "purge": "Empty the cache",
+      "purgeConfirm": "Empty the page cache of the site? Pages are rebuilt by PHP on their next visit.",
+      "purged": "Page cache emptied"
+    }
   },
   "siteRoutes": {
     "basePathNote": "A sub-site must know where it lives: the base path of this site is {{basePath}} (Configuration tab).",
@@ -402,7 +417,8 @@
       "appInstallBusy": "Too many installations are running: try again shortly.",
       "appInstallRights": "Installing an application also needs the rights to manage the databases and to publish.",
       "appInstallState": "This installation is no longer in a state that allows this.",
-      "appInstallSiteGone": "The site of this installation was deleted."
+      "appInstallSiteGone": "The site of this installation was deleted.",
+      "noPageCache": "This site runs no base with a page cache (LSCache: OpenLiteSpeed bases)."
     },
     "fields": {
       "account": "Hosting account",
@@ -582,7 +598,9 @@
         "install": "WordPress installation",
         "preview": "Preview",
         "publish": "Publication of release 1"
-      }
+      },
+      "lscachePlugin": "Install the LiteSpeed Cache plugin",
+      "lscachePluginHint": "Drives the OpenLiteSpeed page cache (LSCache) of this base. Checked against its official file list; installed and activated in release 1."
     }
   },
   "leakGuard": {

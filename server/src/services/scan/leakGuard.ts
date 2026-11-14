@@ -1,6 +1,6 @@
 import {
   LEAK_FINDINGS_MAX, normalizeLeakAllowlistEntry,
-  type LeakFinding, type LeakPolicy, type LeakReport, type LeakRule,
+  type LeakFinding, type LeakPolicy, type LeakReport, type LeakRule, type SiteEngine,
 } from '@oblimint/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ export interface LeakGuardInput {
   /** Document root of the site ('' = the release root). */
   docroot: string;
   /** Web server of the site's base (what it refuses differs); null = unknown (Apache rules, the most permissive). */
-  engine: 'apache' | 'nginx' | null;
+  engine: SiteEngine | null;
   policy: LeakPolicy;
   allowlist: string[];
   budget?: Partial<LeakBudget>;
@@ -86,10 +86,11 @@ export function inDocroot(rel: string, docroot: string): boolean {
 }
 
 /** Refused by the site configuration whatever its extension (images/siteconf templates). */
-export function refusedByServer(rel: string, engine: 'apache' | 'nginx' | null): boolean {
+export function refusedByServer(rel: string, engine: SiteEngine | null): boolean {
   const segs = segmentsOf(rel);
-  if (engine === 'nginx') {
-    // location ~ /\.(?!well-known/) — any dot segment but .well-known.
+  if (engine === 'nginx' || engine === 'litespeed') {
+    // nginx: location ~ /\.(?!well-known/); OpenLiteSpeed: context exp:(?:/\.(?!well-known(/|$)))
+    // — any dot segment but .well-known.
     return segs.some((s) => s.startsWith('.') && s !== '.well-known');
   }
   // Apache: <FilesMatch "^\.(ht|user\.ini|git|svn|env)"> and <DirectoryMatch "/\.(git|svn|hg)(/|$)">.
@@ -98,12 +99,12 @@ export function refusedByServer(rel: string, engine: 'apache' | 'nginx' | null):
 }
 
 /** Reachable over HTTP (served as is, or run for a PHP file). */
-export function reachable(rel: string, docroot: string, engine: 'apache' | 'nginx' | null): boolean {
+export function reachable(rel: string, docroot: string, engine: SiteEngine | null): boolean {
   return inDocroot(rel, docroot) && !refusedByServer(rel, engine);
 }
 
 /** Handed out AS IS by the web server: reachable and not a PHP source (run or refused). */
-export function servedRaw(rel: string, docroot: string, engine: 'apache' | 'nginx' | null): boolean {
+export function servedRaw(rel: string, docroot: string, engine: SiteEngine | null): boolean {
   return reachable(rel, docroot, engine) && !PHP_EXT_RE.test(baseOf(rel));
 }
 
@@ -274,7 +275,7 @@ function stripEnvComment(value: string): string {
 const NO_CONTENT_EXT_RE = /\.(png|jpe?g|gif|webp|avif|ico|bmp|tiff?|psd|mp[34]|m4a|ogg|wav|flac|webm|mov|avi|mkv|woff2?|ttf|otf|eot|zip|gz|tgz|bz2|xz|7z|rar|tar|zst|jar|war|pdf|docx?|xlsx?|pptx?|odt|ods|exe|dll|so|dylib|bin|class|pyc|wasm|swf|mo|sqlite3?|db)$/i;
 
 /** Rough order of interest for the content budget: served text first, PHP after, the rest last. */
-function contentPriority(rel: string, docroot: string, engine: 'apache' | 'nginx' | null): number {
+function contentPriority(rel: string, docroot: string, engine: SiteEngine | null): number {
   const b = baseOf(rel);
   if (ENV_NAME_RE.test(b) || /\.(pem|key|json|ya?ml|ini|conf|cnf|env|txt|js|xml|properties|toml|npmrc|pypirc)$/i.test(b)) {
     return servedRaw(rel, docroot, engine) ? 0 : 1;

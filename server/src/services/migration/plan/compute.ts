@@ -496,7 +496,10 @@ export function computePlan(
       const php = pick(ordered.map((d) => d.php));
       const app = pick(ordered.map((d) => d.app));
       const chosenBase = pick(cs.map((c) => c.base)) as SiteBaseId | null;
-      const sel = selectBase(php, { choice: chosenBase, htaccess: !!app?.htaccess, allowedBases: L.allowedBases });
+      const sel = selectBase(php, {
+        choice: chosenBase, htaccess: !!app?.htaccess, allowedBases: L.allowedBases,
+        litespeedSource: /litespeed/i.test(inventory.server.webserverSetup ?? '') || !!app?.lscache,
+      });
       for (const m of sel.warnings) warn(m.severity, m.code, sScope, { fqdn: key, ...m.params });
       const profile = (pick(cs.map((c) => c.profile)) ?? app?.profile ?? null) as AppProfileId | null;
       // Profile data paths are relative to the APP root (P1: release root). The profile is detected from markers
@@ -517,6 +520,11 @@ export function computePlan(
         }))
         : [];
       for (const dp of dataPaths) if (dp.allowedExtensions === undefined) delete dp.allowedExtensions;
+      // LiteSpeed Cache plugin found: its run-time folder (optimized CSS / JS) is data, never code.
+      if (profile === 'wordpress' && app?.lscache) {
+        const lsPath = dataPrefix ? `${dataPrefix}/wp-content/litespeed` : 'wp-content/litespeed';
+        if (!dataPaths.some((d) => d.path === lsPath)) dataPaths.push({ path: lsPath, policy: 'persistent' });
+      }
 
       // Secondary runtimes (.htaccess of a sub-directory forcing another PHP version).
       let secondaryRuntimes: MigrationSecondaryRuntimeChoice[] = [];

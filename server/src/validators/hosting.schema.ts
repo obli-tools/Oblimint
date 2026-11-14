@@ -203,6 +203,8 @@ export const siteUpdateSchema = z.object({
   healthcheckPath: healthcheckPath.optional(),
   php: phpSettingsSchema.optional(),
   customNginx: z.string().max(64 * 1024).nullable().optional(),
+  /** LSCache page cache (litespeed bases; stored whatever the base). */
+  lscacheEnabled: z.boolean().optional(),
   leakPolicy: z.enum(['warn', 'block']).optional(),
   cmsGuard: z.object({
     enabled: z.boolean().optional(),

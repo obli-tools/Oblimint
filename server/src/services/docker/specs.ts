@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import path from 'path';
 import type Docker from 'dockerode';
-import type { PlanLimits, RuntimeRole, SiteBaseId } from '@oblimint/shared';
+import { siteBaseDef, type PlanLimits, type RuntimeRole, type SiteBaseId } from '@oblimint/shared';
 import {
   accountNetwork, EDGE_CONTAINER, edgeImage, fileServerContainer, fileServerImage, HOSTD_CONTAINER, hostdImage,
   LABELS, PANEL_NETWORK, previewContainer, releasePreviewContainer, secondaryContainer, siteContainer, siteImage, type ContainerRole,
@@ -148,6 +148,30 @@ export const TMPFS_FLAGS = 'rw,noexec,nosuid,nodev';
  */
 export const TMPFS_SHARED_FLAGS = `${TMPFS_FLAGS},mode=1777`;
 
+/**
+ * litespeed bases: LSCache page store + compressed static files (images/
+ * litespeed, OBLIMINT_LSCACHE_DIR). Its own tmpfs: writable by the account uid,
+ * never executable, outside open_basedir and the release, bounded. A tmpfs is
+ * charged to the memory of the container: a quarter of it, between 32 and
+ * 512 MiB (256 MiB when the memory is unlimited). The image purges it at every
+ * publication / rollback (new generation) and when it is 80 % full.
+ */
+export const LSCACHE_TMPFS_PATH = '/var/cache/lscache';
+export const LSCACHE_TMPFS_MIN_MB = 32;
+export const LSCACHE_TMPFS_MAX_MB = 512;
+export const LSCACHE_TMPFS_DEFAULT_MB = 256;
+
+export function lscacheTmpfsMb(memoryMb: number | null): number {
+  if (memoryMb === null || !(memoryMb > 0)) return LSCACHE_TMPFS_DEFAULT_MB;
+  return Math.min(LSCACHE_TMPFS_MAX_MB, Math.max(LSCACHE_TMPFS_MIN_MB, Math.floor(memoryMb / 4)));
+}
+
+/** Extra tmpfs of a site base (litespeed: the LSCache store), {} for the others. */
+export function baseTmpfs(base: SiteBaseId, memoryMb: number | null): Record<string, string> {
+  if (siteBaseDef(base).engine !== 'litespeed') return {};
+  return { [LSCACHE_TMPFS_PATH]: `${TMPFS_SHARED_FLAGS},size=${lscacheTmpfsMb(memoryMb)}m` };
+}
+
 export const LOG_CONFIG: Docker.HostConfig['LogConfig'] = {
   Type: 'json-file',
   Config: { 'max-size': '10m', 'max-file': '3' },
@@ -206,6 +230,7 @@ export function siteContainerSpec(input: SiteContainerInput): Docker.ContainerCr
     Tmpfs: {
       '/tmp': `${TMPFS_SHARED_FLAGS},size=256m`,
       '/run': `${TMPFS_SHARED_FLAGS},size=16m`,
+      ...baseTmpfs(input.base, effectiveSiteLimits(input.limits).memoryMb),
     },
     ReadonlyRootfs: true,
     CapDrop: ['ALL'],
@@ -298,6 +323,8 @@ export function releasePreviewContainerSpec(input: ReleasePreviewContainerInput)
   for (const p of input.ephemeralPaths.filter(isPreviewTmpfsPath).slice(0, PREVIEW_MAX_EPHEMERAL_TMPFS).sort()) {
     tmpfs[`${CONTAINER_PATHS.data}/${p}`] = `${TMPFS_SHARED_FLAGS},size=${PREVIEW_EPHEMERAL_TMPFS_MB}m`;
   }
+  // litespeed: the smallest LSCache store (a preview is short-lived).
+  Object.assign(tmpfs, baseTmpfs(input.base, LSCACHE_TMPFS_MIN_MB * 4));
   const hostConfig: Docker.HostConfig = {
     Mounts: [
       { Type: 'bind', Source: posix(input.previewReleasesDir), Target: CONTAINER_PATHS.releases, ReadOnly: true },

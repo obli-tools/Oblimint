@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import {
   LEAK_POLICIES, isSiteBaseId, siteBaseDef,
-  type LeakPolicy, type LeakReport, type SiteBaseId,
+  type LeakPolicy, type LeakReport, type SiteBaseId, type SiteEngine,
 } from '@oblimint/shared';
 import { localContentTree } from '../maintenance/contracts';
 import { commitContentTree } from './commitTree';
@@ -30,7 +30,7 @@ export interface LeakSettings {
   policy: LeakPolicy;
   allowlist: string[];
   docroot: string;
-  engine: 'apache' | 'nginx' | null;
+  engine: SiteEngine | null;
 }
 
 /** Policy (block unless 'warn'), allowlist (JSON array of strings), document root and web server of a site row. */

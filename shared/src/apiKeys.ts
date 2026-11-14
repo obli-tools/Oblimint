@@ -377,6 +377,11 @@ export interface ApiV1Site {
   leakGuard: { policy: LeakPolicy; allowlist: string[] };
   /** Observation after each publication (read only for a key): mode off | alert | revert and window (minutes). */
   observation: { mode: ObservationMode; windowMinutes: number };
+  /**
+   * LSCache page cache: available = the base is a litespeed one (OpenLiteSpeed);
+   * enabled = the site setting (lscacheEnabled of PATCH, kept on any base).
+   */
+  lscache: { available: boolean; enabled: boolean };
 }
 
 /** GET /api/v1/sites/:id/leak-check (MCP check_leaks): the leak guard run on the staging, as the next publish would see it. */
@@ -403,7 +408,7 @@ export interface ApiV1LiveRelease {
 }
 
 /** PATCH /api/v1/sites/:id (scope sites.manage): the platform-only settings (custom nginx, base path, profile) stay in the panel. */
-export type ApiV1SiteUpdate = Pick<SiteUpdate, 'name' | 'docroot' | 'publishMode' | 'publishDebounceSec' | 'healthcheckPath' | 'php'>;
+export type ApiV1SiteUpdate = Pick<SiteUpdate, 'name' | 'docroot' | 'publishMode' | 'publishDebounceSec' | 'healthcheckPath' | 'php' | 'lscacheEnabled'>;
 
 /** A domain of the account a key can create subdomains under. */
 export interface ApiV1ParentDomain {

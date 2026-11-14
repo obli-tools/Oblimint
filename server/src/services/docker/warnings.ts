@@ -12,14 +12,65 @@ export interface ReleaseFacts {
   hasPhp: boolean;
   /** The scan stopped at the entry cap: absence of a marker is not proven. */
   truncated: boolean;
+  /**
+   * Only with scanReleaseFacts(…, { htaccessDirectives: true }): directives of
+   * the .htaccess files that OpenLiteSpeed ignores (it reads the rewrite rules
+   * only), sorted, at most HTACCESS_DIRECTIVES_MAX.
+   */
+  htaccessIgnored?: string[];
+}
+
+export const HTACCESS_DIRECTIVES_MAX = 16;
+const HTACCESS_FILES_MAX = 200;
+const HTACCESS_READ_MAX = 256 * 1024;
+
+/**
+ * What OpenLiteSpeed honours in a .htaccess: the mod_rewrite directives, the
+ * LiteSpeed cache directives (LSCache plugins) and the <IfModule> wrappers
+ * around them. Everything else (php_value / php_flag, Auth*, Require / Order /
+ * Allow / Deny, <Files…>, Header, ErrorDocument, Options, Expires*, SetEnv,
+ * Redirect, AddHandler…) is ignored.
+ */
+const LSWS_HTACCESS_SUPPORTED = new Set([
+  'rewriteengine', 'rewritebase', 'rewritecond', 'rewriterule', 'rewriteoptions', 'rewritefile',
+  'cachelookup', 'cacheengine', 'cachekeymodify', 'cachedisable', 'cacheenable',
+  '<ifmodule', '</ifmodule>', '</ifmodule',
+]);
+
+/** Distinct directive names of a .htaccess that OpenLiteSpeed ignores (as written, first spelling wins). */
+export function lswsIgnoredDirectives(text: string): string[] {
+  const seen = new Map<string, string>();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = /^(<\/?[A-Za-z][\w.-]*|[A-Za-z][\w.-]*)/.exec(line);
+    if (!m) continue;
+    const name = m[1];
+    const key = name.toLowerCase();
+    if (LSWS_HTACCESS_SUPPORTED.has(key) || key.startsWith('</')) continue;
+    if (!seen.has(key)) seen.set(key, name.startsWith('<') ? `${name}>` : name);
+  }
+  return [...seen.values()];
 }
 
 export const RELEASE_SCAN_MAX_ENTRIES = 20_000;
 const PHP_EXT = /\.(php\d?|phtml|phar)$/i;
 
-/** Walks `root` with lstat (symlinks never followed), stops when both markers are found or at `maxEntries`. */
-export async function scanReleaseFacts(root: string, maxEntries = RELEASE_SCAN_MAX_ENTRIES): Promise<ReleaseFacts> {
+/**
+ * Walks `root` with lstat (symlinks never followed), stops when both markers
+ * are found or at `maxEntries`. opts.htaccessDirectives: also reads the
+ * .htaccess files (regular files only, bounded) for the directives
+ * OpenLiteSpeed ignores — the walk then goes through the whole tree.
+ */
+export async function scanReleaseFacts(root: string, maxEntries = RELEASE_SCAN_MAX_ENTRIES, opts: { htaccessDirectives?: boolean } = {}): Promise<ReleaseFacts> {
   const facts: ReleaseFacts = { hasHtaccess: false, hasPhp: false, truncated: false };
+  const ignored = new Map<string, string>();
+  let htaccessRead = 0;
+  if (opts.htaccessDirectives) facts.htaccessIgnored = [];
+  const finish = (): ReleaseFacts => {
+    if (opts.htaccessDirectives) facts.htaccessIgnored = [...ignored.values()].sort((a, b) => a.localeCompare(b)).slice(0, HTACCESS_DIRECTIVES_MAX);
+    return facts;
+  };
   let seen = 0;
   const stack: string[] = [root];
   try {
@@ -39,7 +90,7 @@ export async function scanReleaseFacts(root: string, maxEntries = RELEASE_SCAN_M
     for (const e of entries) {
       if (++seen > maxEntries) {
         facts.truncated = true;
-        return facts;
+        return finish();
       }
       // Dirent types come from lstat semantics: a symlink is neither file nor directory here.
       if (e.isSymbolicLink()) continue;
@@ -47,13 +98,36 @@ export async function scanReleaseFacts(root: string, maxEntries = RELEASE_SCAN_M
         if (e.name === '.git') continue;
         stack.push(path.join(dir, e.name));
       } else if (e.isFile()) {
-        if (e.name === '.htaccess') facts.hasHtaccess = true;
-        else if (PHP_EXT.test(e.name)) facts.hasPhp = true;
-        if (facts.hasHtaccess && facts.hasPhp) return facts;
+        if (e.name === '.htaccess') {
+          facts.hasHtaccess = true;
+          if (opts.htaccessDirectives && htaccessRead < HTACCESS_FILES_MAX) {
+            htaccessRead++;
+            const text = await readBounded(path.join(dir, e.name), HTACCESS_READ_MAX);
+            for (const d of lswsIgnoredDirectives(text)) if (!ignored.has(d.toLowerCase())) ignored.set(d.toLowerCase(), d);
+          }
+        } else if (PHP_EXT.test(e.name)) facts.hasPhp = true;
+        if (facts.hasHtaccess && facts.hasPhp && !opts.htaccessDirectives) return facts;
       }
     }
   }
-  return facts;
+  return finish();
+}
+
+/** First `max` bytes of a regular file (never through a symlink: lstat-checked dirent + O_NOFOLLOW), '' on error. */
+async function readBounded(file: string, max: number): Promise<string> {
+  let fh: fs.promises.FileHandle | null = null;
+  try {
+    fh = await fs.promises.open(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    const st = await fh.stat();
+    if (!st.isFile()) return '';
+    const buf = Buffer.alloc(Math.min(max, st.size));
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    return buf.subarray(0, bytesRead).toString('utf-8');
+  } catch {
+    return '';
+  } finally {
+    await fh?.close().catch(() => undefined);
+  }
 }
 
 function versionParts(v: string): [number, number] {
@@ -83,8 +157,21 @@ export function switchWarnings(input: SwitchWarningInput): RuntimeWarning[] {
   const cur = siteBaseDef(input.current);
   const tgt = siteBaseDef(input.target);
   const out: RuntimeWarning[] = [];
-  if (input.release?.hasHtaccess && !tgt.htaccess) {
+  if (input.release?.hasHtaccess && !tgt.htaccessRewrite) {
     out.push({ code: 'htaccessIgnored', message: `The current release contains .htaccess files: ${tgt.id} (nginx) ignores them. Convert the rewrite rules into the custom nginx rules of the site.` });
+  }
+  if (input.release?.hasHtaccess && tgt.engine === 'litespeed' && cur.engine !== 'litespeed') {
+    // OpenLiteSpeed reads the rewrite rules only: access rules (Require, Deny,
+    // Auth*…) and PHP settings of the .htaccess files no longer apply.
+    const ignored = input.release.htaccessIgnored;
+    if (ignored === undefined || ignored.length > 0) {
+      const list = ignored?.join(', ') ?? '';
+      out.push({
+        code: 'htaccessPartial',
+        message: `${tgt.id} (OpenLiteSpeed) only reads the rewrite rules of the .htaccess files${list ? `: ignored here: ${list}` : ''}. Access restrictions (Require, Deny, Auth…) and PHP settings (php_value…) written there no longer apply.`,
+        params: { directives: list },
+      });
+    }
   }
   const unfixed = tgt.php ? phpAdvisoriesUnfixedOnBranch(tgt.php) : [];
   if (unfixed.length) {

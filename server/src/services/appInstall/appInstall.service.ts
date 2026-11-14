@@ -76,6 +76,7 @@ function toInstall(actor: HostingActor, r: AppInstallRow, releaseNumber: number 
     failedStep: r.failed_step as AppInstallStepKey | null, errorCode: r.error_code,
     error: r.error && actor.kind === 'staff' && r.error_detail ? `${r.error} : ${r.error_detail}` : r.error,
     version: r.version, locale: o.locale, adminUser: o.adminUser, adminEmail: o.adminEmail, previewFirst: !!o.previewFirst,
+    lscachePlugin: !!o.lscachePlugin,
     previewId: r.preview_id === null ? null : Number(r.preview_id), releaseId: r.release_id === null ? null : Number(r.release_id), releaseNumber,
     instanceId: r.db_instance_id === null ? null : Number(r.db_instance_id), databaseId: r.db_database_id === null ? null : Number(r.db_database_id),
     databaseName: r.db_database_name,
@@ -206,6 +207,9 @@ export interface InstallVia {
   onSiteCreated?: (siteId: number) => Promise<void>;
 }
 
+/** Run-time folder of the LiteSpeed Cache plugin (optimized CSS / JS, its own notes): data, never code. */
+export const LSCACHE_DATA_PATH = 'wp-content/litespeed';
+
 export const appInstallService = {
   preflight,
   startGates,
@@ -215,12 +219,20 @@ export const appInstallService = {
     const options: InstallOptions = {
       title: (body.title?.trim() || body.name).slice(0, 120), adminUser: body.adminUser, adminEmail: body.adminEmail, locale: body.locale ?? 'en_US',
       previewFirst: !!body.previewFirst, base: pre.base, publishMode: pre.publishMode, publishDebounceSec: body.publishDebounceSec ?? null,
+      // litespeed bases: the LiteSpeed Cache plugin unless refused.
+      lscachePlugin: siteBaseDef(pre.base).lscache && body.lscachePlugin !== false,
     };
     // 'manual' until the publish step: nothing may publish a half-installed tree.
     const site = await sitesService.create(req, actor, {
       accountId: pre.account.id, name: body.name, slug: body.slug, base: pre.base, appProfile: 'wordpress', publishMode: 'manual', applyProfileDataPaths: true,
     });
     await via.onSiteCreated?.(site.id);
+    if (options.lscachePlugin) {
+      // Optimized CSS / JS and the files the LiteSpeed Cache plugin writes at run time: a persistent data path
+      // (writable, never executed). Without it the plugin keeps working, its optimizations stay off.
+      await sitesService.addDataPath(req, actor, site.id, { path: LSCACHE_DATA_PATH, policy: 'persistent' })
+        .catch((err) => logger.warn({ siteId: site.id, err: errText(err) }, 'App install: LiteSpeed Cache data path not added'));
+    }
     const adminPassword = generateAdminPassword();
     const [row] = await db('app_installs').insert({
       tenant_id: pre.account.tenant_id, account_id: pre.account.id, site_id: site.id, site_slug: site.slug, site_name: site.name, app: body.app,

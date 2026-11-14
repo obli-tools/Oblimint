@@ -65,6 +65,8 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
   const [adminEmail, setAdminEmail] = useState('');
   const [locale, setLocale] = useState('en_US');
   const [previewFirst, setPreviewFirst] = useState(false);
+  /** litespeed bases: the LiteSpeed Cache plugin (on by default). */
+  const [lscachePlugin, setLscachePlugin] = useState(true);
   const [started, setStarted] = useState<AppInstallStartResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -157,6 +159,7 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
         ...(publishMode === 'auto' ? { publishDebounceSec: debounceNum } : {}),
         ...(siteTitle.trim() ? { title: siteTitle.trim() } : {}),
         adminUser, adminEmail: adminEmail.trim(), locale, previewFirst,
+        ...(siteBaseDef(base).lscache ? { lscachePlugin } : {}),
       }));
     } catch (err) {
       setError(siteErrorMessage(err, t));
@@ -339,6 +342,17 @@ function CreateSiteForm({ onClose, onCreated, initialAccountId }: Omit<CreateSit
                 description={t('sites.install.previewFirstHint') || 'Stops before publishing: you check WordPress in a preview, with a disposable copy of the database, then you publish release 1.'}
               />
             </div>
+            {siteBaseDef(base).lscache && (
+              <div className="rounded-lg bg-bg-tertiary/60 p-3">
+                <ToggleSwitch
+                  checked={lscachePlugin}
+                  onChange={setLscachePlugin}
+                  size="sm"
+                  label={t('sites.install.lscachePlugin') || 'Install the LiteSpeed Cache plugin'}
+                  description={t('sites.install.lscachePluginHint') || 'Drives the OpenLiteSpeed page cache (LSCache) of this base. Checked against its official file list; installed and activated in release 1.'}
+                />
+              </div>
+            )}
           </div>
         )}
 

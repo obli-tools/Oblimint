@@ -21,8 +21,9 @@ import { json, planLimits } from '../hosting/rows';
 import { platformSettings } from '../platformSettings';
 import type { InstallDeps } from './deps';
 import {
-  ADMIN_PASSWORD_ENV, ADMIN_USER_ENV, ARCHIVE_IN_DIST, isApacheBase, phpSatisfies, scrubSecrets, verifiedFilesOf, WordPressDistError, WP_SALT_NAMES, wpConfigPhp, wpHtaccess, wpInstallCommands,
+  ADMIN_PASSWORD_ENV, ADMIN_USER_ENV, ARCHIVE_IN_DIST, phpSatisfies, readsHtaccessRewrites, scrubSecrets, verifiedFilesOf, WordPressDistError, WP_SALT_NAMES, wpConfigPhp, wpHtaccess, wpInstallCommands,
 } from './wordpress';
+import { LSCACHE_PLUGIN_SLUG, PLUGIN_IN_DIST, lscachePluginCommands, pluginVerifiedFiles } from './lscachePlugin';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The steps of one installation, in the background. Each step is idempotent and
@@ -41,6 +42,14 @@ export interface InstallOptions {
   base: SiteBaseId;
   publishMode: PublishMode;
   publishDebounceSec: number | null;
+  /**
+   * litespeed bases: install and activate the LiteSpeed Cache plugin (the page
+   * cache of OpenLiteSpeed is driven by it). Turned off by the verify step when
+   * the plugin cannot be verified (the installation goes on without it).
+   */
+  lscachePlugin?: boolean;
+  /** Version of the plugin fetched by the download step. */
+  lscachePluginVersion?: string | null;
 }
 
 export interface AppInstallRow {
@@ -294,19 +303,60 @@ async function stepDownload(env: Env): Promise<void> {
     fs.copyFileSync(file, target);
   }
   await logLine(row.id, 'info', `WordPress ${version} (${options.locale}) : archive vérifiée`);
+  if (options.lscachePlugin) await fetchLscachePlugin(env, row, (await context(env)).options, php);
+}
+
+/** Rewrites the stored options (a later step, or a retry, sees the change). */
+async function saveOptions(id: number, options: InstallOptions): Promise<void> {
+  await save(id, { options: JSON.stringify(options) });
+}
+
+/** The LiteSpeed Cache archive in the seed (download step). Skipped with a warning when unavailable: never a failure. */
+async function fetchLscachePlugin(env: Env, row: AppInstallRow, options: InstallOptions, php: string | null): Promise<void> {
+  const plugin = env.deps.lscachePlugin;
+  const skip = async (why: string) => {
+    await saveOptions(row.id, { ...options, lscachePlugin: false, lscachePluginVersion: null });
+    await logLine(row.id, 'warn', `extension LiteSpeed Cache non installée : ${why}`);
+  };
+  if (!plugin) return skip('indisponible sur ce serveur');
+  let version = options.lscachePluginVersion ?? null;
+  try {
+    if (!version) {
+      const offer = await plugin.latest();
+      if (!php || !phpSatisfies(php, offer.requiresPhp)) return skip(`elle demande PHP ${offer.requiresPhp ?? '?'}`);
+      version = offer.version;
+    }
+    const file = await plugin.ensureArchive(localPaths.appDist(), version);
+    const target = path.join(seedDir(row.id), PLUGIN_IN_DIST);
+    fs.rmSync(target, { force: true });
+    try {
+      fs.linkSync(file, target);
+    } catch {
+      fs.copyFileSync(file, target);
+    }
+  } catch (err) {
+    return skip(errText(err).slice(0, 200));
+  }
+  await saveOptions(row.id, { ...options, lscachePluginVersion: version });
+  await logLine(row.id, 'info', `extension LiteSpeed Cache ${version} téléchargée`);
 }
 
 async function stepExtract(env: Env): Promise<void> {
   await tool(env, 'extract', 'Extraction de WordPress', wpInstallCommands.extract());
+  const { options } = await context(env);
+  if (options.lscachePlugin && options.lscachePluginVersion) {
+    await tool(env, 'plugin-extract', 'Extraction de l\'extension LiteSpeed Cache', lscachePluginCommands.extract());
+  }
 }
 
 async function stepConfig(env: Env): Promise<void> {
   const { row, options } = await context(env);
   const dir = seedDir(row.id);
-  const apache = isApacheBase(options.base);
-  fs.writeFileSync(path.join(dir, 'wp-config.php'), wpConfigPhp(), { mode: 0o644 });
-  if (apache) fs.writeFileSync(path.join(dir, '.htaccess'), wpHtaccess(), { mode: 0o644 });
-  await tool(env, 'config', 'Écriture de la configuration', wpInstallCommands.config(apache));
+  // Apache and OpenLiteSpeed read the rewrite rules of .htaccess (pretty permalinks); nginx does not.
+  const htaccess = readsHtaccessRewrites(options.base);
+  fs.writeFileSync(path.join(dir, 'wp-config.php'), wpConfigPhp({ wpCache: !!options.lscachePlugin }), { mode: 0o644 });
+  if (htaccess) fs.writeFileSync(path.join(dir, '.htaccess'), wpHtaccess(), { mode: 0o644 });
+  await tool(env, 'config', 'Écriture de la configuration', wpInstallCommands.config(htaccess));
 }
 
 async function stepVerify(env: Env): Promise<void> {
@@ -320,6 +370,30 @@ async function stepVerify(env: Env): Promise<void> {
     throw new InstallStepError('checksumMismatch', `${v.mismatched.length} fichier(s) du cœur ne correspondent pas à la liste officielle`, v.mismatched.slice(0, 10).join(', '));
   }
   await logLine(row.id, 'info', `${v.checked} fichiers du cœur conformes à la liste officielle`);
+  await verifyLscachePlugin(env);
+}
+
+/**
+ * Every file of the extracted plugin against the official list of its version,
+ * nothing else in its folder. Unverifiable or different: the folder is removed
+ * and the installation goes on WITHOUT the plugin (warning), never with an
+ * unverified one.
+ */
+async function verifyLscachePlugin(env: Env): Promise<void> {
+  const { row, options } = await context(env);
+  if (!options.lscachePlugin || !options.lscachePluginVersion) return;
+  const plugin = env.deps.lscachePlugin;
+  const list = plugin ? await plugin.checksums(options.lscachePluginVersion) : null;
+  const v = plugin ? await plugin.verify(localPaths.siteStaging(row.account_id, row.site_slug), list) : null;
+  if (v && v.available && v.mismatched.length === 0 && v.unexpected.length === 0) {
+    await logLine(row.id, 'info', `extension LiteSpeed Cache : ${v.checked} fichiers conformes à la liste officielle`);
+    return;
+  }
+  await tool(env, 'plugin-remove', 'Retrait de l\'extension LiteSpeed Cache', lscachePluginCommands.remove());
+  await saveOptions(row.id, { ...options, lscachePlugin: false });
+  const why = !v || !v.available ? 'liste officielle indisponible'
+    : `${v.mismatched.length + v.unexpected.length} fichier(s) non conforme(s) : ${[...v.mismatched, ...v.unexpected].slice(0, 5).join(', ')}`;
+  await logLine(row.id, 'warn', `extension LiteSpeed Cache retirée (${why}) : le site est installé sans elle`);
 }
 
 async function stepInstall(env: Env): Promise<void> {
@@ -329,6 +403,10 @@ async function stepInstall(env: Env): Promise<void> {
   await tool(env, 'core-install', 'Installation de WordPress', wpInstallCommands.coreInstall(options.title, options.adminUser, options.adminEmail), {}, [password]);
   await tool(env, 'set-password', 'Mot de passe administrateur', wpInstallCommands.setPassword(), { [ADMIN_PASSWORD_ENV]: password, [ADMIN_USER_ENV]: options.adminUser }, [password]);
   await tool(env, 'permalinks', 'Permaliens', wpInstallCommands.permalinks(), {}, [password]);
+  if (options.lscachePlugin && options.lscachePluginVersion) {
+    await tool(env, 'plugin-activate', 'Activation de LiteSpeed Cache', lscachePluginCommands.activate(), {}, [password]);
+    await logLine(row.id, 'info', 'extension LiteSpeed Cache activée');
+  }
   // It has no further use on this side: the holder received it from the starting call.
   await save(row.id, { admin_password_sealed: null });
 }
@@ -373,7 +451,11 @@ async function stepPublish(env: Env): Promise<'succeeded' | 'awaiting_approval'>
     const release = await deps.publish(siteId, {
       trigger: caller.apiKeyId ? 'api' : 'manual', userId: caller.actor.userId ?? null, apiKeyId: caller.apiKeyId,
       message: `Installation de WordPress ${row.version ?? ''}`.trim(),
-      verifiedFiles: verifiedFilesOf(await deps.officialChecksums(String(row.version), options.locale)),
+      verifiedFiles: new Map([
+        ...verifiedFilesOf(await deps.officialChecksums(String(row.version), options.locale), { wpCache: !!options.lscachePlugin }),
+        ...(options.lscachePlugin && options.lscachePluginVersion && deps.lscachePlugin
+          ? pluginVerifiedFiles(LSCACHE_PLUGIN_SLUG, await deps.lscachePlugin.checksums(options.lscachePluginVersion)) : []),
+      ]),
     });
     releaseId = release.id;
     await save(row.id, { release_id: releaseId });

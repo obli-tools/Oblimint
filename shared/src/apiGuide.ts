@@ -124,11 +124,12 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`get_guide\` | This guide (\`lang\`: \`en\` or \`fr\`) | — |
 | \`list_notifications\` | Notifications of the key's human about this account (release awaiting approval / approved / rejected, certificate issued or failing, domain verified, quota, cron…): \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Only for a key on every site, and only the families its scopes cover (releases: \`releases.publish\`; domains and certificates: every domain too; cron: \`cron.manage\`). Read-only: they stay unread for the human | — |
 | \`list_sites\` / \`get_site\` | Sites of the key (id, slug, domains, status, document root, publish mode); \`liveRelease\` (since when, how: \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, by whom), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
-| \`install_app\` | Install WordPress as an immutable site, in one call: \`app\`, \`name\`, \`slug\`, \`admin_user\`, \`admin_email\`, \`title?\`, \`locale?\`, \`base?\`, \`publish_mode?\`, \`preview_first?\`. Answers with the admin password, **once** | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
+| \`install_app\` | Install WordPress as an immutable site, in one call: \`app\`, \`name\`, \`slug\`, \`admin_user\`, \`admin_email\`, \`title?\`, \`locale?\`, \`base?\`, \`publish_mode?\`, \`preview_first?\`, \`lscache_plugin?\` (litespeed bases: the LiteSpeed Cache plugin, verified, on by default). Answers with the admin password, **once** | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
 | \`list_app_installs\` · \`get_app_install\` | Installations; state and steps of one (\`install_id\`). Never a password | \`sites.create\` |
 | \`retry_app_install\` · \`publish_app_install\` · \`cleanup_app_install\` | Resume at the failed step; publish release 1 after a preview; delete what the operation created (only if this key started it) | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
 | \`create_site\` | Create a site: \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (URL prefix it expects, e.g. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
-| \`update_site\` | Change a site: \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
+| \`update_site\` | Change a site: \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\`, \`lscache_enabled?\` | \`sites.manage\` |
+| \`purge_cache\` | Empty the LSCache page cache of a site on a \`litespeed-php8.x\` base (publications and rollbacks already do) | \`sites.manage\` |
 | \`list_files\` | List a folder (\`path\`, \`area\`); \`with_sha256: true\` adds the hash of each file | \`files.read\` |
 | \`search_files\` | Search the text files under a folder (\`query\`, \`regex?\`, \`case_sensitive?\`, \`include?\` / \`exclude?\` globs, \`include_vendor?\`, \`max_results?\`): \`path\`, \`line\`, \`column\`, \`text\` of each match; vendor / node_modules, binaries, files > 1 MB and links skipped; bounded (\`truncated\`, \`stoppedBy\`) | \`files.read\` |
 | \`read_file\` | Read a file by lines (\`start_line\` / \`end_line\`, ≤ 2000 lines per call) or by bytes (\`offset\` / \`length\`, \`encoding\`); always returns \`sha256\` (of the whole file), \`size\`, \`totalLines\`, \`nextLine\` when cut | \`files.read\` |
@@ -192,7 +193,8 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 
 Tools that may run into a protected action (see §5 « Protected actions ») also take an optional \`approval_id\`.
 
-**Bases (\`base\`)**: \`apache-php5.6\` (legacy code being ported only: no security fix), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supported), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (plain HTML/JS/CSS).
+**Bases (\`base\`)**: \`apache-php5.6\` (legacy code being ported only: no security fix), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supported), \`nginx-php8.1\` … \`nginx-php8.4\`, \`litespeed-php8.1\` … \`litespeed-php8.4\` (OpenLiteSpeed + LSPHP with the **LSCache** page cache; only the **rewrite rules** of \`.htaccess\` files apply: no access rules, authentication nor \`php_value\`), \`nginx-static\` (plain HTML/JS/CSS).
+**LSCache (\`lscache_enabled\` / \`lscacheEnabled\`)**: on a litespeed base, OpenLiteSpeed serves without PHP the pages the application marks cacheable (LSCache plugin of WordPress, PrestaShop, Joomla… — nothing is cached otherwise), never the pages of a logged-in visitor. The cache is emptied at every publication and rollback; after a change made outside a release (content, CMS setting), \`purge_cache\`. \`get_site\` → \`lscache: { available, enabled }\`.
 **Profiles (\`app_profile\`)**: \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (document root \`public\`), \`generic-php\`, \`static\`. A profile sets the document root and declares the data folders (e.g. \`wp-content/uploads\`).
 **PHP settings (\`php\`)**: \`{ memoryLimitMb, uploadMaxFilesizeMb, postMaxSizeMb, maxExecutionTime }\`, within the limits of the account's plan.
 
@@ -444,12 +446,13 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET | \`/me\` | | — |
 | GET | \`/guide\` | \`?lang=en\` or \`fr\`: this guide as Markdown | — |
 | GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50): \`{ items, unreadCount, hasMore }\`, this account only, within the key's reach (see \`list_notifications\`), read-only | — |
-| POST | \`/apps/install\` | \`{ app, name, slug, adminUser, adminEmail, title?, locale?, base?, publishMode?, publishDebounceSec?, previewFirst? }\` → \`{ install, adminUser, adminPassword }\` (the password: **once**) | \`sites.create\` |
+| POST | \`/apps/install\` | \`{ app, name, slug, adminUser, adminEmail, title?, locale?, base?, publishMode?, publishDebounceSec?, previewFirst?, lscachePlugin? }\` → \`{ install, adminUser, adminPassword }\` (the password: **once**) | \`sites.create\` |
 | GET | \`/apps/installs\` · \`…/installs/:id\` | State and steps; never a password | \`sites.create\` |
 | POST | \`/apps/installs/:id/retry\` · \`/publish\` · \`/cleanup\` | Resume at the failed step; publish after a preview; remove what it created (the key that started it). Also needs \`databases.manage\` and \`releases.publish\` | \`sites.create\` |
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
-| PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |
+| PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php?, lscacheEnabled? }\` | \`sites.manage\` |
+| POST | \`/sites/:id/cache/purge\` | — → \`{ purged }\` (409 \`noPageCache\` when the site runs no litespeed base) | \`sites.manage\` |
 | GET · PATCH | \`/sites/:id/env\` | PATCH: \`{ set?: [{ name, value?, secret? }], remove?: [name] }\` (the others stay) | \`sites.manage\` |
 | GET · POST | \`/sites/:id/data-paths\` | POST: \`{ path, policy, allowedExtensions? }\` | \`sites.manage\` (GET: —) |
 | PUT · DELETE | \`/sites/:id/data-paths/:pathId\` | PUT: \`{ policy?, allowedExtensions? }\` | \`sites.manage\` |
@@ -740,11 +743,12 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`get_guide\` | Ce guide (\`lang\`: \`fr\` ou \`en\`) | — |
 | \`list_notifications\` | Notifications de l'humain de la clé sur ce compte (release en attente d'approbation / approuvée / rejetée, certificat délivré ou en échec, domaine vérifié, quota, cron…) : \`unread?\`, \`family?\`, \`before?\`, \`limit?\` (≤ 50). Seulement pour une clé sur tous les sites, et seulement les familles que couvrent ses portées (releases : \`releases.publish\` ; domaines et certificats : tous les domaines aussi ; cron : \`cron.manage\`). Lecture seule : elles restent non lues pour l'humain | — |
 | \`list_sites\` / \`get_site\` | Sites de la clé (id, slug, domaines, statut, racine web, mode de publication) ; \`liveRelease\` (depuis quand, comment : \`publish\` / \`rollback\` / \`revert\` / \`rebuild\`, par qui), \`latestRelease\`, \`rolledBack\` + \`rolledBackFrom\` | — |
-| \`install_app\` | Installer WordPress en site immuable, en un appel : \`app\`, \`name\`, \`slug\`, \`admin_user\`, \`admin_email\`, \`title?\`, \`locale?\`, \`base?\`, \`publish_mode?\`, \`preview_first?\`. Répond avec le mot de passe administrateur, **une seule fois** | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
+| \`install_app\` | Installer WordPress en site immuable, en un appel : \`app\`, \`name\`, \`slug\`, \`admin_user\`, \`admin_email\`, \`title?\`, \`locale?\`, \`base?\`, \`publish_mode?\`, \`preview_first?\`, \`lscache_plugin?\` (bases litespeed : extension LiteSpeed Cache, vérifiée, activée par défaut). Répond avec le mot de passe administrateur, **une seule fois** | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
 | \`list_app_installs\` · \`get_app_install\` | Installations ; état et étapes de l'une (\`install_id\`). Jamais de mot de passe | \`sites.create\` |
 | \`retry_app_install\` · \`publish_app_install\` · \`cleanup_app_install\` | Reprendre à l'étape en échec ; publier la release 1 après un aperçu ; supprimer ce que l'opération a créé (si cette clé l'a lancée) | \`sites.create\`, \`databases.manage\`, \`releases.publish\` |
 | \`create_site\` | Créer un site : \`name\`, \`slug\` (a-z, 0-9, -), \`base\`, \`app_profile?\`, \`docroot?\`, \`base_path?\` (préfixe d'URL attendu, ex. \`/uploads/\`), \`publish_mode?\` | \`sites.create\` |
-| \`update_site\` | Modifier un site : \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\` | \`sites.manage\` |
+| \`update_site\` | Modifier un site : \`name?\`, \`docroot?\`, \`publish_mode?\`, \`publish_debounce_sec?\`, \`healthcheck_path?\`, \`php?\`, \`lscache_enabled?\` | \`sites.manage\` |
+| \`purge_cache\` | Vider le cache de pages LSCache d'un site sur une base \`litespeed-php8.x\` (publications et retours arrière le font déjà) | \`sites.manage\` |
 | \`list_files\` | Lister un dossier (\`path\`, \`area\`) ; \`with_sha256: true\` ajoute l'empreinte de chaque fichier | \`files.read\` |
 | \`search_files\` | Chercher dans les fichiers texte d'un dossier (\`query\`, \`regex?\`, \`case_sensitive?\`, globs \`include?\` / \`exclude?\`, \`include_vendor?\`, \`max_results?\`) : \`path\`, \`line\`, \`column\`, \`text\` de chaque résultat ; vendor / node_modules, binaires, fichiers > 1 Mo et liens ignorés ; borné (\`truncated\`, \`stoppedBy\`) | \`files.read\` |
 | \`read_file\` | Lire un fichier par lignes (\`start_line\` / \`end_line\`, ≤ 2000 lignes par appel) ou par octets (\`offset\` / \`length\`, \`encoding\`) ; renvoie toujours \`sha256\` (du fichier entier), \`size\`, \`totalLines\`, \`nextLine\` si coupé | \`files.read\` |
@@ -808,7 +812,8 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 
 Les outils qui peuvent rencontrer une action protégée (voir §5 « Actions protégées ») acceptent aussi un \`approval_id\` facultatif.
 
-**Bases (\`base\`)** : \`apache-php5.6\` (code ancien en cours de portage uniquement : aucun correctif de sécurité), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supporté), \`nginx-php8.1\` … \`nginx-php8.4\`, \`nginx-static\` (HTML/JS/CSS pur).
+**Bases (\`base\`)** : \`apache-php5.6\` (code ancien en cours de portage uniquement : aucun correctif de sécurité), \`apache-php7.4\`, \`apache-php8.1\` … \`apache-php8.4\` (\`.htaccess\` supporté), \`nginx-php8.1\` … \`nginx-php8.4\`, \`litespeed-php8.1\` … \`litespeed-php8.4\` (OpenLiteSpeed + LSPHP avec le cache de pages **LSCache** ; seules les **règles de réécriture** des fichiers \`.htaccess\` s'appliquent : ni règles d'accès, ni authentification, ni \`php_value\`), \`nginx-static\` (HTML/JS/CSS pur).
+**LSCache (\`lscache_enabled\` / \`lscacheEnabled\`)** : sur une base litespeed, OpenLiteSpeed sert sans PHP les pages que l'application déclare cachables (extension LSCache de WordPress, PrestaShop, Joomla… — rien n'est mis en cache sinon), jamais celles d'un visiteur connecté. Le cache est vidé à chaque publication et à chaque retour arrière ; après un changement fait hors release (contenu, réglage du CMS), \`purge_cache\`. \`get_site\` → \`lscache: { available, enabled }\`.
 **Profils (\`app_profile\`)** : \`wordpress\`, \`joomla\`, \`drupal\`, \`prestashop\`, \`laravel\` (racine web \`public\`), \`generic-php\`, \`static\`. Un profil règle la racine web et déclare les dossiers de données (ex. \`wp-content/uploads\`).
 **Réglages PHP (\`php\`)** : \`{ memoryLimitMb, uploadMaxFilesizeMb, postMaxSizeMb, maxExecutionTime }\`, dans les limites du plan du compte.
 
@@ -1060,12 +1065,13 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET | \`/me\` | | — |
 | GET | \`/guide\` | \`?lang=fr\` ou \`en\` : ce guide en Markdown | — |
 | GET | \`/notifications\` | \`?unread=1&family=&before=&limit=\` (≤ 50) : \`{ items, unreadCount, hasMore }\`, ce compte seulement, dans la portée de la clé (voir \`list_notifications\`), lecture seule | — |
-| POST | \`/apps/install\` | \`{ app, name, slug, adminUser, adminEmail, title?, locale?, base?, publishMode?, publishDebounceSec?, previewFirst? }\` → \`{ install, adminUser, adminPassword }\` (le mot de passe : **une seule fois**) | \`sites.create\` |
+| POST | \`/apps/install\` | \`{ app, name, slug, adminUser, adminEmail, title?, locale?, base?, publishMode?, publishDebounceSec?, previewFirst?, lscachePlugin? }\` → \`{ install, adminUser, adminPassword }\` (le mot de passe : **une seule fois**) | \`sites.create\` |
 | GET | \`/apps/installs\` · \`…/installs/:id\` | État et étapes ; jamais de mot de passe | \`sites.create\` |
 | POST | \`/apps/installs/:id/retry\` · \`/publish\` · \`/cleanup\` | Reprendre à l'étape en échec ; publier après un aperçu ; retirer ce qu'elle a créé (la clé qui l'a lancée). Demande aussi \`databases.manage\` et \`releases.publish\` | \`sites.create\` |
 | GET | \`/sites\` · \`/sites/:id\` | | — |
 | POST | \`/sites\` | \`{ name, slug, base, appProfile?, docroot?, basePath?, publishMode?, publishDebounceSec?, healthcheckPath?, applyProfileDataPaths? }\` | \`sites.create\` |
-| PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php? }\` | \`sites.manage\` |
+| PATCH | \`/sites/:id\` | \`{ name?, docroot?, publishMode?, publishDebounceSec? (5-3600), healthcheckPath?, php?, lscacheEnabled? }\` | \`sites.manage\` |
+| POST | \`/sites/:id/cache/purge\` | — → \`{ purged }\` (409 \`noPageCache\` si le site n'utilise aucune base litespeed) | \`sites.manage\` |
 | GET · PATCH | \`/sites/:id/env\` | PATCH : \`{ set?: [{ name, value?, secret? }], remove?: [name] }\` (les autres restent) | \`sites.manage\` |
 | GET · POST | \`/sites/:id/data-paths\` | POST : \`{ path, policy, allowedExtensions? }\` | \`sites.manage\` (GET : —) |
 | PUT · DELETE | \`/sites/:id/data-paths/:pathId\` | PUT : \`{ policy?, allowedExtensions? }\` | \`sites.manage\` |

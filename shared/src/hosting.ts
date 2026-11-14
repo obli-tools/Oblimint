@@ -27,9 +27,14 @@ export type SiteBaseId =
   | 'nginx-php8.2'
   | 'nginx-php8.3'
   | 'nginx-php8.4'
-  | 'nginx-static';
+  | 'nginx-static'
+  | 'litespeed-php8.1'
+  | 'litespeed-php8.2'
+  | 'litespeed-php8.3'
+  | 'litespeed-php8.4';
 
-export type SiteEngine = 'apache' | 'nginx';
+/** litespeed: OpenLiteSpeed + LSPHP (LSAPI), LSCache page cache built in. */
+export type SiteEngine = 'apache' | 'nginx' | 'litespeed';
 
 export interface SiteBaseDef {
   id: SiteBaseId;
@@ -44,15 +49,24 @@ export interface SiteBaseDef {
   image: string;
   /** PHP branch out of security support → "unmaintained runtime" badge. */
   unmaintained: boolean;
-  /** Honours .htaccess files (Apache bases only). */
+  /** Honours .htaccess files entirely (Apache bases only). */
   htaccess: boolean;
+  /**
+   * Honours the REWRITE rules of .htaccess files (Apache, OpenLiteSpeed). On
+   * OpenLiteSpeed every other directive (php_value, Auth*, Require / Deny,
+   * Header, ErrorDocument, Options…) is ignored.
+   */
+  htaccessRewrite: boolean;
+  /** LSCache page cache (litespeed bases): per-site switch, purged at every publication. */
+  lscache: boolean;
 }
 
 /** Default repository prefix of the site base images (images/build.sh REPO=meejay). */
 export const DEFAULT_SITE_IMAGE_PREFIX = 'meejay/oblimint-';
 
 const base = (id: SiteBaseId, engine: SiteEngine, php: string | null, unmaintained: boolean): SiteBaseDef => ({
-  id, engine, php, image: `${DEFAULT_SITE_IMAGE_PREFIX}${id}`, unmaintained, htaccess: engine === 'apache',
+  id, engine, php, image: `${DEFAULT_SITE_IMAGE_PREFIX}${id}`, unmaintained,
+  htaccess: engine === 'apache', htaccessRewrite: engine === 'apache' || engine === 'litespeed', lscache: engine === 'litespeed',
 });
 
 /** Catalog of site bases, in display order. Images are built from images/. */
@@ -69,7 +83,18 @@ export const SITE_BASES: readonly SiteBaseDef[] = [
   base('nginx-php8.2', 'nginx', '8.2', false),
   base('nginx-php8.1', 'nginx', '8.1', true),
   base('nginx-static', 'nginx', null, false),
+  // OpenLiteSpeed (GPLv3) + LSPHP from the official LiteSpeed repository (images/litespeed).
+  base('litespeed-php8.4', 'litespeed', '8.4', false),
+  base('litespeed-php8.3', 'litespeed', '8.3', false),
+  base('litespeed-php8.2', 'litespeed', '8.2', false),
+  base('litespeed-php8.1', 'litespeed', '8.1', true),
 ];
+
+/** The litespeed base of the same PHP branch (migration, installer), null when none. */
+export function litespeedBaseFor(php: string | null): SiteBaseId | null {
+  const def = SITE_BASES.find((b) => b.engine === 'litespeed' && b.php === php);
+  return def ? def.id : null;
+}
 
 export const SITE_BASE_IDS: readonly SiteBaseId[] = SITE_BASES.map((b) => b.id);
 
@@ -641,6 +666,12 @@ export interface Site {
   previewUrl: string | null;
   php: PhpSettings;
   customNginx: string | null;
+  /**
+   * LSCache page cache of the litespeed bases (migration 045, default on).
+   * Stored whatever the base (a base switch keeps it); only rendered on a
+   * litespeed base.
+   */
+  lscacheEnabled: boolean;
   /** Leak guard of the publications: policy and allowlisted paths (globs relative to the code root). */
   leakPolicy: LeakPolicy;
   leakAllowlist: string[];
@@ -683,6 +714,8 @@ export interface SiteUpdate {
   healthcheckPath?: string;
   php?: PhpSettings;
   customNginx?: string | null;
+  /** LSCache page cache (litespeed bases). */
+  lscacheEnabled?: boolean;
   /** Relaxing the guard (block → warn, a new allowlist entry) takes the right to approve releases. */
   leakPolicy?: LeakPolicy;
   leakAllowlist?: string[];
@@ -1308,12 +1341,19 @@ export interface RuntimeContainerStatus {
   phpVersion: string | null;
 }
 
-export type RuntimeWarningCode = 'htaccessIgnored' | 'unmaintainedRuntime' | 'vulnerableRuntime' | 'phpDowngrade' | 'phpMajorChange' | 'staticBaseWithPhp' | 'imageMissing';
+export type RuntimeWarningCode = 'htaccessIgnored' | 'htaccessPartial' | 'unmaintainedRuntime' | 'vulnerableRuntime' | 'phpDowngrade' | 'phpMajorChange' | 'staticBaseWithPhp' | 'imageMissing';
 
 export interface RuntimeWarning {
   code: RuntimeWarningCode;
   /** English fallback; the client translates `runtime.warnings.<code>`. */
   message: string;
+  /** Interpolation values of the translation (htaccessPartial: directives = "php_value, AuthType…"). */
+  params?: Record<string, string>;
+}
+
+/** POST /api/sites/:id/runtime/cache/purge (and API v1 / MCP purge_cache): containers whose page cache was emptied. */
+export interface SiteCachePurgeResult {
+  purged: number;
 }
 
 /** GET /api/sites/:id/runtime */
@@ -1357,6 +1397,11 @@ export interface SiteRuntimeConfig {
   php: Required<PhpSettings>;
   customNginx: string | null;
   healthcheckPath: string;
+  /**
+   * LSCache page cache: written for a litespeed base only (images/siteconf:
+   * absent = enabled), so the configs of the other bases stay byte-identical.
+   */
+  lscache?: { enabled: boolean };
 }
 
 // ─── INFRA / EDGE ────────────────────────────────────────────────────────────
