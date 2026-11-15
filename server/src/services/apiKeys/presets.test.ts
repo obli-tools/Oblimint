@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ApiKeyPresetState, ApiKeyScope } from '@oblimint/shared';
 import {
-  API_KEY_PRESETS, API_KEY_SCOPES, apiKeyFormCutToGrantable, apiKeyPreset, apiKeyPresetMatches, apiKeyPresetNeedsParents, apiKeyPresetScopes, matchApiKeyPreset,
+  API_KEY_OPT_IN_SCOPES, API_KEY_PRESETS, API_KEY_SCOPES, apiKeyFormCutToGrantable, apiKeyPreset, apiKeyPresetMatches, apiKeyPresetNeedsParents, apiKeyPresetScopes, matchApiKeyPreset,
 } from '@oblimint/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -12,7 +12,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALL = [...API_KEY_SCOPES];
-const EVERYTHING = ALL.filter((s) => s !== 'releases.propose');
+const EVERYTHING = ALL.filter((s) => s !== 'releases.propose' && s !== 'mail.mailboxes');
 const scopesOf = (id: Parameters<typeof apiKeyPreset>[0]) => apiKeyPresetScopes(apiKeyPreset(id), ALL);
 const lacks = (id: Parameters<typeof apiKeyPreset>[0], ...out: ApiKeyScope[]) => {
   const s = scopesOf(id);
@@ -101,6 +101,15 @@ test('supervised agent: proposes, previews its proposal, reads; never publishes 
   assert.equal(p.minSites, 1);
   assert.equal(p.domains, 'none');
   assert.equal(matchApiKeyPreset(state({ scopes: scopesOf('supervised'), siteCount: 2 }), ALL, true), 'supervised');
+});
+
+test('the mailboxes are opt-in: no preset gives them, « Everything » included', () => {
+  assert.deepEqual([...API_KEY_OPT_IN_SCOPES], ['mail.mailboxes']);
+  for (const p of API_KEY_PRESETS) lacks(p.id, 'mail.mailboxes');
+  // A preset whose list would name it still leaves it out.
+  assert.deepEqual(apiKeyPresetScopes({ ...apiKeyPreset('readonly'), scopes: ['files.read', 'mail.mailboxes'] }, ALL), ['files.read']);
+  // Everything + the mailboxes is a custom key (never matched as « Everything »).
+  assert.equal(matchApiKeyPreset(state({ scopes: [...EVERYTHING, 'mail.mailboxes'], siteScope: 'all', domainScope: 'all' }), ALL, true), null);
 });
 
 test('no preset holds both releases.publish and releases.propose', () => {

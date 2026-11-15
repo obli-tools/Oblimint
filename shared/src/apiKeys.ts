@@ -2,6 +2,7 @@ import type { DbConnectionInfo, DbDatabase, DbEngine, DbFamily, DbInstanceStatus
 import type { CurrentReleaseVia, LeakPolicy, LeakReport, SiteUpdate } from './hosting';
 import type { ObservationMode } from './releaseObservation';
 import type { DnsRecordOrigin, DnsRecordType, DnsZoneKind, DnsZoneServed, DnsZoneStatus } from './dns';
+import type { MailAccountLimits, MailAccountUsage, MailDomainStatus } from './mail';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API access keys of a hosting account (« Clés d'accès »): a script, a CI or an
@@ -72,12 +73,24 @@ export type ApiKeyScope =
    * never a record the platform manages (web records of the sites and subdomains, mail records of a
    * hosted mail, SOA / NS, ACME and ownership challenges). Hosted zones only.
    */
-  | 'dns.write';
+  | 'dns.write'
+  /**
+   * Mailboxes of the account's mail domains (keyMail.ts): list, create (within the plan), new password,
+   * delete (a protected action: mail.mailbox_delete). The password is returned once, never stored nor
+   * audited in clear. OPT-IN: never checked by a preset, « Everything » included (API_KEY_OPT_IN_SCOPES).
+   */
+  | 'mail.mailboxes';
 
 export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
   'files.read', 'files.write', 'releases.publish', 'releases.propose', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain',
-  'dns.read', 'dns.write', 'logs.read', 'network.read',
+  'dns.read', 'dns.write', 'logs.read', 'network.read', 'mail.mailboxes',
 ];
+
+/**
+ * Scopes only ever given by ticking them one by one: no preset checks them, not even « Everything »
+ * (a key made for the sites must not reach the mailboxes of the account by surprise).
+ */
+export const API_KEY_OPT_IN_SCOPES: readonly ApiKeyScope[] = ['mail.mailboxes'];
 
 export type ApiKeySiteScope = 'all' | 'selected';
 
@@ -248,8 +261,10 @@ export function apiKeyPreset(id: ApiKeyPresetId): ApiKeyPreset {
 
 /** Scopes a preset checks for someone who may grant `grantable`, in API_KEY_SCOPES order. */
 export function apiKeyPresetScopes(preset: ApiKeyPreset, grantable: readonly ApiKeyScope[]): ApiKeyScope[] {
-  // 'all' never checks releases.propose: it excludes releases.publish and would take a right away.
-  return API_KEY_SCOPES.filter((s) => grantable.includes(s) && (preset.scopes === 'all' ? s !== 'releases.propose' : preset.scopes.includes(s)));
+  // 'all' never checks releases.propose: it excludes releases.publish and would take a right away;
+  // no preset checks an opt-in scope (the mailboxes), whatever its list says.
+  return API_KEY_SCOPES.filter((s) => grantable.includes(s) && !API_KEY_OPT_IN_SCOPES.includes(s)
+    && (preset.scopes === 'all' ? s !== 'releases.propose' : preset.scopes.includes(s)));
 }
 
 /** State of a key form, as the presets see it. */
@@ -571,4 +586,64 @@ export interface ApiV1RouteDomain {
   /** The key may add / change / remove routes on it (all its routes lead to sites of the key). */
   manageable: boolean;
   routes: ApiV1Route[];
+}
+
+// ── Mailboxes (scope mail.mailboxes: REST /api/v1/mailboxes, MCP list_mailboxes…) ──
+
+/** A mail domain of the key's account, as the key API shows it. */
+export interface ApiV1MailDomain {
+  id: number;
+  /** e.g. "example.com": the mailboxes are <localPart>@<name>. */
+  name: string;
+  enabled: boolean;
+  /** active: receives and sends; pending: the domain ownership is not verified yet (no mail service); disabled / suspended / error. */
+  status: MailDomainStatus;
+  mailboxCount: number;
+}
+
+/** A mailbox as the key API shows it (never its password nor its hash; no forwarding, rules or autoresponder). */
+export interface ApiV1Mailbox {
+  id: number;
+  address: string;
+  localPart: string;
+  domain: string;
+  mailDomainId: number;
+  displayName: string | null;
+  /** MiB, null = unlimited (only when the plan allows it). */
+  quotaMb: number | null;
+  usedBytes: number | null;
+  /** false: cannot log in (IMAP / POP3 / SMTP / webmail). */
+  enabled: boolean;
+  sendEnabled: boolean;
+  receiveEnabled: boolean;
+  passwordSetAt: string | null;
+  createdAt: string;
+}
+
+/** GET /api/v1/mailboxes (MCP list_mailboxes). */
+export interface ApiV1MailboxList {
+  /** The platform's mail engine hosts mailboxes (false: external engine, create_mailbox answers mailEngineNoMailboxes). */
+  hostsMailboxes: boolean;
+  /** IMAP / SMTP server of the mailboxes (null: not configured). */
+  hostname: string | null;
+  webmailUrl: string | null;
+  /** Mail limits of the account's plan, and what is used of them. */
+  limits: MailAccountLimits | null;
+  usage: MailAccountUsage | null;
+  domains: ApiV1MailDomain[];
+  items: ApiV1Mailbox[];
+  /** Mailboxes matching the filters (items: one page of them). */
+  total: number;
+}
+
+/** Answer of a mailbox creation: the password is returned ONCE (null when the caller gave it). */
+export interface ApiV1MailboxCreated {
+  mailbox: ApiV1Mailbox;
+  password: string | null;
+}
+
+/** Answer of a password reset: the new password, returned ONCE (null when the caller gave it). */
+export interface ApiV1MailboxPassword {
+  mailbox: { id: number; address: string };
+  password: string | null;
 }

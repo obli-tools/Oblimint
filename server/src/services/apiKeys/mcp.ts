@@ -25,6 +25,7 @@ import { keyDatabases } from './keyDatabases';
 import { appInstallStartSchema } from '../../validators/appInstall.schema';
 import { keyEnv } from './keyEnv';
 import { keyDns } from './keyDns';
+import { KEY_MAILBOX_PAGE_MAX, keyMail } from './keyMail';
 import { parseBody } from '../docker/parseBody';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -749,7 +750,68 @@ const TOOLS: ToolDef[] = [
     }, ['zone', 'revision_id']),
     args: z.object({ zone: z.string().min(1).max(253), revision_id: zId, dry_run: z.boolean().optional() }),
     run: (ctx, req, a) => keyDns.restore(ctx, req, a.zone, a.revision_id, { dryRun: a.dry_run === true }),
-  },  // ── path routes (routes.manage), secondary runtimes (sites.manage) ──
+  },
+  // ── mailboxes of the account's mail domains (mail.mailboxes, opt-in) ──
+  {
+    name: 'list_mailboxes', title: 'Mailboxes', readOnly: true,
+    description: 'Mailboxes of the hosting account (scope mail.mailboxes): domains = the mail domains of the account (id, name, status: active receives and sends, pending = domain ownership not verified yet, no mail service), items = one page of mailboxes (id, address, quotaMb, usedBytes, enabled…; never a password), total, limits / usage = the plan\'s mail limits (maxMailboxes, mailQuotaMb, mailboxQuotaMaxMb) and what is used, hostname = the IMAP / SMTP server, hostsMailboxes false = the mail engine is external (no mailbox can be created). Another account never appears.',
+    inputSchema: obj({
+      domain: { type: 'string', description: 'Only the mailboxes of this mail domain, e.g. "example.com".' },
+      mail_domain_id: { type: 'integer', description: 'Only the mailboxes of this mail domain (id from domains).' },
+      search: { type: 'string', description: 'Part of the address.' },
+      limit: { type: 'integer', minimum: 1, maximum: KEY_MAILBOX_PAGE_MAX, description: 'Mailboxes per page (default 100).' },
+      offset: { type: 'integer', minimum: 0, description: 'Mailboxes to skip (paging).' },
+    }, []),
+    args: z.object({
+      domain: z.string().min(1).max(253).optional(), mail_domain_id: zId.optional(), search: z.string().max(100).optional(),
+      limit: z.number().int().min(1).max(KEY_MAILBOX_PAGE_MAX).optional(), offset: z.number().int().min(0).optional(),
+    }),
+    run: (ctx, _r, a) => keyMail.list(ctx, { domain: a.domain, mailDomainId: a.mail_domain_id, search: a.search, limit: a.limit, offset: a.offset }),
+  },
+  {
+    name: 'create_mailbox', title: 'Create a mailbox',
+    description: 'Creates the mailbox <local_part>@<domain> in a mail domain of the account (scope mail.mailboxes; domain by name, or mail_domain_id from list_mailboxes). Same checks as the panel: the plan\'s number of mailboxes and mail storage (planLimit with details.dimension mailboxes / mailQuota / mailboxQuota), an address already used by a mailbox or an alias (addressTaken), reserved names (invalidAddress), suspended account (accountSuspended), external mail engine (mailEngineNoMailboxes). Without password, a strong one is generated: the answer returns it ONCE (password) and it is never shown again — keep it for the test, or call reset_mailbox_password. Usable over IMAP / SMTP on the server of list_mailboxes (hostname) within a minute. Meant for test mailboxes: delete them with delete_mailbox when done.',
+    inputSchema: obj({
+      domain: { type: 'string', description: 'Mail domain name, e.g. "example.com" (or mail_domain_id).' },
+      mail_domain_id: { type: 'integer', description: 'Mail domain id from list_mailboxes (or domain).' },
+      local_part: { type: 'string', description: 'What comes before the @: lower-case letters, digits, . _ + - (e.g. "test-signup").' },
+      password: { type: 'string', description: 'Optional: omit it to get a generated one, returned once.' },
+      quota_mb: { type: 'integer', minimum: 1, maximum: 1048576, description: 'Optional size limit in MiB (default: the platform default, within the plan).' },
+      display_name: { type: 'string', description: 'Optional name shown as the sender.' },
+    }, ['local_part']),
+    args: z.object({
+      domain: z.string().min(1).max(253).optional(), mail_domain_id: zId.optional(), local_part: z.string().min(1).max(64),
+      password: z.string().min(1).max(256).optional(), quota_mb: z.number().int().min(1).max(1_048_576).optional(), display_name: z.string().max(255).optional(),
+    }).refine((a) => (a.domain !== undefined) !== (a.mail_domain_id !== undefined), { message: 'domain or mail_domain_id (one of them) is required', path: ['domain'] }),
+    run: (ctx, req, a) => keyMail.create(ctx, req, {
+      domain: a.domain, mailDomainId: a.mail_domain_id, localPart: a.local_part, password: a.password ?? null,
+      ...(a.quota_mb !== undefined ? { quotaMb: a.quota_mb } : {}), ...(a.display_name !== undefined ? { displayName: a.display_name } : {}),
+    }),
+  },
+  {
+    name: 'reset_mailbox_password', title: 'New mailbox password', gated: ['mail.mailbox_password'],
+    description: 'Sets a new password on a mailbox of the account (scope mail.mailboxes), by mailbox_id or full address. Without password, a strong one is generated and returned ONCE. The old password stops working within a minute. Refused on a suspended account (accountSuspended). May be protected by the humans (twoFactorRequired / approvalRequired: tell the human, then call again with the same arguments).',
+    inputSchema: obj({
+      mailbox_id: { type: 'integer', description: 'Mailbox id from list_mailboxes (or address).' },
+      address: { type: 'string', description: 'Full address of the mailbox (or mailbox_id).' },
+      password: { type: 'string', description: 'Optional: omit it to get a generated one, returned once.' },
+    }, []),
+    args: z.object({ mailbox_id: zId.optional(), address: z.string().min(3).max(254).optional(), password: z.string().min(1).max(256).optional() })
+      .refine((a) => (a.mailbox_id !== undefined) !== (a.address !== undefined), { message: 'mailbox_id or address (one of them) is required', path: ['mailbox_id'] }),
+    run: (ctx, req, a) => keyMail.resetPassword(ctx, req, a.mailbox_id !== undefined ? { id: a.mailbox_id } : { address: a.address }, { password: a.password ?? null }),
+  },
+  {
+    name: 'delete_mailbox', title: 'Delete a mailbox', destructive: true, gated: ['mail.mailbox_delete'],
+    description: 'Deletes a mailbox of the account and ALL its mail (scope mail.mailboxes), by mailbox_id or full address: logins and delivery stop within a minute, the stored mail is purged after the grace period. Protected by default: the first call files a request the key\'s owner confirms in the panel (twoFactorRequired with details.pendingActionId); tell the human, call wait_for_pending_action, then call delete_mailbox again with the same arguments.',
+    inputSchema: obj({
+      mailbox_id: { type: 'integer', description: 'Mailbox id from list_mailboxes (or address).' },
+      address: { type: 'string', description: 'Full address of the mailbox (or mailbox_id).' },
+    }, []),
+    args: z.object({ mailbox_id: zId.optional(), address: z.string().min(3).max(254).optional() })
+      .refine((a) => (a.mailbox_id !== undefined) !== (a.address !== undefined), { message: 'mailbox_id or address (one of them) is required', path: ['mailbox_id'] }),
+    run: (ctx, req, a) => keyMail.remove(ctx, req, a.mailbox_id !== undefined ? { id: a.mailbox_id } : { address: a.address }),
+  },
+  // ── path routes (routes.manage), secondary runtimes (sites.manage) ──
   {
     name: 'list_routes', title: 'Domains and routes', readOnly: true,
     description: 'Domains of the account with their path routes (which site — and which runtime of it — serves https://domain/prefix/…; longest prefix wins). manageable: the key may change that domain\'s routes (scope routes.manage): a domain given to the key in the panel (even one serving nothing yet), or one whose routes all lead to its sites (a key limited to some sites). Routes always lead to the key\'s own sites; a route towards a site outside the key (site_id 0) is never changed nor removed.',
@@ -1172,6 +1234,7 @@ export const MCP_INSTRUCTIONS = [
   'Writable folders are declared data paths (add_data_path); secrets and database credentials go to environment variables (set_env secret: write-only, create_database_user with env_site_id), never into the code (a committed secret stays readable in old releases). Never write your own access key into a file. Every publish runs a leak guard (secrets, dumps, config backups, phpinfo…): run check_leaks before publish; leakBlocked means nothing went live — remove what outcome.leaks names and publish again.',
   'Domains: only those given to the key (Domains of the key in the panel) or serving only its sites can be routed or get subdomains; a route towards a site outside the key is never changed nor removed. Batches: at most 20 messages.',
   'DNS (scopes dns.read / dns.write): list_dns_zones, list_dns_records, upsert_dns_record, delete_dns_record on the zones of the domains given to the key; list_dns_revisions / get_dns_revision / restore_dns_revision to go back after a bad change. The records the platform manages (names served by the sites and subdomains, hosted mail, SOA / NS, challenges) are read-only: never repoint a name served by a site (use routes / subdomains); DNS records are for what is hosted elsewhere.',
+  'Mailboxes (scope mail.mailboxes): list_mailboxes, create_mailbox, reset_mailbox_password, delete_mailbox on the mail domains of the account, within its plan; a password is returned once (generated when none is given): never write it into a file, a log or a release. Delete the test mailboxes you created when done.',
   'No permanent process runs: only the website and its cron jobs (one hour at most each).',
   `Protected actions: the humans may protect some operations (dropping a database, an SQL write, publishing…). Such a tool then answers an error twoFactorRequired (the key's owner confirms with his 2FA code) or approvalRequired (a second authorised person approves) with details.pendingActionId, description and userMessage: tell the human exactly that message (« ${PENDING_ACTION_USER_MESSAGE_FR} ») and what is asked, call wait_for_pending_action, and once approved call the SAME tool again with the SAME arguments (or approval_id) — it runs once; any other argument files a new request. twoFactorNotEnrolled: the key's owner must first enable 2FA in his profile; noEligibleApprover: a second authorised person is needed. You never confirm nor approve anything yourself; denied means stop and ask the human.`,
   'Call get_guide for the full guide (rights, tools, databases, cron, routes, how to develop on a live site and roll back).',

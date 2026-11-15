@@ -164,8 +164,8 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'firewall.rules_write', category: 'domains', need: 'files.manage', scopable: 'account', surfaces: P },
   // ── Mail ──
   { key: 'mail.domain_delete', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: P },
-  { key: 'mail.mailbox_delete', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: P },
-  { key: 'mail.mailbox_password', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: P, secret: true },
+  { key: 'mail.mailbox_delete', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: PK },
+  { key: 'mail.mailbox_password', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: PK, secret: true },
   { key: 'mail.dkim_rotate', category: 'mail', need: 'mail.manage', scopable: 'account', surfaces: P },
   // Where a mailbox's mail goes: forwarding (on / off / targets) and inbox rules (a rule may forward,
   // redirect or delete). Panel only (the mailbox owner's own webmail changes are bounded by

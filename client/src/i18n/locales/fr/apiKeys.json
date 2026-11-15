@@ -126,6 +126,12 @@
           "label": "Écrire les enregistrements DNS",
           "hint": "Créer, modifier et supprimer les enregistrements libres de ces zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), par exemple un nom pointant vers un autre serveur ou le SRV d’un serveur de jeu. Jamais ceux que gère la plateforme : noms servis par les sites et sous-domaines, mail hébergé, SOA / NS, challenges."
         }
+      },
+      "mail": {
+        "mailboxes": {
+          "label": "Boîtes mail",
+          "hint": "Boîtes mail des domaines mail du compte (par exemple des boîtes de test) : lister, créer dans les limites du plan, changer le mot de passe, supprimer (protégé). Un mot de passe n’est montré qu’une fois à la clé. Jamais inclus dans un préréglage, « Tout » compris : à cocher à part."
+        }
       }
     },
     "guide": "Guide API & agents IA",
@@ -198,7 +204,7 @@
       },
       "all": {
         "label": "Tout",
-        "hint": "Tous les droits que tu peux accorder, sur tous les sites, et tous les domaines si tu peux en donner. Jamais : supprimer un site, ajouter un domaine racine, les utilisateurs, les autres clés."
+        "hint": "Tous les droits que tu peux accorder, sur tous les sites, et tous les domaines si tu peux en donner ; les boîtes mail se cochent à part. Jamais : supprimer un site, ajouter un domaine racine, les utilisateurs, les autres clés."
       },
       "custom": {
         "label": "Personnalisé",

@@ -104,3 +104,29 @@ test('a malformed approval_id is refused before the tool runs', async () => {
     assert.match(r.result.content[0].text, /Invalid arguments: approval_id/);
   }
 });
+
+test('mailbox tools: a read-only listing, an ungated creation, a gated password, a destructive gated deletion', async () => {
+  const byName = new Map(toolList().map((t) => [t.name, t]));
+  const gated = new Map(gatedTools().map((t) => [t.name, t.actions]));
+  assert.equal(byName.get('list_mailboxes')?.annotations.readOnlyHint, true);
+  assert.ok(!gated.has('list_mailboxes') && !gated.has('create_mailbox'));
+  assert.equal(byName.get('create_mailbox')?.annotations.destructiveHint, false);
+  assert.match(byName.get('create_mailbox')!.description, /returns it ONCE/);
+  assert.deepEqual(gated.get('reset_mailbox_password'), ['mail.mailbox_password']);
+  assert.deepEqual(gated.get('delete_mailbox'), ['mail.mailbox_delete']);
+  assert.equal(byName.get('delete_mailbox')?.annotations.destructiveHint, true);
+  for (const a of ['mail.mailbox_password', 'mail.mailbox_delete']) assert.ok(restrictableAction(a)?.surfaces.includes('keys'), a);
+  assert.match(MCP_INSTRUCTIONS, /mail\.mailboxes/);
+  const call = async (name: string, args: Record<string, unknown>) => (await handleRpc({} as never, {} as never, {
+    jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args },
+  }) as { result: { isError: boolean; content: Array<{ text: string }> } }).result;
+  let r = await call('create_mailbox', { local_part: 'test' });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /Invalid arguments: domain: domain or mail_domain_id/);
+  r = await call('create_mailbox', { local_part: 'test', domain: 'example.com', mail_domain_id: 3 });
+  assert.match(r.content[0].text, /Invalid arguments: domain/);
+  r = await call('delete_mailbox', {});
+  assert.match(r.content[0].text, /Invalid arguments: mailbox_id: mailbox_id or address/);
+  r = await call('reset_mailbox_password', { mailbox_id: 1, address: 'test@example.com' });
+  assert.match(r.content[0].text, /Invalid arguments: mailbox_id/);
+});

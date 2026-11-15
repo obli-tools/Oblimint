@@ -19,6 +19,7 @@ import { keyDatabases } from '../services/apiKeys/keyDatabases';
 import { appInstallStartSchema } from '../validators/appInstall.schema';
 import { keyEnv } from '../services/apiKeys/keyEnv';
 import { keyDns } from '../services/apiKeys/keyDns';
+import { KEY_MAILBOX_PAGE_MAX, keyMail } from '../services/apiKeys/keyMail';
 import { keyPending, pendingIdOf, PENDING_WAIT_MAX_MS, statusOf } from '../services/apiKeys/keyPending';
 import { errorListQuery, errorListShape } from '../services/siteErrors/siteErrors.service';
 import type { SiteBaseId } from '@oblimint/shared';
@@ -133,6 +134,12 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   GET    /zones/:zone/revisions/:rev                  → DnsZoneRevisionDetail (records, diff to now, restore plan) dns.read
 //   POST   /zones/:zone/revisions/:rev/restore {dryRun?} → DnsRestoreResult (free records only)    dns.write (gate dns.zone_restore
 //                                                         + dns.record_write / dns.record_delete when it writes / removes records)
+//   GET    /mailboxes?domain=&mailDomainId=&search=&limit=&offset= → ApiV1MailboxList (mail domains of the account, one page of
+//                                                        mailboxes, plan limits and usage)                       mail.mailboxes
+//   POST   /mailboxes {domain | mailDomainId, localPart, password?, quotaMb?, displayName?} → ApiV1MailboxCreated (201; the
+//                                                        password once, generated when absent; no-store)       mail.mailboxes
+//   POST   /mailboxes/:id/password {password?}          → ApiV1MailboxPassword (once; no-store)                  mail.mailboxes (gate mail.mailbox_password)
+//   DELETE /mailboxes/:id                               → { deleted: true, id, address }                         mail.mailboxes (gate mail.mailbox_delete)
 //   GET    /pending-actions?status=                     → KeyPendingAction[] (this key's requests for protected actions)
 //   GET    /pending-actions/:pid                        → KeyPendingAction
 //   GET    /pending-actions/:pid/wait?timeout=≤60       → KeyPendingAction once decided (timedOut otherwise; one of the 3 wait slots)
@@ -482,6 +489,37 @@ router.post('/zones/:zone/revisions/:rev/restore', h(async (req, res) => {
   const body = parseBody(dnsRestoreBody, req.body ?? {});
   ok(res, await keyDns.restore(ctxOf(req), req, zoneName(req), Number(req.params.rev), { dryRun: body.dryRun === true }));
 }));
+// ── mailboxes of the account's mail domains (mail.mailboxes; keyMail.ts) ──
+// A password is a secret shown once: never cached (no-store), whatever the outcome.
+const noStore = (res: Response) => { res.setHeader('Cache-Control', 'no-store'); };
+const mailboxQuery = z.object({
+  domain: z.string().trim().min(1).max(253).optional(),
+  mailDomainId: z.coerce.number().int().positive().optional(),
+  search: z.string().trim().max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(KEY_MAILBOX_PAGE_MAX).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+}).strict();
+const mailboxCreate = z.object({
+  domain: z.string().trim().min(1).max(253).optional(),
+  mailDomainId: z.number().int().positive().optional(),
+  localPart: z.string().min(1).max(64),
+  password: z.string().max(256).nullable().optional(),
+  quotaMb: z.number().int().min(1).max(1_048_576).nullable().optional(),
+  displayName: z.string().max(255).nullable().optional(),
+}).strict().refine((b) => !!b.domain !== !!b.mailDomainId, { message: 'domain or mailDomainId (one of them)', path: ['domain'] });
+const mailboxId = (req: Request) => Number(req.params.id);
+router.get('/mailboxes', h(async (req, res) => ok(res, await keyMail.list(ctxOf(req), parseBody(mailboxQuery, req.query)))));
+router.post('/mailboxes', h(async (req, res) => {
+  noStore(res);
+  ok(res, await keyMail.create(ctxOf(req), req, parseBody(mailboxCreate, req.body)), 201);
+}));
+router.post('/mailboxes/:id/password', h(async (req, res) => {
+  noStore(res);
+  const b = parseBody(z.object({ password: z.string().max(256).nullable().optional() }).strict(), req.body ?? {});
+  ok(res, await keyMail.resetPassword(ctxOf(req), req, { id: mailboxId(req) }, b));
+}));
+router.delete('/mailboxes/:id', h(async (req, res) => ok(res, await keyMail.remove(ctxOf(req), req, { id: mailboxId(req) }))));
+
 // ── path routes ──
 const prefix = z.string().min(1).max(255);
 /** "/uploads" or "uploads" → "/uploads/", checked like the panel routes. */
