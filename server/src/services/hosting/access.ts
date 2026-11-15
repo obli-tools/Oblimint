@@ -25,7 +25,9 @@ import { clientCapabilities, type AccountRow, type DomainRow, type SiteRow } fro
 // capability mapped from the need (permission set of its membership).
 // Client (users.kind = 'client'): filtered on tenant_id = req.tenantId AND the
 // accounts of account_users; capabilities per account; never 'accounts.manage'
-// nor 'plans.manage'.
+// nor 'plans.manage'. 'users.manage' (the account's customer logins): staff
+// accounts.manage, or the client capability users.manage — what a client may
+// then do to another login is narrowed by clientTeam.ts (anti-escalation).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type HostingNeed =
@@ -50,6 +52,9 @@ export type HostingNeed =
   | 'apps.console'
   | 'proxy.manage'
   | 'monitoring.manage'
+  // Customer logins of the account (list, create / attach, capabilities, profile, password,
+  // disable, remove): staff accounts.manage; client users.manage, narrowed by clientTeam.ts.
+  | 'users.manage'
   // Content of the code (release / window diff patches): 'read' only gives
   // the file names and stats. Code access = files.manage (the SFTP / explorer
   // right); staff sites.manage too (it publishes and approves, it reviews code),
@@ -93,6 +98,7 @@ const STAFF_CAPS: Record<HostingNeed, readonly string[]> = {
   'apps.console': ['apps.console'],
   'proxy.manage': ['proxy.manage'],
   'monitoring.manage': ['monitoring.manage'],
+  'users.manage': ['accounts.manage'],
   'code.read': ['files.manage', 'sites.manage'],
 };
 
@@ -113,6 +119,7 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | readonly ClientCapabili
   'apps.console': 'apps.console',
   'proxy.manage': 'proxy.manage',
   'monitoring.manage': 'monitoring.manage',
+  'users.manage': 'users.manage',
   'code.read': ['files.manage', 'releases.approve'],
 };
 
@@ -145,6 +152,8 @@ export const CLIENT_CAP_STAFF_EQUIVALENT: Record<ClientCapability, string> = {
   'apps.console': 'apps.console',
   'proxy.manage': 'proxy.manage',
   'monitoring.manage': 'monitoring.manage',
+  // Managing the account's logins = the staff right over the account's users.
+  'users.manage': 'accounts.manage',
 };
 
 /** Staff capabilities a set of client capabilities amounts to. */

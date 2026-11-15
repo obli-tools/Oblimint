@@ -233,7 +233,7 @@ test('server-app security fixes on PostgreSQL (PGlite)', { timeout: 300_000 }, a
       // Back to just before 026 (the later migrations first), then up again.
       let rolledBack = 0;
       while (!(await db.migrate.currentVersion()).startsWith('025')) {
-        assert.ok(rolledBack++ < 20, 'migration 025 not found');
+        assert.ok(rolledBack++ < 60, 'migration 025 not found');
         await db.migrate.down();
       }
       await db.migrate.latest();

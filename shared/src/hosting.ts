@@ -494,6 +494,11 @@ export interface HostingAccountUpdate {
  * P2: databases.manage (instances, databases, users, admin UI) and
  * dns.manage (zone editor). Cron jobs need sites.manage; the account access
  * allow-list needs files.manage; logs and usage need read (membership).
+ * Team: users.manage — the client manages the other logins of the account
+ * (create / attach, capabilities, profile, password, disable, remove), only
+ * those whose rights it holds itself (anti-escalation rules of
+ * server/src/services/hosting/clientTeam.ts). The owner created with the
+ * account gets it.
  */
 export type ClientCapability = 'sites.manage' | 'releases.publish' | 'releases.approve' | 'domains.manage' | 'files.manage'
   | 'databases.manage' | 'dns.manage'
@@ -503,11 +508,13 @@ export type ClientCapability = 'sites.manage' | 'releases.publish' | 'releases.a
   // console (exec, also gated by settings / tenant policy), proxy objects (hosts,
   // redirections, dead hosts, access lists, pages, auth providers, account bans),
   // monitoring (uptime monitors, status pages, workflows, SFTP targets, windows).
-  | 'apps.manage' | 'apps.console' | 'proxy.manage' | 'monitoring.manage';
+  | 'apps.manage' | 'apps.console' | 'proxy.manage' | 'monitoring.manage'
+  // Team of the account (customer logins).
+  | 'users.manage';
 
 export const CLIENT_CAPABILITIES: readonly ClientCapability[] = [
   'sites.manage', 'releases.publish', 'releases.approve', 'domains.manage', 'files.manage', 'databases.manage', 'dns.manage', 'mail.manage',
-  'apps.manage', 'apps.console', 'proxy.manage', 'monitoring.manage',
+  'apps.manage', 'apps.console', 'proxy.manage', 'monitoring.manage', 'users.manage',
 ];
 
 /** One client user of an account (GET /api/accounts/:id/users). */
@@ -522,6 +529,16 @@ export interface AccountClientUser {
   /** Other accounts this user also belongs to. */
   otherAccountCount: number;
   createdAt: string;
+  /** The caller's own login (a client never manages itself from this screen). */
+  isSelf: boolean;
+  /** The caller may change its capabilities on this account and remove it from the account. */
+  manageable: boolean;
+  /**
+   * The caller may also change the LOGIN itself (profile, password, disable /
+   * enable, delete): it controls every account the login belongs to. A shared
+   * login the caller does not fully control can only be removed from this account.
+   */
+  loginManageable: boolean;
 }
 
 /** GET /accounts/:id/users/candidates: active client users of the account's tenant not attached to it yet. */
@@ -540,6 +557,13 @@ export interface ClientUserCreate {
   displayName?: string | null;
   email?: string | null;
   capabilities: ClientCapability[];
+}
+
+/** PUT /api/accounts/:id/users/:userId — capabilities on the account and / or the login's profile. */
+export interface AccountClientUserUpdate {
+  capabilities?: ClientCapability[];
+  displayName?: string | null;
+  email?: string | null;
 }
 
 /** POST /api/accounts/:id/users — create a new client user OR attach an existing one. */

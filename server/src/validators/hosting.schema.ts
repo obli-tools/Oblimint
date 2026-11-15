@@ -137,6 +137,19 @@ export const clientUserAddSchema = z.discriminatedUnion('mode', [
 
 export const clientUserCapabilitiesSchema = z.object({ capabilities }).strict();
 
+/** PUT /accounts/:id/users/:userId — capabilities on the account and / or the login's profile (at least one field). */
+export const clientUserUpdateSchema = z.object({
+  capabilities: capabilities.optional(),
+  displayName: optionalText(200),
+  email,
+}).strict().refine((b) => b.capabilities !== undefined || b.displayName !== undefined || b.email !== undefined, 'Nothing to change');
+
+/** PUT /accounts/:id/users/:userId/password — never logged (gate: secretParams). */
+export const clientUserPasswordSchema = z.object({ password: z.string().min(12).max(128) }).strict();
+
+/** PUT /accounts/:id/users/:userId/active */
+export const clientUserActiveSchema = z.object({ active: z.boolean() }).strict();
+
 // ── File access ──────────────────────────────────────────────────────────────
 
 export const fileAccessUpdateSchema = z.object({
@@ -318,6 +331,7 @@ export type AccountCreateBody = z.infer<typeof accountCreateSchema>;
 export type AccountUpdateBody = z.infer<typeof accountUpdateSchema>;
 export type ClientUserCreateBody = z.infer<typeof clientUserCreateSchema>;
 export type ClientUserAddBody = z.infer<typeof clientUserAddSchema>;
+export type ClientUserUpdateBody = z.infer<typeof clientUserUpdateSchema>;
 export type SiteCreateBody = z.infer<typeof siteCreateSchema>;
 export type SiteUpdateBody = z.infer<typeof siteUpdateSchema>;
 export type DataPathInputBody = z.infer<typeof dataPathInputSchema>;

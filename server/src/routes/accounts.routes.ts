@@ -3,15 +3,16 @@ import { validate } from '../middleware/validate';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
 import { accountsService } from '../services/hosting/accounts.service';
-import { assertStaff, idParam, loadAccount, requireStaffActor, resolveActor } from '../services/hosting/access';
+import { idParam, loadAccount, requireStaffActor, resolveActor } from '../services/hosting/access';
 import { assertNotContained } from '../services/containment/guard';
 import { clientUsersService } from '../services/hosting/clientUsers.service';
 import { gateAction } from '../services/restrictions/gate';
 import { accountTarget, gateAccount } from '../services/restrictions/targets';
 import { fileAccessService } from '../services/hosting/fileAccess.service';
 import {
-  accountCreateSchema, accountUpdateSchema, clientUserAddSchema, clientUserCapabilitiesSchema, fileAccessUpdateSchema, sshKeyInputSchema,
-  type AccountCreateBody, type AccountUpdateBody, type ClientUserAddBody,
+  accountCreateSchema, accountUpdateSchema, clientUserActiveSchema, clientUserAddSchema, clientUserPasswordSchema, clientUserUpdateSchema,
+  fileAccessUpdateSchema, sshKeyInputSchema,
+  type AccountCreateBody, type AccountUpdateBody, type ClientUserAddBody, type ClientUserUpdateBody,
 } from '../validators/hosting.schema';
 
 // /api/accounts — OWNED BY MODULE `hosting-api` (docs/P1-PLAN.md §API).
@@ -25,11 +26,16 @@ import {
 //   POST   /:id/unsuspend               → HostingAccount (accounts.manage)
 //   POST   /:id/usage/refresh           → HostingAccount (read; 502 backendUnavailable)
 //   DELETE /:id                         { confirm: username } → { deleted: true } (accounts.manage)
-//   GET    /:id/users                   → AccountClientUser[] (staff, accounts.manage)
-//   GET    /:id/users/candidates        → ClientUserCandidate[] (staff, accounts.manage)
-//   POST   /:id/users                   AccountClientUserAdd → AccountClientUser (staff, accounts.manage)
-//   PUT    /:id/users/:userId           { capabilities } → AccountClientUser (staff, accounts.manage)
-//   DELETE /:id/users/:userId           ?deleteUser=true → { removed: true } (staff, accounts.manage)
+// Customer logins (need 'users.manage': staff accounts.manage, or a client holding the
+// capability users.manage on the account — anti-escalation rules: clientTeam.ts; gate
+// 'account.client_users' with `op`; a client's writes 423 while the account is contained):
+//   GET    /:id/users                   → AccountClientUser[] (rows flagged for the caller)
+//   GET    /:id/users/candidates        → ClientUserCandidate[] (client: logins of the accounts it manages)
+//   POST   /:id/users                   AccountClientUserAdd → AccountClientUser
+//   PUT    /:id/users/:userId           AccountClientUserUpdate → AccountClientUser (capabilities, profile)
+//   PUT    /:id/users/:userId/password  { password } → { updated: true } (secret; sessions ended)
+//   PUT    /:id/users/:userId/active    { active } → AccountClientUser (disable ends the sessions)
+//   DELETE /:id/users/:userId           ?deleteUser=true → { removed: true, userDeleted }
 //   GET    /:id/file-access             → FileAccessInfo (read)
 //   PUT    /:id/file-access             FileAccessUpdate → FileAccessInfo (files.manage)
 //   POST   /:id/file-access/password    → FileAccessPasswordResult (files.manage, shown ONCE)
@@ -46,12 +52,17 @@ const optionalId = (v: unknown): number | null => {
 /** `confirm` from the JSON body (preferred) or the query string (clients that cannot send a DELETE body). */
 const confirmOf = (req: Request): unknown => (req.body && typeof req.body === 'object' && 'confirm' in req.body ? req.body.confirm : req.query.confirm);
 
-/** Account with `need`, for the client-user routes: staff only (clients never manage users in P1). */
-async function staffAccount(req: Request) {
+/**
+ * Account of the customer-login routes: staff with accounts.manage, or a
+ * client holding users.manage on it (what it may then touch: clientTeam.ts).
+ * `write`: a client's change waits while the account is contained (its
+ * capabilities are already off there: loadAccount answers 423 first).
+ */
+async function teamAccount(req: Request, write = false) {
   const actor = await resolveActor(req);
-  const account = await loadAccount(actor, idParam(req), 'accounts.manage');
-  assertStaff(actor);
-  return account;
+  const account = await loadAccount(actor, idParam(req), 'users.manage');
+  if (write && actor.kind === 'client') await assertNotContained(account.id);
+  return { actor, account };
 }
 
 // ── Accounts ─────────────────────────────────────────────────────────────────
@@ -121,27 +132,29 @@ router.delete('/:id', async (req, res, next) => {
 
 router.get('/:id/users', async (req, res, next) => {
   try {
-    const account = await staffAccount(req);
-    res.json({ success: true, data: await clientUsersService.list(account.id) });
+    const { actor, account } = await teamAccount(req);
+    res.json({ success: true, data: await clientUsersService.list(account.id, actor) });
   } catch (err) { next(err); }
 });
 
 router.get('/:id/users/candidates', async (req, res, next) => {
   try {
-    const account = await staffAccount(req);
-    res.json({ success: true, data: await clientUsersService.candidates(account) });
+    const { actor, account } = await teamAccount(req);
+    res.json({ success: true, data: await clientUsersService.candidates(account, actor) });
   } catch (err) { next(err); }
 });
 
 router.post('/:id/users', async (req, res, next) => {
   try {
-    const account = await staffAccount(req);
+    const { account } = await teamAccount(req, true);
     await assertNotContained(account.id);
     const parsed = clientUserAddSchema.safeParse(req.body);
     if (!parsed.success) {
       const issues = parsed.error.errors.map((e) => `${e.path.length ? e.path.join('.') : '<root>'}: ${e.message}`);
       throw new AppError(400, `Validation failed — ${issues.join('; ')}`, undefined, parsed.error.flatten().fieldErrors);
     }
+    // Refused before anyone is asked to confirm or approve (the service checks again).
+    await clientUsersService.authorizeAdd(req, account, parsed.data as ClientUserAddBody);
     // A new login may carry a password: a secret (fingerprint only; panel: code instead of an approval).
     const { password, ...shown } = parsed.data as ClientUserAddBody & { password?: string | null };
     await gateAction(req, {
@@ -152,25 +165,56 @@ router.post('/:id/users', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.put('/:id/users/:userId', validate(clientUserCapabilitiesSchema), async (req, res, next) => {
+router.put('/:id/users/:userId', validate(clientUserUpdateSchema), async (req, res, next) => {
   try {
-    const account = await staffAccount(req);
+    const { account } = await teamAccount(req, true);
+    const body = req.body as ClientUserUpdateBody;
+    const userId = idParam(req, 'userId');
+    await clientUsersService.authorizeUpdate(req, account, userId, body);
     await gateAction(req, {
-      action: 'account.client_users', target: accountTarget(account), params: { op: 'capabilities', userId: idParam(req, 'userId'), capabilities: req.body.capabilities },
+      action: 'account.client_users', target: accountTarget(account), params: { op: 'update', userId, ...body },
     });
-    const user = await clientUsersService.updateCapabilities(req, account, idParam(req, 'userId'), req.body.capabilities);
-    res.json({ success: true, data: user });
+    res.json({ success: true, data: await clientUsersService.update(req, account, userId, body) });
+  } catch (err) { next(err); }
+});
+
+router.put('/:id/users/:userId/password', validate(clientUserPasswordSchema), async (req, res, next) => {
+  try {
+    const { account } = await teamAccount(req, true);
+    const userId = idParam(req, 'userId');
+    await clientUsersService.authorizeLogin(req, account, userId, true);
+    // The password enters the fingerprint only: never stored, shown nor logged.
+    await gateAction(req, {
+      action: 'account.client_users', target: accountTarget(account), params: { op: 'password', userId }, secretParams: { password: req.body.password },
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, data: await clientUsersService.setPassword(req, account, userId, req.body.password as string) });
+  } catch (err) { next(err); }
+});
+
+router.put('/:id/users/:userId/active', validate(clientUserActiveSchema), async (req, res, next) => {
+  try {
+    const { account } = await teamAccount(req, true);
+    const userId = idParam(req, 'userId');
+    const active = req.body.active === true;
+    await clientUsersService.authorizeLogin(req, account, userId, active);
+    await gateAction(req, {
+      action: 'account.client_users', target: accountTarget(account), params: { op: active ? 'enable' : 'disable', userId },
+    });
+    res.json({ success: true, data: await clientUsersService.setActive(req, account, userId, active) });
   } catch (err) { next(err); }
 });
 
 router.delete('/:id/users/:userId', async (req, res, next) => {
   try {
-    const account = await staffAccount(req);
+    const { account } = await teamAccount(req, true);
     const deleteUser = req.query.deleteUser === 'true' || req.query.deleteUser === '1';
+    const userId = idParam(req, 'userId');
+    await clientUsersService.authorizeRemove(req, account, userId);
     await gateAction(req, {
-      action: 'account.client_users', target: accountTarget(account), params: { op: 'remove', userId: idParam(req, 'userId'), deleteUser },
+      action: 'account.client_users', target: accountTarget(account), params: { op: 'remove', userId, deleteUser },
     });
-    const result = await clientUsersService.remove(req, account, idParam(req, 'userId'), deleteUser);
+    const result = await clientUsersService.remove(req, account, userId, deleteUser);
     res.json({ success: true, data: result });
   } catch (err) { next(err); }
 });

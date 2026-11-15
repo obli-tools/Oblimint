@@ -106,7 +106,9 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'account.delete', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true },
   { key: 'account.contain', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true },
   { key: 'account.contain_lift', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true },
-  { key: 'account.client_users', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true },
+  // Customer logins of an account: staff (accounts.manage) or a client holding users.manage on it (the
+  // service enforces the anti-escalation rules); approved by the staff only. Carries a password (add, password).
+  { key: 'account.client_users', category: 'sites', need: 'accounts.manage', scopable: 'account', surfaces: P, staffOnly: true, secret: true },
   { key: 'account.sftp_credentials', category: 'sites', need: 'files.manage', scopable: 'account', surfaces: P, secret: true },
   // ── Releases, windows, backups ──
   { key: 'release.publish', category: 'releases', need: 'releases.publish', scopable: 'site', surfaces: PK },
