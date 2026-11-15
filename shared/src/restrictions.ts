@@ -244,6 +244,9 @@ export const DEFAULT_RESTRICTIONS: Readonly<RestrictionMap> = {
   'dns.record_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'mail.domain_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'mail.mailbox_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
+  // A key that resets a mailbox password can read the mailbox: second factor
+  // from the keys only (migration 048), the panel stays open by default.
+  'mail.mailbox_password': { level: 'sensitive', scope: { mode: 'all' }, via: 'keys' },
   'user.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'platform.tenant_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
 };
