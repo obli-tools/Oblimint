@@ -11,16 +11,17 @@ import { AccountUsersTab } from './AccountUsersTab';
 
 /**
  * « Access & security » tab of the account page (coherence plan 1.2): who
- * may act on the account — its users (staff, accounts.manage), the access
+ * may act on the account — its users (staff accounts.manage, or a client
+ * holding users.manage on it: its team), the access
  * keys and Claude connectors (sites.manage), the firewall of its SFTP / SQL
  * ports and their bans (files.manage to edit). `&section=users|keys|firewall`;
  * the old tabs ?tab=users|keys|security land here (utils/links.ts aliases).
  */
 export function AccountAccessTab({ account }: { account: HostingAccount }) {
   const { t } = useTranslation();
-  const { me, can } = useHostingMe();
+  const { can } = useHostingMe();
   const [params, setParams] = useSearchParams();
-  const canUsers = me?.kind === 'staff' && can('accounts.manage', account.id);
+  const canUsers = can('users.manage', account.id);
   const canKeys = can('sites.manage', account.id);
 
   const sections: SegmentedTab<AccountAccessSection>[] = [

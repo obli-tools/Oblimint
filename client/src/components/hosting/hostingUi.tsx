@@ -182,6 +182,7 @@ const KNOWN_CODES = [
   'accountSuspended', 'fileServerOff', 'keyExists', 'allocationExhausted', 'backendUnavailable', 'notImplemented',
   'planNameTaken', 'planInactive', 'baseNotAllowed', 'accountDeleting', 'invalidSshKey', 'emailTaken', 'alreadyMember',
   'domainReserved', 'certificateNotDue', 'certificateRateLimited', 'acmeEmailMissing', 'fileServerNoPort', 'noNode',
+  'capabilityNotHeld', 'userNotDominated', 'cannotManageSelf', 'sharedLoginNotManaged', 'passwordReused',
   'invalidKeyName', 'unknownNode', 'runtimeMismatch', 'runtimePrefixLimit', 'siteDeleting', 'certificateNameTaken', 'nodeNotSupported',
   'accountNotServed', 'tlsDisabled', 'domainServedByProxy', 'keyNotOwned', 'ipRequired', 'invalidCidr', 'cidrTooWide', 'addressBanned',
   // Generic codes of every module (a module namespace may still refine them).

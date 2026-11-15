@@ -23,6 +23,8 @@ export type HostingNeed =
   // P4b: apps (stacks, catalog, registries, network links), app console, proxy objects,
   // monitoring (uptime, status pages, workflows, SSH keys / SFTP targets, update slots).
   | 'apps.manage' | 'apps.console' | 'proxy.manage' | 'monitoring.manage'
+  // Customer logins of the account (team): staff accounts.manage, client users.manage.
+  | 'users.manage'
   // Content of the code (release / window diff patches); 'read' only lists the files.
   // Client: files.manage or releases.approve (an approver reviews the code).
   | 'code.read';
@@ -44,6 +46,7 @@ const STAFF_CAPS: Record<HostingNeed, string[]> = {
   'apps.console': ['apps.console'],
   'proxy.manage': ['proxy.manage'],
   'monitoring.manage': ['monitoring.manage'],
+  'users.manage': ['accounts.manage'],
   'code.read': ['files.manage', 'sites.manage'],
 };
 
@@ -64,6 +67,7 @@ const CLIENT_CAP: Record<HostingNeed, ClientCapability | readonly ClientCapabili
   'apps.console': 'apps.console',
   'proxy.manage': 'proxy.manage',
   'monitoring.manage': 'monitoring.manage',
+  'users.manage': 'users.manage',
   'code.read': ['files.manage', 'releases.approve'],
 };
 
