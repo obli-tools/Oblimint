@@ -1,0 +1,76 @@
+{
+  "mailClient": {
+    "devices": {
+      "title": "Appareils et mots de passe d'application",
+      "hint": "Chaque appareil reçoit son propre mot de passe, révocable seul : le mot de passe de la boîte ne change pas.",
+      "count": "{{count}} / {{max}}",
+      "loadFailed": "Impossible de charger les appareils",
+      "empty": "Aucun appareil n'a de mot de passe propre pour cette boîte.",
+      "colName": "Appareil",
+      "colType": "Type",
+      "colFor": "Pour",
+      "colCreated": "Créé le",
+      "colLastSeen": "Dernier contact",
+      "colExpires": "Échéance",
+      "colProtocols": "Protocoles",
+      "typeMailforge": "MailForge",
+      "typeManual": "Manuel",
+      "neverSeen": "Jamais",
+      "revoke": "Révoquer",
+      "revokeConfirm": "Révoquer « {{name}} » ? L'appareil ne pourra plus lire ni envoyer de mail avec cette boîte.",
+      "revokeAll": "Tout révoquer",
+      "revokeAllConfirm": "Révoquer les {{count}} appareils de {{address}} ?",
+      "revoked": "Appareil révoqué",
+      "revokeFailed": "Impossible de révoquer l'appareil",
+      "create": "Créer un mot de passe d'application",
+      "createSubmit": "Créer",
+      "createFailed": "Impossible de créer le mot de passe d'application",
+      "createLabel": "Nom de l'appareil",
+      "createLabelPlaceholder": "Téléphone de Claire",
+      "createDuration": "Durée",
+      "duration90": "90 jours",
+      "duration365": "1 an",
+      "duration1095": "3 ans",
+      "createProtocols": "Protocoles",
+      "protocolsImapSmtp": "IMAP et SMTP",
+      "protocolsAll": "IMAP, POP3 et SMTP",
+      "pop3Stalwart": "Sur ce serveur, POP3 reste toujours ouvert.",
+      "createHint": "Identifiant : {{address}}. Le mot de passe est généré par le serveur et affiché une seule fois.",
+      "createdTitle": "Mot de passe d'application créé",
+      "usernameLabel": "Identifiant",
+      "username": "Identifiant : {{address}}",
+      "shownOnce": "Copiez-le maintenant : il ne sera plus jamais affiché.",
+      "limit": "{{max}} appareils au plus par boîte : révoquez-en un d'abord.",
+      "reason": {
+        "device": "Déconnecté depuis l'appareil",
+        "user": "Révoqué par l'utilisateur",
+        "manager": "Révoqué par un gestionnaire",
+        "basis": "Accès retiré",
+        "password": "Mot de passe de la boîte changé",
+        "containment": "Compte confiné",
+        "expired": "Expiré",
+        "replaced": "Remplacé"
+      }
+    },
+    "password": {
+      "revokeDevices": "Déconnecter aussi les appareils ({{count}})",
+      "revokeDevicesHint": "Par défaut, les appareils qui ont leur propre mot de passe d'application restent connectés : le mot de passe de la boîte n'est pas le leur."
+    },
+    "settings": {
+      "title": "Applications de bureau",
+      "description": "Mots de passe d'appareil : un par appareil et par boîte, révocable seul (MailForge, téléphones, autres logiciels de messagerie).",
+      "enabled": "Autoriser « Se connecter à Mint » (MailForge)",
+      "enabledHint": "Les applications de bureau se connectent avec le compte Mint et reçoivent un mot de passe d'appareil par boîte. Désactivé : seuls l'adresse et le mot de passe d'une boîte (ou un mot de passe d'application manuel) fonctionnent.",
+      "idleDays": "Révoquer un appareil sans contact depuis (jours)",
+      "idleDaysHint": "MailForge se signale une fois par jour : un ordinateur actif ne perd jamais son accès.",
+      "manualMaxDays": "Durée maximale d'un mot de passe d'application (jours)",
+      "manualMaxDaysHint": "Durées proposées : 90 jours, 1 an, 3 ans.",
+      "maxDevices": "Appareils au plus par boîte",
+      "revokedAllowance": "Ne pas bannir une IP pour les échecs qui suivent une révocation",
+      "revokedAllowanceHint": "Pendant 72 h après la révocation ou l'expiration de mots de passe d'appareil d'une boîte, autant d'échecs sur cette boîte ne comptent pas pour un bannissement (un bureau dont tous les postes ont été déconnectés reste joignable)."
+    },
+    "bans": {
+      "allowanceApplied": "Franchise de révocation appliquée ({{count}} échec(s) non compté(s))"
+    }
+  }
+}

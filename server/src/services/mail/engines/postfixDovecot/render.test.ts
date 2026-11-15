@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { renderConfig, isMassRemoval, containerCertPath } from './render';
 import { cidrContains, parseCidr, networksExcluding, subtractAddress, RenderError } from './validate';
 import { baseState, box, CTX, edKey, HASH_APP, lines } from './testUtil';
-import { C_LIVE } from './layout';
+import { C_LIVE, DEVICE_PASSWORD_SLOTS, isSecretFile } from './layout';
 
 // Pure rendering of mail/config/postfix-dovecot (docs/P4-PLAN.md §5.2, MA1–MA4, MA12, MA14).
 
@@ -490,4 +490,67 @@ test('render: Sieve vacation / redirect go over SMTP to a loopback-only smtpd, n
   assert.equal(main.get('milter_default_action'), 'tempfail');
   // master.cf "-o" values never contain spaces (they would be split into arguments).
   for (const [name, svc] of master) for (const l of svc.slice(1)) assert.ok(!/^-o \S+=.*\s/.test(l), `${name}: ${l}`);
+});
+
+test('render: device passwords (« Se connecter à Mint », O4a / O4s) — own reserve, one file per slot and service, Sieve always empty', () => {
+  const state = baseState();
+  const dev = (id: number, expiresAt: string, protocols: Array<'imap' | 'pop3' | 'smtp'>, mailboxId = 101, address = 'contact@exemple.fr') =>
+    ({ id, mailboxId, address, passwordHash: HASH_APP, expiresAt, purpose: 'device' as const, allowNets: null, protocols });
+  state.appPasswords.push(
+    dev(20, '2027-05-01T00:00:00Z', ['imap', 'smtp']),
+    dev(21, '2027-06-01T00:00:00Z', ['imap', 'pop3', 'smtp']),
+    dev(22, '2026-10-09T11:00:00Z', ['imap', 'smtp']), // expired
+    { id: 2, mailboxId: 101, address: 'contact@exemple.fr', passwordHash: HASH_APP, expiresAt: '2026-10-09T22:00:00Z', purpose: 'webmail', allowNets: ['172.20.0.0/16'] },
+  );
+  const out = renderConfig(state, CTX);
+  // Slot 0 = the latest expiry (id 21: IMAP + POP3 + SMTP), slot 1 = id 20 (IMAP + SMTP).
+  for (const service of ['imap', 'pop3', 'smtp', 'sieve']) {
+    assert.ok(out.files.has(`dovecot/apppasswords.dev.${service}.0`), service);
+    assert.ok(out.files.has(`dovecot/apppasswords.dev.${service}.1`), service);
+    assert.ok(!out.files.has(`dovecot/apppasswords.dev.${service}.2`), `${service}: the expired one is not rendered`);
+  }
+  const l = (f: string) => lines(out.files.get(`dovecot/${f}`));
+  assert.equal(l('apppasswords.dev.imap.0').length, 1);
+  assert.match(l('apppasswords.dev.imap.0')[0], /^contact@exemple\.fr:\{SHA512-CRYPT\}[^:\s]+::::::$/, 'no network restriction for a device');
+  assert.equal(l('apppasswords.dev.pop3.0').length, 1);
+  assert.equal(l('apppasswords.dev.pop3.1').length, 0, 'IMAP+SMTP only: no POP3 line');
+  assert.equal(l('apppasswords.dev.smtp.1').length, 1);
+  assert.equal(l('apppasswords.dev.sieve.0').length, 0, 'ManageSieve never accepts a device password');
+  assert.equal(l('apppasswords.dev.sieve.1').length, 0);
+  // The webmail keeps its own, network-restricted reserve (non-regression of « never unrestricted »).
+  assert.match(l('apppasswords.0')[0], /allow_real_nets=/);
+  // passdb order: main, devices (%s = service), webmail.
+  const conf = out.files.get('dovecot/dovecot.conf')!;
+  const iMain = conf.indexOf(`${C_LIVE}/dovecot/passwd\n`);
+  const iDev0 = conf.indexOf(`${C_LIVE}/dovecot/apppasswords.dev.%s.0\n`);
+  const iDev1 = conf.indexOf(`${C_LIVE}/dovecot/apppasswords.dev.%s.1\n`);
+  const iWeb = conf.indexOf(`${C_LIVE}/dovecot/apppasswords.0\n`);
+  assert.ok(iMain > 0 && iDev0 > iMain && iDev1 > iDev0 && iWeb > iDev1, 'passdb order');
+  assert.ok(!conf.includes('apppasswords.dev.%s.2'));
+  // A suspended mailbox (login off) renders none of its device passwords; they are not lost (desired state keeps the rows).
+  const s2 = baseState();
+  s2.appPasswords.push(dev(30, '2027-05-01T00:00:00Z', ['imap', 'smtp']));
+  s2.mailboxes[0].loginEnabled = false;
+  assert.ok(!renderConfig(s2, CTX).files.has('dovecot/apppasswords.dev.imap.0'));
+});
+
+test('render: at most DEVICE_PASSWORD_SLOTS device passwords per address; a device without protocol is reported', () => {
+  const state = baseState();
+  for (let i = 0; i < 12; i++) {
+    state.appPasswords.push({ id: 100 + i, mailboxId: 101, address: 'contact@exemple.fr', passwordHash: HASH_APP, expiresAt: `2027-01-${String(10 + i).padStart(2, '0')}T00:00:00Z`, purpose: 'device', allowNets: null, protocols: ['imap', 'smtp'] });
+  }
+  state.appPasswords.push({ id: 200, mailboxId: 102, address: 'jean@exemple.fr', passwordHash: HASH_APP, expiresAt: '2027-01-01T00:00:00Z', purpose: 'device', allowNets: null, protocols: [] });
+  const out = renderConfig(state, CTX);
+  assert.ok(out.files.has(`dovecot/apppasswords.dev.imap.${DEVICE_PASSWORD_SLOTS - 1}`));
+  assert.ok(!out.files.has(`dovecot/apppasswords.dev.imap.${DEVICE_PASSWORD_SLOTS}`));
+  assert.ok(out.domainErrors['exemple.fr']?.includes('device password without protocol'));
+});
+
+test('isSecretFile: passwd, webmail and device password files (root only on the host); nothing else', () => {
+  for (const f of ['dovecot/passwd', 'dovecot/apppasswords.0', 'dovecot/apppasswords.7', 'dovecot/apppasswords.dev.imap.0', 'dovecot/apppasswords.dev.sieve.9', 'dovecot/apppasswords.dev.smtp.12']) {
+    assert.equal(isSecretFile(f), true, f);
+  }
+  for (const f of ['dovecot/users', 'dovecot/dovecot.conf', 'dovecot/apppasswords.dev.imap', 'dovecot/apppasswords.dev..0', 'dovecot/apppasswords.dev.IMAP.0', 'postfix/apppasswords.0']) {
+    assert.equal(isSecretFile(f), false, f);
+  }
 });

@@ -335,7 +335,15 @@ const STEPS: Record<ContainmentStepKey, (run: Run) => Promise<number>> = {
   async consoles(run) {
     const consoles = await deps.closeConsoles(run.accountId) + await deps.closeDbSessions(run.accountId);
     const sessions = Number(await db('webmail_sessions').where({ account_id: run.accountId, tenant_id: run.tenantId, method: 'sso' }).del());
-    await db('mail_app_passwords').where({ account_id: run.accountId }).whereNull('revoked_at').update({ revoked_at: new Date(), updated_at: new Date() });
+    // Webmail sessions and device passwords (« Se connecter à Mint », owner's decision P5: every device of the account).
+    const revoked = await db('mail_app_passwords').where({ account_id: run.accountId }).whereNull('revoked_at')
+      .update({ revoked_at: new Date(), revoked_reason: 'containment', updated_at: new Date() })
+      .returning(['mailbox_id']) as Array<{ mailbox_id: number }>;
+    if (revoked.length) {
+      // The engine drops them now and the open IMAP sessions end (never throws).
+      await (await import('../mail/devices/devices.service')).devicesService
+        .afterContainment(run.accountId, [...new Set(revoked.map((r) => Number(r.mailbox_id)))]);
+    }
     return consoles + sessions;
   },
 

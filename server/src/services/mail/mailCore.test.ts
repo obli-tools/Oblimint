@@ -146,12 +146,13 @@ const mailboxRow = (over: Partial<MailboxRow> = {}): MailboxRow => ({
   used_bytes: null, usage_checked_at: null, quota_warned_at: null, created_at: new Date(0), updated_at: new Date(0), ...over,
 });
 
-test('toMailbox never carries the password hash (MA4); client settings 993 / 995 / 587', () => {
+test('toMailbox never carries the password hash (MA4); client settings 993 / 995 / 465 first, 587 as the alternative (O6)', () => {
   const mb = toMailbox({ ...mailboxRow({ forward_targets: ['x@gmail.com'], forward_keep_copy: false }), domain_name: 'a.fr' });
   assert.ok(!JSON.stringify(mb).includes('secret'));
   assert.deepEqual(mb.forwarding, { targets: ['x@gmail.com'], keepCopy: false, enabled: true });
   const cs = mailClientSettings('contact@a.fr', 'mail.host.net', null);
-  assert.deepEqual([cs.imap.port, cs.pop3.port, cs.smtp.port, cs.smtp.security], [993, 995, 587, 'starttls']);
+  assert.deepEqual([cs.imap.port, cs.pop3.port, cs.smtp.port, cs.smtp.security], [993, 995, 465, 'ssl']);
+  assert.deepEqual([cs.smtpAlternative.port, cs.smtpAlternative.security], [587, 'starttls']);
   assert.equal(cs.username, 'contact@a.fr');
   const now = new Date('2026-06-01T00:00:00Z');
   assert.ok(autoresponderActive({ enabled: true, startsAt: null, endsAt: null }, now));

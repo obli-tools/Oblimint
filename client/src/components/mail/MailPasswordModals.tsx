@@ -156,16 +156,27 @@ export function MailPasswordModal({ open, mailboxId, address, staff, onClose, on
   const [hash, setHash] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // « Se connecter à Mint » (E8): live device passwords of the mailbox; « also disconnect them » is unchecked by default.
+  const [devices, setDevices] = useState(0);
+  const [revokeDevices, setRevokeDevices] = useState(false);
 
   // Nothing typed survives the dialog (MA4).
-  useEffect(() => { if (!open) { setPassword(''); setHash(''); setMode('generate'); setError(''); } }, [open]);
+  useEffect(() => { if (!open) { setPassword(''); setHash(''); setMode('generate'); setError(''); setRevokeDevices(false); } }, [open]);
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    // Best effort: without the list the checkbox simply does not show.
+    mailApi.listDevices(mailboxId).then((l) => { if (!cancelled) setDevices(l.items.length); }).catch(() => { if (!cancelled) setDevices(0); });
+    return () => { cancelled = true; };
+  }, [open, mailboxId]);
 
   const submit = async () => {
     if (!passwordChoiceValid(mode, password, hash)) return;
     setSaving(true);
     setError('');
     try {
-      const res = await mailApi.setPassword(mailboxId, mode === 'enter' ? { password } : mode === 'import' ? { passwordHash: hash.trim() } : {});
+      const pw = mode === 'enter' ? { password } : mode === 'import' ? { passwordHash: hash.trim() } : {};
+      const res = await mailApi.setPassword(mailboxId, { ...pw, ...(revokeDevices && devices > 0 ? { revokeDevices: true } : {}) });
       setPassword('');
       setHash('');
       onDone(res.password);
@@ -195,6 +206,15 @@ export function MailPasswordModal({ open, mailboxId, address, staff, onClose, on
       <div className="space-y-3">
         <PasswordChoice mode={mode} onMode={setMode} password={password} onPassword={setPassword} hash={hash} onHash={setHash} staff={staff} idPrefix="mbpw" />
         <p className="text-xs text-text-muted">{t('mail.password.changeHint') || 'Open mail clients and webmail sessions will have to sign in again.'}</p>
+        {devices > 0 && (
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg bg-bg-primary p-2.5">
+            <input type="checkbox" checked={revokeDevices} disabled={saving} onChange={(e) => setRevokeDevices(e.target.checked)} className="mt-0.5 accent-accent" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm text-text-primary">{t('mailClient.password.revokeDevices', { count: devices, defaultValue: 'Also disconnect the devices ({{count}})' })}</span>
+              <span className="block text-xs text-text-muted">{t('mailClient.password.revokeDevicesHint') || 'Devices with their own app password keep working by default: the mailbox password is not theirs.'}</span>
+            </span>
+          </label>
+        )}
         {error && <p className="whitespace-pre-line text-xs text-status-down">{error}</p>}
       </div>
     </Modal>

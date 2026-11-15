@@ -159,7 +159,8 @@ export function buildDesiredState(input: DesiredStateInput): MailDesiredState {
     domains,
     mailboxes,
     aliases,
-    // A webmail session only for a mailbox that may log in, until it expires.
+    // A webmail session or a device password only for a mailbox that may log in, until it expires: a suspended
+    // mailbox / account keeps its device passwords in the database, they come back with it (§5.4).
     appPasswords: input.appPasswords.filter((p) => loginEnabledIds.has(p.mailboxId) && Date.parse(p.expiresAt) > now.getTime()),
     dkim: input.dkim.filter((k) => activeNames.has(k.domain.toLowerCase())),
     tls: input.tls,

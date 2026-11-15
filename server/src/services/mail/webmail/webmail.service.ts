@@ -50,8 +50,11 @@ import { alignWebmailWithEngine } from './webmailDefault';
 // (address, credential): the credential never reaches the browser, a log or
 // the audit; the mailbox password is never handled. Logout (container),
 // expiry (timer), mailbox disabled / password changed / deleted → revoked_at
-// + requestSync (the engine drops it at the next sync). Rows older than
-// 7 days are deleted.
+// + requestSync (the engine drops it at the next sync). Rows revoked /
+// expired for 7 days are deleted. Every webmail query here is bound to
+// purpose 'webmail': the device passwords of the same table (« Se connecter à
+// Mint », devices.service) are never revoked, counted or read by the webmail;
+// only the expiry timer (expireAppPasswords) covers both purposes.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const WEBMAIL_SESSION_TTL_MS = 12 * 60 * 60_000;
@@ -64,6 +67,12 @@ export const WEBMAIL_SYNC_WAIT_MS = 10_000;
  */
 export const MAX_WEBMAIL_SESSIONS_PER_MAILBOX = APP_PASSWORD_SLOTS;
 export const WEBMAIL_ROW_RETENTION_MS = 7 * 24 * 60 * 60_000;
+/**
+ * Device passwords stay 400 days after their revocation / expiry: longer than
+ * the 180 idle days of a MailForge device, so that a computer switched off
+ * for months still learns "revoked" from the device API (§2.4).
+ */
+export const DEVICE_ROW_RETENTION_MS = 400 * 24 * 60 * 60_000;
 const EXPIRY_INTERVAL_MS = 60_000;
 const SETTINGS_DEBOUNCE_MS = 1_000;
 
@@ -87,6 +96,8 @@ export interface WebmailDeps {
   endOblimintSessions(mailboxId: number | null): Promise<number>;
   /** Subnets of the mail network (allowNets). */
   subnets(): Promise<string[]>;
+  /** Device passwords the expiry pass revoked (audit, open sessions, ban allowance). Never throws. */
+  devicesExpired(ids: number[]): void;
   now(): number;
 }
 
@@ -124,6 +135,11 @@ const defaultDeps: WebmailDeps = {
   oblimintRunning: oblimintWebmailListening,
   endOblimintSessions: (mailboxId) => (mailboxId === null ? dbWebmailSessionStore.removeAll() : dbWebmailSessionStore.removeMailbox(mailboxId)).catch(() => 0),
   subnets: mailNetworkSubnets,
+  devicesExpired: (ids) => {
+    void import('../devices/devices.service')
+      .then((m) => m.devicesService.afterExpiry(ids))
+      .catch((err) => logger.warn({ err: errText(err) }, 'mail: device expiry follow-up failed'));
+  },
   now: Date.now,
 };
 let deps: WebmailDeps = defaultDeps;
@@ -166,9 +182,15 @@ async function mailDomainActive(name: string): Promise<boolean> {
   return !!row;
 }
 
-/** Revokes active credentials matching `where`; returns how many. */
+/**
+ * Revokes active WEBMAIL credentials matching `where`; returns how many.
+ * Never a device password (« Se connecter à Mint », purpose 'device'): the
+ * webmail's own life cycle (logout, session cap, mailbox disabled / password
+ * changed, webmail kind change) must not disconnect the devices of a mailbox
+ * (devices.service handles them).
+ */
 async function revokeWhere(where: (q: ReturnType<typeof db>) => void): Promise<number> {
-  const q = db('mail_app_passwords').whereNull('revoked_at');
+  const q = db('mail_app_passwords').whereNull('revoked_at').where('purpose', 'webmail');
   where(q);
   return Number(await q.update({ revoked_at: new Date(deps.now()), updated_at: new Date(deps.now()) }));
 }
@@ -192,28 +214,44 @@ let settingsTimer: NodeJS.Timeout | null = null;
 let lastKind: string | null = null;
 
 /**
- * Expired credentials → revoked_at (+ engine sync), rows older than 7 days
- * deleted, expired tokens dropped. Never throws. Returns the revoked count.
+ * Expiry pass of every app password (webmail sessions and device passwords,
+ * « Se connecter à Mint » §5.5): expired credentials → revoked_at +
+ * revoked_reason 'expired' (+ engine sync); rows deleted per purpose once
+ * revoked / expired for long enough — COALESCE(revoked_at, expires_at), not
+ * created_at: a device password a year old stays readable after its
+ * revocation (the device API answers "revoked", never 401) —
+ * WEBMAIL_ROW_RETENTION_MS for 'webmail', DEVICE_ROW_RETENTION_MS for
+ * 'device'; expired tokens dropped. Never throws. Returns the revoked count.
  */
-export async function expireWebmailSessions(now = deps.now()): Promise<number> {
+export async function expireAppPasswords(now = deps.now()): Promise<number> {
   webmailTokens.sweep();
   try {
     const at = new Date(now);
-    const revoked = Number(await db('mail_app_passwords').whereNull('revoked_at').where('expires_at', '<=', at)
-      .update({ revoked_at: at, updated_at: at }));
-    await db('mail_app_passwords').where('created_at', '<', new Date(now - WEBMAIL_ROW_RETENTION_MS))
-      .where((q) => q.whereNotNull('revoked_at').orWhere('expires_at', '<=', at))
-      .delete();
+    // revoked_at = the expiry itself (≤ now): the retention and the ban allowance (72 h) count from it.
+    const expired = await db('mail_app_passwords').whereNull('revoked_at').where('expires_at', '<=', at)
+      .update({ revoked_at: db.raw('expires_at'), revoked_reason: 'expired', updated_at: at })
+      .returning(['id', 'purpose']) as Array<{ id: number; purpose: string }>;
+    const revoked = expired.length;
+    for (const [purpose, keepMs] of [['webmail', WEBMAIL_ROW_RETENTION_MS], ['device', DEVICE_ROW_RETENTION_MS]] as const) {
+      await db('mail_app_passwords').where('purpose', purpose)
+        .whereRaw('COALESCE(revoked_at, expires_at) < ?', [new Date(now - keepMs)])
+        .delete();
+    }
     if (revoked > 0) {
-      logger.info({ count: revoked }, 'webmail: session credentials expired');
-      deps.requestSync('webmail sessions expired');
+      logger.info({ count: revoked }, 'mail: app passwords expired');
+      deps.requestSync('app passwords expired');
+      const deviceIds = expired.filter((r) => r.purpose === 'device').map((r) => Number(r.id));
+      if (deviceIds.length) deps.devicesExpired(deviceIds);
     }
     return revoked;
   } catch (err) {
-    logger.warn({ err: errText(err) }, 'webmail: session expiry pass failed');
+    logger.warn({ err: errText(err) }, 'mail: app password expiry pass failed');
     return 0;
   }
 }
+
+/** Former name (the webmail's own pass, before device passwords). */
+export const expireWebmailSessions = expireAppPasswords;
 
 /** (Re)deploys or removes the container per settings, then edge sync. Never throws. */
 async function applySettings(): Promise<void> {
@@ -291,7 +329,8 @@ export const webmailService = {
     const now = deps.now();
     const expiresAt = new Date(now + WEBMAIL_SESSION_TTL_MS);
     const appPasswordId = await db.transaction(async (trx) => {
-      const live = await trx('mail_app_passwords').where({ mailbox_id: mb.id }).whereNull('revoked_at').where('expires_at', '>', new Date(now))
+      // Webmail sessions only: the device passwords of the mailbox have their own ceiling (devices.service).
+      const live = await trx('mail_app_passwords').where({ mailbox_id: mb.id, purpose: 'webmail' }).whereNull('revoked_at').where('expires_at', '>', new Date(now))
         .orderBy('id', 'desc').pluck('id') as Array<number | string>;
       const excess = live.slice(MAX_WEBMAIL_SESSIONS_PER_MAILBOX - 1).map(Number);
       if (excess.length) await trx('mail_app_passwords').whereIn('id', excess).update({ revoked_at: new Date(now), updated_at: new Date(now) });
@@ -386,7 +425,7 @@ export const webmailService = {
     if (!ticket || ticket.kind === 'oblimint') return null;
     const settings = await platformSettings.section('mail');
     if (settings.webmail !== ticket.kind) return null;
-    const row = await db('mail_app_passwords').where({ id: ticket.appPasswordId, mailbox_id: ticket.mailboxId })
+    const row = await db('mail_app_passwords').where({ id: ticket.appPasswordId, mailbox_id: ticket.mailboxId, purpose: 'webmail' })
       .whereNull('revoked_at').where('expires_at', '>', new Date(deps.now())).first('id');
     if (!row) return null;
     logger.info({ mailboxId: ticket.mailboxId, accountId: ticket.accountId, webmail: ticket.kind }, 'webmail SSO token redeemed');
@@ -420,6 +459,7 @@ export const webmailService = {
     const rows = await db('mail_app_passwords as p')
       .join('mailboxes as m', 'm.id', 'p.mailbox_id')
       .where('m.address', address)
+      .where('p.purpose', 'webmail')
       .whereNull('p.revoked_at')
       .where('p.expires_at', '>', new Date(deps.now()))
       .orderBy('p.id', 'desc')
@@ -470,9 +510,9 @@ export const webmailService = {
     // Default Oblimint webmail on an engine without JMAP: Roundcube instead (webmailDefault.ts).
     void alignWebmailWithEngine().then((changed) => { if (changed) webmailService.settingsChanged(); });
     void wantedWebmailKind().then((k) => { if (lastKind === null) lastKind = k; }).catch(() => undefined);
-    timer = setInterval(() => { void expireWebmailSessions(); }, EXPIRY_INTERVAL_MS);
+    timer = setInterval(() => { void expireAppPasswords(); }, EXPIRY_INTERVAL_MS);
     timer.unref?.();
-    setTimeout(() => { void expireWebmailSessions(); }, 5_000).unref?.();
+    setTimeout(() => { void expireAppPasswords(); }, 5_000).unref?.();
   },
 
   stop(): void {

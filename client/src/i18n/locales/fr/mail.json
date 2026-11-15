@@ -420,6 +420,7 @@
       "imap": "Entrant (IMAP)",
       "pop3": "Entrant (POP3)",
       "smtp": "Sortant (SMTP, authentification obligatoire)",
+      "smtpAlt": "Sortant, autre choix (SMTP avec STARTTLS)",
       "webmail": "Webmail"
     },
     "webmail": {
@@ -635,6 +636,9 @@
       "mailboxDisabled": "Cette boîte est désactivée.",
       "notImplemented": "Fonction en cours de déploiement : elle n'est pas encore disponible sur ce serveur.",
       "notFound": "Cet élément n'existe plus ou ne vous est pas visible.",
+      "deviceLimit": "{{max}} appareils au plus par boîte : révoquez-en un d'abord.",
+      "invalidDuration": "Cette durée n'est pas permise ({{maxDays}} jours au plus).",
+      "invalidLabel": "Indiquez un nom d'appareil (64 caractères au plus).",
       "dkimAlgorithmDisabled": "La signature DKIM Ed25519 est désactivée pour ce domaine : activez-la d'abord dans les options DNS.",
       "mailDataPendingPurge": "Les anciennes données de {{name}} sont encore en cours de suppression : réessayez dans quelques minutes.",
       "mailEngineChanging": "Le moteur mail est en cours de changement : réessayez dans quelques minutes.",

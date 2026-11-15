@@ -18,12 +18,14 @@ import {
   MailboxAliasesCard, MailboxAutoresponderCard, MailboxForwardingCard, MailboxSettingsCard, MailClientSettingsCard,
 } from '@/components/mail/MailboxCards';
 import { MailboxForwardingNotice, MailboxRulesCard } from '@/components/mail/MailboxRulesCard';
+import { MailboxDevicesCard } from '@/components/mail/MailboxDevicesCard';
 import { useMailboxActions } from '@/components/mail/useMailboxActions';
 import { apiErrorStatus, mailErrorCode, mailLoadError } from '@/components/mail/mailErrors';
 
 /**
  * /mail/mailboxes/:id — one mailbox: quota bar, password, flags, forwarding
- * (+ its Outlook-like notice), inbox rules, autoresponder, aliases, client settings, "Open webmail" (SSO ticket in a
+ * (+ its Outlook-like notice), inbox rules, autoresponder, aliases, client settings, device passwords
+ * (« Se connecter à Mint », mail.manage), "Open webmail" (SSO ticket in a
  * new tab) (docs/P4-PLAN.md §12). OWNED BY MODULE `ui-mail`.
  */
 export function MailboxPage() {
@@ -175,6 +177,7 @@ export function MailboxPage() {
         <div className="flex flex-col gap-5">
           <MailboxAutoresponderCard box={box} manage={manage} onChanged={setBox} />
           <MailClientSettingsCard box={box} />
+          {manage && <MailboxDevicesCard box={box} />}
         </div>
       </div>
 

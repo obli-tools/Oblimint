@@ -1,3 +1,4 @@
+import { MAIL_CLIENT_DISCOVERY_PATH } from '@oblimint/shared';
 import type { EdgeCertificateWish, EdgeContributor, EdgeContributorContext } from '../../edge/contributors';
 import { isPublicAcmeName } from '../../edge/acmeIssuer';
 import { edgeCertPaths, type EdgeLocation, type EdgeVhost } from '../../edge/nginxConfig';
@@ -29,6 +30,8 @@ export const MAIL_PUBLIC_PATHS: readonly string[] = [
   '/autodiscover/autodiscover.xml',
   '/Autodiscover/Autodiscover.xml',
   '/.well-known/mta-sts.txt',
+  // « Se connecter à Mint » discovery document (O2): answered on autoconfig.<d> only (autoconfig.service).
+  MAIL_CLIENT_DISCOVERY_PATH,
 ];
 
 export const MAIL_VHOST_HEADERS: Record<string, string> = { 'X-Robots-Tag': 'noindex, nofollow' };

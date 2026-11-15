@@ -161,6 +161,8 @@ export interface MailBanRow {
   service: string;
   failures: number;
   reason: string | null;
+  /** Failures the revocation allowance did not count (migration 046). */
+  revoked_allowance?: number | null;
   expires_at: Ts;
   created_at: Ts;
   updated_at: Ts;

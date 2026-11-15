@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { validate } from '../middleware/validate';
 import { idParam, resolveActor } from '../services/hosting/access';
 import { mailService } from '../services/mail/mail.service';
+import { devicesService } from '../services/mail/devices/devices.service';
+import { MAIL_DEVICE_PUBLIC_ID_RE } from '@oblimint/shared';
 
 /** A mail object as a restriction target (its account). */
 const mailTarget = (r: { tenant_id: number; account_id: number }) => ({ tenantId: Number(r.tenant_id), accountId: Number(r.account_id), siteId: null });
@@ -21,7 +23,11 @@ const mailTarget = (r: { tenant_id: number; account_id: number }) => ({ tenantId
 //   POST   /mailboxes                  MailboxCreate             → MailboxCreated (201)         (mail.manage; passwordHash: staff only)
 //   GET    /mailboxes/:id                                        → MailboxDetail                (read)
 //   PUT    /mailboxes/:id              MailboxUpdate             → MailboxDetail                (mail.manage)
-//   POST   /mailboxes/:id/password     MailPasswordChange        → MailPasswordResult           (mail.manage)
+//   POST   /mailboxes/:id/password     MailPasswordChange        → MailPasswordResult           (mail.manage; revokeDevices: also
+//                                                                                                  revoke its device passwords, reason 'password')
+//   GET    /mailboxes/:id/devices                                → MailDeviceList               (mail.manage; « Se connecter à Mint »)
+//   POST   /mailboxes/:id/devices      MailDeviceCreate          → MailDeviceCreated (201)      (mail.manage, gate mail.device_create; secret once)
+//   POST   /mailboxes/:id/devices/revoke MailDeviceRevoke        → { revoked: n }               (mail.manage; one id or all, reason 'manager')
 //   PUT    /mailboxes/:id/forwarding   MailForwardingInput       → MailboxDetail                (mail.manage, gate mail.mailbox_forwarding)
 //   PUT    /mailboxes/:id/rules        MailRulesInput            → MailboxDetail                (mail.manage, gate mail.mailbox_rules; Stalwart)
 //   GET    /mailboxes/:id/folders                                → string[]                     (read; rule "move to" picker)
@@ -38,6 +44,7 @@ const mailTarget = (r: { tenant_id: number; account_id: number }) => ({ tenantId
 // invalidPasswordHash (400), invalidSchedule (400: autoresponder endsAt ≤ startsAt), hashImportForbidden (403: client),
 // hashSchemeUnsupported (409: engine), envelopeExceeded (409: tenant maxMailboxes), backendUnavailable (502, A6),
 // invalidRule (400), tooManyRedirects (400: forwarding + rules over 20 destinations), rulesUnsupported (409: engine),
+// deviceLimit (409: devices per mailbox), invalidDuration / invalidLabel (400: manual app password),
 // mailDataPendingPurge (409: the data another account left under this domain / address could not be purged yet,
 // retry later — MA5 / MA12), mailEngineChanging (409: engine change in progress, retry later).
 const router = Router();
@@ -103,7 +110,20 @@ const mailboxUpdate = z.object({
 const passwordChange = z.object({
   password: z.string().min(1).max(256).nullable().optional(),
   passwordHash: z.string().trim().min(1).max(512).nullable().optional(),
+  /** « Also disconnect the devices »: unchecked by default (device passwords are independent of the mailbox password). */
+  revokeDevices: z.boolean().optional(),
 }).strict().refine((b) => !(b.password && b.passwordHash), { message: 'password and passwordHash are exclusive', path: ['passwordHash'] });
+
+const deviceCreate = z.object({
+  label: z.string().trim().min(1).max(200),
+  days: z.number().int().positive(),
+  protocols: z.enum(['imapSmtp', 'all']),
+}).strict();
+
+const deviceRevoke = z.object({
+  id: z.string().trim().toLowerCase().regex(MAIL_DEVICE_PUBLIC_ID_RE, 'a device id').optional(),
+  all: z.literal(true).optional(),
+}).strict().refine((b) => !!b.id !== !!b.all, { message: 'id or all', path: ['id'] });
 
 const forwardingInput = z.object({
   targets: z.array(address).max(20).transform((v) => [...new Set(v)]),
@@ -215,12 +235,39 @@ router.post('/mailboxes/:id/password', validate(passwordChange), async (req, res
     const actor = await resolveActor(req);
     const mb = await loadMailbox(actor, idParam(req), 'mail.manage');
     // The password (or its hash) is a secret: fingerprint only (panel: the user's code instead of an approval).
-    const { password, passwordHash } = req.body as { password?: string | null; passwordHash?: string | null };
+    const { password, passwordHash, revokeDevices } = req.body as { password?: string | null; passwordHash?: string | null; revokeDevices?: boolean };
     await gateAction(req, {
-      action: 'mail.mailbox_password', target: mailTarget(mb), params: { mailbox: mb.address, generated: !password && !passwordHash },
+      action: 'mail.mailbox_password', target: mailTarget(mb), params: { mailbox: mb.address, generated: !password && !passwordHash, revokeDevices: !!revokeDevices },
       secretParams: { ...(password ? { password } : {}), ...(passwordHash ? { passwordHash } : {}) },
     });
-    res.json({ success: true, data: await mailService.setPassword(req, actor, mb.id, req.body) });
+    const result = await mailService.setPassword(req, actor, mb.id, { password, passwordHash });
+    // Device passwords stay valid by default (they are independent of the mailbox password).
+    if (revokeDevices) await devicesService.revokeForPasswordChange(req, mb, actor.userId);
+    res.json({ success: true, data: result });
+  } catch (err) { next(err); }
+});
+
+// ── device passwords (« Se connecter à Mint », O4a) ──
+router.get('/mailboxes/:id/devices', async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await devicesService.list(await resolveActor(req), idParam(req)) });
+  } catch (err) { next(err); }
+});
+
+router.post('/mailboxes/:id/devices', validate(deviceCreate), async (req, res, next) => {
+  try {
+    const actor = await resolveActor(req);
+    const mb = await loadMailbox(actor, idParam(req), 'mail.manage');
+    const b = req.body as { label: string; days: number; protocols: 'imapSmtp' | 'all' };
+    await gateAction(req, { action: 'mail.device_create', target: mailTarget(mb), params: { mailbox: mb.address, label: b.label, days: b.days, protocols: b.protocols } });
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(201).json({ success: true, data: await devicesService.createManual(req, actor, mb.id, b) });
+  } catch (err) { next(err); }
+});
+
+router.post('/mailboxes/:id/devices/revoke', validate(deviceRevoke), async (req, res, next) => {
+  try {
+    res.json({ success: true, data: await devicesService.revoke(req, await resolveActor(req), idParam(req), req.body) });
   } catch (err) { next(err); }
 });
 

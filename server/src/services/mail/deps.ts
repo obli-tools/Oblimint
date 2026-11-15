@@ -58,7 +58,14 @@ const real: MailCoreDeps = {
   async ensureDkim(id) { await (await import('./dns/dkim.service')).dkimService.ensureForDomain(id); },
   async dkimSigningKeys() { return (await import('./dns/dkim.service')).dkimService.signingKeys(); },
   async tlsCertificates() { return (await import('./tls/mailTls.service')).mailTlsService.certificates(); },
-  async appPasswords() { return (await import('./webmail/webmail.service')).webmailService.appPasswords(); },
+  async appPasswords() {
+    // Device passwords (« Se connecter à Mint ») first, then the webmail sessions; each provider filters its own purpose.
+    const [devices, webmail] = await Promise.all([
+      (await import('./devices/devices.service')).devicesService.appPasswords(),
+      (await import('./webmail/webmail.service')).webmailService.appPasswords(),
+    ]);
+    return [...devices, ...webmail];
+  },
   async sendPolicy() { return (await import('./outbound/outbound.service')).outboundService.sendPolicy(); },
   async relayTrust() { return (await import('./outbound/outbound.service')).outboundService.relayTrust(); },
   async ptrStatus() { return (await import('./dns/mailDns.service')).mailDnsService.ptrStatus(); },

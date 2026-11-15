@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import {
-  AlertTriangle, CheckCircle2, Globe, Mail, RefreshCw, ShieldAlert, ShieldBan, ShieldCheck, SlidersHorizontal, Unlock, Workflow, XCircle, Zap,
+  AlertTriangle, CheckCircle2, Globe, Mail, MonitorSmartphone, RefreshCw, ShieldAlert, ShieldBan, ShieldCheck, SlidersHorizontal, Unlock, Workflow, XCircle, Zap,
 } from 'lucide-react';
 import {
-  HostingSocketEvents, MAIL_ENGINES, isMailEngineSupported,
+  HostingSocketEvents, MAIL_DEVICE_SLOTS, MAIL_ENGINES, isMailEngineSupported,
   type AppConfigData, type HostingSettings, type HostingSettingsUpdate, type InfraComponentStatus, type MailBan, type MailEngine, type MailPtrCheck,
   type MailSettings, type MailSystemStatus, type MailUpdatedPayload, type OpenRelayTestResult, type WebmailKind,
 } from '@oblimint/shared';
@@ -79,6 +79,7 @@ export function MailSettingsSections() {
           <MailDnsDefaultsBlock value={settings.mail} save={save} />
           <MailAntispamBlock value={settings.mail} save={save} />
           <MailAbuseBlock value={settings.mail} save={save} />
+          <MailDesktopClientsBlock value={settings.mail} save={save} />
         </>
       )}
       <RelayTestBlock />
@@ -615,6 +616,64 @@ function MailAbuseBlock({ value, save }: { value: MailSettings; save: SaveFn }) 
   );
 }
 
+// ── Desktop clients (« Se connecter à Mint », E7) ─────────────────────────────
+
+function MailDesktopClientsBlock({ value, save }: { value: MailSettings; save: SaveFn }) {
+  const { t } = useTranslation();
+  const [draft, set, dirty, reset] = useDraft({
+    desktopClients: value.desktopClients !== false,
+    devicePasswordIdleDays: String(value.devicePasswordIdleDays ?? 180),
+    manualAppPasswordMaxDays: String(value.manualAppPasswordMaxDays ?? 1095),
+    maxDevicesPerMailbox: String(value.maxDevicesPerMailbox ?? MAIL_DEVICE_SLOTS),
+    authBanRevokedAllowance: value.authBanRevokedAllowance !== false,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const idle = intIn(draft.devicePasswordIdleDays, 30, 730);
+  const manualMax = intIn(draft.manualAppPasswordMaxDays, 90, 1095);
+  const maxDevices = intIn(draft.maxDevicesPerMailbox, 1, MAIL_DEVICE_SLOTS);
+  const valid = idle !== null && manualMax !== null && maxDevices !== null;
+
+  const submit = async () => {
+    if (!valid) return;
+    setSaving(true);
+    const err = await save({
+      desktopClients: draft.desktopClients, devicePasswordIdleDays: idle!, manualAppPasswordMaxDays: manualMax!,
+      maxDevicesPerMailbox: maxDevices!, authBanRevokedAllowance: draft.authBanRevokedAllowance,
+    });
+    setSaving(false);
+    setError(err || null);
+  };
+
+  return (
+    <SettingsBlock
+      id="settings-mail-desktop"
+      icon={<MonitorSmartphone />}
+      title={t('mailClient.settings.title') || 'Desktop applications'}
+      description={t('mailClient.settings.description') || 'Device passwords: one per device and mailbox, revocable on its own (MailForge, phones, other mail clients).'}
+      dirty={dirty} saving={saving} canSave={valid} onSave={() => { void submit(); }} onReset={() => { reset(); setError(null); }} error={error}
+    >
+      <ToggleSwitch
+        checked={draft.desktopClients}
+        onChange={(v) => set({ desktopClients: v })}
+        label={t('mailClient.settings.enabled') || 'Allow “Sign in to Mint” (MailForge)'}
+        description={t('mailClient.settings.enabledHint') || 'Desktop applications sign in with the Mint account and receive one device password per mailbox. Off: only the address and password of a mailbox (or a manual app password) work.'}
+      />
+      <ToggleSwitch
+        checked={draft.authBanRevokedAllowance}
+        onChange={(v) => set({ authBanRevokedAllowance: v })}
+        label={t('mailClient.settings.revokedAllowance') || 'Do not ban an address for failures right after a revocation'}
+        description={t('mailClient.settings.revokedAllowanceHint') || 'For 72 h after device passwords of a mailbox were revoked or expired, as many failures of that mailbox are not counted towards a ban (an office whose devices were all disconnected stays reachable).'}
+      />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <NumberField id="mdc-idle" label={t('mailClient.settings.idleDays') || 'Revoke a device not seen for (days)'} value={draft.devicePasswordIdleDays} onChange={(v) => set({ devicePasswordIdleDays: v })} min={30} max={730} hint={t('mailClient.settings.idleDaysHint') || 'MailForge checks in once a day: an active computer never loses its access.'} />
+        <NumberField id="mdc-manual" label={t('mailClient.settings.manualMaxDays') || 'Maximum app password lifetime (days)'} value={draft.manualAppPasswordMaxDays} onChange={(v) => set({ manualAppPasswordMaxDays: v })} min={90} max={1095} hint={t('mailClient.settings.manualMaxDaysHint') || 'Offered lifetimes: 90 days, 1 year, 3 years.'} />
+        <NumberField id="mdc-max" label={t('mailClient.settings.maxDevices') || 'Devices per mailbox at most'} value={draft.maxDevicesPerMailbox} onChange={(v) => set({ maxDevicesPerMailbox: v })} min={1} max={MAIL_DEVICE_SLOTS} />
+      </div>
+    </SettingsBlock>
+  );
+}
+
 // ── Bans ────────────────────────────────────────────────────────────────────
 
 /**
@@ -684,6 +743,9 @@ export function MailBansPanel() {
                   <td className="px-4 py-2.5 font-mono text-xs text-text-primary">
                     {b.ip}
                     {b.reason && <div className="text-[11px] text-text-muted">{b.reason}</div>}
+                    {b.revokedAllowance > 0 && (
+                      <div className="text-[11px] text-text-muted">{t('mailClient.bans.allowanceApplied', { count: b.revokedAllowance, defaultValue: 'Revocation allowance applied ({{count}} failure(s) not counted)' })}</div>
+                    )}
                   </td>
                   <td className="px-4 py-2.5"><Pill>{b.service}</Pill></td>
                   <td className="px-4 py-2.5 text-right font-mono tabular-nums">{b.failures}</td>

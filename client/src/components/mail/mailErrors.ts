@@ -57,6 +57,9 @@ const MAIL_ERROR_FALLBACKS = {
   noPublicAddress: 'The public address of the server is unknown (setup: public IPv4 / IPv6).',
   notImplemented: 'This feature is being deployed: it is not available on this server yet.',
   notFound: 'This item does not exist anymore or is not visible to you.',
+  deviceLimit: 'At most {{max}} devices per mailbox: revoke one first.',
+  invalidDuration: 'This lifetime is not allowed (at most {{maxDays}} days).',
+  invalidLabel: 'Enter a device name (64 characters at most).',
 } as const;
 
 export type MailErrorCode = keyof typeof MAIL_ERROR_FALLBACKS;

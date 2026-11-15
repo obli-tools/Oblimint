@@ -318,6 +318,7 @@ export function MailClientSettingsCard({ box }: { box: MailboxDetail }) {
         </div>
         {row(t('mail.client.imap') || 'Incoming (IMAP)', c.imap)}
         {row(t('mail.client.smtp') || 'Outgoing (SMTP, authentication required)', c.smtp)}
+        {c.smtpAlternative && row(t('mail.client.smtpAlt') || 'Outgoing, alternative (SMTP with STARTTLS)', c.smtpAlternative)}
         {row(t('mail.client.pop3') || 'Incoming (POP3)', c.pop3)}
         {c.webmailUrl && (
           <div className="rounded-lg bg-bg-primary p-2.5">

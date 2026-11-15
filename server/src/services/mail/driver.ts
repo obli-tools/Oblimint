@@ -127,7 +127,15 @@ export interface DesiredAlias {
   targets: string[];
 }
 
-/** Extra credential of a mailbox (webmail SSO session): valid only from `allowNets`, until `expiresAt`. */
+/**
+ * Extra credential of a mailbox, until `expiresAt`:
+ *  - 'webmail' (SSO session): valid only from `allowNets` (never empty: the
+ *    provider drops every webmail credential without the mail network subnets);
+ *  - 'device' (« Se connecter à Mint », O4a): a device password, usable from
+ *    anywhere (allowNets null), for `protocols` only where the engine can
+ *    restrict them (postfix-dovecot: per-service passwd-files, never
+ *    ManageSieve — O4s; Stalwart 0.12.4: every protocol it publishes).
+ */
 export interface DesiredAppPassword {
   id: number;
   mailboxId: number;
@@ -135,9 +143,11 @@ export interface DesiredAppPassword {
   /** {SHA512-CRYPT} hash of the random credential. */
   passwordHash: string;
   expiresAt: string;
-  purpose: 'webmail';
-  /** Source networks allowed to use it (the mail network subnet(s)). Engines that cannot restrict document it (risk R-APPPW-NET). */
-  allowNets: string[];
+  purpose: 'webmail' | 'device';
+  /** webmail: source networks allowed to use it (the mail network subnet(s)); engines that cannot restrict document it (risk R-APPPW-NET). device: null = from anywhere. */
+  allowNets: string[] | null;
+  /** device only: protocols the credential may log into. */
+  protocols?: Array<'imap' | 'pop3' | 'smtp'>;
 }
 
 export interface DesiredDkimKey {
@@ -303,6 +313,12 @@ export interface MailDriver {
   /** Engine queue (bounded by limit). [] when unsupported. */
   queue(opts: { limit: number }): Promise<MailQueueEntry[]>;
   queueAction(queueId: string, action: 'retry' | 'delete'): Promise<void>;
+  /**
+   * Ends the open IMAP / POP3 sessions of a mailbox (a revoked device
+   * password must not survive in an IDLE session). Optional: absent = the
+   * engine has no way to do it (the session lives until it reconnects).
+   */
+  kickSessions?(address: string): Promise<void>;
   /** Containers whose stdout/stderr carry the mail log (followed by the outbound module). */
   logContainers(): string[];
   /** Pure parser of one log line of one of logContainers(). null = not interesting. */

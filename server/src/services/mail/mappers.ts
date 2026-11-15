@@ -118,13 +118,19 @@ export function autoresponderActive(ar: { enabled: boolean; startsAt: string | n
   return true;
 }
 
-/** What to type in a mail client: node mail host, IMAPS 993 / POP3S 995 / submission 587 STARTTLS. */
+/**
+ * What to type in a mail client: node mail host, IMAPS 993 / POP3S 995 /
+ * submission over implicit TLS 465 first (RFC 8314, O6: the same order as the
+ * Thunderbird autoconfig, the Outlook autodiscover and the discovery
+ * document), 587 STARTTLS as the alternative.
+ */
 export function mailClientSettings(address: string, hostname: string, webmailUrl: string | null): MailClientSettings {
   return {
     username: address,
     imap: { host: hostname, port: MAIL_PUBLIC_PORTS.imaps, security: 'ssl' },
     pop3: { host: hostname, port: MAIL_PUBLIC_PORTS.pop3s, security: 'ssl' },
-    smtp: { host: hostname, port: MAIL_PUBLIC_PORTS.submission, security: 'starttls' },
+    smtp: { host: hostname, port: MAIL_PUBLIC_PORTS.submissions, security: 'ssl' },
+    smtpAlternative: { host: hostname, port: MAIL_PUBLIC_PORTS.submission, security: 'starttls' },
     webmailUrl,
   };
 }

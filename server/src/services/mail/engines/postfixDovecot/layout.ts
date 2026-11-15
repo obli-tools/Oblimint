@@ -96,8 +96,24 @@ export const MANIFEST_FILE = 'manifest.json';
 export const MANAGED_DIRS = ['postfix', 'dovecot', 'sieve', 'rspamd'] as const;
 /** Maximum app password slots (one passwd-file per slot: Dovecot keeps the first line of a user per file). */
 export const APP_PASSWORD_SLOTS = 8;
+/**
+ * Device password slots (« Se connecter à Mint », O4a), a reserve DISTINCT from
+ * the webmail one: = MAIL_DEVICE_SLOTS (shared). One passwd-file per slot AND
+ * per Dovecot service: apppasswords.dev.<service>.<slot>, looked up through
+ * %s (the service) in the passdb path — named under apppasswords.* so that
+ * the image's ctl script hardens them (0640 root:dovecot) like the others.
+ */
+export const DEVICE_PASSWORD_SLOTS = 10;
+/**
+ * Services a device password file is rendered for. 'smtp' is the service
+ * Postfix's SASL client announces to the Dovecot auth socket; 'sieve'
+ * (ManageSieve) always gets EMPTY files: a stolen device password cannot drop
+ * a Sieve redirect that would outlive its revocation (O4s).
+ */
+export const DEVICE_PASSWORD_SERVICES = ['imap', 'pop3', 'smtp', 'sieve'] as const;
+export type DevicePasswordService = typeof DEVICE_PASSWORD_SERVICES[number];
 
 /** Files holding password hashes: root-only on the host (the container's root reads them). */
 export function isSecretFile(rel: string): boolean {
-  return rel === 'dovecot/passwd' || /^dovecot\/apppasswords\.\d+$/.test(rel);
+  return rel === 'dovecot/passwd' || /^dovecot\/apppasswords\.(\d+|dev\.[a-z0-9]+\.\d+)$/.test(rel);
 }

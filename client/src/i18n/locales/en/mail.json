@@ -420,6 +420,7 @@
       "imap": "Incoming (IMAP)",
       "pop3": "Incoming (POP3)",
       "smtp": "Outgoing (SMTP, authentication required)",
+      "smtpAlt": "Outgoing, alternative (SMTP with STARTTLS)",
       "webmail": "Webmail"
     },
     "webmail": {
@@ -635,6 +636,9 @@
       "mailboxDisabled": "This mailbox is disabled.",
       "notImplemented": "This feature is being deployed: it is not available on this server yet.",
       "notFound": "This item does not exist anymore or is not visible to you.",
+      "deviceLimit": "At most {{max}} devices per mailbox: revoke one first.",
+      "invalidDuration": "This lifetime is not allowed (at most {{maxDays}} days).",
+      "invalidLabel": "Enter a device name (64 characters at most).",
       "dkimAlgorithmDisabled": "Ed25519 DKIM signing is turned off for this domain: enable it in the DNS options first.",
       "mailDataPendingPurge": "The previous data of {{name}} is still being removed: try again in a few minutes.",
       "mailEngineChanging": "The mail engine is being changed: try again in a few minutes.",

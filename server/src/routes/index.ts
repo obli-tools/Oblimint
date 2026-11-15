@@ -27,6 +27,7 @@ import runtimeRoutes from './runtime.routes';            // orchestration
 import fileServerRoutes from './filesrv.routes';         // orchestration
 import filesRoutes from './files.routes';                // web file explorer
 import v1Routes from './v1.routes';                      // API access keys (/api/v1)
+import mailClientV1Routes from './mailClientV1.routes';  // « Se connecter à Mint »: device API (/api/v1/mail/device, /client), NOT a key surface
 import siteEnvRoutes from './siteEnv.routes';            // site environment variables
 import previewsRoutes from './previews.routes';          // release / staging previews (feature B)
 import { accountBackupsRouter, systemBackupsRouter } from './backups.routes'; // external backups
@@ -120,6 +121,9 @@ for (const migrationRouter of [migrationSourcesRoutes, migrationDiscoveryRoutes,
   router.use('/system/migration', requireAuth, requirePlatformAdminOnMaster, migrationRouter); // P5
 }
 router.use('/site-api', siteApiRoutes);            // P3 windows: Bearer site token (no session)
+// « Se connecter à Mint » (device API, lot 2 client API): BEFORE /v1, so that neither the obk_ key check nor the
+// key surfaces' barrier (strict regime = permanent web ban of an unknown address) ever sees these requests.
+router.use('/v1/mail', mailClientV1Routes);
 router.use('/v1', v1Routes);                        // API access keys: Bearer obk_ (no session)
 router.use('/public', publicStatusRoutes);         // P4b monitoring-automation: public status pages (no session)
 router.use('/system', systemRoutes);               // platform admin, no tenant required

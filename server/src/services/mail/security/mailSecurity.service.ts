@@ -17,6 +17,7 @@ import { errText } from '../../setup/docker';
 import { notify } from '../../usage/notifications.service';
 import { mailHostname } from '../contracts';
 import type { MailBanRow } from '../rows';
+import { banKey, normalizeAddress } from '../../firewall/addresses';
 import { buildMailFirewallState, isMailBanService, mailBanKey, serviceLabel, type BanGuard } from './bans';
 import { runRelayTest } from './relayTest';
 
@@ -88,14 +89,127 @@ const defaultBackends: MailSecurityBackends = {
 
 let backends: MailSecurityBackends = defaultBackends;
 let failures = new FailureWindow();
+/** Second window (O11): per (ban key, attempted user name). */
+let pairFailures = new FailureWindow();
 let guardCache: { at: number; guard: BanGuard } | null = null;
 
 export function setMailSecurityBackendsForTests(b: Partial<MailSecurityBackends> | null): void {
   backends = b ? { ...defaultBackends, ...b } : defaultBackends;
   failures = new FailureWindow();
+  pairFailures = new FailureWindow();
   guardCache = null;
   lastApplyError = null;
   lastApplyAt = null;
+  allowanceCache = null;
+  allowanceUsed.clear();
+  excused.clear();
+}
+
+// ── revocation allowance (« Se connecter à Mint », O11, §8.3) ────────────────
+//
+// A device whose password was just revoked tries once more (MailForge's gate
+// never retries; other clients may a few times). Twenty computers of an office
+// behind ONE address, all revoked at once, must not get the office banned.
+// Rule, per failure (setting mail.authBanRevokedAllowance, on by default):
+//  - with a user name: R = device passwords of that address revoked or
+//    expired in the last 72 h; the first R failures of the pair (ban key,
+//    user name) since then count NEITHER in the address window NOR in the
+//    pair window; the next ones count normally in both;
+//  - without a user name (Postfix SASL may not log it): R' = device passwords
+//    revoked / expired in the last 72 h whose last check-in (device API) came
+//    from that ban key; the first R' failures without a user name of that key
+//    are not counted. A device that never checked in opens no such allowance;
+//  - webmail failures never get one (a device password never opens the webmail).
+// The "address → R" and "key → R'" lists live in memory (refreshed at every
+// revocation and at least every minute): a failure under attack costs no query
+// once the lists are loaded. An attacker gains at most R free attempts, on
+// that address, for 72 h after a real revocation.
+// Both budgets are capped (REVOCATION_ALLOWANCE_MAX): anyone holding a mailbox
+// can mint revocations (create a device password, check in from his own
+// address, revoke it), and without a cap each one bought one more free try
+// WITHOUT a user name, i.e. against any mailbox of the node (review).
+
+export const REVOCATION_ALLOWANCE_MS = 72 * 60 * 60_000;
+/** Ceiling of one allowance (per address, per ban key): far above an office's mass revocation, far below the threshold's own rate. */
+export const REVOCATION_ALLOWANCE_MAX = 50;
+const ALLOWANCE_TTL_MS = 60_000;
+const ALLOWANCE_MAX_KEYS = 50_000;
+
+let allowanceCache: { at: number; byAddress: Map<string, number>; byKey: Map<string, number> } | null = null;
+/** Consumed allowance: 'u:<key>|<user>' or 'k:<key>' → count and first use. */
+const allowanceUsed = new Map<string, { count: number; since: number }>();
+/** Failures not counted, per ban key (timestamps, 72 h): shown with a ban. */
+const excused = new Map<string, number[]>();
+
+/** A device password was revoked / expired: reload the lists at the next failure. */
+export function invalidateRevocationAllowance(): void {
+  allowanceCache = null;
+}
+
+async function revocationAllowance(nowMs: number): Promise<{ byAddress: Map<string, number>; byKey: Map<string, number> }> {
+  if (allowanceCache && nowMs - allowanceCache.at < ALLOWANCE_TTL_MS) return allowanceCache;
+  const rows = await db('mail_app_passwords as p')
+    .join('mailboxes as m', 'm.id', 'p.mailbox_id')
+    .where('p.purpose', 'device')
+    .whereRaw('COALESCE(p.revoked_at, p.expires_at) > ?', [new Date(nowMs - REVOCATION_ALLOWANCE_MS)])
+    .whereRaw('COALESCE(p.revoked_at, p.expires_at) <= ?', [new Date(nowMs)])
+    .select('m.address', 'p.last_seen_ip') as Array<{ address: string; last_seen_ip: string | null }>;
+  const byAddress = new Map<string, number>();
+  const byKey = new Map<string, number>();
+  for (const r of rows) {
+    const a = String(r.address).toLowerCase();
+    byAddress.set(a, (byAddress.get(a) ?? 0) + 1);
+    const n = r.last_seen_ip ? normalizeAddress(r.last_seen_ip) : null;
+    const k = n ? banKey(n.ip) : null;
+    if (k) byKey.set(k, (byKey.get(k) ?? 0) + 1);
+  }
+  allowanceCache = { at: nowMs, byAddress, byKey };
+  return allowanceCache;
+}
+
+function pruneAllowance(nowMs: number): void {
+  for (const [k, v] of allowanceUsed) if (nowMs - v.since > REVOCATION_ALLOWANCE_MS) allowanceUsed.delete(k);
+  for (const [k, list] of excused) {
+    const kept = list.filter((t) => nowMs - t <= REVOCATION_ALLOWANCE_MS);
+    if (kept.length) excused.set(k, kept); else excused.delete(k);
+  }
+}
+
+/** Failures of `key` the allowance did not count in the last 72 h. */
+function excusedCount(key: string, nowMs: number): number {
+  return (excused.get(key) ?? []).filter((t) => nowMs - t <= REVOCATION_ALLOWANCE_MS).length;
+}
+
+/**
+ * true = this failure is covered by the revocation allowance (not counted).
+ * Never throws (no allowance on any error: the failure counts).
+ */
+async function coveredByAllowance(key: string, user: string | null, service: MailBanService, nowMs: number): Promise<boolean> {
+  if (service === 'webmail') return false;
+  let lists;
+  try {
+    lists = await revocationAllowance(nowMs);
+  } catch (err) {
+    logger.warn({ err: errText(err) }, 'mail bans: revocation allowance unavailable (failure counted)');
+    return false;
+  }
+  const budget = Math.min(REVOCATION_ALLOWANCE_MAX, user ? (lists.byAddress.get(user) ?? 0) : (lists.byKey.get(key) ?? 0));
+  if (budget <= 0) return false;
+  const slot = user ? `u:${key}|${user}` : `k:${key}`;
+  let used = allowanceUsed.get(slot);
+  if (used && nowMs - used.since > REVOCATION_ALLOWANCE_MS) used = undefined;
+  if (!used) {
+    if (allowanceUsed.size >= ALLOWANCE_MAX_KEYS) pruneAllowance(nowMs);
+    if (allowanceUsed.size >= ALLOWANCE_MAX_KEYS) return false;
+    used = { count: 0, since: nowMs };
+  }
+  if (used.count >= budget) return false;
+  used.count++;
+  allowanceUsed.set(slot, used);
+  const list = excused.get(key) ?? [];
+  list.push(nowMs);
+  excused.set(key, list.slice(-1000));
+  return true;
 }
 
 /** Docker subnets of the mail / panel / account networks + the node addresses (never banned). */
@@ -125,6 +239,7 @@ const toApi = (r: MailBanRow): MailBan => ({
   service: (isMailBanService(r.service) ? r.service : 'smtp') as MailBanService,
   failures: r.failures,
   reason: r.reason,
+  revokedAllowance: Number(r.revoked_allowance ?? 0),
   expiresAt: iso(r.expires_at)!,
   createdAt: iso(r.created_at)!,
 });
@@ -188,17 +303,30 @@ export async function recordMailAuthFailure(e: MailAuthFailure): Promise<MailBan
   if (!key) return null;
   const s = await platformSettings.section('mail');
   const now = backends.now();
-  const count = failures.record(key, now.getTime(), s.authBanWindowMinutes * 60_000, s.authBanThreshold);
+  const nowMs = now.getTime();
+  // Attempted user name, normalized the way the engines log in (address, lower case); never a password.
+  // eslint-disable-next-line no-control-regex
+  const login = e.username ? String(e.username).replace(/[\u0000-\u001f\u007f]/g, '').trim().toLowerCase().slice(0, 254) || null : null;
+  if (s.authBanRevokedAllowance !== false && await coveredByAllowance(key, login, e.service, nowMs)) {
+    logger.debug({ ip: key, service: e.service }, 'mail auth failure covered by the revocation allowance (not counted)');
+    return null;
+  }
+  const windowMs = s.authBanWindowMinutes * 60_000;
+  // Two windows (O11): the address, and the pair (address, user name). The ban stays per address (nftables).
+  const pairCount = login ? pairFailures.record(`${key}|${login}`, nowMs, windowMs, s.authBanThreshold) : null;
+  const ipCount = failures.record(key, nowMs, windowMs, s.authBanThreshold);
+  const count = ipCount ?? pairCount;
   if (count === null) return null;
   const live = await db('mail_bans').where({ ip: key }).andWhere('expires_at', '>', now).first('id') as { id: number } | undefined;
   if (live) return null;
-  const expiresAt = new Date(now.getTime() + s.authBanDurationMinutes * 60_000);
-  const user = e.username ? String(e.username).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 64) : null;
+  const expiresAt = new Date(nowMs + s.authBanDurationMinutes * 60_000);
+  const user = login ? login.slice(0, 64) : null;
+  const revokedAllowance = excusedCount(key, nowMs);
   const reason = `${count} échecs d'authentification ${serviceLabel(e.service)} en ${s.authBanWindowMinutes} min${user ? ` (dernier identifiant : ${user})` : ''}`.slice(0, 255);
   const [row] = await db('mail_bans')
-    .insert({ ip: key, service: e.service, failures: count, reason, expires_at: expiresAt, created_at: now, updated_at: now })
+    .insert({ ip: key, service: e.service, failures: count, reason, revoked_allowance: revokedAllowance, expires_at: expiresAt, created_at: now, updated_at: now })
     .onConflict('ip')
-    .merge({ service: e.service, failures: count, reason, expires_at: expiresAt, created_at: now, updated_at: now })
+    .merge({ service: e.service, failures: count, reason, revoked_allowance: revokedAllowance, expires_at: expiresAt, created_at: now, updated_at: now })
     .returning('*') as MailBanRow[];
   logger.warn({ ip: key, service: e.service, failures: count }, 'Address banned on the mail ports');
   // One key for every mail ban: notify() deduplicates it for an hour (a distributed attack never floods the channels).
@@ -237,6 +365,8 @@ export function startMailSecurity(): void {
     expireMailBans().catch((err) => logger.warn({ err: errText(err) }, 'mail ban expiry failed'));
     const s = backends.now().getTime();
     failures.prune(s, 60 * 60_000);
+    pairFailures.prune(s, 60 * 60_000);
+    pruneAllowance(s);
   }, EXPIRY_TICK_MS);
   expiryTimer.unref?.();
 }
@@ -261,6 +391,7 @@ export const mailSecurityService = {
     if (!row) throw new AppError(404, 'Ban not found', 'notFound');
     await db('mail_bans').where({ id }).del();
     failures.clear(row.ip);
+    pairFailures.clear(`${row.ip}|`);
     await auditService.logReqAs(req, MASTER_TENANT_ID, 'mail.unban', { resourceType: 'mailBan', resourcePath: String(id), details: { ip: row.ip, service: row.service } });
     requestPush();
   },

@@ -25,7 +25,8 @@ import { domainName, invalid, isMailAddress, mailAddress, positiveInt } from './
 //  - one `individual` per mailbox, name = address (the login), emails = the
 //    address + every alias whose ONLY target is that mailbox (sending as an
 //    alias, MA3), secrets = the imported hash converted to the form Stalwart
-//    verifies + the live webmail app passwords (R-STALWART-APPPW); a hash the
+//    verifies + the live webmail app passwords and device passwords
+//    (R-STALWART-APPPW); a hash the
 //    engine cannot verify (e.g. an imported $2x$) does NOT abort the sync: the
 //    mailbox gets no secret (no login) and the failure is reported under its
 //    domain (secretErrors → domainErrors); quota in
@@ -190,13 +191,15 @@ export function buildDesiredPrincipals(state: MailDesiredState, now: Date): Desi
     });
   }
 
-  // App passwords (webmail SSO) still valid at `now`.
+  // App passwords still valid at `now`: webmail SSO sessions and device passwords (« Se connecter à Mint »,
+  // O4a). Stalwart 0.12.4 restricts neither the network nor the protocol of a secret (R-STALWART-APPPW):
+  // a device password also opens POP3 here (documented in the panel); there is no ManageSieve on this engine.
   const appSecrets = new Map<string, string[]>();
   for (const ap of state.appPasswords) {
     const addr = mailAddress(ap.address, 'app password address');
     const exp = new Date(ap.expiresAt).getTime();
     if (!Number.isFinite(exp) || exp <= now.getTime()) continue;
-    const secret = secretOf(ap.passwordHash, domainOf(addr), `webmail session of ${addr}`);
+    const secret = secretOf(ap.passwordHash, domainOf(addr), `${ap.purpose === 'device' ? 'device password' : 'webmail session'} of ${addr}`);
     if (secret !== null) appSecrets.set(addr, [...(appSecrets.get(addr) ?? []), secret]);
   }
 

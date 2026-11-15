@@ -169,6 +169,20 @@ export interface MailSettings {
   authBanThreshold: number;
   authBanWindowMinutes: number;
   authBanDurationMinutes: number;
+  /**
+   * Revocation allowance (« Se connecter à Mint », O11): the first failures of
+   * an address right after one of its device passwords was revoked / expired
+   * (72 h, as many as revoked) are not counted towards a ban.
+   */
+  authBanRevokedAllowance: boolean;
+  /** Desktop clients (MailForge) may sign in with their Mint account (flow B, lot 2). */
+  desktopClients: boolean;
+  /** A MailForge device password not seen for this many days expires (each daily check-in pushes it back). */
+  devicePasswordIdleDays: number;
+  /** Longest lifetime of a manual app password (days). */
+  manualAppPasswordMaxDays: number;
+  /** Live device passwords per mailbox (MailForge + manual), ≤ MAIL_DEVICE_SLOTS. */
+  maxDevicesPerMailbox: number;
   /** mail_log rows kept (days). */
   logRetentionDays: number;
   /**
@@ -452,6 +466,11 @@ export const DEFAULT_HOSTING_SETTINGS: HostingSettings = {
     authBanThreshold: 10,
     authBanWindowMinutes: 10,
     authBanDurationMinutes: 60,
+    authBanRevokedAllowance: true,
+    desktopClients: true,
+    devicePasswordIdleDays: 180,
+    manualAppPasswordMaxDays: 1095,
+    maxDevicesPerMailbox: 10,
     logRetentionDays: 30,
     ownerExternalForwarding: true,
   },

@@ -1,5 +1,8 @@
 import { isValidServerName } from '../../edge/nginxConfig';
+import { panelHostRole, panelHosts } from '../../panelHosts';
+import { mailCoreDeps } from '../deps';
 import { activeMailDomainByName, loadMailPlatformContext, optionsOf, type MailDomainView, type MailPlatformContext } from '../dns/domains';
+import { buildMailClientDiscovery } from './mailClientDiscovery';
 import { autodiscoverRequestEmail, emailDomain, mtaStsPolicyText, normalizeEmail, outlookXml, thunderbirdXml } from './xml';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -18,9 +21,13 @@ export interface PublicAnswer {
   body: string;
   /** Cache-Control max-age (s). */
   maxAge: number;
+  /** Access-Control-Allow-Origin: * (the discovery document, read by any client). */
+  cors?: boolean;
 }
 
 const XML_MAX_AGE = 3600;
+/** « Se connecter à Mint » discovery document (O2, §7.1). */
+const DISCOVERY_MAX_AGE = 300;
 const MTA_STS_CACHE = 3600;
 
 type Prefix = 'autoconfig' | 'autodiscover' | 'mta-sts';
@@ -59,6 +66,47 @@ export const autoconfigService = {
     const r = await resolveHost(host, 'autodiscover');
     if (!r || emailDomain(address) !== r.v.name) return null;
     return { contentType: 'application/xml; charset=utf-8', body: outlookXml({ domain: r.v.name, host: r.ctx.host, email: address }), maxAge: XML_MAX_AGE };
+  },
+
+  /**
+   * « Se connecter à Mint » (O2): GET /.well-known/oblimint/mail-client.
+   * On autoconfig.<d>: same conditions as the Thunderbird autoconfig (active
+   * mail domain of an engine with mailboxes, autoconfig on), the domain part
+   * included — the domain's certificate is what ties an address to this
+   * server. On a configured panel host (panel / client space): the same
+   * document without the domain part, when the platform autoconfig is on.
+   * Anything else: null (404, empty body). Never names the engine (P6).
+   */
+  async mailClient(host: string): Promise<PublicAnswer | null> {
+    const h = String(host ?? '').trim().toLowerCase().replace(/\.$/, '');
+    if (!isValidServerName(h)) return null;
+    const hosts = await panelHosts();
+    let domain: string | null = null;
+    let ctx: MailPlatformContext & { host: string };
+    if (h.startsWith('autoconfig.')) {
+      const r = await resolveHost(h, 'autoconfig');
+      if (!r) return null;
+      domain = r.v.name;
+      ctx = r.ctx;
+    } else {
+      if (!panelHostRole(h, hosts)) return null;
+      const c = await loadMailPlatformContext();
+      if (!c.hasMailboxes || !c.host || !c.settings.autoconfig) return null;
+      ctx = { ...c, host: c.host };
+    }
+    const s = ctx.settings;
+    const webmailUrl = domain ? await mailCoreDeps().webmailUrl(domain).catch(() => null) : null;
+    const doc = buildMailClientDiscovery({
+      host: ctx.host,
+      domain,
+      panelHost: hosts.admin,
+      clientHost: hosts.client,
+      desktopClients: s.desktopClients !== false,
+      maxMessageSizeMb: s.maxMessageSizeMb,
+      authBan: { threshold: s.authBanThreshold, windowMinutes: s.authBanWindowMinutes, durationMinutes: s.authBanDurationMinutes, revokedAllowance: s.authBanRevokedAllowance !== false },
+      webmailUrl,
+    });
+    return { contentType: 'application/json; charset=utf-8', body: JSON.stringify(doc), maxAge: DISCOVERY_MAX_AGE, cors: true };
   },
 
   /** GET /.well-known/mta-sts.txt on mta-sts.<d> (mode from the domain / settings; 404 when off). */

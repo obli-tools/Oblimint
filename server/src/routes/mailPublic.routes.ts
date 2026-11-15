@@ -1,5 +1,6 @@
 import express, { Router, type Request, type Response, type NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
+import { MAIL_CLIENT_DISCOVERY_PATH } from '@oblimint/shared';
 import { autoconfigService, type PublicAnswer } from '../services/mail/autoconfig/autoconfig.service';
 import { logger } from '../utils/logger';
 
@@ -11,6 +12,9 @@ import { logger } from '../utils/logger';
 //   GET|POST  /autodiscover/autodiscover.xml   (case-insensitive)   Outlook autodiscover (POST: XML ≤ 16 KiB;
 //                                                                   originGuard.PUBLIC_XML_PATHS exempts it)
 //   GET       /.well-known/mta-sts.txt                              MTA-STS policy
+//   GET       /.well-known/oblimint/mail-client                     « Se connecter à Mint » discovery (O2): on
+//                                                                   autoconfig.<d> (domain part) and on the panel
+//                                                                   hosts; JSON, CORS *, never the engine (P6)
 // Anything the service does not recognise (unknown Host, inactive domain,
 // feature off) → 404 with an empty body (no information about the platform).
 const router = Router();
@@ -28,6 +32,7 @@ function send(res: Response, answer: PublicAnswer | null): void {
   }
   res.setHeader('Content-Type', answer.contentType);
   res.setHeader('Cache-Control', `public, max-age=${Math.max(0, Math.floor(answer.maxAge))}`);
+  if (answer.cors) res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.status(200).send(answer.body);
 }
@@ -66,5 +71,6 @@ router.get(/^\/autodiscover\/autodiscover\.xml$/i, limiter, autodiscover);
 router.post(/^\/autodiscover\/autodiscover\.xml$/i, limiter, xmlBody, autodiscover);
 
 router.get('/.well-known/mta-sts.txt', limiter, handle((req) => autoconfigService.mtaStsPolicy(hostOf(req))));
+router.get(MAIL_CLIENT_DISCOVERY_PATH, limiter, handle((req) => autoconfigService.mailClient(hostOf(req))));
 
 export default router;

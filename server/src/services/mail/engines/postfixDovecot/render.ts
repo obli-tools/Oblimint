@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import type { DesiredMailbox, MailDesiredState } from '../../driver';
 import {
-  APP_PASSWORD_SLOTS, C_CERTS, C_LIVE, C_SELF_SIGNED_CERT, C_SELF_SIGNED_KEY, C_VMAIL, VMAIL_GID, VMAIL_UID,
+  APP_PASSWORD_SLOTS, C_CERTS, C_LIVE, C_SELF_SIGNED_CERT, C_SELF_SIGNED_KEY, C_VMAIL, DEVICE_PASSWORD_SERVICES, DEVICE_PASSWORD_SLOTS,
+  VMAIL_GID, VMAIL_UID, type DevicePasswordService,
 } from './layout';
 import { renderDovecotConf } from './confDovecot';
 import { renderMainCf, renderMasterCf } from './confPostfix';
@@ -317,6 +318,9 @@ export function renderConfig(state: MailDesiredState, ctx: RenderContext): Rende
 
   const appSlots: string[][] = [];
   const perUser = new Map<string, Array<{ hash: string; expires: number; id: number; nets: string[] }>>();
+  // Device passwords (« Se connecter à Mint », O4a / O4s): no network restriction (Internet use), one
+  // reserve of DEVICE_PASSWORD_SLOTS distinct from the webmail one, one file per slot AND service.
+  const devicePerUser = new Map<string, Array<{ hash: string; expires: number; id: number; protocols: Set<string> }>>();
   for (const ap of state.appPasswords ?? []) {
     const dom = String(ap?.address ?? '').split('@')[1] ?? '';
     try {
@@ -328,6 +332,14 @@ export function renderConfig(state: MailDesiredState, ctx: RenderContext): Rende
       if (!Number.isFinite(expires)) throw new RenderError('invalid app password expiry');
       if (expires <= ctx.now.getTime()) continue;
       assertPasswordHash(ap.passwordHash, 'SHA512-CRYPT');
+      if (ap.purpose === 'device') {
+        const protocols = new Set((ap.protocols ?? []).filter((p) => p === 'imap' || p === 'pop3' || p === 'smtp'));
+        if (protocols.size === 0) throw new RenderError('device password without protocol');
+        if (!devicePerUser.has(address)) devicePerUser.set(address, []);
+        devicePerUser.get(address)!.push({ hash: ap.passwordHash, expires, id: Number(ap.id) || 0, protocols });
+        continue;
+      }
+      if (ap.purpose !== 'webmail') throw new RenderError('unknown app password purpose');
       // MA6: only from the mail network, never from its gateway (= the Internet behind the userland proxy).
       const nets = networksExcluding(ap.allowNets ?? [], ctx.mailGateways);
       if (nets.length === 0) continue; // never an unrestricted credential
@@ -342,6 +354,17 @@ export function renderConfig(state: MailDesiredState, ctx: RenderContext): Rende
     list.slice(0, APP_PASSWORD_SLOTS).forEach((ap, i) => {
       if (!appSlots[i]) appSlots[i] = [];
       appSlots[i].push(`${address}:${ap.hash}::::::allow_real_nets=${ap.nets.join(',')}`);
+    });
+  }
+  // deviceSlots[i][service] = lines of apppasswords.dev.<service>.<i>; 'sieve' stays empty (O4s).
+  const deviceSlots: Array<Record<DevicePasswordService, string[]>> = [];
+  for (const [address, list] of [...devicePerUser.entries()].sort((x, y) => byString(x[0], y[0]))) {
+    list.sort((x, y) => y.expires - x.expires || y.id - x.id);
+    list.slice(0, DEVICE_PASSWORD_SLOTS).forEach((ap, i) => {
+      if (!deviceSlots[i]) deviceSlots[i] = { imap: [], pop3: [], smtp: [], sieve: [] };
+      for (const service of DEVICE_PASSWORD_SERVICES) {
+        if (service !== 'sieve' && ap.protocols.has(service)) deviceSlots[i][service].push(`${address}:${ap.hash}::::::`);
+      }
     });
   }
 
@@ -434,11 +457,19 @@ export function renderConfig(state: MailDesiredState, ctx: RenderContext): Rende
     tls: tlsDefault,
     sni: dovecotSni.sort((x, y) => byString(x.name, y.name)),
     appPasswordSlots: appSlots.length,
+    devicePasswordSlots: deviceSlots.length,
     ipv6: ctx.mailSubnets.some((n) => n.includes(':')),
   }));
   files.set('dovecot/passwd', file('passdb: mailboxes allowed to log in', passwd));
   files.set('dovecot/users', file('userdb: every mailbox (delivery)', users));
   appSlots.forEach((lines, i) => files.set(`dovecot/apppasswords.${i}`, file(`webmail session credentials, slot ${i}`, lines)));
+  deviceSlots.forEach((byService, i) => {
+    for (const service of DEVICE_PASSWORD_SERVICES) {
+      files.set(`dovecot/apppasswords.dev.${service}.${i}`, file(service === 'sieve'
+        ? `device passwords, slot ${i}: ManageSieve — always empty (no Sieve script with a device password)`
+        : `device passwords, slot ${i}, service ${service}`, byService[service]));
+    }
+  });
   for (const [rel, content] of [...sieveFiles.entries()].sort((x, y) => byString(x[0], y[0]))) files.set(rel, content);
   for (const [name, content] of rspamd) files.set(`rspamd/${name}`, content);
 

@@ -1,5 +1,5 @@
 import {
-  APP_PASSWORD_SLOTS, C_DH_PARAMS, C_LIVE, C_SPOOL, C_STATE, C_VMAIL, QUOTA_STATUS_PORT, SIEVE_SUBMIT_PORT, VMAIL_GID, VMAIL_UID,
+  APP_PASSWORD_SLOTS, DEVICE_PASSWORD_SLOTS, C_DH_PARAMS, C_LIVE, C_SPOOL, C_STATE, C_VMAIL, QUOTA_STATUS_PORT, SIEVE_SUBMIT_PORT, VMAIL_GID, VMAIL_UID,
 } from './layout';
 import { assertHostname, assertInt, assertSafePath, parseCidr, formatCidr } from './validate';
 
@@ -17,7 +17,10 @@ import { assertHostname, assertInt, assertSafePath, parseCidr, formatCidr } from
 //    (no panel call per login); webmail session credentials live in
 //    separate passwd-files with allow_real_nets = mail network (checked on
 //    the REAL peer address, not the one a trusted proxy forwards), one file
-//    per slot because a passwd-file keeps one line per user;
+//    per slot because a passwd-file keeps one line per user; device passwords
+//    (« Se connecter à Mint ») come BEFORE them, without network restriction,
+//    one file per slot and per service (apppasswords.dev.%s.<slot>): the
+//    'sieve' files are always empty (no ManageSieve with a device password);
 //  - quota (count backend) + quota-status for Postfix (refusal at RCPT);
 //  - Sieve: panel scripts (autoresponder) come through the userdb field
 //    sieve_before (precompiled in the live generation), personal ManageSieve
@@ -41,6 +44,8 @@ export interface DovecotConfInput {
   tls: { cert: string; key: string };
   sni: Array<{ name: string; cert: string; key: string }>;
   appPasswordSlots: number;
+  /** Device password slots in use (« Se connecter à Mint »): one passdb per slot, its file chosen per service (%s). Absent = 0. */
+  devicePasswordSlots?: number;
   /** The mail network has an IPv6 subnet: also listen on "::" (an IPv4-only container may refuse it). */
   ipv6: boolean;
 }
@@ -51,6 +56,7 @@ export function renderDovecotConf(input: DovecotConfInput): string {
   const hostname = assertHostname(input.hostname);
   const trusted = input.trustedNets.map((n) => formatCidr(parseCidr(n)));
   const slots = assertInt(input.appPasswordSlots, 0, APP_PASSWORD_SLOTS, 'app password slots');
+  const deviceSlots = assertInt(input.devicePasswordSlots ?? 0, 0, DEVICE_PASSWORD_SLOTS, 'device password slots');
   const cert = assertSafePath(input.tls.cert, 'certificate path');
   const key = assertSafePath(input.tls.key, 'key path');
   const passdb = (args: string) => ['passdb {', '  driver = passwd-file', `  args = username_format=%Lu ${args}`, '}'];
@@ -75,6 +81,8 @@ export function renderDovecotConf(input: DovecotConfInput): string {
     'disable_plaintext_auth = yes',
     `login_trusted_networks = ${trusted.join(' ')}`,
     ...passdb(`${D}/passwd`),
+    // Device passwords (O4a / O4s): %s = the service (imap, pop3, smtp for Postfix SASL, sieve = always empty files).
+    ...Array.from({ length: deviceSlots }, (_, i) => passdb(`${D}/apppasswords.dev.%s.${i}`)).flat(),
     ...Array.from({ length: slots }, (_, i) => passdb(`${D}/apppasswords.${i}`)).flat(),
     'userdb {',
     '  driver = passwd-file',

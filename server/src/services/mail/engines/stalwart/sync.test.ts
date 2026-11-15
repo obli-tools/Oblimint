@@ -10,7 +10,7 @@ import { MailDriverError } from '../../driver';
 import { hashMailPassword, md5Crypt, sha256Crypt } from '../../passwords';
 import { StalwartApi } from './api';
 import { createStalwartDriver } from './driver';
-import { toStalwartSecret, STALWART_PASSWORD_SCHEMES } from './principals';
+import { buildDesiredPrincipals, secretsFingerprint, toStalwartSecret, STALWART_PASSWORD_SCHEMES } from './principals';
 import { FakeStalwart, QUEUE_FIXTURE_V011, QUEUE_FIXTURE_V012 } from './testing';
 import { STALWART_GID, STALWART_UID } from './constants';
 
@@ -782,4 +782,26 @@ test('certGid: the engine group reads its certificate copies (mail-dns-tls), roo
   const base = { credentials: async () => creds, api: (c: typeof creds) => new StalwartApi({ user: 'oblimint-admin', secret: c.secret }), docker: async () => { throw new Error('no docker'); }, ensureNetwork: async () => undefined, hostname: async () => 'mail.host.net', configDir: 'c', dataDir: 'd', certsDir: 'x', certRoots: ['x'], hostDataDir: '/srv/oblimint', bindAddresses: [] };
   assert.equal(createStalwartDriver({ ...base, owner: { uid: STALWART_UID, gid: STALWART_GID } }).certGid, STALWART_GID);
   assert.equal(createStalwartDriver({ ...base, owner: null }).certGid, null);
+});
+
+test('stalwart principals: device passwords (« Se connecter à Mint ») are extra secrets like the webmail ones; expired / login-off dropped', () => {
+  const state = baseState();
+  const deviceHash = hashMailPassword('device-password-credential-0123456789abcdef').hash;
+  const oldDeviceHash = hashMailPassword('expired-device-credential').hash;
+  state.appPasswords.push(
+    { id: 40, mailboxId: 1, address: 'contact@exemple.fr', passwordHash: deviceHash, expiresAt: '2027-05-01T00:00:00Z', purpose: 'device', allowNets: null, protocols: ['imap', 'smtp'] },
+    { id: 41, mailboxId: 1, address: 'contact@exemple.fr', passwordHash: oldDeviceHash, expiresAt: '2026-10-01T00:00:00Z', purpose: 'device', allowNets: null, protocols: ['imap', 'smtp'] },
+  );
+  const p = buildDesiredPrincipals(state, NOW);
+  const contact = p.individuals.find((i) => i.name === 'contact@exemple.fr')!;
+  assert.ok(contact.secrets.includes(toStalwartSecret(deviceHash)), 'live device password is a secret');
+  assert.ok(!contact.secrets.includes(toStalwartSecret(oldDeviceHash)), 'expired one dropped');
+  assert.ok(contact.secrets.includes(toStalwartSecret(appHash)), 'webmail secret kept');
+  // Order of the provider does not matter: the diff compares the secrets as a set (secretsFingerprint).
+  const reversed = { ...state, appPasswords: [...state.appPasswords].reverse() };
+  const again = buildDesiredPrincipals(reversed, NOW).individuals.find((i) => i.name === 'contact@exemple.fr')!;
+  assert.equal(secretsFingerprint(again.secrets), secretsFingerprint(contact.secrets));
+  // Login off: no secret at all (device passwords included).
+  state.mailboxes[0] = { ...state.mailboxes[0], loginEnabled: false };
+  assert.deepEqual(buildDesiredPrincipals(state, NOW).individuals.find((i) => i.name === 'contact@exemple.fr')!.secrets, []);
 });

@@ -101,6 +101,7 @@ export const ACTION_VERBS_FR: Readonly<Record<string, string>> = {
   'mail.mailbox_delete': 'Supprimer la boîte mail',
   'mail.mailbox_password': 'Changer le mot de passe de la boîte mail',
   'mail.dkim_rotate': 'Renouveler la clé DKIM',
+  'mail.device_create': 'Créer un mot de passe d’application de la boîte mail',
   'cron.write': 'Créer ou modifier une tâche planifiée',
   'cron.delete': 'Supprimer une tâche planifiée',
   'cron.run': 'Lancer une tâche planifiée',

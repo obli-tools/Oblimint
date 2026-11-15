@@ -14,6 +14,8 @@ export * from './platform';
 export * from './maintenance';
 export * from './mail';
 export * from './webmail';
+// « Se connecter à Mint »: discovery document, device passwords, device API
+export * from './mailClient';
 // P4b (docs/P4b-PLAN.md)
 export * from './apps';
 export * from './network';

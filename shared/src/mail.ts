@@ -345,7 +345,10 @@ export interface MailClientSettings {
   username: string;
   imap: MailClientEndpoint;
   pop3: MailClientEndpoint;
+  /** Submission over implicit TLS (465, RFC 8314) first: what the autoconfig and the discovery document announce too (O6). */
   smtp: MailClientEndpoint;
+  /** Alternative: submission 587 with STARTTLS. */
+  smtpAlternative: MailClientEndpoint;
   /** null = no webmail configured. */
   webmailUrl: string | null;
 }
@@ -394,6 +397,8 @@ export interface MailPasswordChange {
   password?: string | null;
   /** Staff only (import). */
   passwordHash?: string | null;
+  /** Also revoke the mailbox's device passwords (« Se connecter à Mint »); default false: they are independent of the mailbox password. */
+  revokeDevices?: boolean;
 }
 
 export interface MailPasswordResult {
@@ -750,6 +755,8 @@ export interface MailBan {
   service: MailBanService;
   failures: number;
   reason: string | null;
+  /** Failures NOT counted thanks to the revocation allowance (settings mail.authBanRevokedAllowance) in the 72 h before the ban; 0 = none. */
+  revokedAllowance: number;
   expiresAt: string;
   createdAt: string;
 }

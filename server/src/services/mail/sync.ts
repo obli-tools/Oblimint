@@ -59,6 +59,8 @@ interface SyncRuntime {
   lastSyncAt: string | null;
   lastSyncError: string | null;
   lastResult: MailSyncResult | null;
+  /** Last sync the engine applied (fully or partly): when its desired state was read, and the domains it failed. */
+  lastApplied: { loadedAt: number; failing: Set<string> } | null;
   lastNotifiedAt: number;
   watchFingerprint: string | null;
 }
@@ -74,9 +76,22 @@ const rt: SyncRuntime = {
   lastSyncAt: null,
   lastSyncError: null,
   lastResult: null,
+  lastApplied: null,
   lastNotifiedAt: 0,
   watchFingerprint: null,
 };
+
+/**
+ * « Se connecter à Mint » (engineReady): did a sync whose desired state was
+ * read AFTER `since` (database clock) get applied without failing `domain`?
+ * In memory: false after a panel restart until the next sync.
+ */
+export function mailSyncAppliedSince(domain: string, since: Date | string): boolean {
+  const a = rt.lastApplied;
+  const t = new Date(since).getTime();
+  if (!a || !Number.isFinite(t)) return false;
+  return a.loadedAt > t && !a.failing.has(String(domain ?? '').toLowerCase());
+}
 
 export function mailSyncInfo(): { lastSyncAt: string | null; lastSyncError: string | null; lastResult: MailSyncResult | null } {
   return { lastSyncAt: rt.lastSyncAt, lastSyncError: rt.lastSyncError, lastResult: rt.lastResult };
@@ -212,6 +227,7 @@ async function performSync(opts: { reason: string; force: boolean; ensureNetwork
     rt.lastSyncAt = new Date().toISOString();
     await storeDomainErrors(result.domainErrors ?? {});
     const failing = Object.keys(result.domainErrors ?? {});
+    rt.lastApplied = { loadedAt: new Date(loadedAt).getTime(), failing: new Set(failing.map((d) => d.toLowerCase())) };
     rt.lastSyncError = result.ok && failing.length === 0 ? null
       : failing.length ? `Synchronisation partielle : ${failing.length} domaine(s) en échec (${failing.slice(0, 5).join(', ')})`
         : 'Synchronisation partielle';
@@ -399,6 +415,7 @@ export function resetMailSyncForTests(): void {
   rt.lastSyncAt = null;
   rt.lastSyncError = null;
   rt.lastResult = null;
+  rt.lastApplied = null;
   rt.lastNotifiedAt = 0;
   rt.watchFingerprint = null;
   sharedSync = null;

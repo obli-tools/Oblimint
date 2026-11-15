@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  APP_CAP_ADD_ALLOWED, DEFAULT_HOSTING_SETTINGS, PLATFORM_RESERVED_PORTS, PROTECTED_SETTINGS_SECTIONS, type HostingSettings, type HostingSettingsSection, type HostingSettingsUpdate,
+  APP_CAP_ADD_ALLOWED, DEFAULT_HOSTING_SETTINGS, MAIL_DEVICE_SLOTS, PLATFORM_RESERVED_PORTS, PROTECTED_SETTINGS_SECTIONS, type HostingSettings, type HostingSettingsSection, type HostingSettingsUpdate,
 } from '@oblimint/shared';
 import type { Knex } from 'knex';
 import { db } from '../db';
@@ -122,6 +122,11 @@ const sectionSchemas = {
     authBanThreshold: z.number().int().min(3).max(1000),
     authBanWindowMinutes: z.number().int().min(1).max(1440),
     authBanDurationMinutes: z.number().int().min(1).max(43200),
+    authBanRevokedAllowance: z.boolean(),
+    desktopClients: z.boolean(),
+    devicePasswordIdleDays: z.number().int().min(30).max(730),
+    manualAppPasswordMaxDays: z.number().int().min(90).max(1095),
+    maxDevicesPerMailbox: z.number().int().min(1).max(MAIL_DEVICE_SLOTS),
     logRetentionDays: z.number().int().min(1).max(366),
     ownerExternalForwarding: z.boolean(),
   }).strict(),

@@ -30,7 +30,7 @@ import { renderConfig } from './render';
 import { parseDoveadmQuotaJson, parsePostqueueJson } from './runtime';
 import { clamdTcpNetsOf, normalizeClamdTcpNets } from '../../../scan/scannerSpec';
 import { ENGINE_EXTRA_NETWORKS, engineContainerSpec, engineDataDirs, redisContainerSpec, rspamdContainerSpec } from './spec';
-import { firstHost, QUEUE_ID_RE, RenderError } from './validate';
+import { assertAddress, firstHost, QUEUE_ID_RE, RenderError } from './validate';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // postfix-dovecot engine (docs/P4-PLAN.md §5.2) — module engine-postfix.
@@ -636,6 +636,29 @@ export function createPostfixDovecotDriver(overrides: Partial<PostfixDovecotDeps
       const r = await ctl(docker, MAIL_CONTAINER, [MAIL_CTL, action, queueId]);
       if (r.exitCode === 3) throw new MailDriverError('notFound', 'Unknown queue item');
       if (r.exitCode !== 0) throw new MailDriverError('unavailable', `The queue item could not be ${action === 'retry' ? 'retried' : 'deleted'}`, execDetail(r));
+    },
+
+    /**
+     * « Se connecter à Mint » (§5.6): a revoked device password must not
+     * survive in an open IMAP / POP3 session (IDLE). `doveadm kick <address>`
+     * through a DIRECT docker exec (the image's ctl script has no `kick` yet:
+     * adding it means rebuilding the image, owner's point P12) — the address
+     * is validated (assertAddress) and is the only argument. It also ends the
+     * mailbox's other sessions, which log in again with their own secret.
+     * The caller runs it after the sync that dropped the credential.
+     */
+    async kickSessions(address: string) {
+      let addr: string;
+      try {
+        addr = assertAddress(String(address ?? '').trim().toLowerCase());
+      } catch {
+        throw new MailDriverError('invalidState', 'Invalid mailbox address');
+      }
+      const docker = await dockerOrThrow();
+      if (!(await isRunning(docker, MAIL_CONTAINER))) return;
+      const r = await ctl(docker, MAIL_CONTAINER, ['doveadm', 'kick', addr], 30_000);
+      // No session for that user is not an error (doveadm kick exits non-zero then): logged at debug only.
+      if (r.exitCode !== 0) logger.debug({ engine: ENGINE, exitCode: r.exitCode }, 'doveadm kick: nothing kicked or refused');
     },
 
     logContainers() {

@@ -4,7 +4,7 @@ import type {
   MailboxCreated, MailboxDetail, MailboxUpdate, MailDnsFixPlan, MailDnsFixResult, MailDnsStatus, MailDomain, MailDomainCreate, MailDomainDetail, MailDomainDnsUpdate,
   MailDomainUpdate, MailEngine, MailForwardingInput, MailLogDirection, MailLogEntry, MailLogEventKind, MailOutboundState, MailOverview,
   MailPasswordChange, MailPasswordResult, MailQueueItem, MailSystemStatus, OpenRelayTestResult, SiteMailRelay, SiteMailRelayUpdate,
-  WebmailSsoTicket, MailRule,
+  WebmailSsoTicket, MailRule, MailDeviceCreate, MailDeviceCreated, MailDeviceList, MailDeviceRevoke,
 } from '@oblimint/shared';
 
 // /api/mail, /api/system/mail, /api/sites/:id/mail-relay — docs/P4-PLAN.md §6.
@@ -78,6 +78,20 @@ export const mailApi = {
   },
   async setPassword(id: number, data: MailPasswordChange): Promise<MailPasswordResult> {
     const res = await apiClient.post<ApiResponse<MailPasswordResult>>(`/mail/mailboxes/${id}/password`, data);
+    return res.data.data!;
+  },
+  // ── device passwords (« Se connecter à Mint », mail.manage) ──
+  async listDevices(id: number): Promise<MailDeviceList> {
+    const res = await apiClient.get<ApiResponse<MailDeviceList>>(`/mail/mailboxes/${id}/devices`);
+    return res.data.data!;
+  },
+  /** The secret comes back once (never stored by the caller beyond the reveal dialog). */
+  async createDevice(id: number, data: MailDeviceCreate): Promise<MailDeviceCreated> {
+    const res = await apiClient.post<ApiResponse<MailDeviceCreated>>(`/mail/mailboxes/${id}/devices`, data);
+    return res.data.data!;
+  },
+  async revokeDevices(id: number, data: MailDeviceRevoke): Promise<{ revoked: number }> {
+    const res = await apiClient.post<ApiResponse<{ revoked: number }>>(`/mail/mailboxes/${id}/devices/revoke`, data);
     return res.data.data!;
   },
   async setForwarding(id: number, data: MailForwardingInput): Promise<MailboxDetail> {

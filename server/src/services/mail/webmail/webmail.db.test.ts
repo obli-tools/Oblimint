@@ -344,7 +344,7 @@ test('webmail module on PostgreSQL (PGlite)', { timeout: 300_000 }, async (t: Te
     syncs.length = 0;
     const n = await expireWebmailSessions();
     assert.ok(n >= 1);
-    assert.ok(syncs.includes('webmail sessions expired'));
+    assert.ok(syncs.includes('app passwords expired'));
     const s = await db('mail_app_passwords').where({ id: Number(soon.id ?? soon) }).first();
     assert.ok(s.revoked_at, 'expired row marked revoked');
     assert.equal(await db('mail_app_passwords').where({ id: Number(old.id ?? old) }).first(), undefined, 'old row deleted');
