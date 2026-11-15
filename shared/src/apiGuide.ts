@@ -99,6 +99,7 @@ Consequences:
 | \`dns.write\` | Create, change and delete the **free** records of those zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), never a record the platform manages; restore a revision of the zone (see §5 « DNS records ») |
 | \`logs.read\` | Read access, error (web server / PHP) and application logs, and the PHP errors grouped by release |
 | \`network.read\` | Read the public ports of the account: its blocks of the shared IP, its dedicated IP (public address) and the bindings of **every** app / stack of the account (whatever the site selection). Read only |
+| \`mail.mailboxes\` | Mailboxes of the account's mail domains: list, create (within the plan), new password, delete (protected). A password is returned **once**. Never given by a preset, « Everything » included: ticked on its own (see §5 « Mailboxes ») |
 
 **Databases**: a key valid for every site sees every database of the account; a key limited to some sites sees only the databases and users **it created**, plus the databases **owned by or shared with its sites**. A key deletes only what it created, and never stops nor deletes a database server.
 
@@ -108,7 +109,7 @@ Consequences:
 
 **DNS records**: a key reaches the zones of the domains given to it in the panel (every zone of the account for a key on every domain; the domains section of the key bounds both the routes and the DNS records). It only writes the free records of a hosted zone: the records of the names served by the sites, of a hosted mail, the SOA / NS and the challenges stay the platform's.
 
-Never possible with a key: deleting a site, adding a **new root domain**, deleting a database it did not create or a database server, managing FTP / mail accounts or users, or touching another account. Ask the human for those.
+Never possible with a key: deleting a site, adding a **new root domain**, deleting a database it did not create or a database server, managing FTP accounts, mail domains, aliases or forwarding, or users, or touching another account. Ask the human for those.
 
 Oblimint runs **no permanent process** (bot, websocket, queue worker listening all the time): only the website and its cron tasks, one hour at most each. Such a program must be hosted elsewhere, or rewritten as short tasks run by cron (e.g. every minute, resuming where it stopped).
 
@@ -165,6 +166,9 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`list_dns_revisions\` | History of a zone (\`zone\`, \`limit?\`), most recent first: \`id\`, \`seq\`, \`source\` (\`panel\`, \`api\`, \`mcp\`, \`system\`), \`action\`, \`author\`, \`summary\` | \`dns.read\` |
 | \`get_dns_revision\` | A revision (\`zone\`, \`revision_id\`): its \`records\`, the \`diff\` to the current records and the \`plan\` of a restore by this key | \`dns.read\` |
 | \`restore_dns_revision\` | Put the free records back as they were in a revision (\`zone\`, \`revision_id\`, \`dry_run?\`); files a new revision | \`dns.write\` |
+| \`list_mailboxes\` | Mail domains of the account (\`domains\`), one page of mailboxes (\`domain?\` or \`mail_domain_id?\`, \`search?\`, \`limit?\`, \`offset?\`), the plan's mail \`limits\` and \`usage\`, the IMAP / SMTP \`hostname\` | \`mail.mailboxes\` |
+| \`create_mailbox\` | Create \`local_part\`@domain (\`domain\` or \`mail_domain_id\`, \`password?\`, \`quota_mb?\`, \`display_name?\`); without \`password\` one is generated and returned **once** | \`mail.mailboxes\` |
+| \`reset_mailbox_password\` / \`delete_mailbox\` | New password (\`mailbox_id\` or \`address\`, \`password?\`: generated and returned once when absent); delete a mailbox and its mail (protected: the key's owner confirms by default) | \`mail.mailboxes\` |
 | \`get_env\` / \`set_env\` | Environment variables of the site (read by PHP with \`getenv()\`); \`set\` adds / replaces, \`remove\` deletes, the others stay; secrets write-only; the site restarts | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Folders the site may write to (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Secondary runtimes: another container (possibly another engine) serving some paths of the **same** code and data | \`sites.manage\` |
@@ -412,6 +416,15 @@ curl -X POST -H "Authorization: Bearer $OBK" -H "Content-Type: application/json"
   -d '{"name":"_minecraft._tcp.play","type":"SRV","priority":0,"content":"5 25565 play.example.com."}' ${panel}/api/v1/zones/example.com/records
 \`\`\`
 
+### Mailboxes
+
+With \`mail.mailboxes\` (ticked on its own: no preset gives it), a key manages the mailboxes of the mail domains of its account, typically **test mailboxes** (a sign-up or password-reset e-mail of the site under test). The mail domains themselves, aliases, forwarding and the mail DNS stay in the panel.
+
+- \`list_mailboxes\` gives the mail domains, the mailboxes, the plan's limits (\`maxMailboxes\`, \`mailQuotaMb\`, \`mailboxQuotaMaxMb\`) with what is used, and the IMAP / SMTP server (\`hostname\`). A mail domain \`pending\` (ownership not verified) receives nothing yet.
+- \`create_mailbox\` applies the panel's checks: \`planLimit\` (409, \`details.dimension\`), \`addressTaken\` (409, a mailbox or an alias), \`invalidAddress\` (400, a reserved or invalid name), \`accountSuspended\` (409), \`mailEngineNoMailboxes\` (409, external mail engine).
+- **Passwords**: give one (10 characters at least, \`weakPassword\` otherwise) or let the server generate one: the answer holds it **once** (REST: \`Cache-Control: no-store\`). It is never shown again, never in the audit log nor in a pending action: keep it for the test, or set a new one with \`reset_mailbox_password\`. Never write it into a file, a log or a release.
+- \`delete_mailbox\` deletes the mailbox **and its mail**; by default the key's owner confirms it with his 2FA code (see « Protected actions »). A new password may be protected too.
+
 ### Protected actions
 
 The humans of the account may protect some operations (dropping a database, an SQL write, a deletion, publishing, a cron job…; by default only the deletions — a site, a database, a domain, a DNS zone, a mailbox…; writing to a database stays free unless the humans protect it). A protected call runs nothing and answers **428** with a request waiting for a human:
@@ -522,6 +535,9 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | PUT · DELETE | \`/zones/:zone/records/:recordId\` | PUT: the same body | \`dns.write\` |
 | GET | \`/zones/:zone/revisions?limit=\` · \`…/revisions/:revisionId\` | history of the zone (as \`list_dns_revisions\`) · a revision (as \`get_dns_revision\`) | \`dns.read\` |
 | POST | \`/zones/:zone/revisions/:revisionId/restore\` | \`{ dryRun? }\`: restore a revision (as \`restore_dns_revision\`) | \`dns.write\` |
+| GET · POST | \`/mailboxes?domain=&mailDomainId=&search=&limit=&offset=\` | mail domains, mailboxes, limits (as \`list_mailboxes\`) · \`{ domain, localPart, password?, quotaMb?, displayName? }\` (or \`mailDomainId\`): \`{ mailbox, password }\`, the password once | \`mail.mailboxes\` |
+| POST | \`/mailboxes/:id/password\` | \`{ password? }\`: \`{ mailbox, password }\`, generated and returned once when absent | \`mail.mailboxes\` |
+| DELETE | \`/mailboxes/:id\` | delete the mailbox and its mail (protected) | \`mail.mailboxes\` |
 | GET | \`/pending-actions\` · \`/pending-actions/:pid\` | this key's requests for protected actions (\`?status=\`) · one of them | — |
 | GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, default 30): once a human decided (\`timedOut\` otherwise) | — |
 | DELETE | \`/pending-actions/:pid\` | withdraw the request | — |
@@ -718,6 +734,7 @@ Conséquences :
 | \`dns.write\` | Créer, modifier et supprimer les enregistrements **libres** de ces zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), jamais un enregistrement géré par la plateforme ; restaurer une révision de la zone (voir §5 « Enregistrements DNS ») |
 | \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs, et les erreurs PHP regroupées par release |
 | \`network.read\` | Lire les ports publics du compte : ses plages de l'IP partagée, son IP dédiée (adresse publique) et les liaisons de **toutes** les applications / stacks du compte (quelle que soit la sélection de sites). Lecture seule |
+| \`mail.mailboxes\` | Boîtes mail des domaines mail du compte : lister, créer (dans les limites du plan), nouveau mot de passe, supprimer (protégé). Un mot de passe n'est rendu qu'**une fois**. Jamais donné par un préréglage, « Tout » compris : à cocher à part (voir §5 « Boîtes mail ») |
 
 **Bases de données** : une clé valable pour tous les sites voit toutes les bases du compte ; une clé limitée à certains sites ne voit que les bases et utilisateurs **qu'elle a créés**, ainsi que les bases **appartenant à ses sites ou partagées avec eux**. Une clé ne supprime que ce qu'elle a créé, et n'arrête ni ne supprime jamais un serveur de bases.
 
@@ -727,7 +744,7 @@ Conséquences :
 
 **Enregistrements DNS** : une clé atteint les zones des domaines qui lui sont donnés dans le panel (toutes les zones du compte pour une clé sur tous les domaines ; la section Domaines de la clé borne à la fois les routes et les enregistrements DNS). Elle n'écrit que les enregistrements libres d'une zone hébergée : ceux des noms servis par les sites, d'un mail hébergé, le SOA / NS et les challenges restent à la plateforme.
 
-Jamais possible avec une clé : supprimer un site, ajouter un **nouveau domaine racine**, supprimer une base qu'elle n'a pas créée ou un serveur de bases, gérer les comptes FTP / mail ou les utilisateurs, ou toucher à un autre compte. Pour ça, demande à l'humain.
+Jamais possible avec une clé : supprimer un site, ajouter un **nouveau domaine racine**, supprimer une base qu'elle n'a pas créée ou un serveur de bases, gérer les comptes FTP, les domaines mail, les alias ou les transferts, ou les utilisateurs, ou toucher à un autre compte. Pour ça, demande à l'humain.
 
 Oblimint ne fait tourner **aucun processus permanent** (bot, websocket, file d'attente qui écoute en continu) : seulement le site web et ses tâches cron, d'une heure au plus chacune. Un tel programme doit être hébergé ailleurs, ou réécrit en tâches courtes lancées par le cron (ex. toutes les minutes, en reprenant là où il s'était arrêté).
 
@@ -784,6 +801,9 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`list_dns_revisions\` | Historique d'une zone (\`zone\`, \`limit?\`), de la plus récente à la plus ancienne : \`id\`, \`seq\`, \`source\` (\`panel\`, \`api\`, \`mcp\`, \`system\`), \`action\`, \`author\`, \`summary\` | \`dns.read\` |
 | \`get_dns_revision\` | Une révision (\`zone\`, \`revision_id\`) : ses \`records\`, le \`diff\` jusqu'aux enregistrements actuels et le \`plan\` d'une restauration par cette clé | \`dns.read\` |
 | \`restore_dns_revision\` | Remettre les enregistrements libres tels qu'ils étaient dans une révision (\`zone\`, \`revision_id\`, \`dry_run?\`) ; crée une nouvelle révision | \`dns.write\` |
+| \`list_mailboxes\` | Domaines mail du compte (\`domains\`), une page de boîtes (\`domain?\` ou \`mail_domain_id?\`, \`search?\`, \`limit?\`, \`offset?\`), les \`limits\` mail du plan et leur \`usage\`, le serveur IMAP / SMTP (\`hostname\`) | \`mail.mailboxes\` |
+| \`create_mailbox\` | Créer \`local_part\`@domaine (\`domain\` ou \`mail_domain_id\`, \`password?\`, \`quota_mb?\`, \`display_name?\`) ; sans \`password\`, il est généré et rendu **une seule fois** | \`mail.mailboxes\` |
+| \`reset_mailbox_password\` / \`delete_mailbox\` | Nouveau mot de passe (\`mailbox_id\` ou \`address\`, \`password?\` : généré et rendu une fois s'il est absent) ; supprimer une boîte et son courrier (protégé : le propriétaire de la clé confirme par défaut) | \`mail.mailboxes\` |
 | \`get_env\` / \`set_env\` | Variables d'environnement du site (lues par PHP avec \`getenv()\`) ; \`set\` ajoute / remplace, \`remove\` supprime, les autres restent ; secrets en écriture seule ; le site redémarre | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Dossiers où le site peut écrire (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Runtimes secondaires : un autre conteneur (autre moteur possible) qui sert certains chemins du **même** code et des mêmes données | \`sites.manage\` |
@@ -1031,6 +1051,15 @@ curl -X POST -H "Authorization: Bearer $OBK" -H "Content-Type: application/json"
   -d '{"name":"_minecraft._tcp.play","type":"SRV","priority":0,"content":"5 25565 play.exemple.com."}' ${panel}/api/v1/zones/exemple.com/records
 \`\`\`
 
+### Boîtes mail
+
+Avec \`mail.mailboxes\` (coché à part : aucun préréglage ne le donne), une clé gère les boîtes mail des domaines mail de son compte, typiquement des **boîtes de test** (l'e-mail d'inscription ou de mot de passe oublié du site testé). Les domaines mail eux-mêmes, les alias, les transferts et le DNS mail restent dans le panel.
+
+- \`list_mailboxes\` donne les domaines mail, les boîtes, les limites du plan (\`maxMailboxes\`, \`mailQuotaMb\`, \`mailboxQuotaMaxMb\`) et leur consommation, et le serveur IMAP / SMTP (\`hostname\`). Un domaine mail \`pending\` (propriété non vérifiée) ne reçoit encore rien.
+- \`create_mailbox\` applique les contrôles du panel : \`planLimit\` (409, \`details.dimension\`), \`addressTaken\` (409, une boîte ou un alias), \`invalidAddress\` (400, nom réservé ou invalide), \`accountSuspended\` (409), \`mailEngineNoMailboxes\` (409, moteur mail externe).
+- **Mots de passe** : en donner un (10 caractères au moins, sinon \`weakPassword\`) ou laisser le serveur le générer : la réponse le contient **une seule fois** (REST : \`Cache-Control: no-store\`). Il n'est plus jamais affiché, ni dans le journal d'audit ni dans une action en attente : le garder pour le test, ou en poser un nouveau avec \`reset_mailbox_password\`. Ne jamais l'écrire dans un fichier, un journal ou une release.
+- \`delete_mailbox\` supprime la boîte **et son courrier** ; par défaut le propriétaire de la clé le confirme avec son code 2FA (voir « Actions protégées »). Un nouveau mot de passe peut aussi être protégé.
+
 ### Actions protégées
 
 Les humains du compte peuvent protéger certaines opérations (supprimer une base, une requête SQL en écriture, une suppression, une publication, une tâche planifiée… ; par défaut seulement les suppressions — un site, une base, un domaine, une zone DNS, une boîte mail… ; écrire dans une base reste libre sauf si les humains la protègent). Un appel protégé n'exécute rien et répond **428** avec une demande qui attend un humain :
@@ -1141,6 +1170,9 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | PUT · DELETE | \`/zones/:zone/records/:recordId\` | PUT : le même corps | \`dns.write\` |
 | GET | \`/zones/:zone/revisions?limit=\` · \`…/revisions/:revisionId\` | historique de la zone (comme \`list_dns_revisions\`) · une révision (comme \`get_dns_revision\`) | \`dns.read\` |
 | POST | \`/zones/:zone/revisions/:revisionId/restore\` | \`{ dryRun? }\` : restaurer une révision (comme \`restore_dns_revision\`) | \`dns.write\` |
+| GET · POST | \`/mailboxes?domain=&mailDomainId=&search=&limit=&offset=\` | domaines mail, boîtes, limites (comme \`list_mailboxes\`) · \`{ domain, localPart, password?, quotaMb?, displayName? }\` (ou \`mailDomainId\`) : \`{ mailbox, password }\`, le mot de passe une seule fois | \`mail.mailboxes\` |
+| POST | \`/mailboxes/:id/password\` | \`{ password? }\` : \`{ mailbox, password }\`, généré et rendu une fois s'il est absent | \`mail.mailboxes\` |
+| DELETE | \`/mailboxes/:id\` | supprimer la boîte et son courrier (protégé) | \`mail.mailboxes\` |
 | GET | \`/pending-actions\` · \`/pending-actions/:pid\` | les demandes de cette clé pour des actions protégées (\`?status=\`) · l'une d'elles | — |
 | GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, 30 par défaut) : dès qu'un humain a décidé (\`timedOut\` sinon) | — |
 | DELETE | \`/pending-actions/:pid\` | retirer la demande | — |

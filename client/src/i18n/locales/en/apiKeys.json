@@ -126,6 +126,12 @@
           "label": "Write DNS records",
           "hint": "Create, change and delete the free records of those zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), e.g. a name pointing to another server or a game server SRV. Never the records the platform manages: names served by the sites and subdomains, hosted mail, SOA / NS, challenges."
         }
+      },
+      "mail": {
+        "mailboxes": {
+          "label": "Mailboxes",
+          "hint": "Mailboxes of the account's mail domains (e.g. test mailboxes): list, create within the plan, set a new password, delete (protected). A password is shown to the key once. Never part of a preset, « Everything » included: tick it on its own."
+        }
       }
     },
     "guide": "API & AI agent guide",
@@ -198,7 +204,7 @@
       },
       "all": {
         "label": "Everything",
-        "hint": "Every right you may grant, on every site, and every domain if you may give them. Never: deleting a site, adding a root domain, users, other keys."
+        "hint": "Every right you may grant, on every site, and every domain if you may give them; the mailboxes are ticked on their own. Never: deleting a site, adding a root domain, users, other keys."
       },
       "custom": {
         "label": "Custom",

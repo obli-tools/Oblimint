@@ -99,6 +99,8 @@ export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed> = {
   // DNS records of the zones of the domains given to the key (keyDns.ts): read as the panel reads a zone, write with dns.manage.
   'dns.read': 'read',
   'dns.write': 'dns.manage',
+  // Mailboxes of the account (keyMail.ts): who may not manage the mail in the panel never delegates it.
+  'mail.mailboxes': 'mail.manage',
 };
 
 /** Client capability each scope gives the key's actor. */
@@ -121,6 +123,8 @@ const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
   'network.read': null,
   'dns.read': null,
   'dns.write': 'dns.manage',
+  // The mail service's own checks (loadMailDomain / loadMailbox with mail.manage) then apply to the key unchanged.
+  'mail.mailboxes': 'mail.manage',
 };
 
 /** Feature B (B9): stops the previews started through a key (never throws). */
