@@ -21,6 +21,7 @@ export function capabilityLabel(t: TFunction, c: ClientCapability): string {
     'apps.console': 'Application console',
     'proxy.manage': 'Manage proxy hosts',
     'monitoring.manage': 'Manage monitoring',
+    'users.manage': 'Manage users',
   };
   return t(`accounts.capabilities.${c.replace('.', '_')}`) || fallback[c];
 }
@@ -39,6 +40,7 @@ function capabilityHint(t: TFunction, c: ClientCapability): string {
     'apps.console': 'Open an interactive console in the application containers (when the plan allows it).',
     'proxy.manage': 'Create proxy hosts, redirections, dead hosts, access lists, error pages and manage the bans of the account.',
     'monitoring.manage': 'Create uptime monitors, status pages, workflows, SFTP targets and maintenance windows.',
+    'users.manage': 'Add and manage the other logins of the account (capabilities, password, disable), never with rights you do not hold yourself.',
   };
   return t(`accounts.capabilities.${c.replace('.', '_')}_hint`) || fallback[c];
 }
@@ -60,6 +62,7 @@ const STAFF_EQUIVALENT: Record<ClientCapability, string> = {
   'apps.console': 'apps.console',
   'proxy.manage': 'proxy.manage',
   'monitoring.manage': 'monitoring.manage',
+  'users.manage': 'accounts.manage',
 };
 
 /**
@@ -78,12 +81,16 @@ export function useGrantableClientCapabilities(): readonly ClientCapability[] {
 /**
  * Checklist of the client capabilities (in CLIENT_CAPABILITIES order) — the common rights editor.
  * A capability the caller cannot delegate is greyed (it can still be removed).
+ * `grantableOverride`: what the caller may delegate when it is not the staff
+ * (a client managing its team: its own capabilities on the account).
  */
-export function CapabilityCheckboxes({ value, onChange, disabled = false }: {
+export function CapabilityCheckboxes({ value, onChange, disabled = false, grantableOverride }: {
   value: ClientCapability[]; onChange: (next: ClientCapability[]) => void; disabled?: boolean;
+  grantableOverride?: readonly ClientCapability[];
 }) {
   const { t } = useTranslation();
-  const grantable = useGrantableClientCapabilities();
+  const staffGrantable = useGrantableClientCapabilities();
+  const grantable = grantableOverride ?? staffGrantable;
   return (
     <RightsChecklist<ClientCapability>
       items={CLIENT_CAPABILITIES.map((c) => ({ id: c, label: capabilityLabel(t, c), hint: capabilityHint(t, c) }))}

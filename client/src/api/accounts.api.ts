@@ -1,7 +1,7 @@
 import apiClient from './client';
 import type {
   AccountContainment, ContainmentAuditRow, ContainmentLiftRequest, ContainmentStartRequest,
-  AccountClientUser, AccountClientUserAdd, AccountSshKey, ApiResponse, ClientCapability, ClientUserCandidate, FileAccessInfo,
+  AccountClientUser, AccountClientUserAdd, AccountClientUserUpdate, AccountSshKey, ApiResponse, ClientUserCandidate, FileAccessInfo,
   FileAccessPasswordResult, FileAccessUpdate, FileServerStatus, HostingAccount, HostingAccountCreate,
   HostingAccountStatus, HostingAccountUpdate, SshKeyInput,
 } from '@oblimint/shared';
@@ -66,8 +66,20 @@ export const accountsApi = {
     return res.data.data!;
   },
 
-  async updateUser(id: number, userId: number, capabilities: ClientCapability[]): Promise<AccountClientUser> {
-    const res = await apiClient.put<ApiResponse<AccountClientUser>>(`/accounts/${id}/users/${userId}`, { capabilities });
+  /** Capabilities on the account and / or the login's profile (only the fields sent change). */
+  async updateUser(id: number, userId: number, data: AccountClientUserUpdate): Promise<AccountClientUser> {
+    const res = await apiClient.put<ApiResponse<AccountClientUser>>(`/accounts/${id}/users/${userId}`, data);
+    return res.data.data!;
+  },
+
+  /** New password of the login (its sessions end). */
+  async setUserPassword(id: number, userId: number, password: string): Promise<void> {
+    await apiClient.put(`/accounts/${id}/users/${userId}/password`, { password });
+  },
+
+  /** Disable (sessions end) or enable the login. */
+  async setUserActive(id: number, userId: number, active: boolean): Promise<AccountClientUser> {
+    const res = await apiClient.put<ApiResponse<AccountClientUser>>(`/accounts/${id}/users/${userId}/active`, { active });
     return res.data.data!;
   },
 
