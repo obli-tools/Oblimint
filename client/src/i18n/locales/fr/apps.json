@@ -341,9 +341,18 @@
     "env": {
       "badLines": ".env : ligne(s) invalide(s) {{lines}} (CLÉ=valeur attendu).",
       "empty": "Aucune variable.",
+      "exampleFailed": "Le dépôt n’a pas pu être lu",
+      "exampleHeader": "Depuis {{file}} : valeurs d’exemple, à remplacer avant de déployer",
+      "exampleHint": "Le .env.example du dépôt (ou .env.sample, .env.dist, example.env, à côté du fichier compose puis à la racine) n’est jamais appliqué tout seul : importez-le, puis remplacez ses valeurs d’exemple.",
+      "exampleImport": "Importer depuis {{file}}",
+      "exampleImportRepo": "Importer depuis .env.example",
+      "exampleImported": "{{count}} variable(s) ajoutée(s) depuis {{file}} : vérifiez leurs valeurs.",
+      "exampleNone": "Aucun .env.example (.env.sample, .env.dist, example.env) dans le dépôt.",
+      "exampleNothing": "Toutes les variables de {{file}} sont déjà définies.",
       "hint": "Lignes CLÉ=valeur, stockées chiffrées. Seules ces variables sont interpolées dans le fichier compose.",
       "keysCount": "{{count}} variable(s).",
       "loadFailed": "Échec du chargement du .env",
+      "missingExpected": "Variables attendues manquantes : {{count}} variable(s) de {{file}} ne sont pas définies dans le .env.",
       "sealed": "Les valeurs sont stockées chiffrées. Les afficher est inscrit au journal d’audit.",
       "show": "Afficher et modifier",
       "title": "Environnement (.env)"

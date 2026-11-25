@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Pill } from '@/components/common/Pill';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { ArrowLeft, CheckCircle2, Code2, FolderArchive, GitBranch, LayoutGrid, Rocket, ShieldCheck, Upload } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Code2, FileDown, FolderArchive, GitBranch, LayoutGrid, Rocket, ShieldCheck, Upload } from 'lucide-react';
 import type {
   AppResourceSummary, AppSourceType, AppStackCreate, AppTemplate, AppTemplateDetail, ComposeIssue, ComposeValidationResult, HostingAccount,
 } from '@oblimint/shared';
@@ -24,6 +24,7 @@ import { CatalogIcon } from '@/components/apps/CatalogIcon';
 import { CodeEditor } from '@/components/apps/CodeEditor';
 import { ComposeIssueList } from '@/components/apps/ComposeIssues';
 import { EffectivePreview } from '@/components/apps/EffectivePreview';
+import { importEnvExample } from '@/components/apps/EnvExampleImport';
 import { GitSourceForm, gitDraftFrom, gitDraftOut, gitDraftProblem, type GitDraft } from '@/components/apps/GitSourceForm';
 import { RegistryPicker } from '@/components/apps/RegistryPicker';
 import { TemplateFieldsForm, fieldValuesOut, firstFieldProblem, initialFieldValues, type FieldValues } from '@/components/apps/TemplateFieldsForm';
@@ -90,6 +91,7 @@ export function AppCreatePage() {
   const [validating, setValidating] = useState(false);
   // ── git ──
   const [git, setGit] = useState<GitDraft>(() => gitDraftFrom(null));
+  const [probing, setProbing] = useState(false);
   // ── zip ──
   const [zip, setZip] = useState<File | null>(null);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
@@ -136,6 +138,25 @@ export function AppCreatePage() {
     }
   };
 
+  /** .env example of the repository (bounded server-side lookup): adds the variables the .env does not set. */
+  const importGitExample = async () => {
+    setError('');
+    if (accountId == null) { setError(t('apps.scope.pickAccount') || 'Choose an account…'); return; }
+    const p = gitDraftProblem(t, git);
+    if (p) { setError(p); return; }
+    const d = gitDraftOut(git);
+    setProbing(true);
+    try {
+      const tpl = await appsApi.probeEnvTemplate({ accountId, repoUrl: d.repoUrl, branch: d.branch, composePath: d.composePath, ...(git.token ? { token: git.token } : {}) });
+      const next = importEnvExample(t, env, tpl);
+      if (next !== null) setEnv(next);
+    } catch (err) {
+      if (!isStepUpHandled(err)) toast.error(appsErrorMessage(t, err, t('apps.env.exampleFailed') || 'The repository could not be read'), { duration: 7000 });
+    } finally {
+      setProbing(false);
+    }
+  };
+
   // The ZIP upload always deploys the draft it fills (server), whatever the toggle says.
   const willDeploy = source === 'zip' || deploy;
 
@@ -158,7 +179,10 @@ export function AppCreatePage() {
     } else if (source === 'git') {
       const p = gitDraftProblem(t, git);
       if (p) { setError(p); return; }
+      const bad = dotenvBadLines(env);
+      if (bad.length) { setError(t('apps.env.badLines', { lines: bad.join(', '), defaultValue: '.env: invalid line(s) {{lines}} (KEY=value expected).' })); return; }
       data.git = gitDraftOut(git);
+      if (env.trim()) data.env = env;
     } else if (source === 'zip') {
       if (!zip) { setError(t('apps.create.zipRequired') || 'Choose a ZIP archive.'); return; }
     } else if (source === 'catalog') {
@@ -347,6 +371,19 @@ export function AppCreatePage() {
           {source === 'git' && (
             <Card title={t('apps.create.git') || 'Git repository'}>
               <GitSourceForm value={git} onChange={setGit} buildAllowed={resources?.build ?? false} />
+              <div className="mt-4">
+                <div className="mb-1 flex flex-wrap items-end justify-between gap-2">
+                  <label className={labelCls}>{t('apps.env.title') || 'Environment (.env)'}</label>
+                  <Button size="sm" variant="secondary" loading={probing} disabled={accountId == null || !git.repoUrl.trim()} onClick={() => { void importGitExample(); }}>
+                    <FileDown size={14} className="mr-1.5" />{t('apps.env.exampleImportRepo') || 'Import from .env.example'}
+                  </Button>
+                </div>
+                <CodeEditor value={env} onChange={setEnv} language="text" minHeight="90px" maxHeight="240px" placeholder="DB_PASSWORD=…" ariaLabel=".env" />
+                <p className="mt-1 text-[11px] text-text-muted">
+                  {t('apps.env.hint') || 'KEY=value lines, stored encrypted. Only these variables are interpolated in the compose file.'}{' '}
+                  {t('apps.env.exampleHint') || 'The .env.example of the repository (or .env.sample, .env.dist, example.env, next to the compose file then at the root) is never applied by itself: import it, then replace its example values.'}
+                </p>
+              </div>
             </Card>
           )}
 

@@ -1,6 +1,6 @@
 import apiClient from './client';
 import type {
-  ApiResponse, AppActionRequest, AppContainerAction, AppContainerInspect, AppDeployment, AppDeploymentDetail, AppEnvResponse,
+  ApiResponse, AppActionRequest, AppContainerAction, AppContainerInspect, AppDeployment, AppDeploymentDetail, AppEnvResponse, AppEnvTemplate, AppEnvTemplateProbe,
   AppImageRollbackRequest, AppLogsResponse, AppRegistryCredential, AppRegistryCredentialInput, AppRegistryCredentialUpdate,
   AppResourceSummary, AppRollbackRequest, AppServiceInfo, AppServiceUpdate, AppStack, AppStackCreate, AppStackDeleteRequest,
   AppStackDetail, AppStackStatus, AppStackUpdate, AppStatsResponse, AppTemplate, AppTemplateCategory, AppTemplateDetail,
@@ -47,6 +47,16 @@ export const appsApi = {
   /** Sealed .env in clear (apps.manage, audited): fetched on demand only, never cached. */
   async getEnv(id: number): Promise<AppEnvResponse> {
     const res = await apiClient.get<ApiResponse<AppEnvResponse>>(`/apps/stacks/${id}/env`);
+    return res.data.data!;
+  },
+  /** .env example of the stack source (.env.example …): example values, not secret. */
+  async envTemplate(id: number): Promise<AppEnvTemplate> {
+    const res = await apiClient.get<ApiResponse<AppEnvTemplate>>(`/apps/stacks/${id}/env-template`);
+    return res.data.data!;
+  },
+  /** .env example of a git repository before the application exists (bounded lookup on the server). */
+  async probeEnvTemplate(data: AppEnvTemplateProbe): Promise<AppEnvTemplate> {
+    const res = await apiClient.post<ApiResponse<AppEnvTemplate>>('/apps/git/env-template', data);
     return res.data.data!;
   },
 

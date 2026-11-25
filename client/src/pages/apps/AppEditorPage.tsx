@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, ArrowLeft, Boxes, Eye, Info, Rocket, Save, ShieldCheck } from 'lucide-react';
-import type { AppStackDetail, ComposeIssue, ComposeValidationResult } from '@oblimint/shared';
+import { AlertTriangle, ArrowLeft, Boxes, Eye, FileDown, Info, Rocket, Save, ShieldCheck } from 'lucide-react';
+import type { AppEnvTemplate, AppStackDetail, ComposeIssue, ComposeValidationResult } from '@oblimint/shared';
 import type { EditorView } from '@uiw/react-codemirror';
 import { appsApi } from '@/api/apps.api';
 import { isStepUpHandled } from '@/api/client';
@@ -21,12 +21,14 @@ import { AppStatusBadge } from '@/components/apps/AppBadges';
 import { CodeEditor, revealLine } from '@/components/apps/CodeEditor';
 import { ComposeIssueList } from '@/components/apps/ComposeIssues';
 import { EffectivePreview } from '@/components/apps/EffectivePreview';
+import { MissingEnvKeys, importEnvExample } from '@/components/apps/EnvExampleImport';
 
 type Side = 'issues' | 'effective';
 
 /**
  * /apps/:id/edit — compose editor (CodeMirror YAML), .env editor (fetched on
- * demand: GET /env is audited), live validation (POST /apps/validate, issues
+ * demand: GET /env is audited), .env example of a git / ZIP source (expected
+ * variables missing, import without overwriting a value), live validation (POST /apps/validate, issues
  * with line markers), effective config preview, save / save + deploy
  * (docs/P4b-PLAN.md §13). OWNED BY MODULE `ui-apps`.
  */
@@ -48,6 +50,8 @@ export function AppEditorPage() {
   const [serverIssues, setServerIssues] = useState<ComposeIssue[]>([]);
   const [side, setSide] = useState<Side>('issues');
   const [saving, setSaving] = useState<'save' | 'deploy' | null>(null);
+  const [template, setTemplate] = useState<AppEnvTemplate | null>(null);
+  const [importing, setImporting] = useState(false);
   const viewRef = useRef<EditorView | null>(null);
 
   useEffect(() => {
@@ -70,6 +74,7 @@ export function AppEditorPage() {
   const editable = !!stack && (stack.sourceType === 'editor' || stack.sourceType === 'zip') && can('apps.manage', stack.accountId);
   // The .env belongs to the application whatever its source (git, catalog): only the compose follows the source.
   const envEditable = !!stack && can('apps.manage', stack.accountId);
+  const exampleSource = !!stack && (stack.sourceType === 'git' || stack.sourceType === 'zip');
   const composeDirty = !!stack && compose !== stack.composeYaml;
   const envDirty = env !== null && env !== envBase;
   const dirty = composeDirty || envDirty;
@@ -105,17 +110,44 @@ export function AppEditorPage() {
     return () => window.clearTimeout(timer);
   }, [compose, env, stack, editable, dirty, runValidation]);
 
-  const loadEnv = async () => {
-    if (!stack) return;
+  // .env example of a git / ZIP source (not secret; read in the source tree, not audited).
+  const stackKey = stack?.id ?? null;
+  useEffect(() => {
+    if (stackKey === null || !envEditable || !exampleSource) return;
+    let cancelled = false;
+    appsApi.envTemplate(stackKey)
+      .then((tpl) => { if (!cancelled) setTemplate(tpl); })
+      .catch(() => { if (!cancelled) setTemplate(null); });
+    return () => { cancelled = true; };
+  }, [stackKey, envEditable, exampleSource]);
+
+  const loadEnv = async (): Promise<string | null> => {
+    if (!stack) return null;
     setEnvLoading(true);
     try {
       const r = await appsApi.getEnv(stack.id);
       setEnv(r.env);
       setEnvBase(r.env);
+      return r.env;
     } catch (err) {
       toastAppsError(t, err, t('apps.env.loadFailed') || 'Failed to load the .env');
+      return null;
     } finally {
       setEnvLoading(false);
+    }
+  };
+
+  /** Adds the variables of the example the .env does not set (the .env is loaded first: no value is ever overwritten). */
+  const importExample = async () => {
+    if (!template) return;
+    setImporting(true);
+    try {
+      const current = env ?? await loadEnv();
+      if (current === null) return;
+      const next = importEnvExample(t, current, template);
+      if (next !== null) setEnv(next);
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -134,6 +166,10 @@ export function AppEditorPage() {
         setStack(next);
         setCompose(next.composeYaml);
         if (env !== null) setEnvBase(env);
+        if (envDirty && next.envKeys.some((k) => !dotenvKeys(env!).includes(k))) {
+          // The server added variables (catalog template field restored / defaulted): show the stored .env.
+          try { const r = await appsApi.getEnv(next.id); setEnv(r.env); setEnvBase(r.env); } catch { /* keeps the text sent */ }
+        }
         if (next.validation) setValidation(next.validation);
       }
       if (andDeploy) {
@@ -165,6 +201,8 @@ export function AppEditorPage() {
   if (!stack) return <PageContainer className="flex justify-center py-16"><LoadingSpinner /></PageContainer>;
 
   const issues = serverIssues.length ? serverIssues : (validation?.issues ?? []);
+  const currentKeys = env !== null ? dotenvKeys(env) : stack.envKeys;
+  const missingKeys = (template?.keys ?? []).filter((k) => !currentKeys.includes(k));
   const markers = issues.filter((i) => i.line != null).map((i) => ({ line: i.line!, severity: i.severity }));
   const errorCount = issues.filter((i) => i.severity === 'error').length;
 
@@ -219,10 +257,18 @@ export function AppEditorPage() {
           </Card>
           <Card
             title={t('apps.env.title') || 'Environment (.env)'}
-            actions={env === null && envEditable ? (
-              <Button size="sm" variant="secondary" loading={envLoading} onClick={() => { void loadEnv(); }}><Eye size={14} className="mr-1.5" />{t('apps.env.show') || 'Show and edit'}</Button>
+            actions={envEditable && (env === null || template?.file) ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {template?.file && (
+                  <Button size="sm" variant="secondary" loading={importing} disabled={envLoading} onClick={() => { void importExample(); }}>
+                    <FileDown size={14} className="mr-1.5" />{t('apps.env.exampleImport', { file: template.file, defaultValue: 'Import from {{file}}' })}
+                  </Button>
+                )}
+                {env === null && <Button size="sm" variant="secondary" loading={envLoading && !importing} disabled={importing} onClick={() => { void loadEnv(); }}><Eye size={14} className="mr-1.5" />{t('apps.env.show') || 'Show and edit'}</Button>}
+              </div>
             ) : undefined}
           >
+            {template?.file && <MissingEnvKeys file={template.file} keys={missingKeys} />}
             {env === null ? (
               <div className="space-y-2">
                 <p className="text-sm text-text-muted">{t('apps.env.sealed') || 'The values are stored encrypted. Showing them is logged in the audit log.'}</p>

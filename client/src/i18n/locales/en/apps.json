@@ -341,9 +341,18 @@
     "env": {
       "badLines": ".env: invalid line(s) {{lines}} (KEY=value expected).",
       "empty": "No variable.",
+      "exampleFailed": "The repository could not be read",
+      "exampleHeader": "From {{file}}: example values, replace them before deploying",
+      "exampleHint": "The .env.example of the repository (or .env.sample, .env.dist, example.env, next to the compose file then at the root) is never applied by itself: import it, then replace its example values.",
+      "exampleImport": "Import from {{file}}",
+      "exampleImportRepo": "Import from .env.example",
+      "exampleImported": "{{count}} variable(s) added from {{file}}: check their values.",
+      "exampleNone": "No .env.example (.env.sample, .env.dist, example.env) in the repository.",
+      "exampleNothing": "Every variable of {{file}} is already set.",
       "hint": "KEY=value lines, stored encrypted. Only these variables are interpolated in the compose file.",
       "keysCount": "{{count}} variable(s).",
       "loadFailed": "Failed to load the .env",
+      "missingExpected": "Expected variables missing: {{count}} variable(s) of {{file}} are not set in the .env.",
       "sealed": "The values are stored encrypted. Showing them is logged in the audit log.",
       "show": "Show and edit",
       "title": "Environment (.env)"

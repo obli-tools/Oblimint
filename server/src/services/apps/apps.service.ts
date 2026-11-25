@@ -24,7 +24,7 @@ import { platformSettings } from '../platformSettings';
 import { loadStack } from './access';
 import { removeVolume, unpauseContainer } from './appDocker';
 import { catalogService } from './catalog.service';
-import { renderFieldValues } from './catalog/render';
+import { renderFieldValues, syncCatalogEnv } from './catalog/render';
 import { ENV_MAX_BYTES, stringifyDotenv } from './compose/dotenv';
 import { inspectEnvValue, inspectLabels, secretValues, validateCompose } from './compose/validate';
 import { accountPlan, composeContext, envMap, openEnv, otherStacksUsage } from './context';
@@ -552,6 +552,14 @@ export const appsService = {
       envText = stringifyDotenv(existing);
       patch.template_values = JSON.stringify(rendered.values);
       changed.push('catalogValues');
+    } else if (input.env !== undefined && stack.source_type === 'catalog' && stack.template_slug) {
+      // .env edited by hand: the template fields follow it (catalog/render.ts syncCatalogEnv).
+      const tpl = await catalogService.forTenant(stack.tenant_id, stack.template_slug);
+      if (tpl) {
+        const synced = syncCatalogEnv(json(tpl.fields, []), envText, envMap(envText), envMap(openEnv(stack.env_sealed)));
+        envText = synced.envText;
+        patch.template_values = JSON.stringify(synced.values);
+      }
     }
     const env = envMap(envText);
     if (input.env !== undefined || input.catalogValues !== undefined) {

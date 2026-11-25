@@ -849,11 +849,16 @@ export function validateCompose(yamlText: string, ctx: ComposeContext): Validati
         if (!file || isAbsoluteLike(file)) { c.error('envFileOutsideStack', name, ep, 'env_file must be a path relative to the stack source'); return; }
         const rel = resolveRelative(ctx, file);
         if (!rel) { c.error('envFileOutsideStack', name, ep, `env_file "${file.slice(0, 120)}" is outside the stack source`); return; }
-        if (!ctx.inspector) return;
-        const k = ctx.inspector.kind(rel);
+        // `env_file: .env` (or ./.env) next to the compose file is the project .env: the stack's own .env
+        // (sealed in the database, never written in the tree) stands for it, over the file of the source
+        // when there is one (a .env ignored by git is usually absent from the repository).
+        const projectEnv = rel === `${ctx.baseDir}/.env`;
+        const k = ctx.inspector ? ctx.inspector.kind(rel) : 'missing';
         if (k === 'symlink') { c.error('symlinkInPath', name, ep, `A symbolic link is in the path of env_file "${file.slice(0, 120)}"`, { source: file.slice(0, 120) }); return; }
-        const text = k === 'file' ? ctx.inspector.readText(rel) : null;
+        if (!ctx.inspector && !projectEnv) return;
+        const text = k === 'file' && ctx.inspector ? ctx.inspector.readText(rel) : null;
         if (text === null) {
+          if (projectEnv) { for (const [key, value] of ctx.env) env.set(key, value); return; }
           if (required) c.error('envFileOutsideStack', name, ep, `env_file "${file.slice(0, 120)}" not found in the stack source`);
           return;
         }
@@ -867,6 +872,7 @@ export function validateCompose(yamlText: string, ctx: ComposeContext): Validati
           if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
           env.set(body.slice(0, eq).trim(), v);
         }
+        if (projectEnv) for (const [key, value] of ctx.env) env.set(key, value);
       });
     }
     if (s.environment !== undefined) {

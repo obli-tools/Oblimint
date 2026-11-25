@@ -5,6 +5,7 @@ import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
 import { appsService } from '../services/apps/apps.service';
 import { catalogService } from '../services/apps/catalog.service';
+import { envTemplateService } from '../services/apps/envTemplate';
 import { appPolicyService } from '../services/apps/policy.service';
 import { registryCredentialService } from '../services/apps/registry.service';
 import { parseBody } from '../services/docker/parseBody';
@@ -22,6 +23,7 @@ import { accountTarget } from '../services/restrictions/targets';
 //   PUT    /stacks/:id                 AppStackUpdate          → AppStackDetail                  (apps.manage)
 //   DELETE /stacks/:id                 AppStackDeleteRequest   → { deleted: true }               (apps.manage; confirm = name)
 //   GET    /stacks/:id/env                                     → AppEnvResponse                  (apps.manage, audited)
+//   GET    /stacks/:id/env-template                            → AppEnvTemplate                  (apps.manage; .env example of the source)
 //   POST   /stacks/:id/source/zip      application/zip body    → AppStackDetail                  (apps.manage; source zip)
 //   POST   /stacks/:id/source/pull     { deploy?: boolean }    → { commit, changed, deployment } (apps.manage; source git)
 //   POST   /stacks/:id/actions         AppActionRequest        → AppDeployment (202)             (apps.manage)
@@ -38,6 +40,7 @@ import { accountTarget } from '../services/restrictions/targets';
 //   POST   /stacks/:id/containers/:service/:action  (start|stop|restart) → AppServiceInfo       (apps.manage)
 //   GET    /stacks/:id/containers/:service/logs?tail&since     → AppLogsResponse                 (read)
 //   GET    /stacks/:id/containers/:service/inspect             → AppContainerInspect             (read; env values: apps.manage, secrets masked)
+//   POST   /git/env-template           AppEnvTemplateProbe     → AppEnvTemplate                  (apps.manage on accountId; heavyOpLimiter; audited: key names)
 //   POST   /validate                   ComposeValidateRequest  → ComposeValidationResult         (apps.manage on accountId; heavyOpLimiter)
 //   GET    /resources?accountId                                → AppResourceSummary              (read)
 //   GET    /catalog?category&search                            → AppTemplate[]                   (read: any member)
@@ -121,6 +124,14 @@ const updateSchema = z.object({
   registryCredentialIds: z.array(z.number().int().positive()).max(50).optional(),
   updatePolicy: updatePolicySchema.optional(),
   sleepPolicy: sleepPolicySchema.optional(),
+}).strict();
+
+const envProbeSchema = z.object({
+  accountId: z.number().int().positive(),
+  repoUrl: z.string().min(1).max(512),
+  branch: z.string().min(1).max(200).optional(),
+  composePath: z.string().max(255).optional(),
+  token: z.string().max(4096).nullable().optional(),
 }).strict();
 
 const deleteSchema = z.object({ confirm: z.string().max(64), removeVolumes: z.boolean().optional() }).strict();
@@ -270,6 +281,20 @@ router.get('/stacks/:id/env', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
     res.json({ success: true, data: await appsService.getEnv(req, actor, idParam(req)) });
+  } catch (err) { next(err); }
+});
+
+router.get('/stacks/:id/env-template', async (req, res, next) => {
+  try {
+    const actor = await resolveActor(req);
+    res.json({ success: true, data: await envTemplateService.forStack(req, actor, idParam(req)) });
+  } catch (err) { next(err); }
+});
+
+router.post('/git/env-template', heavyOpLimiter, async (req, res, next) => {
+  try {
+    const actor = await resolveActor(req);
+    res.json({ success: true, data: await envTemplateService.probe(req, actor, parseBody(envProbeSchema, req.body)) });
   } catch (err) { next(err); }
 });
 

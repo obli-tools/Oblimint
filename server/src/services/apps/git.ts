@@ -140,6 +140,40 @@ export function cloneArgs(repoUrl: string, branch: string, dest: string, pin: re
   return [...HARDENING, ...pin, 'clone', '--depth', '1', '--no-recurse-submodules', '--single-branch', '--no-tags', '--branch', assertBranch(branch), '--', repoUrl, dest];
 }
 
+/**
+ * Clone of the .env example lookup (envTemplate.ts): same hardening and pinning, but no checkout and no
+ * blob (`--filter=blob:none`): only the tree of the tip commit is downloaded, the one blob read is
+ * fetched on demand by `cat-file` (same pinned address, same header).
+ */
+export function probeCloneArgs(repoUrl: string, branch: string, dest: string, pin: readonly string[] = []): string[] {
+  return [...HARDENING, ...pin, 'clone', '--depth', '1', '--filter=blob:none', '--no-checkout', '--no-recurse-submodules', '--single-branch', '--no-tags', '--branch', assertBranch(branch), '--', repoUrl, dest];
+}
+
+/** Entries of the tip commit at `paths` (NUL separated: `<mode> <type> <sha>\t<path>`). */
+export function probeLsTreeArgs(paths: readonly string[], pin: readonly string[] = []): string[] {
+  return [...HARDENING, ...pin, 'ls-tree', '-z', 'HEAD', '--', ...paths];
+}
+
+/** Content of one blob (fetched from the promisor remote when absent). */
+export function probeCatBlobArgs(sha: string, pin: readonly string[] = []): string[] {
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(sha)) throw new AppError(400, 'Invalid object id', 'validation');
+  return [...HARDENING, ...pin, 'cat-file', 'blob', sha];
+}
+
+/** Regular files of an `ls-tree -z` output (links, submodules and trees skipped): path → blob id. */
+export function parseLsTree(stdout: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const rec of stdout.split('\0')) {
+    const tab = rec.indexOf('\t');
+    if (tab < 0) continue;
+    const [mode, type, sha] = rec.slice(0, tab).trim().split(/\s+/);
+    if (type !== 'blob' || (mode !== '100644' && mode !== '100755')) continue;
+    if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(sha ?? '')) continue;
+    out.set(rec.slice(tab + 1), sha);
+  }
+  return out;
+}
+
 export function lsRemoteArgs(repoUrl: string, branch: string, pin: readonly string[] = []): string[] {
   return [...HARDENING, ...pin, 'ls-remote', '--heads', '--', repoUrl, `refs/heads/${assertBranch(branch)}`];
 }

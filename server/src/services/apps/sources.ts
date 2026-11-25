@@ -102,7 +102,7 @@ function swapSource(dir: string, fresh: string): void {
   if (hadOld) removeTreeNoFollow(old, dir);
 }
 
-function gitToken(stack: StackRow): string | null {
+export function gitToken(stack: StackRow): string | null {
   if (!stack.git_token_sealed) return null;
   try {
     return open('apps', stack.git_token_sealed);

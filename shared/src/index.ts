@@ -53,3 +53,5 @@ export * from './releaseObservation';
 export * from './containment';
 export * from './appInstall';
 export * from './htaccessAccess';
+// .env example of an application source (.env.example …)
+export * from './appEnv';

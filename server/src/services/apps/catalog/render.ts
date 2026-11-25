@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import vm from 'vm';
 import type { AppTemplateField } from '@oblimint/shared';
 import { AppError } from '../../../middleware/errorHandler';
-import { ENV_KEY_RE } from '../compose/dotenv';
+import { ENV_KEY_RE, stringifyDotenv } from '../compose/dotenv';
 
 // Template field values (docs/P4b-PLAN.md §5.3 catalog): user values checked against the field type /
 // options / pattern, empty generated fields generated, every value written to the stack .env (the
@@ -161,4 +161,31 @@ export function renderFieldValues(fields: AppTemplateField[], given: Record<stri
     if (!f.secret) values[f.key] = f.type === 'boolean' ? v === 'true' : f.type === 'number' ? Number(v) : v;
   }
   return { env, values };
+}
+
+/**
+ * .env of a catalog stack edited by hand (not through the template form): the template fields stay
+ * consistent with it. A field value present is checked like a form value (400 otherwise). A field absent
+ * gets, APPENDED to the text (otherwise kept as written): for a GENERATED field the previous .env had, its
+ * previous value (a database already initialized with it would no longer open); else its default or a
+ * generated value; required without either → 400. The non-secret values (template_values) are taken from
+ * the .env, so the settings form shows what is really deployed and a later form save does not revert it.
+ */
+export function syncCatalogEnv(fields: AppTemplateField[], envText: string, env: ReadonlyMap<string, string>, previous: ReadonlyMap<string, string> = new Map()): { envText: string; env: Map<string, string>; values: RenderedValues['values'] } {
+  const base = new Map(env);
+  for (const f of fields) if (f.generate && !base.has(f.key) && previous.get(f.key)) base.set(f.key, previous.get(f.key)!);
+  const rendered = renderFieldValues(fields, {}, base);
+  const next = new Map(env);
+  const added: Array<[string, string]> = [];
+  for (const [k, v] of rendered.env) {
+    if (next.has(k)) continue;
+    added.push([k, v]);
+    next.set(k, v);
+  }
+  let text = envText;
+  if (added.length) {
+    if (text && !text.endsWith('\n')) text += '\n';
+    text += stringifyDotenv(added);
+  }
+  return { envText: text, env: next, values: rendered.values };
 }
