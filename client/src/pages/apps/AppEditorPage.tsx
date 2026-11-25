@@ -68,6 +68,8 @@ export function AppEditorPage() {
   }, [stackId, t]);
 
   const editable = !!stack && (stack.sourceType === 'editor' || stack.sourceType === 'zip') && can('apps.manage', stack.accountId);
+  // The .env belongs to the application whatever its source (git, catalog): only the compose follows the source.
+  const envEditable = !!stack && can('apps.manage', stack.accountId);
   const composeDirty = !!stack && compose !== stack.composeYaml;
   const envDirty = env !== null && env !== envBase;
   const dirty = composeDirty || envDirty;
@@ -181,9 +183,9 @@ export function AppEditorPage() {
           </div>
           <p className="mt-1 font-mono text-xs text-text-muted">{stack.accountUsername} · {stack.name}</p>
         </div>
-        {editable && (
+        {envEditable && (
           <div className="flex shrink-0 flex-wrap items-center gap-2 max-lg:w-full">
-            <Button size="sm" variant="secondary" loading={validating} onClick={() => { void runValidation(compose, env); }}><ShieldCheck size={14} className="mr-1.5" />{t('apps.compose.validate') || 'Validate'}</Button>
+            {editable && <Button size="sm" variant="secondary" loading={validating} onClick={() => { void runValidation(compose, env); }}><ShieldCheck size={14} className="mr-1.5" />{t('apps.compose.validate') || 'Validate'}</Button>}
             <Button size="sm" variant="secondary" loading={saving === 'save'} disabled={!dirty || saving !== null} onClick={() => { void save(false); }}><Save size={14} className="mr-1.5" />{t('common.save') || 'Save'}</Button>
             <Button size="sm" loading={saving === 'deploy'} disabled={saving !== null || stack.status === 'deploying'} onClick={() => { void save(true); }}><Rocket size={14} className="mr-1.5" />{t('apps.editor.saveDeploy') || 'Save and deploy'}</Button>
           </div>
@@ -194,9 +196,9 @@ export function AppEditorPage() {
         <p className="flex items-start gap-2 rounded-lg bg-bg-secondary px-3 py-2 text-sm text-text-muted">
           <Info size={15} className="mt-0.5 shrink-0" />
           {stack.sourceType === 'git'
-            ? (t('apps.editor.readOnlyGit') || 'The compose file comes from the git repository: change it in the repository, then pull.')
+            ? (t('apps.editor.readOnlyGit') || 'The compose file comes from the git repository: change it in the repository, then pull. The .env below belongs to the application: edit it here.')
             : stack.sourceType === 'catalog'
-              ? (t('apps.editor.readOnlyCatalog') || 'The compose file comes from the catalog template: change its settings in the application settings.')
+              ? (t('apps.editor.readOnlyCatalog') || 'The compose file comes from the catalog template: change its settings in the application settings. The .env below can be edited here.')
               : (t('apps.editor.readOnly') || 'Read only: you cannot change this application.')}
         </p>
       )}
@@ -217,7 +219,7 @@ export function AppEditorPage() {
           </Card>
           <Card
             title={t('apps.env.title') || 'Environment (.env)'}
-            actions={env === null && editable ? (
+            actions={env === null && envEditable ? (
               <Button size="sm" variant="secondary" loading={envLoading} onClick={() => { void loadEnv(); }}><Eye size={14} className="mr-1.5" />{t('apps.env.show') || 'Show and edit'}</Button>
             ) : undefined}
           >
