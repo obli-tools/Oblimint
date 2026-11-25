@@ -16,7 +16,10 @@ import type { AddressInfo } from 'net';
 // with its .env, `env_file: .env` absent from the repository = the stack .env
 // in the container, GET /stacks/:id/env-template (local read, remote fetch when
 // the tree is gone), the .env of a git application updated (compose still
-// refused) and redeployed, a catalog .env edited by hand.
+// refused) and redeployed, a catalog .env edited by hand; the variables with a
+// Secret flag (migration 050): a secret never sent back, left empty =
+// unchanged, unchecked without a value refused, masked in the inspect, the
+// text compatibility, the backfill of migration 050.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_URL = process.env.APPS_TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:55471/postgres';
@@ -53,6 +56,9 @@ test('application .env: git, example, env_file, catalog (PGlite)', { timeout: 30
   const { setAppsDepsForTests } = await import('./deps');
   const { FakeAppDocker, fakeAppsDeps } = await import('./testing/fakeAppDocker');
   const { whenStackIdle } = await import('./deployments');
+  const { open } = await import('../../utils/secretBox');
+  const migration050 = await import('../../db/migrations/050_app_env_secrets');
+  const sealedEnv = async (id: number) => open('apps', (await db('app_stacks').where({ id }).first()).env_sealed as string);
 
   await db.migrate.latest();
   t.after(async () => { await db.destroy(); });
@@ -255,6 +261,64 @@ test('application .env: git, example, env_file, catalog (PGlite)', { timeout: 30
   r = await call('PUT', `/apps/stacks/${stackId}`, asManager, { env: 'NOT VALID\n' });
   assert.equal(r.status, 400);
 
+  // ── variables with a Secret flag (migration 050) ───────────────────────────
+  r = await call('GET', `/apps/stacks/${stackId}`, asManager);
+  assert.deepEqual(r.body.data.envSecretKeys, ['API_KEY'], 'a name that looks secret is flagged');
+  r = await call('GET', `/apps/stacks/${stackId}/env`, asReader);
+  assert.equal(r.status, 403);
+  r = await call('GET', `/apps/stacks/${stackId}/env`, asManager);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.data.vars, [{ name: 'API_KEY', value: null, secret: true }, { name: 'MODE', value: 'staging', secret: false }]);
+  assert.ok(!JSON.stringify(r.body).includes('real-key-123456'), 'a secret is never sent back');
+  r = await call('PUT', `/apps/stacks/${stackId}/env`, asReader, { vars: [] });
+  assert.equal(r.status, 403);
+  r = await call('PUT', `/apps/stacks/${stackId}/env`, asManager, { vars: [
+    { name: 'API_KEY', secret: true }, { name: 'MODE', value: 'prod', secret: false }, { name: 'LICENSE', value: 'lic-abcdef-42', secret: true },
+  ] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.changed, true);
+  assert.deepEqual(r.body.data.vars, [{ name: 'API_KEY', value: null, secret: true }, { name: 'MODE', value: 'prod', secret: false }, { name: 'LICENSE', value: null, secret: true }]);
+  assert.deepEqual(r.body.data.stack.envSecretKeys, ['API_KEY', 'LICENSE']);
+  assert.ok(!JSON.stringify(r.body).includes('real-key-123456') && !JSON.stringify(r.body).includes('lic-abcdef-42'));
+  assert.equal(await sealedEnv(stackId), 'API_KEY=real-key-123456\nMODE=prod\nLICENSE=lic-abcdef-42\n', 'a secret left empty is unchanged');
+  audit = await db('audit_logs').where({ action: 'apps.stack.update', resource_path: String(stackId) }).orderBy('id', 'desc').first();
+  assert.deepEqual(audit.details.envKeys, ['API_KEY', 'MODE', 'LICENSE'], 'names audited');
+  assert.ok(!JSON.stringify(audit.details).includes('lic-abcdef-42') && !JSON.stringify(audit.details).includes('real-key-123456'), 'never a value');
+  r = await call('PUT', `/apps/stacks/${stackId}/env`, asManager, { vars: [
+    { name: 'API_KEY', secret: true }, { name: 'MODE', value: 'prod' }, { name: 'LICENSE', secret: true },
+  ] });
+  assert.equal(r.body.data.changed, false, 'unchanged');
+  r = await call('PUT', `/apps/stacks/${stackId}/env`, asManager, { vars: [{ name: 'API_KEY', secret: false }, { name: 'MODE', value: 'prod' }, { name: 'LICENSE', secret: true }] });
+  assert.equal(r.status, 400, 'unchecking Secret without a new value');
+  assert.equal(r.body.code, 'envValueRequired');
+  r = await call('PUT', `/apps/stacks/${stackId}/env`, asManager, { vars: [{ name: 'NEW_SECRET', secret: true }] });
+  assert.equal(r.body.code, 'envValueRequired', 'a new secret needs a value');
+  r = await call('PUT', `/apps/stacks/${stackId}/env`, asManager, { vars: [{ name: 'bad name', value: 'x' }] });
+  assert.equal(r.status, 400);
+  assert.equal(await sealedEnv(stackId), 'API_KEY=real-key-123456\nMODE=prod\nLICENSE=lic-abcdef-42\n', 'nothing stored by a refusal');
+  // Masked in the container inspect by its flag (LICENSE does not look secret by its name).
+  r = await call('POST', `/apps/stacks/${stackId}/actions`, asManager, { action: 'redeploy' });
+  assert.equal(r.status, 202, JSON.stringify(r.body));
+  await whenStackIdle(stackId);
+  assert.equal(containerEnv().get('LICENSE'), 'lic-abcdef-42');
+  r = await call('GET', `/apps/stacks/${stackId}/containers/app/inspect`, asManager);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const inspected = new Map((r.body.data.env as Array<{ key: string; value: string | null }>).map((e) => [e.key, e.value]));
+  assert.equal(inspected.get('LICENSE'), null, 'flagged secret masked');
+  assert.equal(inspected.get('API_KEY'), null);
+  assert.equal(inspected.get('MODE'), 'prod');
+  // A .env still sent as text (creation, catalog, other clients): a secret stays secret, new names by the rule.
+  r = await call('PUT', `/apps/stacks/${stackId}`, asManager, { env: 'API_KEY=real-key-123456\nMODE=prod\nLICENSE=lic-abcdef-42\nOTHER_TOKEN=tok-999999\nPLAIN=1\n' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.data.envSecretKeys, ['API_KEY', 'LICENSE', 'OTHER_TOKEN']);
+  // Migration 050: existing applications get the names that look secret flagged, a choice already made is kept.
+  await db('app_stacks').where({ id: stackId }).update({ env_secret_keys: JSON.stringify([]) });
+  await migration050.up(db);
+  assert.deepEqual((await db('app_stacks').where({ id: stackId }).first()).env_secret_keys, ['API_KEY', 'OTHER_TOKEN']);
+  await db('app_stacks').where({ id: stackId }).update({ env_secret_keys: JSON.stringify(['PLAIN']) });
+  await migration050.up(db);
+  assert.deepEqual((await db('app_stacks').where({ id: stackId }).first()).env_secret_keys, ['PLAIN'], 'idempotent');
+
   // The tree is gone: the example is fetched from the repository (audited, key names only).
   fs.rmSync(src, { recursive: true, force: true });
   gitCalls.length = 0;
@@ -280,17 +344,20 @@ test('application .env: git, example, env_file, catalog (PGlite)', { timeout: 30
   });
   assert.equal(r.status, 201, JSON.stringify(r.body));
   const vault = r.body.data.id as number;
+  assert.ok(r.body.data.envSecretKeys.includes('ADMIN_TOKEN'), 'template secret field flagged');
   r = await call('GET', `/apps/stacks/${vault}/env`, asManager);
-  const token = /ADMIN_TOKEN="?([^"\n]+)"?/.exec(r.body.data.env)![1];
+  assert.deepEqual(r.body.data.vars.find((v: { name: string }) => v.name === 'ADMIN_TOKEN'), { name: 'ADMIN_TOKEN', value: null, secret: true });
+  const token = /ADMIN_TOKEN="?([^"\n]+)"?/.exec(await sealedEnv(vault))![1];
   assert.ok(token.length > 20);
   // DOMAIN changed by hand, ADMIN_TOKEN (generated) and SIGNUPS_ALLOWED removed by mistake.
   r = await call('PUT', `/apps/stacks/${vault}`, asManager, { env: '# by hand\nDOMAIN=https://new.example.com\nEXTRA=1\n' });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.deepEqual(r.body.data.catalogSource.values, { DOMAIN: 'https://new.example.com', SIGNUPS_ALLOWED: false }, 'template values follow the .env');
-  r = await call('GET', `/apps/stacks/${vault}/env`, asManager);
-  assert.ok(r.body.data.env.startsWith('# by hand\nDOMAIN=https://new.example.com\nEXTRA=1\n'), 'the hand-written text is kept');
-  assert.equal(/ADMIN_TOKEN="?([^"\n]+)"?/.exec(r.body.data.env)?.[1], token, 'the generated secret comes back unchanged');
-  assert.match(r.body.data.env, /SIGNUPS_ALLOWED=false/);
+  assert.ok(r.body.data.envSecretKeys.includes('ADMIN_TOKEN'), 'still secret');
+  const vaultEnv = await sealedEnv(vault);
+  assert.ok(vaultEnv.startsWith('# by hand\nDOMAIN=https://new.example.com\nEXTRA=1\n'), 'the hand-written text is kept');
+  assert.equal(/ADMIN_TOKEN="?([^"\n]+)"?/.exec(vaultEnv)?.[1], token, 'the generated secret comes back unchanged');
+  assert.match(vaultEnv, /SIGNUPS_ALLOWED=false/);
   r = await call('PUT', `/apps/stacks/${vault}`, asManager, { env: 'DOMAIN=not a url\n' });
   assert.equal(r.status, 400, 'a value the template field refuses');
   assert.equal((await call('GET', `/apps/stacks/${vault}`, asManager)).body.data.catalogSource.values.DOMAIN, 'https://new.example.com', 'nothing stored');

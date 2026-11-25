@@ -281,7 +281,7 @@ volumes:
   r = await call('GET', `/apps/stacks/${stackId}/env`, asReader);
   assert.equal(r.status, 403);
   r = await call('GET', `/apps/stacks/${stackId}/env`, asManager);
-  assert.equal(r.body.data.env.trim(), `API_TOKEN=${SECRET}`);
+  assert.deepEqual(r.body.data.vars, [{ name: 'API_TOKEN', value: null, secret: true }], 'migration 050: a secret is never sent back');
   const envAudit = await db('audit_logs').where({ action: 'apps.stack.env.read', resource_path: String(stackId) }).first('details');
   assert.ok(envAudit && !JSON.stringify(envAudit.details).includes(SECRET));
   const allAudit = await db('audit_logs').where('action', 'like', 'apps.%').select('details');

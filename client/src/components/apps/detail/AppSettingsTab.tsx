@@ -18,11 +18,12 @@ import { appsErrorMessage, toastAppsError } from '../appsErrors';
 import { formatDateTime, shortSha } from '../appsFormat';
 import { GitSourceForm, gitDraftFrom, gitDraftOut, gitDraftProblem, gitTokenMissing, type GitDraft } from '../GitSourceForm';
 import { RegistryPicker } from '../RegistryPicker';
+import { AppEnvSection } from './AppEnvSection';
 import { TemplateFieldsForm, fieldValuesOut, firstFieldProblem, initialFieldValues, type FieldValues } from '../TemplateFieldsForm';
 
 type SaveFn = (patch: AppStackUpdate) => Promise<boolean>;
 
-/** Settings of a stack: general, updates (+ maintenance window), sleep, source (git / ZIP / catalog values), registries. */
+/** Settings of a stack: .env (variables), general, updates (+ maintenance window), sleep, source (git / ZIP / catalog values), registries. */
 export function AppSettingsTab({ stack, buildAllowed, onSaved, onStarted }: {
   stack: AppStackDetail;
   buildAllowed: boolean;
@@ -41,15 +42,18 @@ export function AppSettingsTab({ stack, buildAllowed, onSaved, onStarted }: {
     }
   };
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
-      <div className="min-w-0 space-y-4">
-        <GeneralSection stack={stack} save={save} />
-        <SourceSection stack={stack} buildAllowed={buildAllowed} save={save} onSaved={onSaved} onStarted={onStarted} />
-        <RegistriesSection stack={stack} save={save} />
-      </div>
-      <div className="min-w-0 space-y-4">
-        <UpdatesSection stack={stack} save={save} />
-        <SleepSection stack={stack} save={save} />
+    <div className="min-w-0 space-y-4">
+      <AppEnvSection stack={stack} onSaved={onSaved} onStarted={onStarted} />
+      <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="min-w-0 space-y-4">
+          <GeneralSection stack={stack} save={save} />
+          <SourceSection stack={stack} buildAllowed={buildAllowed} save={save} onSaved={onSaved} onStarted={onStarted} />
+          <RegistriesSection stack={stack} save={save} />
+        </div>
+        <div className="min-w-0 space-y-4">
+          <UpdatesSection stack={stack} save={save} />
+          <SleepSection stack={stack} save={save} />
+        </div>
       </div>
     </div>
   );

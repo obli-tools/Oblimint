@@ -7,6 +7,8 @@
 // ${VAR} in the COMPOSE is resolved from these values (interpolate.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { ENV_SECRET_KEY_RE } from '@oblimint/shared';
+
 export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 /** Hard limits of a stack .env (the route also bounds the body). */
 export const ENV_MAX_BYTES = 64 * 1024;
@@ -83,8 +85,11 @@ export function stringifyDotenv(values: Iterable<[string, string]>): string {
   return out.length ? `${out.join('\n')}\n` : '';
 }
 
-/** Variable names whose value must never be shown (inspect, effective YAML, logs). */
-export const SECRET_KEY_RE = /(PASS|PWD|SECRET|TOKEN|KEY|CREDENTIAL|PRIVATE|AUTH|SALT|SIGNATURE|CERT|DSN|DATABASE_URL|_URI$|COOKIE|SESSION)/i;
+/**
+ * Variable names whose value must never be shown (inspect, effective YAML, logs), on top of the ones the
+ * user flagged secret (app_stacks.env_secret_keys). Defined in shared (the client proposes Secret with it).
+ */
+export const SECRET_KEY_RE = ENV_SECRET_KEY_RE;
 
 export function looksSecret(key: string): boolean {
   return SECRET_KEY_RE.test(key);

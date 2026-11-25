@@ -309,8 +309,8 @@
       "effective": "Config effective",
       "issues": "Problèmes",
       "readOnly": "Lecture seule : vous ne pouvez pas modifier cette application.",
-      "readOnlyCatalog": "Le fichier compose vient du modèle du catalogue : changez ses paramètres dans les paramètres de l’application. Le .env ci-dessous se modifie ici.",
-      "readOnlyGit": "Le fichier compose vient du dépôt git : modifiez-le dans le dépôt, puis récupérez-le. Le .env ci-dessous appartient à l’application : saisissez-le ici.",
+      "readOnlyCatalog": "Le fichier compose vient du modèle du catalogue : changez ses réglages dans les paramètres de l’application, où se modifie aussi son .env.",
+      "readOnlyGit": "Le fichier compose vient du dépôt git : modifiez-le dans le dépôt, puis récupérez-le. Le .env de l’application se modifie dans ses Paramètres.",
       "saveDeploy": "Enregistrer et déployer",
       "saveFailed": "Échec de l’enregistrement",
       "saved": "Enregistré",
@@ -352,10 +352,14 @@
       "hint": "Lignes CLÉ=valeur, stockées chiffrées. Seules ces variables sont interpolées dans le fichier compose.",
       "keysCount": "{{count}} variable(s).",
       "loadFailed": "Échec du chargement du .env",
+      "manageInSettings": "Gérer dans les Paramètres",
       "missingExpected": "Variables attendues manquantes : {{count}} variable(s) de {{file}} ne sont pas définies dans le .env.",
+      "namesOnly": "Noms seulement : les valeurs sont stockées chiffrées et se modifient dans les Paramètres de l’application (un secret n’est plus jamais affiché).",
+      "savedDeploy": "Enregistré : déployez l’application pour l’appliquer",
       "sealed": "Les valeurs sont stockées chiffrées. Les afficher est inscrit au journal d’audit.",
       "show": "Afficher et modifier",
-      "title": "Environnement (.env)"
+      "title": "Environnement (.env)",
+      "varsIntro": "Variables du .env de l’application : interpolées dans le fichier compose (${NAME}) et données aux conteneurs qui utilisent env_file: .env. Stockées chiffrées ; un secret n’est plus jamais affiché (laissé vide = inchangé). Déployez pour appliquer un changement."
     },
     "errors": {
       "accountSuspended": "Le compte d’hébergement est suspendu.",

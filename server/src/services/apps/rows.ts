@@ -14,6 +14,8 @@ export interface StackRow extends AppStackRow {
   compose_yaml: string;
   env_sealed: string | null;
   env_keys: unknown;
+  /** Migration 050: names of the .env variables flagged secret. */
+  env_secret_keys?: unknown;
   git_repo_url: string | null;
   git_branch: string | null;
   git_compose_path: string | null;
@@ -115,6 +117,12 @@ export function effectiveOf(row: { effective: unknown; validation?: unknown }): 
   if (deployed && Array.isArray(deployed.services)) return deployed;
   const v = json<ComposeValidationResult | null>(row.validation ?? null, null);
   return v?.effective && Array.isArray(v.effective.services) ? v.effective : null;
+}
+
+/** Names flagged secret (migration 050; absent column / row → none). */
+export function envSecretKeysOf(row: { env_secret_keys?: unknown }): string[] {
+  const k = json<unknown[]>(row.env_secret_keys ?? null, []);
+  return Array.isArray(k) ? k.filter((x): x is string => typeof x === 'string') : [];
 }
 
 export function envKeysOf(row: { env_keys: unknown }): string[] {

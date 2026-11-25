@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
-import { AlertTriangle, ArrowLeft, Boxes, Eye, FileDown, Info, Rocket, Save, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Boxes, Eye, Info, Lock, Rocket, Save, Settings2, ShieldCheck } from 'lucide-react';
 import type { AppEnvTemplate, AppStackDetail, ComposeIssue, ComposeValidationResult } from '@oblimint/shared';
 import type { EditorView } from '@uiw/react-codemirror';
 import { appsApi } from '@/api/apps.api';
@@ -15,19 +15,18 @@ import { SegmentedTabs } from '@/components/common/SegmentedTabs';
 import { Card } from '@/components/hosting/hostingUi';
 import { cn } from '@/utils/cn';
 import { useP4bAccess } from '@/components/apps/appsAccess';
-import { appsErrorMessage, composeIssuesOf, isNotFound, toastAppsError } from '@/components/apps/appsErrors';
-import { dotenvBadLines, dotenvKeys } from '@/components/apps/appsFormat';
+import { appsErrorMessage, composeIssuesOf, isNotFound } from '@/components/apps/appsErrors';
 import { AppStatusBadge } from '@/components/apps/AppBadges';
 import { CodeEditor, revealLine } from '@/components/apps/CodeEditor';
 import { ComposeIssueList } from '@/components/apps/ComposeIssues';
 import { EffectivePreview } from '@/components/apps/EffectivePreview';
-import { MissingEnvKeys, importEnvExample } from '@/components/apps/EnvExampleImport';
+import { MissingEnvKeys } from '@/components/apps/EnvExampleImport';
 
 type Side = 'issues' | 'effective';
 
 /**
- * /apps/:id/edit — compose editor (CodeMirror YAML), .env editor (fetched on
- * demand: GET /env is audited), .env example of a git / ZIP source (expected
+ * /apps/:id/edit — compose editor (CodeMirror YAML), names of the .env (the
+ * variables are edited in the Settings tab, AppEnvSection), .env example of a git / ZIP source (expected
  * variables missing, import without overwriting a value), live validation (POST /apps/validate, issues
  * with line markers), effective config preview, save / save + deploy
  * (docs/P4b-PLAN.md §13). OWNED BY MODULE `ui-apps`.
@@ -42,16 +41,12 @@ export function AppEditorPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [compose, setCompose] = useState('');
-  const [env, setEnv] = useState<string | null>(null);
-  const [envBase, setEnvBase] = useState<string | null>(null);
-  const [envLoading, setEnvLoading] = useState(false);
   const [validation, setValidation] = useState<ComposeValidationResult | null>(null);
   const [validating, setValidating] = useState(false);
   const [serverIssues, setServerIssues] = useState<ComposeIssue[]>([]);
   const [side, setSide] = useState<Side>('issues');
   const [saving, setSaving] = useState<'save' | 'deploy' | null>(null);
   const [template, setTemplate] = useState<AppEnvTemplate | null>(null);
-  const [importing, setImporting] = useState(false);
   const viewRef = useRef<EditorView | null>(null);
 
   useEffect(() => {
@@ -76,8 +71,7 @@ export function AppEditorPage() {
   const envEditable = !!stack && can('apps.manage', stack.accountId);
   const exampleSource = !!stack && (stack.sourceType === 'git' || stack.sourceType === 'zip');
   const composeDirty = !!stack && compose !== stack.composeYaml;
-  const envDirty = env !== null && env !== envBase;
-  const dirty = composeDirty || envDirty;
+  const dirty = composeDirty;
 
   useEffect(() => {
     if (!dirty) return;
@@ -86,7 +80,7 @@ export function AppEditorPage() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirty]);
 
-  // Live validation (debounced): the stack's own sealed .env is used while the .env is not loaded.
+  // Live validation (debounced) with the stack's own sealed .env.
   const seq = useRef(0);
   const runValidation = useCallback(async (yaml: string, envText: string | null) => {
     if (!stack) return;
@@ -106,9 +100,9 @@ export function AppEditorPage() {
   }, [stack, t]);
   useEffect(() => {
     if (!stack || !editable || !dirty) return;
-    const timer = window.setTimeout(() => { void runValidation(compose, env); }, 900);
+    const timer = window.setTimeout(() => { void runValidation(compose, null); }, 900);
     return () => window.clearTimeout(timer);
-  }, [compose, env, stack, editable, dirty, runValidation]);
+  }, [compose, stack, editable, dirty, runValidation]);
 
   // .env example of a git / ZIP source (not secret; read in the source tree, not audited).
   const stackKey = stack?.id ?? null;
@@ -121,55 +115,16 @@ export function AppEditorPage() {
     return () => { cancelled = true; };
   }, [stackKey, envEditable, exampleSource]);
 
-  const loadEnv = async (): Promise<string | null> => {
-    if (!stack) return null;
-    setEnvLoading(true);
-    try {
-      const r = await appsApi.getEnv(stack.id);
-      setEnv(r.env);
-      setEnvBase(r.env);
-      return r.env;
-    } catch (err) {
-      toastAppsError(t, err, t('apps.env.loadFailed') || 'Failed to load the .env');
-      return null;
-    } finally {
-      setEnvLoading(false);
-    }
-  };
-
-  /** Adds the variables of the example the .env does not set (the .env is loaded first: no value is ever overwritten). */
-  const importExample = async () => {
-    if (!template) return;
-    setImporting(true);
-    try {
-      const current = env ?? await loadEnv();
-      if (current === null) return;
-      const next = importEnvExample(t, current, template);
-      if (next !== null) setEnv(next);
-    } finally {
-      setImporting(false);
-    }
-  };
-
   const save = async (andDeploy: boolean) => {
     if (!stack) return;
-    if (env !== null) {
-      const bad = dotenvBadLines(env);
-      if (bad.length) { toast.error(t('apps.env.badLines', { lines: bad.join(', '), defaultValue: '.env: invalid line(s) {{lines}} (KEY=value expected).' })); return; }
-    }
     setSaving(andDeploy ? 'deploy' : 'save');
     setServerIssues([]);
     try {
       let next = stack;
       if (dirty) {
-        next = await appsApi.updateStack(stack.id, { ...(composeDirty ? { composeYaml: compose } : {}), ...(envDirty ? { env: env! } : {}) });
+        next = await appsApi.updateStack(stack.id, { composeYaml: compose });
         setStack(next);
         setCompose(next.composeYaml);
-        if (env !== null) setEnvBase(env);
-        if (envDirty && next.envKeys.some((k) => !dotenvKeys(env!).includes(k))) {
-          // The server added variables (catalog template field restored / defaulted): show the stored .env.
-          try { const r = await appsApi.getEnv(next.id); setEnv(r.env); setEnvBase(r.env); } catch { /* keeps the text sent */ }
-        }
         if (next.validation) setValidation(next.validation);
       }
       if (andDeploy) {
@@ -201,8 +156,8 @@ export function AppEditorPage() {
   if (!stack) return <PageContainer className="flex justify-center py-16"><LoadingSpinner /></PageContainer>;
 
   const issues = serverIssues.length ? serverIssues : (validation?.issues ?? []);
-  const currentKeys = env !== null ? dotenvKeys(env) : stack.envKeys;
-  const missingKeys = (template?.keys ?? []).filter((k) => !currentKeys.includes(k));
+  const missingKeys = (template?.keys ?? []).filter((k) => !stack.envKeys.includes(k));
+  const secretKeys = new Set(stack.envSecretKeys ?? []);
   const markers = issues.filter((i) => i.line != null).map((i) => ({ line: i.line!, severity: i.severity }));
   const errorCount = issues.filter((i) => i.severity === 'error').length;
 
@@ -221,9 +176,9 @@ export function AppEditorPage() {
           </div>
           <p className="mt-1 font-mono text-xs text-text-muted">{stack.accountUsername} · {stack.name}</p>
         </div>
-        {envEditable && (
+        {editable && (
           <div className="flex shrink-0 flex-wrap items-center gap-2 max-lg:w-full">
-            {editable && <Button size="sm" variant="secondary" loading={validating} onClick={() => { void runValidation(compose, env); }}><ShieldCheck size={14} className="mr-1.5" />{t('apps.compose.validate') || 'Validate'}</Button>}
+            <Button size="sm" variant="secondary" loading={validating} onClick={() => { void runValidation(compose, null); }}><ShieldCheck size={14} className="mr-1.5" />{t('apps.compose.validate') || 'Validate'}</Button>
             <Button size="sm" variant="secondary" loading={saving === 'save'} disabled={!dirty || saving !== null} onClick={() => { void save(false); }}><Save size={14} className="mr-1.5" />{t('common.save') || 'Save'}</Button>
             <Button size="sm" loading={saving === 'deploy'} disabled={saving !== null || stack.status === 'deploying'} onClick={() => { void save(true); }}><Rocket size={14} className="mr-1.5" />{t('apps.editor.saveDeploy') || 'Save and deploy'}</Button>
           </div>
@@ -234,9 +189,9 @@ export function AppEditorPage() {
         <p className="flex items-start gap-2 rounded-lg bg-bg-secondary px-3 py-2 text-sm text-text-muted">
           <Info size={15} className="mt-0.5 shrink-0" />
           {stack.sourceType === 'git'
-            ? (t('apps.editor.readOnlyGit') || 'The compose file comes from the git repository: change it in the repository, then pull. The .env below belongs to the application: edit it here.')
+            ? (t('apps.editor.readOnlyGit') || 'The compose file comes from the git repository: change it in the repository, then pull. The .env of the application is edited in its Settings.')
             : stack.sourceType === 'catalog'
-              ? (t('apps.editor.readOnlyCatalog') || 'The compose file comes from the catalog template: change its settings in the application settings. The .env below can be edited here.')
+              ? (t('apps.editor.readOnlyCatalog') || 'The compose file comes from the catalog template: change its settings in the application settings, where its .env is edited too.')
               : (t('apps.editor.readOnly') || 'Read only: you cannot change this application.')}
         </p>
       )}
@@ -257,35 +212,25 @@ export function AppEditorPage() {
           </Card>
           <Card
             title={t('apps.env.title') || 'Environment (.env)'}
-            actions={envEditable && (env === null || template?.file) ? (
-              <div className="flex flex-wrap items-center gap-2">
-                {template?.file && (
-                  <Button size="sm" variant="secondary" loading={importing} disabled={envLoading} onClick={() => { void importExample(); }}>
-                    <FileDown size={14} className="mr-1.5" />{t('apps.env.exampleImport', { file: template.file, defaultValue: 'Import from {{file}}' })}
-                  </Button>
-                )}
-                {env === null && <Button size="sm" variant="secondary" loading={envLoading && !importing} disabled={importing} onClick={() => { void loadEnv(); }}><Eye size={14} className="mr-1.5" />{t('apps.env.show') || 'Show and edit'}</Button>}
-              </div>
+            actions={envEditable ? (
+              <Link to={`/apps/${stack.id}?tab=settings`} className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline">
+                <Settings2 size={14} />{t('apps.env.manageInSettings') || 'Manage in Settings'}
+              </Link>
             ) : undefined}
           >
             {template?.file && <MissingEnvKeys file={template.file} keys={missingKeys} />}
-            {env === null ? (
-              <div className="space-y-2">
-                <p className="text-sm text-text-muted">{t('apps.env.sealed') || 'The values are stored encrypted. Showing them is logged in the audit log.'}</p>
-                {stack.envKeys.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {stack.envKeys.map((k) => <span key={k} className="rounded bg-bg-tertiary px-2 py-0.5 font-mono text-xs text-text-secondary">{k}</span>)}
-                  </div>
-                ) : <p className="text-xs text-text-muted">{t('apps.env.empty') || 'No variable.'}</p>}
-              </div>
-            ) : (
-              <>
-                <CodeEditor value={env} onChange={setEnv} language="text" minHeight="120px" maxHeight="320px" ariaLabel=".env" />
-                <p className="mt-1 text-[11px] text-text-muted">
-                  {t('apps.env.keysCount', { count: dotenvKeys(env).length, defaultValue: '{{count}} variable(s).' })} {t('apps.env.hint') || 'KEY=value lines, stored encrypted. Only these variables are interpolated in the compose file.'}
-                </p>
-              </>
-            )}
+            <div className="space-y-2">
+              <p className="text-sm text-text-muted">{t('apps.env.namesOnly') || 'Names only: the values are stored encrypted and edited in the application Settings (a secret is never shown again).'}</p>
+              {stack.envKeys.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {stack.envKeys.map((k) => (
+                    <span key={k} className={cn('inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-xs', secretKeys.has(k) ? 'bg-amber-400/10 text-amber-400' : 'bg-bg-tertiary text-text-secondary')}>
+                      {secretKeys.has(k) && <Lock size={11} />}{k}
+                    </span>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-text-muted">{t('apps.env.empty') || 'No variable.'}</p>}
+            </div>
           </Card>
         </div>
 

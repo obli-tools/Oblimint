@@ -2,7 +2,7 @@ import type { Request } from 'express';
 import type Docker from 'dockerode';
 import type { Knex } from 'knex';
 import type {
-  AppActionRequest, AppContainerAction, AppContainerInspect, AppDeployment, AppDeploymentDetail, AppEnvResponse, AppImageRollbackRequest,
+  AppActionRequest, AppContainerAction, AppContainerInspect, AppDeployment, AppDeploymentDetail, AppEnvResponse, AppEnvSaveResult, AppEnvVarInput, AppTemplateField, AppImageRollbackRequest,
   AppLogsResponse, AppResourceSummary, AppRollbackRequest, AppServiceInfo, AppServiceUpdate, AppSleepPolicy, AppStack, AppStackCreate,
   AppStackDeleteRequest, AppStackDetail, AppStackStatus, AppStackUpdate, AppUpdateApplyRequest, AppUpdateCheck, AppUpdatePolicy,
   ComposeValidateRequest, ComposeValidationResult, EffectiveService, PortBinding,
@@ -36,9 +36,10 @@ import { stackContainersOf, unsafeBindSources } from './engine';
 import type { SourceInspector } from './compose/validate';
 import { emitAppUpdated, clientLine } from './events';
 import { assertBranch, normalizeComposePath, normalizeRepoUrl } from './git';
+import { envFromVars, envVarsOf, sameEnv, secretKeysFor } from './envVars';
 import { appPolicyService } from './policy.service';
 import {
-  catalogSourceOf, effectiveOf, envKeysOf, gitSourceOf, sleepPolicyOf, toAppStack, toDeployment, updatePolicyOf,
+  catalogSourceOf, effectiveOf, envKeysOf, envSecretKeysOf, gitSourceOf, sleepPolicyOf, toAppStack, toDeployment, updatePolicyOf,
   type DeploymentRow, type EffectiveSnapshot, type ServiceRow, type StackRow,
 } from './rows';
 import { sleepManager } from './sleep';
@@ -109,7 +110,7 @@ async function stackFor(actor: HostingActor, id: number, need: 'read' | 'apps.ma
 /** Secret values of the stack .env (inspect masking); null when the .env cannot be read. */
 function inspectSecrets(stack: StackRow): string[] | null {
   try {
-    return secretValues(envMap(openEnv(stack.env_sealed)));
+    return secretValues(envMap(openEnv(stack.env_sealed)), new Set(envSecretKeysOf(stack)));
   } catch {
     return null;
   }
@@ -279,6 +280,7 @@ async function validateStaged(
 
 async function validateForSave(trx: Knex.Transaction, input: {
   stackId: number | null; accountId: number; sourceType: StackRow['source_type']; gitComposePath: string | null; composeYaml: string; env: Map<string, string>;
+  secretKeys?: Iterable<string>;
 }): Promise<ComposeValidationResult> {
   const { ctx } = await composeContext({ ...input, inspect: !!input.stackId }, trx);
   const out = validateCompose(input.composeYaml, ctx);
@@ -405,6 +407,7 @@ export const appsService = {
       ...base,
       composeYaml: stack.compose_yaml,
       envKeys: envKeysOf(stack),
+      envSecretKeys: envSecretKeysOf(stack),
       git: gitSourceOf(stack),
       catalogSource: catalogSourceOf(stack),
       registryCredentialIds: credentialIds.map(Number),
@@ -429,6 +432,7 @@ export const appsService = {
     let envText = input.env ?? '';
     const git: Record<string, unknown> = {};
     const catalog: Record<string, unknown> = {};
+    const templateSecret: string[] = [];
     switch (input.sourceType) {
       case 'editor':
         if (!input.composeYaml?.trim()) throw new AppError(400, 'composeYaml is required', 'validation');
@@ -458,6 +462,7 @@ export const appsService = {
         const tpl = await catalogService.forTenant(account.tenant_id, input.catalog.templateSlug);
         if (!tpl || !tpl.enabled) throw new AppError(404, 'Template not found', 'templateNotFound');
         const rendered = renderFieldValues(json(tpl.fields, []), input.catalog.values ?? {});
+        for (const f of json<AppTemplateField[]>(tpl.fields, [])) if (f.secret) templateSecret.push(f.key);
         const extra = envMap(envText);
         for (const [k, v] of rendered.env) extra.set(k, v);
         envText = stringifyDotenv(extra);
@@ -469,6 +474,8 @@ export const appsService = {
         throw new AppError(400, 'Invalid source type', 'validation');
     }
     const env = envMap(envText);
+    // Migration 050: names that look secret (and the template secret fields) are flagged secret.
+    const secretKeys = secretKeysFor(env.keys(), { templateSecret });
     const updatePolicy = await normalizeUpdatePolicy(actor, account.id, updatePolicyOf({ update_policy: null }), input.updatePolicy);
     const sleepPolicy = await normalizeSleepPolicy(actor, account.id, sleepPolicyOf({ sleep_policy: null }), input.sleepPolicy);
     const plan = await accountPlan(account.id);
@@ -483,13 +490,13 @@ export const appsService = {
         throw new AppError(409, 'An application with this name already exists in the account', 'stackNameTaken');
       }
       const validation = composeYaml
-        ? await validateForSave(trx, { stackId: null, accountId: account.id, sourceType: input.sourceType, gitComposePath: (git.git_compose_path as string) ?? null, composeYaml, env })
+        ? await validateForSave(trx, { stackId: null, accountId: account.id, sourceType: input.sourceType, gitComposePath: (git.git_compose_path as string) ?? null, composeYaml, env, secretKeys })
         : null;
       const [row] = await trx('app_stacks').insert({
         tenant_id: account.tenant_id, account_id: account.id, node_id: account.node_id, name: input.name,
         display_name: (input.displayName?.trim() || input.name).slice(0, 128), description: input.description ?? null,
         source_type: input.sourceType, compose_yaml: composeYaml, env_sealed: envText.trim() ? seal('apps', envText) : null,
-        env_keys: JSON.stringify([...env.keys()]), ...git, ...catalog, status: 'draft', desired_state: 'running',
+        env_keys: JSON.stringify([...env.keys()]), env_secret_keys: JSON.stringify(secretKeys), ...git, ...catalog, status: 'draft', desired_state: 'running',
         validation: validation ? JSON.stringify(validation) : null, update_policy: JSON.stringify(updatePolicy), sleep_policy: JSON.stringify(sleepPolicy),
       }).returning('*') as StackRow[];
       await setCredentials(trx, row.id, account.id, credentials);
@@ -525,7 +532,8 @@ export const appsService = {
     return this.get(actor, stack.id);
   },
 
-  async update(req: Request, actor: HostingActor, id: number, input: AppStackUpdate): Promise<AppStackDetail> {
+  /** opts.secretFlags: Secret flags given by the variables form (replaceEnv); the others follow secretKeysFor. */
+  async update(req: Request, actor: HostingActor, id: number, input: AppStackUpdate, opts: { secretFlags?: ReadonlyMap<string, boolean> } = {}): Promise<AppStackDetail> {
     const stack = await stackFor(actor, id, 'apps.manage');
     checkEnvText(input.env);
     const settings = await platformSettings.section('apps');
@@ -540,6 +548,7 @@ export const appsService = {
     const changed: string[] = [];
     let envText = input.env !== undefined ? input.env : openEnv(stack.env_sealed);
     const composeYaml = input.composeYaml ?? stack.compose_yaml;
+    const templateSecret: string[] = [];
     if (input.displayName !== undefined) { patch.display_name = input.displayName.trim().slice(0, 128) || stack.name; changed.push('displayName'); }
     if (input.description !== undefined) { patch.description = input.description; changed.push('description'); }
     if (input.composeYaml !== undefined) { patch.compose_yaml = composeYaml; changed.push('compose'); }
@@ -548,6 +557,7 @@ export const appsService = {
       if (!tpl) throw new AppError(404, 'Template not found', 'templateNotFound');
       const existing = envMap(envText);
       const rendered = renderFieldValues(json(tpl.fields, []), input.catalogValues, existing);
+      for (const f of json<AppTemplateField[]>(tpl.fields, [])) if (f.secret) templateSecret.push(f.key);
       for (const [k, v] of rendered.env) existing.set(k, v);
       envText = stringifyDotenv(existing);
       patch.template_values = JSON.stringify(rendered.values);
@@ -557,14 +567,18 @@ export const appsService = {
       const tpl = await catalogService.forTenant(stack.tenant_id, stack.template_slug);
       if (tpl) {
         const synced = syncCatalogEnv(json(tpl.fields, []), envText, envMap(envText), envMap(openEnv(stack.env_sealed)));
+        for (const f of json<AppTemplateField[]>(tpl.fields, [])) if (f.secret) templateSecret.push(f.key);
         envText = synced.envText;
         patch.template_values = JSON.stringify(synced.values);
       }
     }
     const env = envMap(envText);
-    if (input.env !== undefined || input.catalogValues !== undefined) {
+    const envChanged = input.env !== undefined || input.catalogValues !== undefined;
+    const secretKeys = envChanged ? secretKeysFor(env.keys(), { previous: envSecretKeysOf(stack), templateSecret, flags: opts.secretFlags }) : envSecretKeysOf(stack);
+    if (envChanged) {
       patch.env_sealed = envText.trim() ? seal('apps', envText) : null;
       patch.env_keys = JSON.stringify([...env.keys()]);
+      patch.env_secret_keys = JSON.stringify(secretKeys);
       changed.push('env');
     }
     if (input.git !== undefined) {
@@ -601,7 +615,7 @@ export const appsService = {
       if ((input.composeYaml !== undefined || input.env !== undefined || input.catalogValues !== undefined) && composeYaml.trim()) {
         const validation = await validateForSave(trx, {
           stackId: stack.id, accountId: stack.account_id, sourceType: stack.source_type,
-          gitComposePath: (patch.git_compose_path as string | undefined) ?? stack.git_compose_path, composeYaml, env,
+          gitComposePath: (patch.git_compose_path as string | undefined) ?? stack.git_compose_path, composeYaml, env, secretKeys,
         });
         patch.validation = JSON.stringify(validation);
       }
@@ -612,7 +626,7 @@ export const appsService = {
       // New repository / branch: the next pull fetches it again.
       await db('app_stacks').where({ id }).update({ git_last_commit: null });
     }
-    await auditStack(req, stack, 'apps.stack.update', { changed });
+    await auditStack(req, stack, 'apps.stack.update', { changed, ...(envChanged ? { envKeys: [...env.keys()], secretKeys } : {}) });
     emitStack(stack, 'updated');
     return this.get(actor, id);
   },
@@ -632,9 +646,29 @@ export const appsService = {
 
   async getEnv(req: Request, actor: HostingActor, id: number): Promise<AppEnvResponse> {
     const stack = await stackFor(actor, id, 'apps.manage');
-    const env = openEnv(stack.env_sealed);
+    const env = envMap(openEnv(stack.env_sealed));
     await auditStack(req, stack, 'apps.stack.env.read', { keys: envKeysOf(stack) });
-    return { env };
+    // Migration 050: a secret is write-only (its value never comes back).
+    return { vars: envVarsOf(env, envSecretKeysOf(stack)) };
+  },
+
+  /**
+   * PUT /stacks/:id/env: the whole set of variables (Settings). A secret sent without a value keeps the
+   * stored one; a stored secret turned visible needs a new value. Saved through update() (validation of
+   * the compose with the new .env, catalog fields kept consistent, audit of the names only); deploy to apply.
+   */
+  async replaceEnv(req: Request, actor: HostingActor, id: number, vars: AppEnvVarInput[]): Promise<AppEnvSaveResult> {
+    const stack = await stackFor(actor, id, 'apps.manage');
+    const current = envMap(openEnv(stack.env_sealed));
+    const currentSecret = new Set(envSecretKeysOf(stack));
+    const next = envFromVars(vars, current, currentSecret);
+    const nextSecret = new Set([...next.flags].filter(([, s]) => s).map(([k]) => k));
+    if (sameEnv(next.env, nextSecret, current, currentSecret)) {
+      return { vars: envVarsOf(current, currentSecret), changed: false, stack: await this.get(actor, id) };
+    }
+    const detail = await this.update(req, actor, id, { env: next.text }, { secretFlags: next.flags });
+    const fresh = (await loadStackRow(id))!;
+    return { vars: envVarsOf(envMap(openEnv(fresh.env_sealed)), envSecretKeysOf(fresh)), changed: true, stack: detail };
   },
 
   async validate(actor: HostingActor, input: ComposeValidateRequest): Promise<ComposeValidationResult> {
@@ -920,6 +954,7 @@ export const appsService = {
     // (rotated panel secret) gives the names only too. Labels are interpolated from the .env as well:
     // their values are masked by the same rule for every caller, hidden when the .env cannot be read.
     const labelSecrets = inspectSecrets(stack);
+    const flagged = new Set(envSecretKeysOf(stack));
     const secrets = actorCan(actor, 'apps.manage', { tenantId: stack.tenant_id, accountId: stack.account_id }) ? labelSecrets : null;
     if (!effectiveOf(stack)?.services.some((s) => s.name === service)) throw new AppError(404, `Service ${service} not found`, 'serviceNotFound');
     let info: Docker.ContainerInspectInfo;
@@ -945,7 +980,7 @@ export const appsService = {
       env: (info.Config?.Env ?? []).map((e) => {
         const eq = e.indexOf('=');
         const key = eq < 0 ? e : e.slice(0, eq);
-        return { key, value: secrets === null ? null : inspectEnvValue(key, eq < 0 ? '' : e.slice(eq + 1), secrets) };
+        return { key, value: secrets === null ? null : inspectEnvValue(key, eq < 0 ? '' : e.slice(eq + 1), secrets, flagged) };
       }),
       envValuesHidden: secrets === null,
       mounts: (info.Mounts ?? []).map((m) => ({

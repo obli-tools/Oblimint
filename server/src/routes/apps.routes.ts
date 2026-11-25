@@ -22,7 +22,8 @@ import { accountTarget } from '../services/restrictions/targets';
 //   GET    /stacks/:id                                         → AppStackDetail                  (read)
 //   PUT    /stacks/:id                 AppStackUpdate          → AppStackDetail                  (apps.manage)
 //   DELETE /stacks/:id                 AppStackDeleteRequest   → { deleted: true }               (apps.manage; confirm = name)
-//   GET    /stacks/:id/env                                     → AppEnvResponse                  (apps.manage, audited)
+//   GET    /stacks/:id/env                                     → AppEnvResponse                  (apps.manage, audited; a secret's value never sent back)
+//   PUT    /stacks/:id/env             AppEnvUpdate            → AppEnvSaveResult                (apps.manage; secret without value = unchanged)
 //   GET    /stacks/:id/env-template                            → AppEnvTemplate                  (apps.manage; .env example of the source)
 //   POST   /stacks/:id/source/zip      application/zip body    → AppStackDetail                  (apps.manage; source zip)
 //   POST   /stacks/:id/source/pull     { deploy?: boolean }    → { commit, changed, deployment } (apps.manage; source git)
@@ -124,6 +125,14 @@ const updateSchema = z.object({
   registryCredentialIds: z.array(z.number().int().positive()).max(50).optional(),
   updatePolicy: updatePolicySchema.optional(),
   sleepPolicy: sleepPolicySchema.optional(),
+}).strict();
+
+const envVarsSchema = z.object({
+  vars: z.array(z.object({
+    name: z.string().min(1).max(128),
+    value: z.string().max(32 * 1024).nullable().optional(),
+    secret: z.boolean().optional(),
+  }).strict()).max(500),
 }).strict();
 
 const envProbeSchema = z.object({
@@ -281,6 +290,14 @@ router.get('/stacks/:id/env', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
     res.json({ success: true, data: await appsService.getEnv(req, actor, idParam(req)) });
+  } catch (err) { next(err); }
+});
+
+router.put('/stacks/:id/env', async (req, res, next) => {
+  try {
+    const actor = await resolveActor(req);
+    const id = idParam(req);
+    res.json({ success: true, data: await appsService.replaceEnv(req, actor, id, parseBody(envVarsSchema, req.body).vars) });
   } catch (err) { next(err); }
 });
 

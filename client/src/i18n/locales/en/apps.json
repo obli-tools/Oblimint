@@ -309,8 +309,8 @@
       "effective": "Effective config",
       "issues": "Problems",
       "readOnly": "Read only: you cannot change this application.",
-      "readOnlyCatalog": "The compose file comes from the catalog template: change its settings in the application settings. The .env below can be edited here.",
-      "readOnlyGit": "The compose file comes from the git repository: change it in the repository, then pull. The .env below belongs to the application: edit it here.",
+      "readOnlyCatalog": "The compose file comes from the catalog template: change its settings in the application settings, where its .env is edited too.",
+      "readOnlyGit": "The compose file comes from the git repository: change it in the repository, then pull. The .env of the application is edited in its Settings.",
       "saveDeploy": "Save and deploy",
       "saveFailed": "Failed to save",
       "saved": "Saved",
@@ -352,10 +352,14 @@
       "hint": "KEY=value lines, stored encrypted. Only these variables are interpolated in the compose file.",
       "keysCount": "{{count}} variable(s).",
       "loadFailed": "Failed to load the .env",
+      "manageInSettings": "Manage in Settings",
       "missingExpected": "Expected variables missing: {{count}} variable(s) of {{file}} are not set in the .env.",
+      "namesOnly": "Names only: the values are stored encrypted and edited in the application Settings (a secret is never shown again).",
+      "savedDeploy": "Saved: deploy the application to apply it",
       "sealed": "The values are stored encrypted. Showing them is logged in the audit log.",
       "show": "Show and edit",
-      "title": "Environment (.env)"
+      "title": "Environment (.env)",
+      "varsIntro": "Variables of the application .env: interpolated in the compose file (${NAME}) and given to the containers that use env_file: .env. Stored encrypted; a secret is never shown again (left empty = unchanged). Deploy to apply a change."
     },
     "errors": {
       "accountSuspended": "The hosting account is suspended.",

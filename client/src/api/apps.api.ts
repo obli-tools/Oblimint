@@ -1,6 +1,6 @@
 import apiClient from './client';
 import type {
-  ApiResponse, AppActionRequest, AppContainerAction, AppContainerInspect, AppDeployment, AppDeploymentDetail, AppEnvResponse, AppEnvTemplate, AppEnvTemplateProbe,
+  ApiResponse, AppActionRequest, AppContainerAction, AppContainerInspect, AppDeployment, AppDeploymentDetail, AppEnvResponse, AppEnvSaveResult, AppEnvTemplate, AppEnvTemplateProbe, AppEnvVarInput,
   AppImageRollbackRequest, AppLogsResponse, AppRegistryCredential, AppRegistryCredentialInput, AppRegistryCredentialUpdate,
   AppResourceSummary, AppRollbackRequest, AppServiceInfo, AppServiceUpdate, AppStack, AppStackCreate, AppStackDeleteRequest,
   AppStackDetail, AppStackStatus, AppStackUpdate, AppStatsResponse, AppTemplate, AppTemplateCategory, AppTemplateDetail,
@@ -44,9 +44,14 @@ export const appsApi = {
   async deleteStack(id: number, data: AppStackDeleteRequest, force = false): Promise<void> {
     await apiClient.delete(`/apps/stacks/${id}`, { data, params: force ? { force: 1 } : undefined });
   },
-  /** Sealed .env in clear (apps.manage, audited): fetched on demand only, never cached. */
+  /** Variables of the sealed .env (apps.manage, audited): a secret's value is never sent back. */
   async getEnv(id: number): Promise<AppEnvResponse> {
     const res = await apiClient.get<ApiResponse<AppEnvResponse>>(`/apps/stacks/${id}/env`);
+    return res.data.data!;
+  },
+  /** Saves the whole set of variables (a secret without value is unchanged); deploy to apply. */
+  async saveEnv(id: number, vars: AppEnvVarInput[]): Promise<AppEnvSaveResult> {
+    const res = await apiClient.put<ApiResponse<AppEnvSaveResult>>(`/apps/stacks/${id}/env`, { vars });
     return res.data.data!;
   },
   /** .env example of the stack source (.env.example …): example values, not secret. */

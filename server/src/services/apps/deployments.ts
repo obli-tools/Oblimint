@@ -177,7 +177,7 @@ export async function prepare(stack: StackRow, composeYaml: string, sourceLocalD
     const first = out.result.issues.find((i) => i.severity === 'error');
     throw new DeployFailure('Le compose n\'est pas valide', first ? `${first.path || '<racine>'}${first.line ? ` (ligne ${first.line})` : ''}: ${first.message}` : null);
   }
-  return { resolved: out.resolved, result: out.result, secrets: secretValues(env), plan };
+  return { resolved: out.resolved, result: out.result, secrets: secretValues(env, ctx.secretKeys), plan };
 }
 
 /** Does the stack mount source files or build images (then it runs from a source snapshot)? */

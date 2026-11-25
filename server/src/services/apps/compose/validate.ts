@@ -62,6 +62,8 @@ export interface SourceInspector {
 export interface ComposeContext {
   /** .env of the stack (interpolation source + bare `environment: [KEY]` entries). */
   env: ReadonlyMap<string, string>;
+  /** Migration 050: names of the .env flagged secret (masked like the secret-looking ones). */
+  secretKeys?: ReadonlySet<string>;
   /** Directory relative paths resolve against, relative to the stack dir ('files', 'src', 'src/deploy'). */
   baseDir: string;
   /** Containment root of every relative path ('files' for an editor stack, 'src' otherwise). */
@@ -1153,7 +1155,7 @@ export function validateCompose(yamlText: string, ctx: ComposeContext): Validati
     totals,
   };
   const stack: ResolvedStack = { effective, services: order };
-  return { result: { ok: true, issues: c.issues, effective, effectiveYaml: renderEffectiveYaml(stack, ctx.env) }, resolved: stack };
+  return { result: { ok: true, issues: c.issues, effective, effectiveYaml: renderEffectiveYaml(stack, ctx.env, ctx.secretKeys) }, resolved: stack };
 }
 
 function round2(n: number): number {
@@ -1173,9 +1175,9 @@ export function toEffectiveService(r: ResolvedService): EffectiveService {
 const MASK = '********';
 
 /** Values of the stack .env whose key looks secret (masked wherever they appear). */
-export function secretValues(env: ReadonlyMap<string, string>): string[] {
+export function secretValues(env: ReadonlyMap<string, string>, secretKeys: ReadonlySet<string> = new Set()): string[] {
   const out: string[] = [];
-  for (const [k, v] of env) if (v && v.length >= 4 && looksSecret(k)) out.push(v);
+  for (const [k, v] of env) if (v && v.length >= 4 && (looksSecret(k) || secretKeys.has(k))) out.push(v);
   return out;
 }
 
@@ -1188,8 +1190,8 @@ const URL_CREDENTIALS_RE = /([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi;
  * contained: DATABASE_URL built from ${DB_PASSWORD}); the credentials of a
  * URL (user:pass@) are masked.
  */
-export function inspectEnvValue(key: string, value: string, secrets: readonly string[]): string | null {
-  if (looksSecret(key)) return null;
+export function inspectEnvValue(key: string, value: string, secrets: readonly string[], secretKeys: ReadonlySet<string> = new Set()): string | null {
+  if (looksSecret(key) || secretKeys.has(key)) return null;
   if (secrets.some((s) => value.includes(s))) return null;
   return value.replace(URL_CREDENTIALS_RE, `$1${MASK}@`);
 }
@@ -1207,12 +1209,12 @@ export function inspectLabels(labels: Readonly<Record<string, string>>, secrets:
 }
 
 /** The rewritten compose shown in the preview (what the panel deploys), secrets masked. */
-export function renderEffectiveYaml(stack: ResolvedStack, env: ReadonlyMap<string, string>): string {
-  const secrets = new Set(secretValues(env));
+export function renderEffectiveYaml(stack: ResolvedStack, env: ReadonlyMap<string, string>, secretKeys: ReadonlySet<string> = new Set()): string {
+  const secrets = new Set(secretValues(env, secretKeys));
   const services: Obj = {};
   for (const r of stack.services) {
     const environment: Obj = {};
-    for (const [k, v] of r.environment) environment[k] = looksSecret(k) || secrets.has(v) ? MASK : v;
+    for (const [k, v] of r.environment) environment[k] = looksSecret(k) || secretKeys.has(k) || secrets.has(v) ? MASK : v;
     const svc: Obj = {
       ...(r.image ? { image: r.image } : { build: r.buildSpec ? { context: r.buildSpec.context, dockerfile: r.buildSpec.dockerfile } : true }),
       ...(r.command ? { command: r.command } : {}),

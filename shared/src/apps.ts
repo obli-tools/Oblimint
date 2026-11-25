@@ -1,3 +1,4 @@
+import type { AppEnvVar } from './appEnv';
 import type { ContainerState } from './hosting';
 
 // =============================================================================
@@ -116,6 +117,8 @@ export interface AppStackDetail extends AppStack {
   composeYaml: string;
   /** Names of the .env variables (values are sealed: GET /apps/stacks/:id/env). */
   envKeys: string[];
+  /** Those of envKeys flagged secret (write-only: never sent back by GET /env). */
+  envSecretKeys: string[];
   git: AppGitSource | null;
   catalogSource: AppCatalogSource | null;
   registryCredentialIds: number[];
@@ -165,9 +168,17 @@ export interface AppStackUpdate {
   sleepPolicy?: Partial<AppSleepPolicy>;
 }
 
-/** GET /apps/stacks/:id/env (apps.manage, audited). */
+/** GET /apps/stacks/:id/env (apps.manage, audited: names only). A secret's value is never sent back. */
 export interface AppEnvResponse {
-  env: string;
+  vars: AppEnvVar[];
+}
+
+/** PUT /apps/stacks/:id/env */
+export interface AppEnvSaveResult {
+  vars: AppEnvVar[];
+  /** Something changed (deploy to apply it). */
+  changed: boolean;
+  stack: AppStackDetail;
 }
 
 // ─── Compose validation / rewrite ────────────────────────────────────────────

@@ -11,7 +11,7 @@ import { parseDotenv } from './compose/dotenv';
 import type { ComposeContext, SourceInspector } from './compose/validate';
 import { stackInspector } from './fsSafe';
 import { effectivePolicyWith, type EffectiveAppPolicy } from './policy.service';
-import { effectiveOf } from './rows';
+import { effectiveOf, envSecretKeysOf } from './rows';
 
 // Validation context of a stack from the database (docs/P4b-PLAN.md §5.2, §5.6): the .env (opened), the
 // effective image policy of the tenant, the plan of the account, the resources of its OTHER stacks, the
@@ -85,6 +85,8 @@ export interface StackContextInput {
   sourceType: AppSourceType;
   gitComposePath: string | null;
   env: Map<string, string>;
+  /** Names flagged secret (masking); default: those stored for stackId (migration 050). */
+  secretKeys?: Iterable<string>;
   /** Check paths on disk (false for a stack that has no tree yet: judged again at deploy). */
   inspect: boolean;
   /**
@@ -100,8 +102,12 @@ export async function composeContext(input: StackContextInput, conn: Knex | Knex
   const policy = await effectivePolicyWith(conn, plan.tenantId);
   const others = await otherStacksUsage(input.accountId, input.stackId, conn);
   const dirs = sourceDirs(input.sourceType, input.gitComposePath);
+  const secretKeys = new Set(input.secretKeys ?? (input.stackId
+    ? envSecretKeysOf(await conn('app_stacks').where({ id: input.stackId }).first('env_secret_keys') ?? {})
+    : []));
   const ctx: ComposeContext = {
     env: input.env,
+    secretKeys,
     ...dirs,
     inspector: input.inspect && input.stackId ? input.inspector ?? stackInspector(localPaths.appStack(input.accountId, input.stackId)) : null,
     policy: {

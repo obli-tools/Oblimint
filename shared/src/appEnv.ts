@@ -139,3 +139,32 @@ export function mergeEnvExample(current: string, example: string, header?: strin
   text += `${block.join('\n')}\n`;
   return { text, added };
 }
+
+// ─── Variables of an application .env (Settings, same editor as the site variables) ───
+
+/** Names whose value is treated as secret by default (masking, import, migration 050). */
+export const ENV_SECRET_KEY_RE = /(PASS|PWD|SECRET|TOKEN|KEY|CREDENTIAL|PRIVATE|AUTH|SALT|SIGNATURE|CERT|DSN|DATABASE_URL|_URI$|COOKIE|SESSION)/i;
+
+export function envKeyLooksSecret(name: string): boolean {
+  return ENV_SECRET_KEY_RE.test(name);
+}
+
+/** GET /apps/stacks/:id/env: one entry per variable of the sealed .env. */
+export interface AppEnvVar {
+  name: string;
+  /** null for a secret: the value is never sent back (write-only). */
+  value: string | null;
+  secret: boolean;
+}
+
+export interface AppEnvVarInput {
+  name: string;
+  /** Omitted / null on an existing secret: the stored value is kept. */
+  value?: string | null;
+  secret?: boolean;
+}
+
+/** PUT /apps/stacks/:id/env: the whole set (the form sends every variable). */
+export interface AppEnvUpdate {
+  vars: AppEnvVarInput[];
+}
