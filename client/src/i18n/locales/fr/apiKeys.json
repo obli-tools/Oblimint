@@ -132,6 +132,22 @@
           "label": "Boîtes mail",
           "hint": "Boîtes mail des domaines mail du compte (par exemple des boîtes de test) : lister, créer dans les limites du plan, changer le mot de passe, supprimer (protégé). Un mot de passe n’est montré qu’une fois à la clé. Jamais inclus dans un préréglage, « Tout » compris : à cocher à part."
         }
+      },
+      "apps": {
+        "read": {
+          "label": "Lire les applications Docker",
+          "hint": "Applications Docker du compte, quels que soient les sites de la clé : état, services et ports internes, URL, déploiements et sortie des conteneurs (variables secrètes masquées). Jamais incluses dans un préréglage, « Tout » compris : à cocher à part."
+        },
+        "manage": {
+          "label": "Applications Docker",
+          "hint": "Déployer des applications Docker (compose, dépôt git ou catalogue) dans les limites du plan, modifier leur compose et leurs variables, les redéployer, démarrer / arrêter / redémarrer, supprimer (protégé). Comprend leur lecture. Jamais de console ni de commande dans un conteneur. Jamais inclus dans un préréglage : à cocher à part."
+        }
+      },
+      "proxy": {
+        "manage": {
+          "label": "Hôtes proxy",
+          "hint": "Mettre les domaines donnés à la clé (ou de nouveaux sous-domaines de ceux-ci, avec Sous-domaines) devant un port interne d’une application, avec un certificat Let’s Encrypt et la redirection vers https ; modifier, supprimer (protégé). Demande aussi le droit de gérer les domaines. Jamais inclus dans un préréglage : à cocher à part."
+        }
       }
     },
     "guide": "Guide API & agents IA",
@@ -204,7 +220,7 @@
       },
       "all": {
         "label": "Tout",
-        "hint": "Tous les droits que tu peux accorder, sur tous les sites, et tous les domaines si tu peux en donner ; les boîtes mail se cochent à part. Jamais : supprimer un site, ajouter un domaine racine, les utilisateurs, les autres clés."
+        "hint": "Tous les droits que tu peux accorder, sur tous les sites, et tous les domaines si tu peux en donner ; les boîtes mail, les applications Docker et les hôtes proxy se cochent à part. Jamais : supprimer un site, ajouter un domaine racine, les utilisateurs, les autres clés."
       },
       "custom": {
         "label": "Personnalisé",

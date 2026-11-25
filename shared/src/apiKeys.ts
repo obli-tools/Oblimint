@@ -3,6 +3,9 @@ import type { CurrentReleaseVia, LeakPolicy, LeakReport, SiteUpdate } from './ho
 import type { ObservationMode } from './releaseObservation';
 import type { DnsRecordOrigin, DnsRecordType, DnsZoneKind, DnsZoneServed, DnsZoneStatus } from './dns';
 import type { MailAccountLimits, MailAccountUsage, MailDomainStatus } from './mail';
+import type { AppCatalogSource, AppDeployment, AppGitSource, AppResourceSummary, AppServiceInfo, AppSourceType, AppStackStatus, AppTemplateField, ComposeIssue } from './apps';
+import type { PortBinding } from './network';
+import type { EdgeUnitStatusKind, ProxyScheme } from './proxy';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API access keys of a hosting account (« Clés d'accès »): a script, a CI or an
@@ -79,18 +82,41 @@ export type ApiKeyScope =
    * delete (a protected action: mail.mailbox_delete). The password is returned once, never stored nor
    * audited in clear. OPT-IN: never checked by a preset, « Everything » included (API_KEY_OPT_IN_SCOPES).
    */
-  | 'mail.mailboxes';
+  | 'mail.mailboxes'
+  /**
+   * Docker applications of the account (keyStacks.ts), read: the applications, their state, services,
+   * internal ports, URLs, deployments and container logs (the .env secrets masked). Whatever the site
+   * selection of the key (an application belongs to the account). OPT-IN (API_KEY_OPT_IN_SCOPES).
+   */
+  | 'apps.read'
+  /**
+   * Docker applications of the account, managed through the apps service (compose, git or catalog
+   * source, plan limits, image policy, validation and rewrite of the compose): deploy, change
+   * (compose, variables, git, catalog values), redeploy, start / stop / restart, delete (a protected
+   * action: app.delete). Includes apps.read. Never a console nor an exec in a container (apps.console
+   * stays in the panel). OPT-IN.
+   */
+  | 'apps.manage'
+  /**
+   * Proxy hosts of the account (keyProxy.ts): a domain given to the key (or a subdomain it creates with
+   * domains.subdomain) → a port of a Docker application of the account (or an external address when
+   * the plan allows it), with its Let's Encrypt certificate and the HTTPS redirection; change, delete (a
+   * protected action: proxy.host_delete). Binding a domain takes it from the sites: the creator must
+   * also manage the domains. OPT-IN.
+   */
+  | 'proxy.manage';
 
 export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
   'files.read', 'files.write', 'releases.publish', 'releases.propose', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain',
-  'dns.read', 'dns.write', 'logs.read', 'network.read', 'mail.mailboxes',
+  'dns.read', 'dns.write', 'logs.read', 'network.read', 'mail.mailboxes', 'apps.read', 'apps.manage', 'proxy.manage',
 ];
 
 /**
  * Scopes only ever given by ticking them one by one: no preset checks them, not even « Everything »
- * (a key made for the sites must not reach the mailboxes of the account by surprise).
+ * (a key made for the sites must not reach the mailboxes of the account by surprise, nor run
+ * containers, read their logs, or take a domain from the sites to put it in front of one).
  */
-export const API_KEY_OPT_IN_SCOPES: readonly ApiKeyScope[] = ['mail.mailboxes'];
+export const API_KEY_OPT_IN_SCOPES: readonly ApiKeyScope[] = ['mail.mailboxes', 'apps.read', 'apps.manage', 'proxy.manage'];
 
 export type ApiKeySiteScope = 'all' | 'selected';
 
@@ -646,4 +672,133 @@ export interface ApiV1MailboxCreated {
 export interface ApiV1MailboxPassword {
   mailbox: { id: number; address: string };
   password: string | null;
+}
+
+// ── Docker applications (scopes apps.read / apps.manage: REST /api/v1/apps/stacks…, MCP list_apps…) ──
+
+/** A Docker application (one compose stack) of the key's account, as the key API shows it. */
+export interface ApiV1App {
+  id: number;
+  /** Slug, unique in the account: [a-z0-9][a-z0-9-]{0,30}. */
+  name: string;
+  displayName: string;
+  description: string | null;
+  sourceType: AppSourceType;
+  /** draft (never deployed), deploying, running, partial, stopped, sleeping, error, deleting. */
+  status: AppStackStatus;
+  /** Last error / warning (a short label, never an internal detail). */
+  statusMessage: string | null;
+  desiredState: 'running' | 'stopped';
+  serviceCount: number;
+  runningCount: number;
+  /** A newer image exists for a service (digest check). */
+  updateAvailable: boolean;
+  catalog: { slug: string; name: string } | null;
+  lastDeployedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A service (container) of an application: exposedPorts are its INTERNAL ports (a proxy host targets one of them). */
+export type ApiV1AppService = Pick<AppServiceInfo, 'name' | 'image' | 'state' | 'health' | 'exposedPorts' | 'updateAvailable' | 'startedAt' | 'restartCount' | 'limits'>;
+
+/** GET /api/v1/apps/stacks/:id (MCP get_app). Never a value of the .env (its names only), never a git or registry secret. */
+export interface ApiV1AppDetail extends ApiV1App {
+  composeYaml: string;
+  envKeys: string[];
+  git: AppGitSource | null;
+  catalogSource: AppCatalogSource | null;
+  registryCredentialIds: number[];
+  services: ApiV1AppService[];
+  /** Validation of the current compose by the panel (errors block a deploy). */
+  validation: { ok: boolean; issues: ComposeIssue[] } | null;
+  /** Ports published on the Internet (public address:port → service port), from `ports:` of the compose. */
+  publishedPorts: Array<Pick<PortBinding, 'service' | 'address' | 'protocol' | 'publicPort' | 'containerPort' | 'status'>>;
+  /** Proxy hosts in front of the application. */
+  proxyHosts: Array<{ id: number; name: string; domains: string[]; service: string; port: number }>;
+  /** https://<domain>/ of those proxy hosts. */
+  urls: string[];
+  /** The last deployments, newest first. */
+  deployments: AppDeployment[];
+}
+
+/** GET /api/v1/apps/stacks (MCP list_apps). */
+export interface ApiV1AppList {
+  apps: ApiV1App[];
+  /** The plan's limits of the applications and what is used (stacks, containers, CPU, memory). */
+  resources: AppResourceSummary;
+  /** Registry credentials of the account (made in the panel; never their password): registryCredentialIds of a deploy. */
+  registries: Array<{ id: number; registry: string; username: string }>;
+}
+
+/** Answer of a deploy / change / redeploy / action: the application, and the deployment started (null: none). */
+export interface ApiV1AppChange {
+  app: ApiV1AppDetail;
+  deployment: AppDeployment | null;
+}
+
+/** GET /api/v1/apps/stacks/:id/logs (MCP app_logs): a service's container output, or a deployment's log. */
+export interface ApiV1AppLogs {
+  appId: number;
+  service: string | null;
+  deploymentId: number | null;
+  /** The deployment's status (deployment logs only). */
+  deploymentStatus: AppDeployment['status'] | null;
+  /** Newest last; the values of the application's .env secrets are masked. */
+  lines: Array<{ at: string | null; stream: 'stdout' | 'stderr' | null; text: string }>;
+  truncated: boolean;
+}
+
+/** A template of the application catalog (GET /api/v1/apps/catalog, MCP list_app_catalog). */
+export interface ApiV1AppTemplate {
+  slug: string;
+  name: string;
+  category: string;
+  description: string;
+  docsUrl: string | null;
+  version: string;
+  /** Values of a catalog deploy (catalog.values): secret ones go to the sealed .env, generated when empty. */
+  fields: AppTemplateField[];
+  /** Service and internal port a proxy host should target. */
+  defaultProxy: { service: string; port: number } | null;
+  minMemoryMb: number | null;
+  /** One template asked by slug: its compose. */
+  composeYaml?: string;
+}
+
+// ── Proxy hosts (scope proxy.manage: REST /api/v1/proxy-hosts, MCP list_proxy_hosts…) ──
+
+export interface ApiV1ProxyTarget {
+  /** app: a service port of a Docker application of the account; external: an address outside the platform; site: a site (set in the panel). */
+  kind: 'app' | 'site' | 'external';
+  appId: number | null;
+  appName: string | null;
+  service: string | null;
+  siteId: number | null;
+  host: string | null;
+  port: number;
+  scheme: ProxyScheme;
+}
+
+/** A proxy host of the key's account, as the key API shows it. */
+export interface ApiV1ProxyHost {
+  id: number;
+  name: string;
+  enabled: boolean;
+  /** Every domain of the host is given to the key (or a subdomain it created): it may change or delete it. */
+  manageable: boolean;
+  domains: Array<{ name: string; verified: boolean; certificate: { status: string; notAfter: string | null } | null }>;
+  target: ApiV1ProxyTarget;
+  targetLabel: string;
+  /** auto: the domains' Let's Encrypt certificates; forceSsl: http:// redirected to https://. */
+  ssl: { mode: 'auto' | 'imported' | 'none'; forceSsl: boolean; http2: boolean; hsts: boolean };
+  options: { websocket: boolean; gzip: boolean; cache: boolean; blockExploits: boolean; bodySizeMb: number | null; readTimeoutSec: number };
+  routes: Array<{ path: string; rewritePrefix: string | null; target: ApiV1ProxyTarget }>;
+  /** Access lists or a sign-in provider protect it (set in the panel, kept by a key's changes). */
+  protectedByAuth: boolean;
+  /** The edge's state of the host: pending, active, quarantined, upstreamUnreachable… */
+  edge: { status: EdgeUnitStatusKind; error: string | null } | null;
+  urls: string[];
+  createdAt: string;
+  updatedAt: string;
 }

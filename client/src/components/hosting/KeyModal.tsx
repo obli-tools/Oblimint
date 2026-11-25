@@ -40,6 +40,9 @@ export const SCOPE_FALLBACK: Record<ApiKeyScope, [string, string]> = {
   'dns.read': ['Read DNS records', 'DNS zones of the domains given to the key (every zone of the account for a key on every domain) and their records; the ones the platform manages are shown read-only.'],
   'dns.write': ['Write DNS records', 'Create, change and delete the free records of those zones (A, AAAA, CNAME, TXT, MX, SRV, CAA), e.g. a name pointing to another server or a game server SRV. Never the records the platform manages: names served by the sites and subdomains, hosted mail, SOA / NS, challenges.'],
   'mail.mailboxes': ['Mailboxes', 'Mailboxes of the account\'s mail domains (e.g. test mailboxes): list, create within the plan, set a new password, delete (protected). A password is shown to the key once. Never part of a preset, « Everything » included: tick it on its own.'],
+  'apps.read': ['Read the Docker applications', 'Docker applications of the account, whatever the sites of the key: state, services and internal ports, URLs, deployments and container logs (secret variables masked). Never part of a preset, « Everything » included: tick it on its own.'],
+  'apps.manage': ['Docker applications', 'Deploy Docker applications (compose, git repository or catalog) within the plan, change their compose and variables, redeploy, start / stop / restart, delete (protected). Includes reading them. Never a console nor a command inside a container. Never part of a preset: tick it on its own.'],
+  'proxy.manage': ['Proxy hosts', 'Put the domains given to the key (or new subdomains of them, with Subdomains) in front of an internal port of an application, with a Let\'s Encrypt certificate and the redirection to https; change, delete (protected). Needs the domain management right too. Never part of a preset: tick it on its own.'],
 };
 
 // Presets of the key form (API_KEY_PRESETS, shared/src/apiKeys.ts): label, what it gives and leaves out.
@@ -50,7 +53,7 @@ const PRESET_FALLBACK: Record<ApiKeyPresetId, [string, string]> = {
   site: ['Manage one site', 'Everything on exactly one site: files, publication, settings, logs, databases, cron jobs, routes of the domains serving it alone. No site creation, no subdomain, no domain given.'],
   multisite: ['Manage several sites', 'The same rights on several sites, or on every site. No domain given by default: give some below only if the key must route them.'],
   autonomous: ['Autonomous creation', 'Creates its own sites and works on them alone (no existing site): files, publication, settings, logs, databases, subdomains attached to its sites. The domains given below only serve as parents of its subdomains. No path route (it would also route the domains given, over the sites they serve); cron jobs (they run code) are to tick apart.'],
-  all: ['Everything', 'Every right you may grant, on every site, and every domain if you may give them; the mailboxes are ticked on their own. Never: deleting a site, adding a root domain, users, other keys.'],
+  all: ['Everything', 'Every right you may grant, on every site, and every domain if you may give them; the mailboxes, the Docker applications and the proxy hosts are ticked on their own. Never: deleting a site, adding a root domain, users, other keys.'],
 };
 
 const EXPIRY_OPTIONS = [

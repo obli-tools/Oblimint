@@ -173,6 +173,36 @@ async function parentIds(ctx: ApiKeyContext): Promise<Set<number>> {
   return new Set(doms.map(Number).filter((id) => keyAllowsDomain(ctx, id) || servesOnlyKeySites(ctx, routes.filter((r) => Number(r.domain_id) === id))));
 }
 
+/**
+ * Creates a SUBDOMAIN of a domain already in the account (never a new root domain: its DNS zone could not be
+ * set up from here), joined to the key (created_by_key): routed to the site `siteId` (add_subdomain), or
+ * serving nothing yet (siteId null: a proxy host binds it, keyProxy.ts). Its parent must be one of the key's
+ * (L19). The records go into the parent's hosted zone; a verified parent makes it verified (certificate at once).
+ */
+export async function createKeySubdomain(ctx: ApiKeyContext, req: Request, rawName: string, siteId: number | null): Promise<{ id: number; name: string; verified: boolean }> {
+  requireScope(ctx, 'domains.subdomain');
+  const name = normalizeName(rawName);
+  if (!/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(name)) {
+    throw new AppError(400, 'Invalid domain name', 'invalidDomain');
+  }
+  const allowed = await parentIds(ctx);
+  const doms = await db('domains').where({ account_id: ctx.accountId }).select('id', 'name') as Array<{ id: number; name: string }>;
+  const parents = doms.filter((d) => allowed.has(Number(d.id))).map((d) => d.name).sort();
+  // The closest domain of the account above the name: it must be one of the key's parents (L19).
+  const parent = doms.filter((d) => name.endsWith(`.${d.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
+  if (!parent) {
+    throw new AppError(400, `Only a subdomain of a domain of the account can be attached (${parents.join(', ') || 'no domain for this key'}): add new domains from the panel`, 'notASubdomain', { parents });
+  }
+  if (!allowed.has(Number(parent.id))) {
+    throw new AppError(403, `${parent.name} is not given to this key and serves other sites (or none yet): give it to the key in the panel (Access keys › Domains), or use one of ${parents.join(', ') || 'its domains (none yet)'}`, 'keyDomainNotManageable', { parents });
+  }
+  const domain = await domainsService.create(req, ctx.actor, {
+    accountId: ctx.accountId, name, kind: 'subdomain', ...(siteId !== null ? { siteId } : {}), tlsMode: 'letsencrypt', forceHttps: true, includeWww: false,
+  } as Parameters<typeof domainsService.create>[2]);
+  await db('api_key_domains').insert({ key_id: ctx.id, domain_id: domain.id, account_id: ctx.accountId, created_by_key: true }).onConflict(['key_id', 'domain_id']).merge({ created_by_key: true });
+  return { id: domain.id, name: domain.name, verified: domain.verification?.status === 'verified' };
+}
+
 async function filesAccount(ctx: ApiKeyContext, write: boolean): Promise<AccountRow> {
   requireScope(ctx, write ? 'files.write' : 'files.read');
   const a = await loadAccount(ctx.actor, ctx.accountId, 'files.manage');
@@ -1038,26 +1068,8 @@ export const keyApi = {
   async addSubdomain(ctx: ApiKeyContext, req: Request, siteId: number, rawName: string): Promise<ApiV1Subdomain> {
     requireScope(ctx, 'domains.subdomain');
     const site = await keySite(ctx, siteId);
-    const name = normalizeName(rawName);
-    if (!/^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/.test(name)) {
-      throw new AppError(400, 'Invalid domain name', 'invalidDomain');
-    }
-    const allowed = await parentIds(ctx);
-    const doms = await db('domains').where({ account_id: ctx.accountId }).select('id', 'name') as Array<{ id: number; name: string }>;
-    const parents = doms.filter((d) => allowed.has(Number(d.id))).map((d) => d.name).sort();
-    // The closest domain of the account above the name: it must be one of the key's parents (L19).
-    const parent = doms.filter((d) => name.endsWith(`.${d.name}`)).sort((a, b) => b.name.length - a.name.length)[0];
-    if (!parent) {
-      throw new AppError(400, `Only a subdomain of a domain of the account can be attached (${parents.join(', ') || 'no domain for this key'}): add new domains from the panel`, 'notASubdomain', { parents });
-    }
-    if (!allowed.has(Number(parent.id))) {
-      throw new AppError(403, `${parent.name} is not given to this key and serves other sites (or none yet): give it to the key in the panel (Access keys › Domains), or use one of ${parents.join(', ') || 'its domains (none yet)'}`, 'keyDomainNotManageable', { parents });
-    }
-    const domain = await domainsService.create(req, ctx.actor, {
-      accountId: ctx.accountId, name, kind: 'subdomain', siteId: site.id, tlsMode: 'letsencrypt', forceHttps: true, includeWww: false,
-    } as Parameters<typeof domainsService.create>[2]);
-    await db('api_key_domains').insert({ key_id: ctx.id, domain_id: domain.id, account_id: ctx.accountId, created_by_key: true }).onConflict(['key_id', 'domain_id']).merge({ created_by_key: true });
-    return { id: domain.id, name: domain.name, siteId: site.id, verified: domain.verification?.status === 'verified', url: `https://${domain.name}/` };
+    const domain = await createKeySubdomain(ctx, req, rawName, site.id);
+    return { id: domain.id, name: domain.name, siteId: site.id, verified: domain.verified, url: `https://${domain.name}/` };
   },
 
   /**

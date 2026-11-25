@@ -12,7 +12,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALL = [...API_KEY_SCOPES];
-const EVERYTHING = ALL.filter((s) => s !== 'releases.propose' && s !== 'mail.mailboxes');
+const EVERYTHING = ALL.filter((s) => s !== 'releases.propose' && !API_KEY_OPT_IN_SCOPES.includes(s));
 const scopesOf = (id: Parameters<typeof apiKeyPreset>[0]) => apiKeyPresetScopes(apiKeyPreset(id), ALL);
 const lacks = (id: Parameters<typeof apiKeyPreset>[0], ...out: ApiKeyScope[]) => {
   const s = scopesOf(id);
@@ -104,12 +104,23 @@ test('supervised agent: proposes, previews its proposal, reads; never publishes 
 });
 
 test('the mailboxes are opt-in: no preset gives them, « Everything » included', () => {
-  assert.deepEqual([...API_KEY_OPT_IN_SCOPES], ['mail.mailboxes']);
+  assert.ok(API_KEY_OPT_IN_SCOPES.includes('mail.mailboxes'));
   for (const p of API_KEY_PRESETS) lacks(p.id, 'mail.mailboxes');
   // A preset whose list would name it still leaves it out.
   assert.deepEqual(apiKeyPresetScopes({ ...apiKeyPreset('readonly'), scopes: ['files.read', 'mail.mailboxes'] }, ALL), ['files.read']);
   // Everything + the mailboxes is a custom key (never matched as « Everything »).
   assert.equal(matchApiKeyPreset(state({ scopes: [...EVERYTHING, 'mail.mailboxes'], siteScope: 'all', domainScope: 'all' }), ALL, true), null);
+});
+
+test('the Docker applications and the proxy are opt-in: no preset gives them, « Everything » included', () => {
+  assert.deepEqual([...API_KEY_OPT_IN_SCOPES], ['mail.mailboxes', 'apps.read', 'apps.manage', 'proxy.manage']);
+  for (const p of API_KEY_PRESETS) lacks(p.id, 'apps.read', 'apps.manage', 'proxy.manage');
+  assert.deepEqual(apiKeyPresetScopes({ ...apiKeyPreset('site'), scopes: ['files.read', 'apps.manage', 'proxy.manage'] }, ALL), ['files.read']);
+  for (const extra of ['apps.read', 'apps.manage', 'proxy.manage'] as const) {
+    assert.equal(matchApiKeyPreset(state({ scopes: [...EVERYTHING, extra], siteScope: 'all', domainScope: 'all' }), ALL, true), null, `everything + ${extra} is custom`);
+  }
+  // A key made with « Everything » before these scopes existed still matches it.
+  assert.equal(matchApiKeyPreset(state({ scopes: EVERYTHING, siteScope: 'all', domainScope: 'all' }), ALL, true), 'all');
 });
 
 test('no preset holds both releases.publish and releases.propose', () => {

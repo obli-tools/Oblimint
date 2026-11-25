@@ -130,3 +130,47 @@ test('mailbox tools: a read-only listing, an ungated creation, a gated password,
   r = await call('reset_mailbox_password', { mailbox_id: 1, address: 'test@example.com' });
   assert.match(r.content[0].text, /Invalid arguments: mailbox_id/);
 });
+
+test('Docker application and proxy tools: read-only readers, gated deploys, destructive gated deletions, no console', async () => {
+  const byName = new Map(toolList().map((t) => [t.name, t]));
+  const gated = new Map(gatedTools().map((t) => [t.name, t.actions]));
+  for (const n of ['list_apps', 'get_app', 'app_logs', 'list_app_catalog', 'list_proxy_hosts']) {
+    assert.equal(byName.get(n)?.annotations.readOnlyHint, true, n);
+    assert.ok(!gated.has(n), n);
+  }
+  for (const n of ['deploy_app', 'update_app', 'redeploy_app', 'app_action']) assert.deepEqual(gated.get(n), ['app.port_publish'], n);
+  assert.deepEqual(gated.get('delete_app'), ['app.delete']);
+  assert.deepEqual(gated.get('delete_proxy_host'), ['proxy.host_delete']);
+  for (const n of ['delete_app', 'delete_proxy_host']) assert.equal(byName.get(n)?.annotations.destructiveHint, true, n);
+  assert.ok(!gated.has('create_proxy_host') && !gated.has('update_proxy_host'));
+  for (const a of ['app.port_publish', 'app.delete', 'proxy.host_delete']) assert.ok(restrictableAction(a)?.surfaces.includes('keys'), a);
+  // Never a console nor an exec through a key.
+  assert.ok(![...byName.keys()].some((n) => /console|exec|shell/.test(n)), 'no console tool');
+  assert.match(byName.get('app_action')!.description, /No console/);
+  assert.match(MCP_INSTRUCTIONS, /apps\.manage/);
+  assert.match(MCP_INSTRUCTIONS, /proxy\.manage/);
+  // The deploy tells the agent what to do when its deploy waits for a human.
+  assert.match(byName.get('deploy_app')!.description, /app_action with action "deploy"/);
+  const call = async (name: string, args: Record<string, unknown>) => (await handleRpc({} as never, {} as never, {
+    jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args },
+  }) as { result: { isError: boolean; content: Array<{ text: string }> } }).result;
+  let r = await call('get_app', {});
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /Invalid arguments: app_id: app_id or app_name/);
+  r = await call('get_app', { app_id: 1, app_name: 'web' });
+  assert.match(r.content[0].text, /Invalid arguments: app_id/);
+  r = await call('deploy_app', { name: 'web', source: 'compose' });
+  assert.match(r.content[0].text, /Invalid arguments: compose_yaml: compose_yaml is required/);
+  r = await call('deploy_app', { name: 'web', source: 'git' });
+  assert.match(r.content[0].text, /Invalid arguments: git/);
+  r = await call('delete_app', { app_id: 3 });
+  assert.match(r.content[0].text, /Invalid arguments: confirm_name/);
+  r = await call('app_action', { app_id: 3, action: 'exec' });
+  assert.match(r.content[0].text, /Invalid arguments: action/);
+  r = await call('create_proxy_host', { domains: ['app.example.com'], app_name: 'web' });
+  assert.match(r.content[0].text, /Invalid arguments: port/);
+  r = await call('update_proxy_host', { proxy_host_id: 2, app_name: 'web' });
+  assert.match(r.content[0].text, /Invalid arguments: port: a new target needs its port/);
+  r = await call('app_logs', { app_id: 1, tail: 5000 });
+  assert.match(r.content[0].text, /Invalid arguments: tail/);
+});

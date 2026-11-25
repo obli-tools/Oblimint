@@ -533,12 +533,7 @@ export const proxyHostsService = {
     try { stackName = (await proxyDeps().stackSummary(body.stackId))?.name ?? stackName; } catch { /* label only */ }
     const letsencrypt = body.letsencrypt !== false;
     const domainIds = uniq(body.domainIds.map(Number));
-    // TLS turned on through the domain module (its checks, its domain.update audit, its certificate request):
-    // the actor must manage the domains too — checked BEFORE the host exists.
-    const toSwitch = letsencrypt
-      ? (await db('domains').whereIn('id', domainIds).where({ account_id: account.id }).whereNot({ tls_mode: 'letsencrypt' }).pluck('id') as number[]).map(Number)
-      : [];
-    if (toSwitch.length) await loadAccount(actor, account.id, 'domains.manage');
+    const toSwitch = letsencrypt ? await acmeDomainsToSwitch(actor, account.id, domainIds) : [];
     const host = await this.create(req, actor, {
       accountId: account.id,
       name: `${stackName}-${body.service}`.slice(0, 128),
@@ -549,11 +544,30 @@ export const proxyHostsService = {
       autoMonitor: body.autoMonitor !== false,
     });
     if (letsencrypt) {
-      const { domainsService } = await import('../hosting/domains.service');
-      for (const d of toSwitch) await domainsService.update(req, actor, d, { tlsMode: 'letsencrypt' });
-      for (const d of domainIds) proxyDeps().ensureCertificate(d);
+      await switchDomainsToAcme(req, actor, toSwitch, domainIds);
       if (toSwitch.length) return fetchHost(host.id, actor);
     }
     return host;
   },
 };
+
+/**
+ * Domains among `domainIds` (of the account) whose TLS is not Let's Encrypt yet. TLS is turned on through the
+ * domain module (its checks, its domain.update audit, its certificate request): the actor must manage the
+ * domains too — checked here, BEFORE the host exists (403 otherwise). Quick setup, and the access keys
+ * (apiKeys/keyProxy.ts) asking for SSL.
+ */
+export async function acmeDomainsToSwitch(actor: HostingActor, accountId: number, domainIds: number[]): Promise<number[]> {
+  const ids = uniq(domainIds.map(Number));
+  if (!ids.length) return [];
+  const toSwitch = (await db('domains').whereIn('id', ids).where({ account_id: accountId }).whereNot({ tls_mode: 'letsencrypt' }).pluck('id') as number[]).map(Number);
+  if (toSwitch.length) await loadAccount(actor, accountId, 'domains.manage');
+  return toSwitch;
+}
+
+/** Turns Let's Encrypt on for `toSwitch` (acmeDomainsToSwitch) and asks the certificates of every domain of the host. */
+export async function switchDomainsToAcme(req: Request, actor: HostingActor, toSwitch: number[], domainIds: number[]): Promise<void> {
+  const { domainsService } = await import('../hosting/domains.service');
+  for (const d of toSwitch) await domainsService.update(req, actor, d, { tlsMode: 'letsencrypt' });
+  for (const d of uniq(domainIds.map(Number))) proxyDeps().ensureCertificate(d);
+}

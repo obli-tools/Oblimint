@@ -78,8 +78,8 @@ declare module 'express-serve-static-core' {
   }
 }
 
-/** Right the creator must hold for each scope. */
-export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed> = {
+/** Right(s) the creator must hold for each scope (a list: every one of them). */
+export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed | readonly HostingNeed[]> = {
   'files.read': 'files.manage',
   'files.write': 'files.manage',
   'releases.publish': 'releases.publish',
@@ -101,7 +101,19 @@ export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed> = {
   'dns.write': 'dns.manage',
   // Mailboxes of the account (keyMail.ts): who may not manage the mail in the panel never delegates it.
   'mail.mailboxes': 'mail.manage',
+  // Docker applications (keyStacks.ts): reading them is a member's right in the panel (stacks, logs); managing them
+  // needs apps.manage. Never apps.console: no key opens a console or an exec in a container.
+  'apps.read': 'read',
+  'apps.manage': 'apps.manage',
+  // Proxy hosts (keyProxy.ts): binding a domain takes it from the sites, which the panel only lets domains.manage do (L1).
+  'proxy.manage': ['proxy.manage', 'domains.manage'],
 };
+
+/** Does `actor` hold every right `scope` needs on the account? */
+export function holdsScope(actor: HostingActor, scope: ApiKeyScope, target: { tenantId: number; accountId: number }): boolean {
+  const need = SCOPE_NEED[scope];
+  return typeof need === 'string' ? actorCan(actor, need, target) : need.every((n) => actorCan(actor, n, target));
+}
 
 /** Client capability each scope gives the key's actor. */
 const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
@@ -125,6 +137,12 @@ const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
   'dns.write': 'dns.manage',
   // The mail service's own checks (loadMailDomain / loadMailbox with mail.manage) then apply to the key unchanged.
   'mail.mailboxes': 'mail.manage',
+  // A member reads the applications (loadStack 'read'): no capability of its own.
+  'apps.read': null,
+  // The apps service's own checks (loadStack / loadAccount with apps.manage) then apply to the key unchanged.
+  'apps.manage': 'apps.manage',
+  // proxy.manage only: keyProxy lends domains.manage for the domains the key may bind (keyAllowsDomain), never more.
+  'proxy.manage': 'proxy.manage',
 };
 
 /** Feature B (B9): stops the previews started through a key (never throws). */
@@ -186,7 +204,7 @@ const ipsOf = (raw: unknown): string[] => jsonArray(raw).filter((s): s is string
 
 /** Scopes the actor holds on the account. */
 function heldScopes(actor: HostingActor, target: { tenantId: number; accountId: number }, scopes: ApiKeyScope[]): ApiKeyScope[] {
-  return scopes.filter((s) => actorCan(actor, SCOPE_NEED[s], target));
+  return scopes.filter((s) => holdsScope(actor, s, target));
 }
 
 async function siteRows(keyIds: number[]): Promise<Array<{ key_id: number; site_id: number; created_by_key: boolean }>> {
@@ -278,7 +296,7 @@ async function normalize(actor: HostingActor, account: { id: number; tenant_id: 
   if (body.scopes !== undefined || creating) {
     const scopes = [...new Set(body.scopes ?? [])];
     if (scopes.some((s) => !(API_KEY_SCOPES as readonly string[]).includes(s))) throw new AppError(400, 'Unknown scope', 'validation');
-    const missing = scopes.filter((s) => !actorCan(actor, SCOPE_NEED[s], { tenantId: account.tenant_id, accountId: account.id }));
+    const missing = scopes.filter((s) => !holdsScope(actor, s, { tenantId: account.tenant_id, accountId: account.id }));
     if (missing.length) throw new AppError(403, `You cannot grant rights you do not hold (${missing.join(', ')})`, 'capabilityNotHeld', { missing });
     if (scopes.includes('releases.propose') && scopes.includes('releases.publish')) {
       throw new AppError(400, 'A key either proposes or publishes: releases.propose excludes releases.publish', 'scopesConflict');
@@ -351,7 +369,7 @@ async function managedKey(actor: HostingActor, account: { id: number; tenant_id:
   if (!row) throw new AppError(404, `${what.label} not found`, 'notFound');
   if (row.created_by !== null && row.created_by === actor.userId) return { row, creator: true };
   const target = { tenantId: account.tenant_id, accountId: account.id };
-  const missing: string[] = scopesOf(row.scopes).filter((s) => !actorCan(actor, SCOPE_NEED[s], target));
+  const missing: string[] = scopesOf(row.scopes).filter((s) => !holdsScope(actor, s, target));
   const given = row.domain_scope === 'all' || !!(await db('api_key_domains').where({ key_id: row.id, created_by_key: false }).first('domain_id'));
   if (given && !actorCan(actor, 'domains.manage', target)) missing.push('domains.manage');
   if (missing.length) {

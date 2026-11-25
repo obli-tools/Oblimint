@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { APP_TEMPLATE_CATEGORIES, type AppStackStatus, type AppTemplateCategory } from '@oblimint/shared';
 import { heavyOpLimiter } from '../middleware/rateLimiter';
 import { AppError } from '../middleware/errorHandler';
-import { appsService } from '../services/apps/apps.service';
+import { appDeleteParams, appsService } from '../services/apps/apps.service';
 import { catalogService } from '../services/apps/catalog.service';
 import { appPolicyService } from '../services/apps/policy.service';
 import { registryCredentialService } from '../services/apps/registry.service';
@@ -20,7 +20,7 @@ import { accountTarget } from '../services/restrictions/targets';
 //   POST   /stacks                     AppStackCreate          → AppStackDetail (201)            (apps.manage on accountId)
 //   GET    /stacks/:id                                         → AppStackDetail                  (read)
 //   PUT    /stacks/:id                 AppStackUpdate          → AppStackDetail                  (apps.manage)
-//   DELETE /stacks/:id                 AppStackDeleteRequest   → { deleted: true }               (apps.manage; confirm = name)
+//   DELETE /stacks/:id                 AppStackDeleteRequest   → { deleted: true }               (apps.manage; confirm = name; gate app.delete)
 //   GET    /stacks/:id/env                                     → AppEnvResponse                  (apps.manage, audited)
 //   POST   /stacks/:id/source/zip      application/zip body    → AppStackDetail                  (apps.manage; source zip)
 //   POST   /stacks/:id/source/pull     { deploy?: boolean }    → { commit, changed, deployment } (apps.manage; source git)
@@ -262,7 +262,12 @@ router.put('/stacks/:id', async (req, res, next) => {
 router.delete('/stacks/:id', async (req, res, next) => {
   try {
     const actor = await resolveActor(req);
-    res.json({ success: true, data: await appsService.remove(req, actor, idParam(req), parseBody(deleteSchema, req.body)) });
+    const id = idParam(req);
+    const body = parseBody(deleteSchema, req.body);
+    // Migration 049: app.delete (open in the panel by default; the access keys gate it too).
+    const stack = await appsService.forDelete(actor, id, body, { force: req.query.force === '1' || req.query.force === 'true' });
+    await gateAction(req, { action: 'app.delete', target: accountTarget({ tenant_id: stack.tenant_id, id: stack.account_id }), params: appDeleteParams(stack, body) });
+    res.json({ success: true, data: await appsService.remove(req, actor, id, body) });
   } catch (err) { next(err); }
 });
 

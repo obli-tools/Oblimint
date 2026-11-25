@@ -121,6 +121,7 @@
       "dns_record_write": "Modifier des enregistrements DNS",
       "dns_record_delete": "Supprimer des enregistrements DNS",
       "mail_dns_fix": "Corriger les DNS du mail (MX, SPF…)",
+      "app_delete": "Supprimer une application Docker",
       "proxy_host_delete": "Supprimer un hôte du proxy",
       "firewall_mode_change": "Changer le mode du pare-feu (liste blanche)",
       "firewall_rules_write": "Modifier les règles du pare-feu",
