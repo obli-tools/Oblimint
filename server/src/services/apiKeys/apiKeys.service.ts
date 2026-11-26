@@ -102,9 +102,11 @@ export const SCOPE_NEED: Record<ApiKeyScope, HostingNeed | readonly HostingNeed[
   // Mailboxes of the account (keyMail.ts): who may not manage the mail in the panel never delegates it.
   'mail.mailboxes': 'mail.manage',
   // Docker applications (keyStacks.ts): reading them is a member's right in the panel (stacks, logs); managing them
-  // needs apps.manage. Never apps.console: no key opens a console or an exec in a container.
+  // needs apps.manage.
   'apps.read': 'read',
   'apps.manage': 'apps.manage',
+  // A command in a container (keyStacks.exec): who may not open the panel's console never delegates it.
+  'apps.exec': 'apps.console',
   // Proxy hosts (keyProxy.ts): binding a domain takes it from the sites, which the panel only lets domains.manage do (L1).
   'proxy.manage': ['proxy.manage', 'domains.manage'],
 };
@@ -141,6 +143,9 @@ const SCOPE_CAP: Record<ApiKeyScope, ClientCapability | null> = {
   'apps.read': null,
   // The apps service's own checks (loadStack / loadAccount with apps.manage) then apply to the key unchanged.
   'apps.manage': 'apps.manage',
+  // apps.console only (loadStack 'apps.console' of keyStacks.exec): never apps.manage, never the interactive console
+  // (a socket of the panel, never reached by a key); the console's own conditions are checked on every call.
+  'apps.exec': 'apps.console',
   // proxy.manage only: keyProxy lends domains.manage for the domains the key may bind (keyAllowsDomain), never more.
   'proxy.manage': 'proxy.manage',
 };

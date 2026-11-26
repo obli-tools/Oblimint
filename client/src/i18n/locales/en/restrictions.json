@@ -122,6 +122,7 @@
       "dns_record_delete": "Delete DNS records",
       "mail_dns_fix": "Fix the mail DNS records (MX, SPF…)",
       "app_delete": "Delete a Docker application",
+      "app_exec": "Run a command in a Docker application (access keys)",
       "proxy_host_delete": "Delete a proxy host",
       "firewall_mode_change": "Change the firewall mode (allowlist)",
       "firewall_rules_write": "Change firewall rules",

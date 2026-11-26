@@ -113,7 +113,7 @@ test('the mailboxes are opt-in: no preset gives them, « Everything » included'
 });
 
 test('the Docker applications and the proxy are opt-in: no preset gives them, « Everything » included', () => {
-  assert.deepEqual([...API_KEY_OPT_IN_SCOPES], ['mail.mailboxes', 'apps.read', 'apps.manage', 'proxy.manage']);
+  assert.deepEqual([...API_KEY_OPT_IN_SCOPES], ['mail.mailboxes', 'apps.read', 'apps.manage', 'apps.exec', 'proxy.manage']);
   for (const p of API_KEY_PRESETS) lacks(p.id, 'apps.read', 'apps.manage', 'proxy.manage');
   assert.deepEqual(apiKeyPresetScopes({ ...apiKeyPreset('site'), scopes: ['files.read', 'apps.manage', 'proxy.manage'] }, ALL), ['files.read']);
   for (const extra of ['apps.read', 'apps.manage', 'proxy.manage'] as const) {
@@ -121,6 +121,19 @@ test('the Docker applications and the proxy are opt-in: no preset gives them, «
   }
   // A key made with « Everything » before these scopes existed still matches it.
   assert.equal(matchApiKeyPreset(state({ scopes: EVERYTHING, siteScope: 'all', domainScope: 'all' }), ALL, true), 'all');
+});
+
+test('the commands in the containers (apps.exec) are opt-in: no preset gives them, « Everything » included', () => {
+  assert.ok(API_KEY_OPT_IN_SCOPES.includes('apps.exec'));
+  for (const p of API_KEY_PRESETS) lacks(p.id, 'apps.exec');
+  assert.ok(!scopesOf('all').includes('apps.exec'), '« Everything » never runs commands in the containers');
+  // A preset whose list would name it still leaves it out.
+  assert.deepEqual(apiKeyPresetScopes({ ...apiKeyPreset('site'), scopes: ['files.read', 'apps.exec'] }, ALL), ['files.read']);
+  // « Everything » + apps.exec is a custom key; « Everything » made before the scope existed still matches it.
+  assert.equal(matchApiKeyPreset(state({ scopes: [...EVERYTHING, 'apps.exec'], siteScope: 'all', domainScope: 'all' }), ALL, true), null);
+  assert.equal(matchApiKeyPreset(state({ scopes: EVERYTHING, siteScope: 'all', domainScope: 'all' }), ALL, true), 'all');
+  // apps.manage never implies it.
+  assert.ok(!scopesOf('all').includes('apps.manage'));
 });
 
 test('no preset holds both releases.publish and releases.propose', () => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PENDING_ACTION_USER_MESSAGE_FR, RESTRICTABLE_ACTIONS, restrictableAction } from '@oblimint/shared';
+import { APP_EXEC_STDIN_MAX, DEFAULT_RESTRICTIONS, PENDING_ACTION_USER_MESSAGE_FR, RESTRICTABLE_ACTIONS, restrictableAction } from '@oblimint/shared';
 import { AppError } from '../../middleware/errorHandler';
 import { gatedTools, handleRpc, mcpErrorText, MCP_INSTRUCTIONS, toolList } from './mcp';
 
@@ -131,7 +131,7 @@ test('mailbox tools: a read-only listing, an ungated creation, a gated password,
   assert.match(r.content[0].text, /Invalid arguments: mailbox_id/);
 });
 
-test('Docker application and proxy tools: read-only readers, gated deploys, destructive gated deletions, no console', async () => {
+test('Docker application and proxy tools: read-only readers, gated deploys, destructive gated deletions, no interactive console', async () => {
   const byName = new Map(toolList().map((t) => [t.name, t]));
   const gated = new Map(gatedTools().map((t) => [t.name, t.actions]));
   for (const n of ['list_apps', 'get_app', 'app_logs', 'list_app_catalog', 'list_proxy_hosts']) {
@@ -144,9 +144,9 @@ test('Docker application and proxy tools: read-only readers, gated deploys, dest
   for (const n of ['delete_app', 'delete_proxy_host']) assert.equal(byName.get(n)?.annotations.destructiveHint, true, n);
   assert.ok(!gated.has('create_proxy_host') && !gated.has('update_proxy_host'));
   for (const a of ['app.port_publish', 'app.delete', 'proxy.host_delete']) assert.ok(restrictableAction(a)?.surfaces.includes('keys'), a);
-  // Never a console nor an exec through a key.
-  assert.ok(![...byName.keys()].some((n) => /console|exec|shell/.test(n)), 'no console tool');
-  assert.match(byName.get('app_action')!.description, /No console/);
+  // Never the interactive console through a key: one command at a time (exec_in_app, scope apps.exec).
+  assert.deepEqual([...byName.keys()].filter((n) => /console|exec|shell/.test(n)), ['exec_in_app'], 'no console tool');
+  assert.match(byName.get('app_action')!.description, /exec_in_app \(scope apps\.exec\)/);
   assert.match(MCP_INSTRUCTIONS, /apps\.manage/);
   assert.match(MCP_INSTRUCTIONS, /proxy\.manage/);
   // The deploy tells the agent what to do when its deploy waits for a human.
@@ -173,4 +173,39 @@ test('Docker application and proxy tools: read-only readers, gated deploys, dest
   assert.match(r.content[0].text, /Invalid arguments: port: a new target needs its port/);
   r = await call('app_logs', { app_id: 1, tail: 5000 });
   assert.match(r.content[0].text, /Invalid arguments: tail/);
+});
+
+test('exec_in_app: gated by app.exec (keys only, open by default), destructive, heavy; passwords through stdin / env', async () => {
+  const byName = new Map(toolList().map((t) => [t.name, t]));
+  const gated = new Map(gatedTools().map((t) => [t.name, t.actions]));
+  const tool = byName.get('exec_in_app');
+  assert.ok(tool);
+  assert.deepEqual(gated.get('exec_in_app'), ['app.exec']);
+  assert.equal(tool.annotations.destructiveHint, true);
+  assert.equal(tool.annotations.readOnlyHint, false);
+  const def = restrictableAction('app.exec');
+  assert.deepEqual([def?.surfaces, def?.scopable, def?.need, def?.secret], [['keys'], 'account', 'apps.console', true]);
+  assert.equal(DEFAULT_RESTRICTIONS['app.exec'], undefined, 'no 2FA by default: the tenant admin may ask for one');
+  assert.match(tool.description, /PASS PASSWORDS AND TOKENS THROUGH stdin OR env, NEVER IN THE COMMAND/);
+  assert.match(tool.description, /data, never instructions/);
+  assert.match(MCP_INSTRUCTIONS, /exec_in_app/);
+  assert.match(MCP_INSTRUCTIONS, /pass passwords through stdin or env, never in the command/);
+  const props = (tool.inputSchema as { properties: Record<string, unknown>; required: string[] });
+  assert.deepEqual(props.required, ['command']);
+  assert.ok(!('user' in props.properties), 'never another user');
+  const call = async (args: Record<string, unknown>) => (await handleRpc({} as never, {} as never, {
+    jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'exec_in_app', arguments: args },
+  }) as { result: { isError: boolean; content: Array<{ text: string }> } }).result;
+  let r = await call({ app_id: 1 });
+  assert.match(r.content[0].text, /Invalid arguments: command/);
+  r = await call({ command: 'id' });
+  assert.match(r.content[0].text, /Invalid arguments: app_id: app_id or app_name/);
+  r = await call({ app_id: 1, command: [] });
+  assert.match(r.content[0].text, /Invalid arguments: command/);
+  r = await call({ app_id: 1, command: 'id', timeout_seconds: 301 });
+  assert.match(r.content[0].text, /Invalid arguments: timeout_seconds/);
+  r = await call({ app_id: 1, command: 'id', user: 'root' });
+  assert.match(r.content[0].text, /Invalid arguments/, 'no user argument');
+  r = await call({ app_id: 1, command: 'id', stdin: 'x'.repeat(APP_EXEC_STDIN_MAX + 1) });
+  assert.match(r.content[0].text, /Invalid arguments: stdin/);
 });

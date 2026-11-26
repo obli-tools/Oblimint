@@ -71,10 +71,13 @@ function baseApp(): express.Express {
   app.use(cors({ origin: config.clientOrigin, credentials: true }));
   // CSRF: state-changing requests only from the panel's origin, JSON bodies only.
   app.use(originGuard);
-  // MCP (/mcp): a tool call may carry a file of up to 8 MiB (base64: ≈ 11 MiB).
+  // MCP (/mcp): a tool call may carry a file of up to 8 MiB (base64: ≈ 11 MiB). A command of a key
+  // (POST /api/v1/apps/stacks/:id/exec) carries a stdin of up to 1 MiB, longer once escaped in JSON.
   const json = express.json({ limit: '1mb' });
   const mcpJson = express.json({ limit: '12mb' });
-  app.use((req, res, next) => (req.path === '/mcp' ? mcpJson : json)(req, res, next));
+  const execJson = express.json({ limit: '8mb' });
+  const execPath = /^\/api\/v1\/apps\/stacks\/\d+\/exec\/?$/;
+  app.use((req, res, next) => (req.path === '/mcp' ? mcpJson : execPath.test(req.path) ? execJson : json)(req, res, next));
   return app;
 }
 

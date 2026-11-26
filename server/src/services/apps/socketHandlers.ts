@@ -11,13 +11,11 @@ import { appContainer } from '../hosting/naming';
 import type { HostingActor } from '../hosting/access';
 import { LogDemuxer, isoOfDockerTs } from '../logs/dockerLogs';
 import { actorFromSocket, type SocketIdentity } from '../logs/socketHandlers';
-import { platformSettings } from '../platformSettings';
 import { loadStack } from './access';
-import { accountPlan } from './context';
+import { consoleRefusal } from './consoleAccess';
 import { appsDeps } from './deps';
 import { runningDeploymentLog } from './deployments';
 import { clientLine, deployRoom } from './events';
-import { appPolicyService } from './policy.service';
 import { effectiveOf, type StackRow } from './rows';
 import { json } from '../hosting/rows';
 
@@ -64,11 +62,9 @@ const defaultDeps: AppSocketDeps = {
   buildActor: actorFromSocket,
   loadStack: async (actor, id, need) => await loadStack(actor, id, need) as StackRow,
   docker: (stack) => appsDeps().docker(stack.node_id),
+  // The same conditions as the commands of an access key (consoleAccess.ts).
   async consoleAllowed(stack) {
-    const settings = await platformSettings.section('apps');
-    const policy = await appPolicyService.effective(stack.tenant_id);
-    const plan = await accountPlan(stack.account_id);
-    return settings.consoleEnabled && policy.allowConsole && plan.limits.appsConsole === true && plan.status !== 'suspended' && plan.status !== 'deleting';
+    return (await consoleRefusal(stack)) === null;
   },
   audit(e) {
     void auditService.log({ tenantId: e.tenantId, userId: e.userId, action: e.action, resourceType: 'app_stack', resourcePath: e.resourcePath, details: e.details, ipAddress: e.ip ?? undefined });

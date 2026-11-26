@@ -140,7 +140,11 @@
         },
         "manage": {
           "label": "Applications Docker",
-          "hint": "Déployer des applications Docker (compose, dépôt git ou catalogue) dans les limites du plan, modifier leur compose et leurs variables, les redéployer, démarrer / arrêter / redémarrer, supprimer (protégé). Comprend leur lecture. Jamais de console ni de commande dans un conteneur. Jamais inclus dans un préréglage : à cocher à part."
+          "hint": "Déployer des applications Docker (compose, dépôt git ou catalogue) dans les limites du plan, modifier leur compose et leurs variables, les redéployer, démarrer / arrêter / redémarrer, supprimer (protégé). Comprend leur lecture. Jamais la console ; une commande dans un conteneur, c’est le droit « Commandes dans les applications Docker ». Jamais inclus dans un préréglage : à cocher à part."
+        },
+        "exec": {
+          "label": "Commandes dans les applications Docker",
+          "hint": "Lancer une commande (non interactive, sans TTY) dans un conteneur en cours d’exécution d’une application du compte, avec l’utilisateur de l’image, par exemple pour créer le premier administrateur d’une application : sortie rendue avec les variables secrètes masquées, 5 minutes au plus, auditée (jamais son entrée standard ni ses variables). Demande ton droit d’ouvrir la console des applications, et la console autorisée par la plateforme, le tenant et le plan. Jamais inclus dans un préréglage, « Tout » compris : à cocher à part."
         }
       },
       "proxy": {
@@ -220,7 +224,7 @@
       },
       "all": {
         "label": "Tout",
-        "hint": "Tous les droits que tu peux accorder, sur tous les sites, et tous les domaines si tu peux en donner ; les boîtes mail, les applications Docker et les hôtes proxy se cochent à part. Jamais : supprimer un site, ajouter un domaine racine, les utilisateurs, les autres clés."
+        "hint": "Tous les droits que tu peux accorder, sur tous les sites, et tous les domaines si tu peux en donner ; les boîtes mail, les applications Docker, les commandes dans leurs conteneurs et les hôtes proxy se cochent à part. Jamais : supprimer un site, ajouter un domaine racine, les utilisateurs, les autres clés."
       },
       "custom": {
         "label": "Personnalisé",
@@ -234,7 +238,8 @@
     "giveAccess": "Donner accès à un agent / une CI",
     "siteEmpty": "Aucune clé d'accès ne couvre ce site.",
     "siteIntro": "Les clés du compte qui atteignent ce site (tous les sites, ou celui-ci parmi d'autres). Elles se gèrent avec les autres clés du compte.",
-    "siteTitle": "Clés d'accès couvrant ce site"
+    "siteTitle": "Clés d'accès couvrant ce site",
+    "execWarning": "Cette clé exécutera des commandes dans tes conteneurs : ce qu’elle y lance peut lire et modifier tout ce que l’application peut (ses données, sa base, ses secrets). Ne la donne qu’à un agent ou un script de confiance, et protège l’action « Exécuter une commande dans une application Docker » dans les restrictions si un humain doit approuver chaque commande."
   },
   "oauth": {
     "title": "Connecter une application",

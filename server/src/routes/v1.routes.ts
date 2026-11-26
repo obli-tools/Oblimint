@@ -12,6 +12,7 @@ import {
   CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_PATH_MAX, SITE_ENV_MAX_VALUE, SITE_ENV_MAX_VARS,
   DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S, FILE_EDIT_MAX_EDITS, FILE_READ_MAX_RANGE, FILE_SEARCH_MAX_PER_FILE, FILE_SEARCH_MAX_RESULTS,
   NOTIFICATION_FAMILIES, APP_TEMPLATE_CATEGORIES,
+  APP_EXEC_ARGV_MAX, APP_EXEC_COMMAND_MAX, APP_EXEC_ENV_MAX, APP_EXEC_ENV_VALUE_MAX, APP_EXEC_STDIN_MAX, APP_EXEC_TIMEOUT_MAX,
 } from '@oblimint/shared';
 import type { DnsRecordInput, NotificationFamily } from '@oblimint/shared';
 import { keyApps } from '../services/apiKeys/keyApps';
@@ -151,6 +152,8 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //   POST   /apps/stacks/:id/redeploy {mode?, gitPull?, build?} → ApiV1AppChange (202; gate app.port_publish)    apps.manage
 //   POST   /apps/stacks/:id/actions {action: start|stop|restart|deploy, service?} → ApiV1AppChange (202)          apps.manage
 //   GET    /apps/stacks/:id/logs?service=&deploymentId=&tail=&since= → ApiV1AppLogs (secrets of the .env masked)   apps.read | apps.manage
+//   POST   /apps/stacks/:id/exec {command: argv | sh -c string, service?, stdin?, timeoutSeconds?, workdir?, env?}
+//                                                        → ApiV1AppExecResult (a running container; gate app.exec)  apps.exec
 //   DELETE /apps/stacks/:id {confirmName, removeVolumes?} → { deleted: true, id, name }                           apps.manage (gate app.delete)
 //   GET    /proxy-hosts · /proxy-hosts/:id               → ApiV1ProxyHost[] · ApiV1ProxyHost                       proxy.manage
 //   POST   /proxy-hosts {domains, target: {appId|appName, service, port} | {host, port, scheme}, ssl?, …} → ApiV1ProxyHost (201) proxy.manage
@@ -565,6 +568,13 @@ const appLogsQuery = z.object({
   service: z.string().trim().min(1).max(64).optional(), deploymentId: z.coerce.number().int().positive().optional(),
   tail: z.coerce.number().int().min(1).max(KEY_APP_LOG_TAIL_MAX).optional(), since: z.string().max(64).optional(),
 }).strict();
+const appExecBody = z.object({
+  service: z.string().trim().min(1).max(64).optional(),
+  command: z.union([z.string().min(1).max(APP_EXEC_COMMAND_MAX), z.array(z.string().max(APP_EXEC_COMMAND_MAX)).min(1).max(APP_EXEC_ARGV_MAX)]),
+  stdin: z.string().max(APP_EXEC_STDIN_MAX).optional(), timeoutSeconds: z.number().int().min(1).max(APP_EXEC_TIMEOUT_MAX).optional(),
+  workdir: z.string().min(1).max(1024).optional(),
+  env: z.record(z.string().max(APP_EXEC_ENV_VALUE_MAX)).refine((m) => Object.keys(m).length <= APP_EXEC_ENV_MAX, `at most ${APP_EXEC_ENV_MAX} variables`).optional(),
+}).strict();
 const appDeleteBody = z.object({ confirmName: z.string().min(1).max(64), removeVolumes: z.boolean().optional() }).strict();
 const appRef = (req: Request) => ({ id: Number(req.params.id) });
 router.get('/apps/stacks', h(async (req, res) => {
@@ -591,6 +601,12 @@ router.post('/apps/stacks/:id/actions', heavyOpLimiter, h(async (req, res) => {
 router.get('/apps/stacks/:id/logs', h(async (req, res) => {
   const q = parseBody(appLogsQuery, req.query);
   ok(res, await keyStacks.logs(ctxOf(req), appRef(req), { service: q.service ?? null, deploymentId: q.deploymentId ?? null, tail: q.tail, since: q.since ?? null }));
+}));
+router.post('/apps/stacks/:id/exec', heavyOpLimiter, h(async (req, res) => {
+  const b = parseBody(appExecBody, req.body);
+  // The output may carry what the command printed (a generated password…): never cached.
+  res.setHeader('Cache-Control', 'no-store');
+  ok(res, await keyStacks.exec(ctxOf(req), req, appRef(req), { ...b, service: b.service ?? null }));
 }));
 router.delete('/apps/stacks/:id', h(async (req, res) => {
   const b = parseBody(appDeleteBody, req.body ?? {});

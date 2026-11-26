@@ -1,16 +1,26 @@
 import type { Request } from 'express';
 import type {
-  ApiV1App, ApiV1AppChange, ApiV1AppDetail, ApiV1AppList, ApiV1AppLogs, ApiV1AppTemplate, AppContainerAction, AppDeployment, AppGitSourceInput,
+  ApiV1App, ApiV1AppChange, ApiV1AppDetail, ApiV1AppExecResult, ApiV1AppList, ApiV1AppLogs, ApiV1AppTemplate, AppContainerAction, AppDeployment, AppGitSourceInput,
   AppStack, AppStackDetail, AppStackStatus, AppStackUpdate, AppTemplate, AppTemplateCategory, AppTemplateDetail, PortBinding,
+} from '@oblimint/shared';
+import {
+  APP_EXEC_ARGV_MAX, APP_EXEC_COMMAND_MAX, APP_EXEC_ENV_MAX, APP_EXEC_ENV_VALUE_MAX, APP_EXEC_OUTPUT_MAX, APP_EXEC_PER_APP, APP_EXEC_STDIN_MAX,
+  APP_EXEC_TIMEOUT_DEFAULT, APP_EXEC_TIMEOUT_MAX,
 } from '@oblimint/shared';
 import { db } from '../../db';
 import { AppError } from '../../middleware/errorHandler';
+import { auditService } from '../audit.service';
+import { appContainer } from '../hosting/naming';
+import { loadStack } from '../apps/access';
 import { appDeleteParams, appsService } from '../apps/apps.service';
 import { catalogService } from '../apps/catalog.service';
 import { ENV_KEY_RE, stringifyDotenv } from '../apps/compose/dotenv';
 import { secretValues } from '../apps/compose/validate';
+import { assertConsoleAllowed } from '../apps/consoleAccess';
 import { envMap, openEnv } from '../apps/context';
-import { envSecretKeysOf } from '../apps/rows';
+import { appsDeps } from '../apps/deps';
+import { execOutputText, maskValues, runAppExec, type AppExecRaw } from '../apps/exec';
+import { effectiveOf, envSecretKeysOf, type StackRow } from '../apps/rows';
 import { registryCredentialService } from '../apps/registry.service';
 import { assertNotContained } from '../containment/guard';
 import { accountTarget, asKeyRequest, keyGated } from '../restrictions/targets';
@@ -34,13 +44,28 @@ import { requireScope, type ApiKeyContext } from './apiKeys.service';
 // Gates, as the panel: a deploy that opens new public ports is
 // app.port_publish (its ports, from a fresh validation, go to the job:
 // anything else it would open is refused while protected); a deletion is
-// app.delete (the key's owner confirms by default, migration 049). Never a
-// console nor an exec (apps.console stays in the panel: an interactive shell
-// in a container is not a key operation), never ?force (the proxy hosts in
-// front of an application are deleted first).
+// app.delete (the key's owner confirms by default, migration 049). Never the
+// interactive console (it stays in the panel), never ?force (the proxy hosts
+// in front of an application are deleted first).
+//
+// Commands (scope apps.exec, opt-in on its own; exec(): REST POST
+// /api/v1/apps/stacks/:id/exec, MCP exec_in_app): one command, not
+// interactive, in a RUNNING container of the application (labels oblimint.*
+// of the stack and the account checked, as the console does), as the image's
+// user, bounded in time (≤ 300 s, the processes killed past it: apps/exec.ts)
+// and in output (256 KiB per stream), 2 at once per application, the heavy
+// operations' rate per key. The creator must hold apps.console (SCOPE_NEED;
+// the key's actor gets apps.console only) and the panel's console conditions
+// apply on every call (apps/consoleAccess.ts: platform, tenant policy, plan,
+// suspended account; contained: 423). Gate app.exec (open by default): the
+// argv, stdin and env are secretParams. Audited (apps.exec): the command with
+// the .env secrets masked (≤ 1000 characters), service, duration, exit code;
+// never the stdin nor an env value (their size and names only).
+//
 // Secrets: the .env values are sealed by the service and never returned
 // (names only); the audit holds the names (service); no gate carries them; the
-// container logs read by a key have the .env secret values masked.
+// container logs and the command output read by a key have the .env secret
+// values masked.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** An application named by the caller: its id, or its name (slug). */
@@ -210,6 +235,118 @@ function maskLine(text: string, secrets: readonly string[]): string {
   for (const v of secrets) if (out.includes(v)) out = out.split(v).join(MASK);
   return out.length > KEY_APP_LOG_LINE_MAX ? `${out.slice(0, KEY_APP_LOG_LINE_MAX)}…` : out;
 }
+
+/** A command run in a container by a key (exec_in_app, POST …/exec). */
+export interface KeyAppExec {
+  service?: string | null;
+  /** argv (run as is), or a string run by sh -c. */
+  command: string | string[];
+  /** Text written to the command's stdin, then EOF (≤ APP_EXEC_STDIN_MAX bytes). Never audited. */
+  stdin?: string | null;
+  timeoutSeconds?: number;
+  /** Absolute path in the container (default: the image's WORKDIR). */
+  workdir?: string | null;
+  /** Variables of the command only (names [A-Za-z_][A-Za-z0-9_]*, never OBLIMINT_*). Never audited (names only). */
+  env?: Record<string, string>;
+}
+
+/** A checked command: argv, the stdin bytes, the env. */
+export interface KeyExecInput {
+  argv: string[];
+  /** command was a string, run by sh -c (argv[2]). */
+  shell: boolean;
+  stdin: Buffer | null;
+  env: Array<[string, string]>;
+  workdir: string | null;
+  timeoutSeconds: number;
+}
+
+/** The command in the audit and the decider's text: at most this many characters. */
+export const KEY_EXEC_AUDIT_COMMAND_MAX = 1000;
+
+const execInvalid = (field: string, message: string) => new AppError(400, message, 'validation', { field });
+const hasNul = (v: string) => v.includes('\u0000');
+
+/** Checks and normalizes a command (400 validation with details.field). Exported for tests. */
+export function execInput(body: KeyAppExec): KeyExecInput {
+  let argv: string[];
+  let shell = false;
+  if (typeof body.command === 'string') {
+    if (!body.command.trim()) throw execInvalid('command', 'command is empty');
+    if (body.command.length > APP_EXEC_COMMAND_MAX) throw execInvalid('command', `command: at most ${APP_EXEC_COMMAND_MAX} characters`);
+    argv = ['sh', '-c', body.command];
+    shell = true;
+  } else if (Array.isArray(body.command)) {
+    argv = [...body.command];
+    if (!argv.length || argv.length > APP_EXEC_ARGV_MAX) throw execInvalid('command', `command: 1 to ${APP_EXEC_ARGV_MAX} arguments`);
+    if (argv.some((a) => typeof a !== 'string')) throw execInvalid('command', 'command: every argument is a string');
+    if (!argv[0].trim()) throw execInvalid('command', 'command: the program (first argument) is empty');
+    if (argv.reduce((n, a) => n + a.length, 0) > APP_EXEC_COMMAND_MAX) throw execInvalid('command', `command: at most ${APP_EXEC_COMMAND_MAX} characters in all`);
+  } else {
+    throw execInvalid('command', 'command: an array of arguments, or a string run by sh -c');
+  }
+  if (argv.some(hasNul)) throw execInvalid('command', 'command: no NUL character');
+  let stdin: Buffer | null = null;
+  if (body.stdin !== undefined && body.stdin !== null) {
+    if (typeof body.stdin !== 'string') throw execInvalid('stdin', 'stdin: text');
+    stdin = Buffer.from(body.stdin, 'utf8');
+    if (stdin.length > APP_EXEC_STDIN_MAX) throw execInvalid('stdin', `stdin: at most ${APP_EXEC_STDIN_MAX} bytes`);
+  }
+  const env = Object.entries(body.env ?? {});
+  if (env.length > APP_EXEC_ENV_MAX) throw execInvalid('env', `env: at most ${APP_EXEC_ENV_MAX} variables`);
+  for (const [k, v] of env) {
+    if (!ENV_KEY_RE.test(k)) throw execInvalid('env', `Invalid variable name ${k.slice(0, 64)}`);
+    if (/^OBLIMINT_/i.test(k)) throw execInvalid('env', `${k}: the OBLIMINT_ variables are the panel's`);
+    if (typeof v !== 'string' || v.length > APP_EXEC_ENV_VALUE_MAX || hasNul(v)) {
+      throw execInvalid('env', `The value of ${k}: a string of at most ${APP_EXEC_ENV_VALUE_MAX} characters, without NUL`);
+    }
+  }
+  let workdir: string | null = null;
+  if (body.workdir !== undefined && body.workdir !== null && body.workdir !== '') {
+    if (typeof body.workdir !== 'string' || !body.workdir.startsWith('/') || body.workdir.length > 1024 || hasNul(body.workdir)) {
+      throw execInvalid('workdir', 'workdir: an absolute path in the container');
+    }
+    workdir = body.workdir;
+  }
+  const t = body.timeoutSeconds ?? APP_EXEC_TIMEOUT_DEFAULT;
+  if (!Number.isInteger(t) || t < 1 || t > APP_EXEC_TIMEOUT_MAX) throw execInvalid('timeoutSeconds', `timeout: 1 to ${APP_EXEC_TIMEOUT_MAX} seconds`);
+  return { argv, shell, stdin, env, workdir, timeoutSeconds: t };
+}
+
+/** sh-like quoting of one argument (display only). */
+const quoteArg = (a: string) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(a) ? a : `'${a.split("'").join("'\\''")}'`);
+
+/**
+ * The command as the audit and the decider read it: the string of sh -c, or the argv quoted; the values of the
+ * .env secrets (and of the command's own env) masked; at most KEY_EXEC_AUDIT_COMMAND_MAX characters. Exported for tests.
+ */
+export function execCommandText(input: Pick<KeyExecInput, 'argv' | 'shell' | 'env'>, secrets: readonly string[]): string {
+  const raw = input.shell ? input.argv[2] : input.argv.map(quoteArg).join(' ');
+  const masked = maskValues(raw, [...secrets, ...input.env.map(([, v]) => v).filter((v) => v.length >= 4)]);
+  return masked.length > KEY_EXEC_AUDIT_COMMAND_MAX ? `${masked.slice(0, KEY_EXEC_AUDIT_COMMAND_MAX - 1)}…` : masked;
+}
+
+/** Commands running now, by application (every key together; one panel process). */
+const execsByStack = new Map<number, number>();
+
+/** Tests: the commands running in an application. */
+export function runningExecs(stackId: number): number {
+  return execsByStack.get(stackId) ?? 0;
+}
+
+/** The service a command runs in: the one named, or the only one of the application. */
+function execService(stack: StackRow, wanted: string | null | undefined): string {
+  const names = (effectiveOf(stack)?.services ?? []).map((v) => v.name);
+  const service = wanted?.trim() || null;
+  if (!service) {
+    if (names.length !== 1) throw new AppError(400, `Name the service (${names.join(', ') || 'none deployed yet'})`, 'serviceRequired', { services: names });
+    return names[0];
+  }
+  if (!names.includes(service)) throw new AppError(404, 'Service not found', 'serviceNotFound', { services: names });
+  return service;
+}
+
+const notRunning = (service: string) => new AppError(409, `The container of ${service} is not running: start the application first`, 'containerNotRunning', { service });
 
 /**
  * A deploy-like action (deploy, redeploy, recreate, pull) as the panel's Deploy: the public ports it would newly
@@ -382,6 +519,89 @@ export const keyStacks = {
     }
     const deployment = await appsService.action(asKeyRequest(req, ctx), ctx.actor, id, { action: body.action });
     return { app: await detailOf(ctx, id), deployment };
+  },
+
+  /**
+   * Runs one command in a running container of the application (scope apps.exec): the console's conditions
+   * (consoleAccess.ts), the container of THIS stack only (labels), the gate app.exec (argv, stdin and env secret), 2 at
+   * once per application; stdout / stderr apart, capped, the .env secrets masked; audited without stdin nor env values.
+   */
+  async exec(ctx: ApiKeyContext, req: Request, ref: KeyAppRef, body: KeyAppExec): Promise<ApiV1AppExecResult> {
+    requireScope(ctx, 'apps.exec');
+    await assertNotContained(ctx.accountId);
+    const input = execInput(body);
+    const id = await keyStackId(ctx, ref);
+    // apps.console on the account (the key's only capability from this scope): 404 elsewhere, 403 without it.
+    const stack = await loadStack(ctx.actor, id, 'apps.console') as StackRow;
+    await assertConsoleAllowed(stack);
+    const service = execService(stack, body.service);
+    const docker = await appsDeps().docker(stack.node_id);
+    const name = appContainer(id, service);
+    let info: Awaited<ReturnType<ReturnType<typeof docker.getContainer>['inspect']>>;
+    try {
+      info = await docker.getContainer(name).inspect();
+    } catch (err) {
+      if ((err as { statusCode?: number })?.statusCode === 404) throw notRunning(service);
+      throw err;
+    }
+    // AP7: only a container of THIS stack and account (never a platform / other account container).
+    const labels = info.Config?.Labels ?? {};
+    if (labels['oblimint.app'] !== String(id) || labels['oblimint.role'] !== 'app' || labels['oblimint.account'] !== String(stack.account_id)) {
+      throw new AppError(404, 'Service not found', 'serviceNotFound');
+    }
+    if (!info.State?.Running || info.State?.Paused) throw notRunning(service);
+
+    const secrets = await logSecrets(id);
+    const command = execCommandText(input, secrets);
+    const envNames = input.env.map(([k]) => k);
+    const shown = {
+      name: stack.name, service, command, workdir: input.workdir, timeoutSeconds: input.timeoutSeconds, stdinBytes: input.stdin?.length ?? 0, envNames,
+    };
+    if ((execsByStack.get(id) ?? 0) >= APP_EXEC_PER_APP) {
+      throw new AppError(429, `${APP_EXEC_PER_APP} commands already run in this application: wait for one to end`, 'execBusy', { max: APP_EXEC_PER_APP });
+    }
+    execsByStack.set(id, (execsByStack.get(id) ?? 0) + 1);
+    try {
+      return await keyGated(ctx, req, {
+        action: 'app.exec', target: accountTarget({ tenant_id: stack.tenant_id, id: stack.account_id }),
+        // The command shown masked; the exact argv, the stdin and the env enter the fingerprint only (never stored nor shown).
+        params: shown,
+        secretParams: { argv: input.argv, stdin: input.stdin ? input.stdin.toString('base64') : null, env: Object.fromEntries(input.env) },
+        describe: () => `Exécuter une commande dans l’application Docker « ${stack.name} » (service ${service}) : ${command}`,
+      }, async () => {
+        const audit = (details: Record<string, unknown>) => auditService.logReqAs(asKeyRequest(req, ctx), stack.tenant_id, 'apps.exec', {
+          resourceType: 'app_stack', resourcePath: String(id),
+          details: {
+            service, command, shell: input.shell, workdir: input.workdir, timeoutSeconds: input.timeoutSeconds, stdinBytes: shown.stdinBytes, envNames, ...details,
+          },
+        });
+        let raw: AppExecRaw;
+        try {
+          raw = await runAppExec(docker, {
+            container: name, argv: input.argv, stdin: input.stdin, env: input.env.map(([k, v]) => `${k}=${v}`), workdir: input.workdir,
+            timeoutMs: input.timeoutSeconds * 1000, outputMax: APP_EXEC_OUTPUT_MAX,
+          });
+        } catch (err) {
+          const status = (err as { statusCode?: number })?.statusCode;
+          const gone = status === 404 || status === 409;
+          await audit({ error: gone ? 'containerNotRunning' : 'execFailed' });
+          if (gone) throw notRunning(service);
+          throw new AppError(502, 'The command could not be started in the container', 'execFailed');
+        }
+        const stdout = execOutputText(raw.stdout, raw.stdoutTotal, APP_EXEC_OUTPUT_MAX, secrets);
+        const stderr = execOutputText(raw.stderr, raw.stderrTotal, APP_EXEC_OUTPUT_MAX, secrets);
+        await audit({
+          exitCode: raw.exitCode, durationMs: raw.durationMs, timedOut: raw.timedOut, killed: raw.killed, stdoutBytes: raw.stdoutTotal, stderrBytes: raw.stderrTotal,
+        });
+        return {
+          appId: id, service, exitCode: raw.exitCode, stdout: stdout.text, stderr: stderr.text,
+          truncated: { stdout: stdout.truncated, stderr: stderr.truncated }, durationMs: raw.durationMs, timedOut: raw.timedOut, killed: raw.killed,
+        };
+      });
+    } finally {
+      const n = (execsByStack.get(id) ?? 1) - 1;
+      if (n > 0) execsByStack.set(id, n); else execsByStack.delete(id);
+    }
   },
 
   /**

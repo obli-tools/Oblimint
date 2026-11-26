@@ -99,6 +99,10 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'site.delete', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: PK },
   // A Docker application deleted (containers, networks, volumes unless kept): panel and keys (scope apps.manage, migration 049).
   { key: 'app.delete', category: 'sites', need: 'apps.manage', scopable: 'account', surfaces: PK },
+  // A command run in a container of a Docker application through a key (scope apps.exec, exec_in_app): open by
+  // default (never in DEFAULT_RESTRICTIONS), the tenant's admin may protect it. Its stdin and env are secrets
+  // (only their HMAC enters the request); the panel's console is interactive and not gated.
+  { key: 'app.exec', category: 'sites', need: 'apps.console', scopable: 'account', surfaces: K, secret: true },
   { key: 'site.stop', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: P },
   { key: 'site.publish_mode_change', category: 'sites', need: 'releases.approve', scopable: 'site', surfaces: PK },
   { key: 'site.data_path_remove', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: PK },

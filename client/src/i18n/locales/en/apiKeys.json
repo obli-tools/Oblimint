@@ -140,7 +140,11 @@
         },
         "manage": {
           "label": "Docker applications",
-          "hint": "Deploy Docker applications (compose, git repository or catalog) within the plan, change their compose and variables, redeploy, start / stop / restart, delete (protected). Includes reading them. Never a console nor a command inside a container. Never part of a preset: tick it on its own."
+          "hint": "Deploy Docker applications (compose, git repository or catalog) within the plan, change their compose and variables, redeploy, start / stop / restart, delete (protected). Includes reading them. Never the console; a command inside a container is the right « Commands in the Docker applications ». Never part of a preset: tick it on its own."
+        },
+        "exec": {
+          "label": "Commands in the Docker applications",
+          "hint": "Run one command (not interactive, no TTY) in a running container of an application of the account, as the image's user, e.g. to create the first administrator of an application: output returned with the secret variables masked, at most 5 minutes, audited (never its stdin nor its variables). Needs your right to open the console of the applications, and the console allowed by the platform, the tenant and the plan. Never part of a preset, « Everything » included: tick it on its own."
         }
       },
       "proxy": {
@@ -220,7 +224,7 @@
       },
       "all": {
         "label": "Everything",
-        "hint": "Every right you may grant, on every site, and every domain if you may give them; the mailboxes, the Docker applications and the proxy hosts are ticked on their own. Never: deleting a site, adding a root domain, users, other keys."
+        "hint": "Every right you may grant, on every site, and every domain if you may give them; the mailboxes, the Docker applications, the commands in their containers and the proxy hosts are ticked on their own. Never: deleting a site, adding a root domain, users, other keys."
       },
       "custom": {
         "label": "Custom",
@@ -234,7 +238,8 @@
     "giveAccess": "Give access to an agent / a CI",
     "siteEmpty": "No access key covers this site.",
     "siteIntro": "The keys of the account that reach this site (every site, or this one among others). They are managed with the other keys of the account.",
-    "siteTitle": "Access keys covering this site"
+    "siteTitle": "Access keys covering this site",
+    "execWarning": "This key will run commands in your containers: what it runs there can read and change everything the application can (its data, its database, its secrets). Give it only to an agent or a script you trust, and protect the action « Run a command in a Docker application » in the restrictions if a human must approve each command."
   },
   "oauth": {
     "title": "Connect an application",

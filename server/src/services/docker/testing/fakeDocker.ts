@@ -1,4 +1,4 @@
-import { PassThrough } from 'stream';
+import { Duplex, PassThrough } from 'stream';
 import Docker from 'dockerode';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +51,25 @@ export interface FakeExec {
   stderr?: string;
   /** Never ends (timeout tests). */
   hang?: boolean;
+  /**
+   * Runs (no output, inspect Running: true) until killExecsWithMarker() names a marker of its Env
+   * (a kill sweep), then ends with exit code 137.
+   */
+  hangUntilKilled?: boolean;
+  /** A hijacked exec (stdin attached) writes the stdin it received back on stdout, once stdin is closed. */
+  echoStdin?: boolean;
+  /** Output after this many milliseconds (concurrency tests). */
+  delayMs?: number;
+}
+
+/** One exec created on the fake: its options, the stdin it received, its state. */
+export interface FakeExecRun {
+  container: string;
+  opts: Docker.ExecCreateOptions;
+  stdin: Buffer;
+  running: boolean;
+  exitCode: number | null;
+  end?: () => void;
 }
 
 function dockerError(statusCode: number, message: string): Error & { statusCode: number } {
@@ -77,6 +96,10 @@ export class FakeDocker {
   calls: string[] = [];
   /** exec results by container name (default exit 0). */
   execResults = new Map<string, FakeExec>();
+  /** When set, decides the result of each exec (before execResults; undefined: execResults). */
+  execHandler: ((container: string, opts: Docker.ExecCreateOptions) => FakeExec | undefined) | null = null;
+  /** Every exec created, in order. */
+  execRuns: FakeExecRun[] = [];
   /** When set, every call rejects with this error (Docker unreachable). */
   down: (Error & { code?: string }) | null = null;
   /** Fails the next N network connects whose aliases match ("alias" = with aliases, "any" = all). */
@@ -101,6 +124,19 @@ export class FakeDocker {
         done(null);
       },
     };
+  }
+
+  /** A kill sweep: every exec hanging until killed whose Env holds `<VAR>=<marker>` stops (exit 137). */
+  killExecsWithMarker(marker: string): number {
+    let n = 0;
+    for (const r of this.execRuns) {
+      if (!r.running || !(r.opts.Env ?? []).some((e) => e.endsWith(`=${marker}`))) continue;
+      r.running = false;
+      r.exitCode = 137;
+      r.end?.();
+      n++;
+    }
+    return n;
   }
 
   asDocker(): Docker {
@@ -198,21 +234,44 @@ export class FakeDocker {
         const c = need();
         if (c.state !== 'running') throw dockerError(409, `Container ${c.name} is not running`);
         self.calls.push(`exec ${c.name} ${(opts.Cmd ?? []).join(' ')}`);
-        const result = self.execResults.get(c.name) ?? { exitCode: 0 };
+        const result = self.execHandler?.(c.name, opts) ?? self.execResults.get(c.name) ?? { exitCode: 0 };
+        const run: FakeExecRun = { container: c.name, opts, stdin: Buffer.alloc(0), running: !!result.hangUntilKilled, exitCode: result.hangUntilKilled ? null : result.exitCode };
+        self.execRuns.push(run);
         return {
-          async start() {
-            const s = new PassThrough();
-            if (!result.hang) {
-              setImmediate(() => {
-                if (result.stdout) s.write(muxFrame(1, result.stdout));
-                if (result.stderr) s.write(muxFrame(2, result.stderr));
-                s.end();
-              });
+          async start(startOpts?: { hijack?: boolean; stdin?: boolean }) {
+            const out = new PassThrough();
+            const emit = (extra?: Buffer) => {
+              const go = () => {
+                if (result.stdout) out.write(muxFrame(1, result.stdout));
+                if (extra && extra.length) out.write(muxFrame(1, extra));
+                if (result.stderr) out.write(muxFrame(2, result.stderr));
+                out.end();
+              };
+              if (result.delayMs) setTimeout(go, result.delayMs); else setImmediate(go);
+            };
+            if (result.hangUntilKilled) run.end = () => out.end();
+            const hijacked = !!(startOpts?.hijack && startOpts.stdin);
+            if (!hijacked) {
+              if (!result.hang && !result.hangUntilKilled) emit();
+              return out;
             }
-            return s;
+            // Hijacked: the writes are the command's stdin, the reads its multiplexed output.
+            const chunks: Buffer[] = [];
+            const duplex = new Duplex({
+              read() { /* pushed from out */ },
+              write(chunk: Buffer, _enc, cb) { chunks.push(Buffer.from(chunk)); cb(); },
+              final(cb) {
+                run.stdin = Buffer.concat(chunks);
+                if (!result.hang && !result.hangUntilKilled) emit(result.echoStdin ? run.stdin : undefined);
+                cb();
+              },
+            });
+            out.on('data', (d: Buffer) => duplex.push(d));
+            out.on('end', () => duplex.push(null));
+            return duplex;
           },
           async inspect() {
-            return { ExitCode: result.exitCode, Running: false };
+            return { ExitCode: run.exitCode, Running: run.running, Pid: 4242 };
           },
         };
       },

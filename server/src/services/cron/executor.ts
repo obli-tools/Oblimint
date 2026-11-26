@@ -84,18 +84,25 @@ export const KILL_WAIT_MS = 10_000;
  * read /proc/<pid>/environ of, and signal, that account's processes). The
  * marker is $1 (argv), never interpolated in the script. BusyBox sh/tr/grep.
  */
-export const KILL_SWEEP_SCRIPT = [
-  'for d in /proc/[0-9]*; do',
-  '  if tr "\\000" "\\n" < "$d/environ" 2>/dev/null | grep -qxF "' + RUN_MARKER_VAR + '=$1"; then',
-  '    kill -9 "${d#/proc/}" 2>/dev/null',
-  '  fi',
-  'done',
-  'exit 0',
-].join('\n');
+export function killSweepScript(markerVar: string): string {
+  return [
+    'for d in /proc/[0-9]*; do',
+    '  if tr "\\000" "\\n" < "$d/environ" 2>/dev/null | grep -qxF "' + markerVar + '=$1"; then',
+    '    kill -9 "${d#/proc/}" 2>/dev/null',
+    '  fi',
+    'done',
+    'exit 0',
+  ].join('\n');
+}
 
-/** argv of the kill sweep (exported for tests). */
-export function killSweepArgv(marker: string): string[] {
-  return ['sh', '-c', KILL_SWEEP_SCRIPT, 'oblimint-cron-kill', marker];
+export const KILL_SWEEP_SCRIPT = killSweepScript(RUN_MARKER_VAR);
+
+/**
+ * argv of the kill sweep (exported for tests). markerVar / label: another kind of run marked the same way (the
+ * commands of an access key in an application's container, apps/exec.ts).
+ */
+export function killSweepArgv(marker: string, markerVar: string = RUN_MARKER_VAR, label = 'oblimint-cron-kill'): string[] {
+  return ['sh', '-c', killSweepScript(markerVar), label, marker];
 }
 
 /**
@@ -121,9 +128,14 @@ export async function sweepInterruptedRun(
 
 /** Runs the kill sweep; true when it completed within `waitMs`. */
 async function killRun(docker: Docker, req: CronExecRequest, marker: string, waitMs: number): Promise<boolean> {
-  const exec = await docker.getContainer(req.container).exec({
-    Cmd: killSweepArgv(marker),
-    User: req.user,
+  return runKillSweep(docker, req.container, req.user, killSweepArgv(marker), waitMs);
+}
+
+/** Runs a kill sweep argv in `container` as `user` (undefined: the image's user); true when it completed within `waitMs`. */
+export async function runKillSweep(docker: Docker, container: string, user: string | undefined, argv: string[], waitMs: number): Promise<boolean> {
+  const exec = await docker.getContainer(container).exec({
+    Cmd: argv,
+    ...(user !== undefined ? { User: user } : {}),
     AttachStdin: false,
     AttachStdout: true,
     AttachStderr: true,
@@ -148,7 +160,7 @@ async function killRun(docker: Docker, req: CronExecRequest, marker: string, wai
 }
 
 /** Polls the run's exec until it reports Running=false (bounded by `waitMs`). */
-async function waitExecStopped(exec: Docker.Exec, waitMs: number): Promise<boolean> {
+export async function waitExecStopped(exec: Docker.Exec, waitMs: number): Promise<boolean> {
   const deadline = Date.now() + waitMs;
   for (;;) {
     try {

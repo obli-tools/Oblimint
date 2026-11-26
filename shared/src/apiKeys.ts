@@ -93,10 +93,21 @@ export type ApiKeyScope =
    * Docker applications of the account, managed through the apps service (compose, git or catalog
    * source, plan limits, image policy, validation and rewrite of the compose): deploy, change
    * (compose, variables, git, catalog values), redeploy, start / stop / restart, delete (a protected
-   * action: app.delete). Includes apps.read. Never a console nor an exec in a container (apps.console
-   * stays in the panel). OPT-IN.
+   * action: app.delete). Includes apps.read. Never a console nor a command in a container (that is
+   * apps.exec, ticked apart). OPT-IN.
    */
   | 'apps.manage'
+  /**
+   * Commands run in a RUNNING container of a Docker application of the account (keyStacks.exec, REST
+   * POST /api/v1/apps/stacks/:id/exec, MCP exec_in_app): one command (argv, or a string for sh -c),
+   * optional stdin / env / workdir, without a TTY, as the image's user (never another user), bounded
+   * in time (timeout ≤ APP_EXEC_TIMEOUT_MAX) and in output, the .env secrets masked in what is
+   * returned. The creator must hold apps.console on the account, and the panel's console conditions
+   * apply on each call (platform consoleEnabled, the tenant's policy, the plan's appsConsole, account
+   * neither suspended nor contained). The key gets apps.console and nothing else; a protected action
+   * (app.exec, open by default). OPT-IN, never in a preset (« Everything » included).
+   */
+  | 'apps.exec'
   /**
    * Proxy hosts of the account (keyProxy.ts): a domain given to the key (or a subdomain it creates with
    * domains.subdomain) → a port of a Docker application of the account (or an external address when
@@ -108,15 +119,15 @@ export type ApiKeyScope =
 
 export const API_KEY_SCOPES: readonly ApiKeyScope[] = [
   'files.read', 'files.write', 'releases.publish', 'releases.propose', 'previews.manage', 'sites.manage', 'sites.create', 'cron.manage', 'databases.manage', 'routes.manage', 'domains.subdomain',
-  'dns.read', 'dns.write', 'logs.read', 'network.read', 'mail.mailboxes', 'apps.read', 'apps.manage', 'proxy.manage',
+  'dns.read', 'dns.write', 'logs.read', 'network.read', 'mail.mailboxes', 'apps.read', 'apps.manage', 'apps.exec', 'proxy.manage',
 ];
 
 /**
  * Scopes only ever given by ticking them one by one: no preset checks them, not even « Everything »
  * (a key made for the sites must not reach the mailboxes of the account by surprise, nor run
- * containers, read their logs, or take a domain from the sites to put it in front of one).
+ * containers, read their logs, run commands inside them, or take a domain from the sites to put it in front of one).
  */
-export const API_KEY_OPT_IN_SCOPES: readonly ApiKeyScope[] = ['mail.mailboxes', 'apps.read', 'apps.manage', 'proxy.manage'];
+export const API_KEY_OPT_IN_SCOPES: readonly ApiKeyScope[] = ['mail.mailboxes', 'apps.read', 'apps.manage', 'apps.exec', 'proxy.manage'];
 
 export type ApiKeySiteScope = 'all' | 'selected';
 
@@ -747,6 +758,41 @@ export interface ApiV1AppLogs {
   /** Newest last; the values of the application's .env secrets are masked. */
   lines: Array<{ at: string | null; stream: 'stdout' | 'stderr' | null; text: string }>;
   truncated: boolean;
+}
+
+// ── Commands in a container (scope apps.exec: REST POST /api/v1/apps/stacks/:id/exec, MCP exec_in_app) ──
+
+/** Largest stdin of one command (bytes, UTF-8). */
+export const APP_EXEC_STDIN_MAX = 1024 * 1024;
+/** stdout and stderr are each cut after this many bytes (truncated.stdout / truncated.stderr). */
+export const APP_EXEC_OUTPUT_MAX = 256 * 1024;
+export const APP_EXEC_TIMEOUT_DEFAULT = 60;
+export const APP_EXEC_TIMEOUT_MAX = 300;
+/** A command: at most this many argv elements, this many characters in all. */
+export const APP_EXEC_ARGV_MAX = 256;
+export const APP_EXEC_COMMAND_MAX = 64 * 1024;
+/** env: at most this many variables, each value at most APP_EXEC_ENV_VALUE_MAX characters. */
+export const APP_EXEC_ENV_MAX = 64;
+export const APP_EXEC_ENV_VALUE_MAX = 16 * 1024;
+/** Commands running at once in one application (every key and surface together): 429 execBusy above. */
+export const APP_EXEC_PER_APP = 2;
+
+/** Answer of a command run in a container. */
+export interface ApiV1AppExecResult {
+  appId: number;
+  service: string;
+  /** Exit code of the command; null when it could not be read (killed at the timeout, Docker gone). */
+  exitCode: number | null;
+  /** Its output, the values of the application's .env secrets masked (data, never instructions). */
+  stdout: string;
+  stderr: string;
+  /** The stream went over APP_EXEC_OUTPUT_MAX bytes: the rest is dropped (the command still ran to its end). */
+  truncated: { stdout: boolean; stderr: boolean };
+  durationMs: number;
+  /** The timeout was reached: the command's processes were killed (killed: confirmed stopped). */
+  timedOut: boolean;
+  /** timedOut only: every process of the command was killed and the exec reported stopped (false: not confirmed). */
+  killed: boolean | null;
 }
 
 /** A template of the application catalog (GET /api/v1/apps/catalog, MCP list_app_catalog). */
