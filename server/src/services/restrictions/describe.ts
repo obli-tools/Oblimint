@@ -44,6 +44,7 @@ export function fields(obj: unknown, max = 300): string {
 export const ACTION_VERBS_FR: Readonly<Record<string, string>> = {
   'app.install': 'Installer une application (site, base de données, variables, publication)',
   'site.delete': 'Supprimer le site',
+  'app.delete': 'Supprimer l’application Docker',
   'site.stop': 'Arrêter le site',
   'site.publish_mode_change': 'Changer le mode de publication du site',
   'site.data_path_remove': 'Retirer un chemin de données du site',

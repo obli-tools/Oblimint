@@ -346,6 +346,11 @@ async function removeStackReserved(req: Request, stack: StackRow, body: AppStack
   return { deleted: true };
 }
 
+/** Parameters of the gate app.delete (panel route and access keys alike: the same request, the same fingerprint). */
+export function appDeleteParams(stack: Pick<StackRow, 'id' | 'name'>, body: AppStackDeleteRequest): Record<string, unknown> {
+  return { name: stack.name, stackId: stack.id, removeVolumes: !!body.removeVolumes };
+}
+
 // ── service ──────────────────────────────────────────────────────────────────
 
 export const appsService = {
@@ -642,6 +647,24 @@ export const appsService = {
     } finally {
       releaseStack(id);
     }
+  },
+
+  /**
+   * Before the gate app.delete (panel route, access keys): the stack with apps.manage, the name typed, and no proxy
+   * host still targeting it unless `force` — nobody confirms a deletion that would be refused anyway. remove()
+   * checks all of it again.
+   */
+  async forDelete(actor: HostingActor, id: number, body: AppStackDeleteRequest, opts: { force?: boolean } = {}): Promise<StackRow> {
+    const stack = await stackFor(actor, id, 'apps.manage');
+    if (body.confirm !== stack.name) throw new AppError(400, 'Type the name of the application to confirm', 'confirmMismatch');
+    if (!opts.force) {
+      let hosts: Array<{ id: number; name: string; domains: string[] }> = [];
+      try { hosts = await appsDeps().proxy.hostsTargetingStack(id); } catch { /* checked again by remove() */ }
+      if (hosts.length) {
+        throw new AppError(409, 'Proxy hosts still target this application', 'stackInUse', { hosts: hosts.map((h) => ({ id: h.id, name: h.name, domains: h.domains })) });
+      }
+    }
+    return stack;
   },
 
   async getEnv(req: Request, actor: HostingActor, id: number): Promise<AppEnvResponse> {

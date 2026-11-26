@@ -97,6 +97,8 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   // Immutable application installer: creates a site, a database, its variables, and publishes.
   { key: 'app.install', category: 'sites', need: 'sites.manage', alsoNeed: 'databases.manage', scopable: 'account', surfaces: PK },
   { key: 'site.delete', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: PK },
+  // A Docker application deleted (containers, networks, volumes unless kept): panel and keys (scope apps.manage, migration 049).
+  { key: 'app.delete', category: 'sites', need: 'apps.manage', scopable: 'account', surfaces: PK },
   { key: 'site.stop', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: P },
   { key: 'site.publish_mode_change', category: 'sites', need: 'releases.approve', scopable: 'site', surfaces: PK },
   { key: 'site.data_path_remove', category: 'sites', need: 'sites.manage', scopable: 'site', surfaces: PK },
@@ -159,9 +161,13 @@ export const RESTRICTABLE_ACTIONS: readonly RestrictableActionDef[] = [
   { key: 'dns.record_write', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: PK },
   { key: 'dns.record_delete', category: 'domains', need: 'dns.manage', scopable: 'account', surfaces: PK },
   { key: 'mail.dns_fix', category: 'domains', need: 'mail.manage', alsoNeed: 'dns.manage', scopable: 'account', surfaces: P },
-  { key: 'proxy.host_delete', category: 'domains', need: 'proxy.manage', scopable: 'account', surfaces: P },
-  // Migration 032: a deploy that opens a port on the Internet (new published binding of an app / stack).
-  { key: 'app.port_publish', category: 'domains', need: 'apps.manage', scopable: 'account', surfaces: P },
+  // Keys too (scope proxy.manage, migration 049): delete_proxy_host asks the key's owner by default.
+  { key: 'proxy.host_delete', category: 'domains', need: 'proxy.manage', scopable: 'account', surfaces: PK },
+  // Migration 032: a deploy that opens a port on the Internet (new published binding of an app / stack). Keys too
+  // (scope apps.manage): deploy_app / redeploy_app / update_app gate the new ports as the panel's Deploy does.
+  // Open by default (never in DEFAULT_RESTRICTIONS): the deploy job enforces it on every surface (deployments.ts),
+  // so a default would also hold the panel's git / automatic deploys.
+  { key: 'app.port_publish', category: 'domains', need: 'apps.manage', scopable: 'account', surfaces: PK },
   { key: 'firewall.mode_change', category: 'domains', need: 'files.manage', scopable: 'account', surfaces: P },
   { key: 'firewall.rules_write', category: 'domains', need: 'files.manage', scopable: 'account', surfaces: P },
   // ── Mail ──
@@ -247,6 +253,10 @@ export const DEFAULT_RESTRICTIONS: Readonly<RestrictionMap> = {
   // A key that resets a mailbox password can read the mailbox: second factor
   // from the keys only (migration 048), the panel stays open by default.
   'mail.mailbox_password': { level: 'sensitive', scope: { mode: 'all' }, via: 'keys' },
+  // Deleting a Docker application or a proxy host through a key: the key's owner confirms (migration 049);
+  // the panel keeps its own confirmation (typing the name) and stays open by default.
+  'app.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'keys' },
+  'proxy.host_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'keys' },
   'user.delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
   'platform.tenant_delete': { level: 'sensitive', scope: { mode: 'all' }, via: 'all' },
 };

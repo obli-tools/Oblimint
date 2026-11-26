@@ -11,7 +11,7 @@ import type { ApiKeyContext } from '../services/apiKeys/apiKeys.service';
 import {
   CRON_MAX_TIMEOUT_SEC, DB_ENGINE_VERSIONS, PREVIEW_FETCH_MAX_BYTES, PREVIEW_FETCH_MIN_BYTES, PREVIEW_PATH_MAX, SITE_ENV_MAX_VALUE, SITE_ENV_MAX_VARS,
   DBX_KEY_MAX_ROWS, DBX_KEY_MAX_TIMEOUT_S, FILE_EDIT_MAX_EDITS, FILE_READ_MAX_RANGE, FILE_SEARCH_MAX_PER_FILE, FILE_SEARCH_MAX_RESULTS,
-  NOTIFICATION_FAMILIES,
+  NOTIFICATION_FAMILIES, APP_TEMPLATE_CATEGORIES,
 } from '@oblimint/shared';
 import type { DnsRecordInput, NotificationFamily } from '@oblimint/shared';
 import { keyApps } from '../services/apiKeys/keyApps';
@@ -20,6 +20,8 @@ import { appInstallStartSchema } from '../validators/appInstall.schema';
 import { keyEnv } from '../services/apiKeys/keyEnv';
 import { keyDns } from '../services/apiKeys/keyDns';
 import { KEY_MAILBOX_PAGE_MAX, keyMail } from '../services/apiKeys/keyMail';
+import { KEY_APP_COMPOSE_MAX, KEY_APP_LOG_TAIL_MAX, KEY_APP_STATUSES, keyStacks } from '../services/apiKeys/keyStacks';
+import { keyProxy } from '../services/apiKeys/keyProxy';
 import { keyPending, pendingIdOf, PENDING_WAIT_MAX_MS, statusOf } from '../services/apiKeys/keyPending';
 import { errorListQuery, errorListShape } from '../services/siteErrors/siteErrors.service';
 import type { SiteBaseId } from '@oblimint/shared';
@@ -140,6 +142,20 @@ import { dataPathInputSchema, dataPathUpdateSchema, routeInputSchema, runtimeInp
 //                                                        password once, generated when absent; no-store)       mail.mailboxes
 //   POST   /mailboxes/:id/password {password?}          → ApiV1MailboxPassword (once; no-store)                  mail.mailboxes (gate mail.mailbox_password)
 //   DELETE /mailboxes/:id                               → { deleted: true, id, address }                         mail.mailboxes (gate mail.mailbox_delete)
+//   GET    /apps/stacks?status=&search=                 → ApiV1AppList (Docker applications, plan limits, registries)  apps.read | apps.manage
+//   POST   /apps/stacks {name, source: compose|git|catalog, composeYaml?, env?, git?, catalog?, registryCredentialIds?, deploy?}
+//                                                        → ApiV1AppChange (201; deploy gated by app.port_publish)  apps.manage
+//   GET    /apps/catalog?slug=&search=&category=        → ApiV1AppTemplate[]                                      apps.read | apps.manage
+//   GET    /apps/stacks/:id                             → ApiV1AppDetail                                          apps.read | apps.manage
+//   PATCH  /apps/stacks/:id {composeYaml?, env? | envSet?, envUnset?, git?, catalogValues?, …, redeploy?} → ApiV1AppChange  apps.manage
+//   POST   /apps/stacks/:id/redeploy {mode?, gitPull?, build?} → ApiV1AppChange (202; gate app.port_publish)    apps.manage
+//   POST   /apps/stacks/:id/actions {action: start|stop|restart|deploy, service?} → ApiV1AppChange (202)          apps.manage
+//   GET    /apps/stacks/:id/logs?service=&deploymentId=&tail=&since= → ApiV1AppLogs (secrets of the .env masked)   apps.read | apps.manage
+//   DELETE /apps/stacks/:id {confirmName, removeVolumes?} → { deleted: true, id, name }                           apps.manage (gate app.delete)
+//   GET    /proxy-hosts · /proxy-hosts/:id               → ApiV1ProxyHost[] · ApiV1ProxyHost                       proxy.manage
+//   POST   /proxy-hosts {domains, target: {appId|appName, service, port} | {host, port, scheme}, ssl?, …} → ApiV1ProxyHost (201) proxy.manage
+//   PATCH  /proxy-hosts/:id                             → ApiV1ProxyHost (manageable hosts only)                  proxy.manage
+//   DELETE /proxy-hosts/:id                             → { deleted: true, id, name }                             proxy.manage (gate proxy.host_delete)
 //   GET    /pending-actions?status=                     → KeyPendingAction[] (this key's requests for protected actions)
 //   GET    /pending-actions/:pid                        → KeyPendingAction
 //   GET    /pending-actions/:pid/wait?timeout=≤60       → KeyPendingAction once decided (timedOut otherwise; one of the 3 wait slots)
@@ -519,6 +535,89 @@ router.post('/mailboxes/:id/password', h(async (req, res) => {
   ok(res, await keyMail.resetPassword(ctxOf(req), req, { id: mailboxId(req) }, b));
 }));
 router.delete('/mailboxes/:id', h(async (req, res) => ok(res, await keyMail.remove(ctxOf(req), req, { id: mailboxId(req) }))));
+
+// ── Docker applications of the account (apps.read / apps.manage; keyStacks.ts) ──
+const appEnv = z.record(z.string().max(16 * 1024)).refine((m) => Object.keys(m).length <= 500, 'at most 500 variables');
+const appCatalogValues = z.record(z.union([z.string().max(2048), z.number(), z.boolean()]));
+const appGit = z.object({
+  repoUrl: z.string().min(1).max(512), branch: z.string().min(1).max(200).optional(), composePath: z.string().max(255).optional(),
+  token: z.string().max(4096).nullable().optional(), build: z.boolean().optional(), autoDeploy: z.boolean().optional(),
+  pollIntervalSec: z.number().int().min(1).max(86400 * 7).nullable().optional(),
+}).strict();
+const appListQuery = z.object({ status: z.enum(KEY_APP_STATUSES).optional(), search: z.string().trim().max(128).optional() }).strict();
+const appCatalogQuery = z.object({
+  slug: z.string().trim().min(1).max(64).optional(), search: z.string().trim().max(128).optional(), category: z.enum(APP_TEMPLATE_CATEGORIES).optional(),
+}).strict();
+const appDeployBody = z.object({
+  name: z.string().min(1).max(31), displayName: z.string().max(128).optional(), description: z.string().max(2000).nullable().optional(),
+  source: z.enum(['compose', 'git', 'catalog']), composeYaml: z.string().max(KEY_APP_COMPOSE_MAX).optional(), env: appEnv.optional(), git: appGit.optional(),
+  catalog: z.object({ templateSlug: z.string().min(1).max(64), values: appCatalogValues.optional() }).strict().optional(),
+  registryCredentialIds: z.array(z.number().int().positive()).max(50).optional(), deploy: z.boolean().optional(),
+}).strict();
+const appUpdateBody = z.object({
+  displayName: z.string().max(128).optional(), description: z.string().max(2000).nullable().optional(), composeYaml: z.string().max(KEY_APP_COMPOSE_MAX).optional(),
+  env: appEnv.optional(), envSet: appEnv.optional(), envUnset: z.array(z.string().min(1).max(128)).max(500).optional(), git: appGit.partial().optional(),
+  catalogValues: appCatalogValues.optional(), registryCredentialIds: z.array(z.number().int().positive()).max(50).optional(), redeploy: z.boolean().optional(),
+}).strict();
+const appRedeployBody = z.object({ mode: z.enum(['redeploy', 'recreate', 'pull']).optional(), gitPull: z.boolean().optional(), build: z.boolean().optional() }).strict();
+const appActionBody = z.object({ action: z.enum(['start', 'stop', 'restart', 'deploy']), service: z.string().min(1).max(64).optional() }).strict();
+const appLogsQuery = z.object({
+  service: z.string().trim().min(1).max(64).optional(), deploymentId: z.coerce.number().int().positive().optional(),
+  tail: z.coerce.number().int().min(1).max(KEY_APP_LOG_TAIL_MAX).optional(), since: z.string().max(64).optional(),
+}).strict();
+const appDeleteBody = z.object({ confirmName: z.string().min(1).max(64), removeVolumes: z.boolean().optional() }).strict();
+const appRef = (req: Request) => ({ id: Number(req.params.id) });
+router.get('/apps/stacks', h(async (req, res) => {
+  const q = parseBody(appListQuery, req.query);
+  ok(res, await keyStacks.list(ctxOf(req), { status: q.status ?? null, search: q.search ?? null }));
+}));
+router.post('/apps/stacks', heavyOpLimiter, h(async (req, res) => {
+  const b = parseBody(appDeployBody, req.body);
+  ok(res, await keyStacks.deploy(ctxOf(req), req, b), 201);
+}));
+router.get('/apps/catalog', h(async (req, res) => {
+  const q = parseBody(appCatalogQuery, req.query);
+  ok(res, await keyStacks.catalog(ctxOf(req), { slug: q.slug ?? null, search: q.search ?? null, category: q.category ?? null }));
+}));
+router.get('/apps/stacks/:id', h(async (req, res) => ok(res, await keyStacks.get(ctxOf(req), appRef(req)))));
+router.patch('/apps/stacks/:id', h(async (req, res) => ok(res, await keyStacks.update(ctxOf(req), req, appRef(req), parseBody(appUpdateBody, req.body)))));
+router.post('/apps/stacks/:id/redeploy', heavyOpLimiter, h(async (req, res) => {
+  ok(res, await keyStacks.redeploy(ctxOf(req), req, appRef(req), parseBody(appRedeployBody, req.body ?? {})), 202);
+}));
+router.post('/apps/stacks/:id/actions', heavyOpLimiter, h(async (req, res) => {
+  const b = parseBody(appActionBody, req.body);
+  ok(res, await keyStacks.action(ctxOf(req), req, appRef(req), { action: b.action, service: b.service ?? null }), 202);
+}));
+router.get('/apps/stacks/:id/logs', h(async (req, res) => {
+  const q = parseBody(appLogsQuery, req.query);
+  ok(res, await keyStacks.logs(ctxOf(req), appRef(req), { service: q.service ?? null, deploymentId: q.deploymentId ?? null, tail: q.tail, since: q.since ?? null }));
+}));
+router.delete('/apps/stacks/:id', h(async (req, res) => {
+  const b = parseBody(appDeleteBody, req.body ?? {});
+  ok(res, await keyStacks.remove(ctxOf(req), req, appRef(req), { confirmName: b.confirmName, removeVolumes: b.removeVolumes === true }));
+}));
+
+// ── proxy hosts of the account (proxy.manage; keyProxy.ts) ──
+const proxyTargetBody = z.object({
+  appId: z.number().int().positive().optional(), appName: z.string().min(1).max(64).optional(),
+  service: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/, 'a service name').optional(),
+  host: z.string().min(1).max(253).optional(), port: z.number().int().min(1).max(65535), scheme: z.enum(['http', 'https']).optional(),
+}).strict();
+const proxyHostFields = {
+  name: z.string().min(1).max(128).optional(), enabled: z.boolean().optional(), domains: z.array(z.string().min(1).max(253)).min(1).max(20),
+  target: proxyTargetBody, ssl: z.boolean().optional(), http2: z.boolean().optional(), hsts: z.boolean().optional(), websocket: z.boolean().optional(),
+  gzip: z.boolean().optional(), cache: z.boolean().optional(), blockExploits: z.boolean().optional(), bodySizeMb: z.number().int().min(1).max(10240).nullable().optional(),
+  readTimeoutSec: z.number().int().min(1).max(3600).optional(),
+  routes: z.array(z.object({ path: z.string().min(1).max(256), rewritePrefix: z.string().max(256).nullable().optional(), target: proxyTargetBody }).strict()).max(50).optional(),
+};
+const proxyHostCreate = z.object(proxyHostFields).strict();
+const proxyHostUpdate = z.object(proxyHostFields).partial().strict();
+const proxyHostId = (req: Request) => Number(req.params.id);
+router.get('/proxy-hosts', h(async (req, res) => ok(res, await keyProxy.list(ctxOf(req)))));
+router.post('/proxy-hosts', h(async (req, res) => ok(res, await keyProxy.create(ctxOf(req), req, parseBody(proxyHostCreate, req.body)), 201)));
+router.get('/proxy-hosts/:id', h(async (req, res) => ok(res, await keyProxy.get(ctxOf(req), proxyHostId(req)))));
+router.patch('/proxy-hosts/:id', h(async (req, res) => ok(res, await keyProxy.update(ctxOf(req), req, proxyHostId(req), parseBody(proxyHostUpdate, req.body)))));
+router.delete('/proxy-hosts/:id', h(async (req, res) => ok(res, await keyProxy.remove(ctxOf(req), req, proxyHostId(req)))));
 
 // ── path routes ──
 const prefix = z.string().min(1).max(255);

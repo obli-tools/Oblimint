@@ -100,6 +100,9 @@ Consequences:
 | \`logs.read\` | Read access, error (web server / PHP) and application logs, and the PHP errors grouped by release |
 | \`network.read\` | Read the public ports of the account: its blocks of the shared IP, its dedicated IP (public address) and the bindings of **every** app / stack of the account (whatever the site selection). Read only |
 | \`mail.mailboxes\` | Mailboxes of the account's mail domains: list, create (within the plan), new password, delete (protected). A password is returned **once**. Never given by a preset, « Everything » included: ticked on its own (see §5 « Mailboxes ») |
+| \`apps.read\` | Read the Docker applications of the account (whatever the site selection): their state, services and internal ports, URLs, deployments and container logs (secret variables masked). Ticked on its own (see §5 « Docker applications ») |
+| \`apps.manage\` | Deploy Docker applications (compose, git repository or catalog), change them (compose, variables, git), redeploy, start / stop / restart, delete (protected); includes \`apps.read\`. Never a console in a container. Ticked on its own |
+| \`proxy.manage\` | Proxy hosts: put domains given to the key in front of an internal port of an application (or an external address when the plan allows it), with Let's Encrypt and the https redirection; change, delete (protected). Its creator must also manage the domains. Ticked on its own (see §5 « Proxy hosts ») |
 
 **Databases**: a key valid for every site sees every database of the account; a key limited to some sites sees only the databases and users **it created**, plus the databases **owned by or shared with its sites**. A key deletes only what it created, and never stops nor deletes a database server.
 
@@ -109,9 +112,9 @@ Consequences:
 
 **DNS records**: a key reaches the zones of the domains given to it in the panel (every zone of the account for a key on every domain; the domains section of the key bounds both the routes and the DNS records). It only writes the free records of a hosted zone: the records of the names served by the sites, of a hosted mail, the SOA / NS and the challenges stay the platform's.
 
-Never possible with a key: deleting a site, adding a **new root domain**, deleting a database it did not create or a database server, managing FTP accounts, mail domains, aliases or forwarding, or users, or touching another account. Ask the human for those.
+Never possible with a key: deleting a site, adding a **new root domain**, deleting a database it did not create or a database server, managing FTP accounts, mail domains, aliases or forwarding, or users, opening a console or running a command inside a container, or touching another account. Ask the human for those.
 
-Oblimint runs **no permanent process** (bot, websocket, queue worker listening all the time): only the website and its cron tasks, one hour at most each. Such a program must be hosted elsewhere, or rewritten as short tasks run by cron (e.g. every minute, resuming where it stopped).
+A site runs **no permanent process** (bot, websocket, queue worker listening all the time): only the website and its cron tasks, one hour at most each. Such a program belongs in a **Docker application** of the account (\`apps.manage\`, see §5 « Docker applications »), elsewhere, or rewritten as short tasks run by cron (e.g. every minute, resuming where it stopped).
 
 A key (or a connector) acts as the human who created (approved) it, with that human's **current** rights: if they lose a right, so does the key. A site outside the key's scope answers **"not found"** (as if it did not exist). A missing right answers **\`keyScope\`**. Do not work around it: ask the human to widen the key.
 
@@ -169,6 +172,15 @@ A key (or a connector) acts as the human who created (approved) it, with that hu
 | \`list_mailboxes\` | Mail domains of the account (\`domains\`), one page of mailboxes (\`domain?\` or \`mail_domain_id?\`, \`search?\`, \`limit?\`, \`offset?\`), the plan's mail \`limits\` and \`usage\`, the IMAP / SMTP \`hostname\` | \`mail.mailboxes\` |
 | \`create_mailbox\` | Create \`local_part\`@domain (\`domain\` or \`mail_domain_id\`, \`password?\`, \`quota_mb?\`, \`display_name?\`); without \`password\` one is generated and returned **once** | \`mail.mailboxes\` |
 | \`reset_mailbox_password\` / \`delete_mailbox\` | New password (\`mailbox_id\` or \`address\`, \`password?\`: generated and returned once when absent); delete a mailbox and its mail (protected: the key's owner confirms by default) | \`mail.mailboxes\` |
+| \`list_apps\` | Docker applications of the account (\`status?\`, \`search?\`), the plan's limits and usage (\`resources\`), the registry credentials (\`registries\`, never a password) | \`apps.read\` or \`apps.manage\` |
+| \`get_app\` | One application (\`app_id\` or \`app_name\`): status, services and their internal ports (\`exposedPorts\`), compose, variable names, published ports, proxy hosts and \`urls\`, last deployments | \`apps.read\` or \`apps.manage\` |
+| \`app_logs\` | Container output of a service (\`service?\`, \`tail?\` ≤ 500, \`since?\`) or the log of a deployment (\`deployment_id\`); secret variables masked | \`apps.read\` or \`apps.manage\` |
+| \`list_app_catalog\` | Templates of the catalog (\`slug?\`, \`search?\`, \`category?\`): their fields, the suggested proxy target | \`apps.read\` or \`apps.manage\` |
+| \`deploy_app\` | Create and deploy an application (\`name\`, \`source\`: \`compose_yaml\`, \`git\` or \`catalog\`; \`env\`, \`registry_credential_ids?\`, \`deploy?\`) | \`apps.manage\` |
+| \`update_app\` / \`redeploy_app\` | Change it (\`compose_yaml\`, \`env\` or \`env_set\` / \`env_unset\`, \`git\`, \`catalog_values\`, \`redeploy?\`); deploy it again (\`mode\`: \`redeploy\`, \`recreate\`, \`pull\`; \`git_pull?\`, \`build?\`) | \`apps.manage\` |
+| \`app_action\` / \`delete_app\` | \`start\`, \`stop\`, \`restart\` (the application or one \`service\`), \`deploy\`; delete it (\`confirm_name\`, \`remove_volumes?\`; protected: the key's owner confirms by default) | \`apps.manage\` |
+| \`list_proxy_hosts\` | Proxy hosts of the account: domains and certificates, target, ssl, routes, state on the edge, \`manageable\` | \`proxy.manage\` |
+| \`create_proxy_host\` / \`update_proxy_host\` / \`delete_proxy_host\` | Domains (\`domains\`) → an internal port of an application (\`app_id\` or \`app_name\`, \`service\`, \`port\`) or an external \`host\`; \`ssl\` (Let's Encrypt + https redirection, on by default), options, \`routes\`; change one (\`proxy_host_id\`); delete one (protected) | \`proxy.manage\` |
 | \`get_env\` / \`set_env\` | Environment variables of the site (read by PHP with \`getenv()\`); \`set\` adds / replaces, \`remove\` deletes, the others stay; secrets write-only; the site restarts | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Folders the site may write to (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Secondary runtimes: another container (possibly another engine) serving some paths of the **same** code and data | \`sites.manage\` |
@@ -387,6 +399,27 @@ The longest route wins: \`/uploads/\` comes before \`/\`. Removing the route giv
 - Laravel: \`create_site\` with \`app_profile: "laravel"\` (document root \`public\`).
 - Secrets (API keys, passwords): **never** in the code. Put them in the site's environment variables (\`set_env\` with \`secret: true\`) and read them with \`getenv()\`.
 
+### Docker applications
+
+With \`apps.manage\` (ticked on its own: no preset gives it, nor \`apps.read\`), a key runs **Docker applications** of its account: a bot, an API, a queue worker, a tool of the catalog… — what a site cannot run (a permanent process). An application belongs to the account, whatever the sites of the key.
+
+- \`deploy_app\` with \`source\` \`compose\` (\`compose_yaml\`), \`git\` (an https repository, \`branch\`, \`compose_path\`, \`token\` of a private one) or \`catalog\` (see \`list_app_catalog\`). The panel validates and **rewrites** the compose: no privileged mode, host network / PID, devices, Docker socket or path outside the application; images under the platform's policy (\`imageNotAllowed\`), building only when the plan allows it (\`buildNotAllowed\`), the plan's limits (\`planLimit\`, \`details.dimension\`), \`composeInvalid\` with \`details.issues\` (line and message).
+- **Secrets** go into \`env\` (sealed: \`get_app\` shows their names, never a value) and are referenced as \`\${NAME}\` in the compose, never written in the compose itself. \`update_app\` with \`env_set\` / \`env_unset\` changes some variables and keeps the others. The values of the secret variables are masked in \`app_logs\`.
+- A deploy is a **background job**: follow it with \`get_app\` (\`deployments[0].status\`: \`queued\`, \`running\`, \`succeeded\`, \`failed\`) and read why it failed with \`app_logs\` and \`deployment_id\`. The running containers keep their configuration until \`update_app\` with \`redeploy\`, or \`redeploy_app\`.
+- A container is never reachable from the Internet by itself: give a web service an internal port (\`expose: ["8080"]\`) and put a **proxy host** in front of it (below). \`ports:\` publishes a port of the account's public blocks (see « Public ports and dedicated IP »); the humans may protect a deploy that opens new ones.
+- \`app_action\` starts, stops or restarts the application or one \`service\`; \`delete_app\` (\`confirm_name\`) deletes it — its data is kept 7 days unless \`remove_volumes\` — once no proxy host targets it (\`stackInUse\`); by default the key's owner confirms it.
+- **No console** nor command inside a container through a key (\`apps.console\` stays in the panel): ask the human.
+
+### Proxy hosts
+
+With \`proxy.manage\` (ticked on its own; its creator must also manage the domains, since binding a domain takes it from the sites), a key puts a domain in front of an application, as the panel's quick setup does:
+
+- \`create_proxy_host\` with \`domains\`, \`app_id\` or \`app_name\`, \`service\` and \`port\` = an **internal** port the service exposes (\`get_app\` → \`services[].exposedPorts\`; \`targetPortNotExposed\` otherwise). \`ssl\` (on by default): Let's Encrypt certificate of the domains and http → https redirection (HTTP/2, HSTS); the certificate comes within a minute or two (\`list_proxy_hosts\` → \`domains[].certificate\`). An external address (\`host\`, \`port\`, \`scheme\`) only when the plan allows it.
+- Domains: the ones **given to the key** in the panel (every domain for a key on every domain), verified, serving no site and no other host (\`domainNotVerified\`, \`domainInUse\`). A name the account does not have yet (e.g. \`app.example.com\`) is created as a **subdomain** of one of the key's domains when the key also holds \`domains.subdomain\`.
+- \`routes\` send other paths to other targets (e.g. \`/api/\` → the api service). Access lists and sign-in providers are set in the panel; a key's changes keep them.
+- \`update_proxy_host\` and \`delete_proxy_host\` act on the hosts whose domains are all the key's (\`manageable\`); by default the key's owner confirms a deletion, and its domains then serve nothing.
+- The edge checks each host on its own: a host that does not pass keeps its last good configuration (\`edge.status\` \`quarantined\`, \`edge.error\`); \`upstreamUnreachable\`: the application does not answer on that port (yet).
+
 ### Public ports and dedicated IP
 
 Sites are only reached through the platform's web proxy (HTTP / HTTPS). An **application** (app / stack) may also be reached on a raw **TCP / UDP port** (a game server, a VoIP service…) when the platform administrator gave the account **public ports** (a block of ports of the shared IP, e.g. \`20000-20009\`) or a **dedicated IP**. Read them with \`get_published_ports\` (\`network.read\`).
@@ -427,7 +460,7 @@ With \`mail.mailboxes\` (ticked on its own: no preset gives it), a key manages t
 
 ### Protected actions
 
-The humans of the account may protect some operations (dropping a database, an SQL write, a deletion, publishing, a cron job…; by default only the deletions — a site, a database, a domain, a DNS zone, a mailbox…; writing to a database stays free unless the humans protect it). A protected call runs nothing and answers **428** with a request waiting for a human:
+The humans of the account may protect some operations (dropping a database, an SQL write, a deletion, publishing, a cron job…; by default only the deletions — a site, a database, a domain, a DNS zone, a mailbox, a Docker application or a proxy host through a key…; writing to a database stays free unless the humans protect it). A protected call runs nothing and answers **428** with a request waiting for a human:
 
 - \`twoFactorRequired\`: the key's owner confirms it in the panel with his 2FA code (phone app or code);
 - \`approvalRequired\`: a **second** authorised person approves it in the panel (with his own code).
@@ -538,6 +571,12 @@ Every route is under \`/api/v1\`, with \`Authorization: Bearer obk_…\`. Files:
 | GET · POST | \`/mailboxes?domain=&mailDomainId=&search=&limit=&offset=\` | mail domains, mailboxes, limits (as \`list_mailboxes\`) · \`{ domain, localPart, password?, quotaMb?, displayName? }\` (or \`mailDomainId\`): \`{ mailbox, password }\`, the password once | \`mail.mailboxes\` |
 | POST | \`/mailboxes/:id/password\` | \`{ password? }\`: \`{ mailbox, password }\`, generated and returned once when absent | \`mail.mailboxes\` |
 | DELETE | \`/mailboxes/:id\` | delete the mailbox and its mail (protected) | \`mail.mailboxes\` |
+| GET · POST | \`/apps/stacks?status=&search=\` | applications, plan limits, registries (as \`list_apps\`) · \`{ name, source, composeYaml?, env?, git?, catalog?, registryCredentialIds?, deploy? }\`: \`{ app, deployment }\` (as \`deploy_app\`) | \`apps.read\` · \`apps.manage\` |
+| GET · PATCH · DELETE | \`/apps/stacks/:id\` | the application (as \`get_app\`) · \`{ composeYaml?, env? or envSet? / envUnset?, git?, catalogValues?, registryCredentialIds?, redeploy? }\`: \`{ app, deployment }\` · \`{ confirmName, removeVolumes? }\` (protected) | \`apps.read\` · \`apps.manage\` |
+| POST | \`/apps/stacks/:id/redeploy\` · \`/actions\` | \`{ mode?, gitPull?, build? }\` · \`{ action: start, stop, restart or deploy, service? }\`: \`{ app, deployment }\` (202) | \`apps.manage\` |
+| GET | \`/apps/stacks/:id/logs?service=&deploymentId=&tail=&since=\` · \`/apps/catalog?slug=&search=&category=\` | as \`app_logs\` · as \`list_app_catalog\` | \`apps.read\` |
+| GET · POST | \`/proxy-hosts\` | the proxy hosts (as \`list_proxy_hosts\`) · \`{ domains, target: { appId or appName, service, port } or { host, port, scheme? }, ssl?, http2?, hsts?, websocket?, routes?, … }\` (as \`create_proxy_host\`) | \`proxy.manage\` |
+| GET · PATCH · DELETE | \`/proxy-hosts/:id\` | one host · the fields to change (as \`update_proxy_host\`) · delete it (protected) | \`proxy.manage\` |
 | GET | \`/pending-actions\` · \`/pending-actions/:pid\` | this key's requests for protected actions (\`?status=\`) · one of them | — |
 | GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, default 30): once a human decided (\`timedOut\` otherwise) | — |
 | DELETE | \`/pending-actions/:pid\` | withdraw the request | — |
@@ -735,6 +774,9 @@ Conséquences :
 | \`logs.read\` | Lire les journaux d'accès, d'erreurs (serveur web / PHP) et applicatifs, et les erreurs PHP regroupées par release |
 | \`network.read\` | Lire les ports publics du compte : ses plages de l'IP partagée, son IP dédiée (adresse publique) et les liaisons de **toutes** les applications / stacks du compte (quelle que soit la sélection de sites). Lecture seule |
 | \`mail.mailboxes\` | Boîtes mail des domaines mail du compte : lister, créer (dans les limites du plan), nouveau mot de passe, supprimer (protégé). Un mot de passe n'est rendu qu'**une fois**. Jamais donné par un préréglage, « Tout » compris : à cocher à part (voir §5 « Boîtes mail ») |
+| \`apps.read\` | Lire les applications Docker du compte (quelle que soit la sélection de sites) : leur état, leurs services et ports internes, leurs URL, leurs déploiements et la sortie de leurs conteneurs (variables secrètes masquées). À cocher à part (voir §5 « Applications Docker ») |
+| \`apps.manage\` | Déployer des applications Docker (compose, dépôt git ou catalogue), les modifier (compose, variables, git), les redéployer, démarrer / arrêter / redémarrer, supprimer (protégé) ; comprend \`apps.read\`. Jamais de console dans un conteneur. À cocher à part |
+| \`proxy.manage\` | Hôtes proxy : mettre des domaines donnés à la clé devant un port interne d'une application (ou une adresse externe si le plan le permet), avec Let's Encrypt et la redirection https ; modifier, supprimer (protégé). Son créateur doit aussi gérer les domaines. À cocher à part (voir §5 « Hôtes proxy ») |
 
 **Bases de données** : une clé valable pour tous les sites voit toutes les bases du compte ; une clé limitée à certains sites ne voit que les bases et utilisateurs **qu'elle a créés**, ainsi que les bases **appartenant à ses sites ou partagées avec eux**. Une clé ne supprime que ce qu'elle a créé, et n'arrête ni ne supprime jamais un serveur de bases.
 
@@ -744,9 +786,9 @@ Conséquences :
 
 **Enregistrements DNS** : une clé atteint les zones des domaines qui lui sont donnés dans le panel (toutes les zones du compte pour une clé sur tous les domaines ; la section Domaines de la clé borne à la fois les routes et les enregistrements DNS). Elle n'écrit que les enregistrements libres d'une zone hébergée : ceux des noms servis par les sites, d'un mail hébergé, le SOA / NS et les challenges restent à la plateforme.
 
-Jamais possible avec une clé : supprimer un site, ajouter un **nouveau domaine racine**, supprimer une base qu'elle n'a pas créée ou un serveur de bases, gérer les comptes FTP, les domaines mail, les alias ou les transferts, ou les utilisateurs, ou toucher à un autre compte. Pour ça, demande à l'humain.
+Jamais possible avec une clé : supprimer un site, ajouter un **nouveau domaine racine**, supprimer une base qu'elle n'a pas créée ou un serveur de bases, gérer les comptes FTP, les domaines mail, les alias ou les transferts, ou les utilisateurs, ouvrir une console ou lancer une commande dans un conteneur, ou toucher à un autre compte. Pour ça, demande à l'humain.
 
-Oblimint ne fait tourner **aucun processus permanent** (bot, websocket, file d'attente qui écoute en continu) : seulement le site web et ses tâches cron, d'une heure au plus chacune. Un tel programme doit être hébergé ailleurs, ou réécrit en tâches courtes lancées par le cron (ex. toutes les minutes, en reprenant là où il s'était arrêté).
+Un site ne fait tourner **aucun processus permanent** (bot, websocket, file d'attente qui écoute en continu) : seulement le site web et ses tâches cron, d'une heure au plus chacune. Un tel programme a sa place dans une **application Docker** du compte (\`apps.manage\`, voir §5 « Applications Docker »), ailleurs, ou réécrit en tâches courtes lancées par le cron (ex. toutes les minutes, en reprenant là où il s'était arrêté).
 
 Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), avec ses droits **actuels** : s'il perd un droit, la clé le perd aussi. Un site hors du périmètre répond **« not found »** (comme s'il n'existait pas). Un droit manquant répond **\`keyScope\`**. Ne contourne pas : demande à l'humain d'élargir la clé.
 
@@ -804,6 +846,15 @@ Une clé (ou un connecteur) agit comme l'humain qui l'a créée (approuvée), av
 | \`list_mailboxes\` | Domaines mail du compte (\`domains\`), une page de boîtes (\`domain?\` ou \`mail_domain_id?\`, \`search?\`, \`limit?\`, \`offset?\`), les \`limits\` mail du plan et leur \`usage\`, le serveur IMAP / SMTP (\`hostname\`) | \`mail.mailboxes\` |
 | \`create_mailbox\` | Créer \`local_part\`@domaine (\`domain\` ou \`mail_domain_id\`, \`password?\`, \`quota_mb?\`, \`display_name?\`) ; sans \`password\`, il est généré et rendu **une seule fois** | \`mail.mailboxes\` |
 | \`reset_mailbox_password\` / \`delete_mailbox\` | Nouveau mot de passe (\`mailbox_id\` ou \`address\`, \`password?\` : généré et rendu une fois s'il est absent) ; supprimer une boîte et son courrier (protégé : le propriétaire de la clé confirme par défaut) | \`mail.mailboxes\` |
+| \`list_apps\` | Applications Docker du compte (\`status?\`, \`search?\`), les limites du plan et leur consommation (\`resources\`), les identifiants de registre (\`registries\`, jamais un mot de passe) | \`apps.read\` ou \`apps.manage\` |
+| \`get_app\` | Une application (\`app_id\` ou \`app_name\`) : statut, services et leurs ports internes (\`exposedPorts\`), compose, noms des variables, ports publiés, hôtes proxy et \`urls\`, derniers déploiements | \`apps.read\` ou \`apps.manage\` |
+| \`app_logs\` | Sortie du conteneur d'un service (\`service?\`, \`tail?\` ≤ 500, \`since?\`) ou journal d'un déploiement (\`deployment_id\`) ; variables secrètes masquées | \`apps.read\` ou \`apps.manage\` |
+| \`list_app_catalog\` | Modèles du catalogue (\`slug?\`, \`search?\`, \`category?\`) : leurs champs, la cible proxy conseillée | \`apps.read\` ou \`apps.manage\` |
+| \`deploy_app\` | Créer et déployer une application (\`name\`, \`source\` : \`compose_yaml\`, \`git\` ou \`catalog\` ; \`env\`, \`registry_credential_ids?\`, \`deploy?\`) | \`apps.manage\` |
+| \`update_app\` / \`redeploy_app\` | La modifier (\`compose_yaml\`, \`env\` ou \`env_set\` / \`env_unset\`, \`git\`, \`catalog_values\`, \`redeploy?\`) ; la redéployer (\`mode\` : \`redeploy\`, \`recreate\`, \`pull\` ; \`git_pull?\`, \`build?\`) | \`apps.manage\` |
+| \`app_action\` / \`delete_app\` | \`start\`, \`stop\`, \`restart\` (l'application ou un seul \`service\`), \`deploy\` ; la supprimer (\`confirm_name\`, \`remove_volumes?\` ; protégé : le propriétaire de la clé confirme par défaut) | \`apps.manage\` |
+| \`list_proxy_hosts\` | Hôtes proxy du compte : domaines et certificats, cible, ssl, routes, état sur l'edge, \`manageable\` | \`proxy.manage\` |
+| \`create_proxy_host\` / \`update_proxy_host\` / \`delete_proxy_host\` | Domaines (\`domains\`) → un port interne d'une application (\`app_id\` ou \`app_name\`, \`service\`, \`port\`) ou un \`host\` externe ; \`ssl\` (Let's Encrypt + redirection https, actif par défaut), options, \`routes\` ; en modifier un (\`proxy_host_id\`) ; en supprimer un (protégé) | \`proxy.manage\` |
 | \`get_env\` / \`set_env\` | Variables d'environnement du site (lues par PHP avec \`getenv()\`) ; \`set\` ajoute / remplace, \`remove\` supprime, les autres restent ; secrets en écriture seule ; le site redémarre | \`sites.manage\` |
 | \`list_data_paths\` / \`add_data_path\` / \`update_data_path\` / \`remove_data_path\` | Dossiers où le site peut écrire (\`path\`, \`policy\`, \`allowed_extensions\`) | \`sites.manage\` |
 | \`list_runtimes\` / \`add_runtime\` / \`remove_runtime\` | Runtimes secondaires : un autre conteneur (autre moteur possible) qui sert certains chemins du **même** code et des mêmes données | \`sites.manage\` |
@@ -1022,6 +1073,27 @@ La route la plus longue gagne : \`/uploads/\` passe avant \`/\`. Supprimer la ro
 - Laravel : \`create_site\` avec \`app_profile: "laravel"\` (racine web \`public\`).
 - Les secrets (clés d'API, mots de passe) : **jamais** dans le code. Mets-les dans les variables d'environnement du site (\`set_env\` avec \`secret: true\`) et lis-les avec \`getenv()\`.
 
+### Applications Docker
+
+Avec \`apps.manage\` (coché à part : aucun préréglage ne le donne, \`apps.read\` non plus), une clé fait tourner des **applications Docker** de son compte : un bot, une API, un worker de file d'attente, un outil du catalogue… — ce qu'un site ne peut pas faire tourner (un processus permanent). Une application appartient au compte, quels que soient les sites de la clé.
+
+- \`deploy_app\` avec \`source\` \`compose\` (\`compose_yaml\`), \`git\` (un dépôt https, \`branch\`, \`compose_path\`, \`token\` d'un dépôt privé) ou \`catalog\` (voir \`list_app_catalog\`). Le panel valide et **réécrit** le compose : ni mode privilégié, ni réseau / PID de l'hôte, ni périphériques, ni socket Docker, ni chemin hors de l'application ; images soumises à la politique de la plateforme (\`imageNotAllowed\`), construction seulement si le plan le permet (\`buildNotAllowed\`), limites du plan (\`planLimit\`, \`details.dimension\`), \`composeInvalid\` avec \`details.issues\` (ligne et message).
+- Les **secrets** vont dans \`env\` (scellé : \`get_app\` en montre les noms, jamais une valeur) et sont référencés en \`\${NAME}\` dans le compose, jamais écrits dans le compose lui-même. \`update_app\` avec \`env_set\` / \`env_unset\` change certaines variables et garde les autres. Les valeurs des variables secrètes sont masquées dans \`app_logs\`.
+- Un déploiement est une **tâche de fond** : le suivre avec \`get_app\` (\`deployments[0].status\` : \`queued\`, \`running\`, \`succeeded\`, \`failed\`) et lire la cause d'un échec avec \`app_logs\` et \`deployment_id\`. Les conteneurs en cours gardent leur configuration jusqu'à \`update_app\` avec \`redeploy\`, ou \`redeploy_app\`.
+- Un conteneur n'est jamais joignable depuis Internet par lui-même : donner à un service web un port interne (\`expose: ["8080"]\`) et mettre un **hôte proxy** devant (ci-dessous). \`ports:\` publie un port des plages publiques du compte (voir « Ports publics et IP dédiée ») ; les humains peuvent protéger un déploiement qui en ouvre de nouveaux.
+- \`app_action\` démarre, arrête ou redémarre l'application ou un seul \`service\` ; \`delete_app\` (\`confirm_name\`) la supprime — ses données sont gardées 7 jours sauf \`remove_volumes\` — une fois qu'aucun hôte proxy ne la vise (\`stackInUse\`) ; par défaut le propriétaire de la clé confirme.
+- **Aucune console** ni commande dans un conteneur par une clé (\`apps.console\` reste dans le panel) : demande à l'humain.
+
+### Hôtes proxy
+
+Avec \`proxy.manage\` (coché à part ; son créateur doit aussi gérer les domaines, car lier un domaine le retire aux sites), une clé met un domaine devant une application, comme la configuration rapide du panel :
+
+- \`create_proxy_host\` avec \`domains\`, \`app_id\` ou \`app_name\`, \`service\` et \`port\` = un port **interne** que le service expose (\`get_app\` → \`services[].exposedPorts\` ; sinon \`targetPortNotExposed\`). \`ssl\` (actif par défaut) : certificat Let's Encrypt des domaines et redirection http → https (HTTP/2, HSTS) ; le certificat arrive en une à deux minutes (\`list_proxy_hosts\` → \`domains[].certificate\`). Une adresse externe (\`host\`, \`port\`, \`scheme\`) seulement si le plan le permet.
+- Domaines : ceux **donnés à la clé** dans le panel (tous les domaines pour une clé sur tous les domaines), vérifiés, ne servant ni site ni autre hôte (\`domainNotVerified\`, \`domainInUse\`). Un nom que le compte n'a pas encore (ex. \`app.exemple.com\`) est créé comme **sous-domaine** d'un domaine de la clé quand elle a aussi \`domains.subdomain\`.
+- \`routes\` envoie d'autres chemins vers d'autres cibles (ex. \`/api/\` → le service api). Les listes d'accès et fournisseurs de connexion se règlent dans le panel ; les modifications d'une clé les conservent.
+- \`update_proxy_host\` et \`delete_proxy_host\` agissent sur les hôtes dont tous les domaines sont à la clé (\`manageable\`) ; par défaut le propriétaire de la clé confirme une suppression, et ses domaines ne servent alors plus rien.
+- L'edge vérifie chaque hôte isolément : un hôte qui ne passe pas garde sa dernière configuration saine (\`edge.status\` \`quarantined\`, \`edge.error\`) ; \`upstreamUnreachable\` : l'application ne répond pas (encore) sur ce port.
+
 ### Ports publics et IP dédiée
 
 Les sites ne sont joints que par le proxy web de la plateforme (HTTP / HTTPS). Une **application** (app / stack) peut aussi être jointe sur un **port TCP / UDP** brut (serveur de jeu, service VoIP…) quand l'administrateur de la plateforme a donné au compte des **ports publics** (une plage de ports de l'IP partagée, ex. \`20000-20009\`) ou une **IP dédiée**. Lisez-les avec \`get_published_ports\` (\`network.read\`).
@@ -1062,7 +1134,7 @@ Avec \`mail.mailboxes\` (coché à part : aucun préréglage ne le donne), une c
 
 ### Actions protégées
 
-Les humains du compte peuvent protéger certaines opérations (supprimer une base, une requête SQL en écriture, une suppression, une publication, une tâche planifiée… ; par défaut seulement les suppressions — un site, une base, un domaine, une zone DNS, une boîte mail… ; écrire dans une base reste libre sauf si les humains la protègent). Un appel protégé n'exécute rien et répond **428** avec une demande qui attend un humain :
+Les humains du compte peuvent protéger certaines opérations (supprimer une base, une requête SQL en écriture, une suppression, une publication, une tâche planifiée… ; par défaut seulement les suppressions — un site, une base, un domaine, une zone DNS, une boîte mail, une application Docker ou un hôte proxy par une clé… ; écrire dans une base reste libre sauf si les humains la protègent). Un appel protégé n'exécute rien et répond **428** avec une demande qui attend un humain :
 
 - \`twoFactorRequired\` : le propriétaire de la clé la confirme dans le panel avec son code 2FA (application du téléphone ou code) ;
 - \`approvalRequired\` : une **seconde** personne habilitée l'approuve dans le panel (avec son propre code).
@@ -1173,6 +1245,12 @@ Toutes les routes sont sous \`/api/v1\`, avec \`Authorization: Bearer obk_…\`.
 | GET · POST | \`/mailboxes?domain=&mailDomainId=&search=&limit=&offset=\` | domaines mail, boîtes, limites (comme \`list_mailboxes\`) · \`{ domain, localPart, password?, quotaMb?, displayName? }\` (ou \`mailDomainId\`) : \`{ mailbox, password }\`, le mot de passe une seule fois | \`mail.mailboxes\` |
 | POST | \`/mailboxes/:id/password\` | \`{ password? }\` : \`{ mailbox, password }\`, généré et rendu une fois s'il est absent | \`mail.mailboxes\` |
 | DELETE | \`/mailboxes/:id\` | supprimer la boîte et son courrier (protégé) | \`mail.mailboxes\` |
+| GET · POST | \`/apps/stacks?status=&search=\` | applications, limites du plan, registres (comme \`list_apps\`) · \`{ name, source, composeYaml?, env?, git?, catalog?, registryCredentialIds?, deploy? }\` : \`{ app, deployment }\` (comme \`deploy_app\`) | \`apps.read\` · \`apps.manage\` |
+| GET · PATCH · DELETE | \`/apps/stacks/:id\` | l'application (comme \`get_app\`) · \`{ composeYaml?, env? ou envSet? / envUnset?, git?, catalogValues?, registryCredentialIds?, redeploy? }\` : \`{ app, deployment }\` · \`{ confirmName, removeVolumes? }\` (protégé) | \`apps.read\` · \`apps.manage\` |
+| POST | \`/apps/stacks/:id/redeploy\` · \`/actions\` | \`{ mode?, gitPull?, build? }\` · \`{ action : start, stop, restart ou deploy, service? }\` : \`{ app, deployment }\` (202) | \`apps.manage\` |
+| GET | \`/apps/stacks/:id/logs?service=&deploymentId=&tail=&since=\` · \`/apps/catalog?slug=&search=&category=\` | comme \`app_logs\` · comme \`list_app_catalog\` | \`apps.read\` |
+| GET · POST | \`/proxy-hosts\` | les hôtes proxy (comme \`list_proxy_hosts\`) · \`{ domains, target : { appId ou appName, service, port } ou { host, port, scheme? }, ssl?, http2?, hsts?, websocket?, routes?, … }\` (comme \`create_proxy_host\`) | \`proxy.manage\` |
+| GET · PATCH · DELETE | \`/proxy-hosts/:id\` | un hôte · les champs à changer (comme \`update_proxy_host\`) · le supprimer (protégé) | \`proxy.manage\` |
 | GET | \`/pending-actions\` · \`/pending-actions/:pid\` | les demandes de cette clé pour des actions protégées (\`?status=\`) · l'une d'elles | — |
 | GET | \`/pending-actions/:pid/wait\` | \`?timeout=\` (≤ 60, 30 par défaut) : dès qu'un humain a décidé (\`timedOut\` sinon) | — |
 | DELETE | \`/pending-actions/:pid\` | retirer la demande | — |
