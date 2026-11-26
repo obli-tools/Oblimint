@@ -13,9 +13,9 @@ images/scanner/
   rules/oblimint-php.yar  NOS règles YARA (34 règles publiques, voir plus bas)
   tests/run-tests.sh      test de fumée des règles (échantillons encodés en base64)
   tests/scand-clamd-smoke.sh  test d'intégration scand + clamd (EICAR par zINSTREAM, au build)
-  tests/samples/*.b64     échantillons positifs / bénins (jamais décodés dans le dépôt)
+  tests/samples/*.b64r    échantillons positifs / bénins (jamais décodés dans le dépôt)
   tests/expected.txt      règles attendues par échantillon (« - » : aucune règle Oblimint_*)
-  tests/eicar.b64         chaîne de test EICAR (test de fumée ClamAV)
+  tests/eicar.b64r        chaîne de test EICAR (test de fumée ClamAV)
 ```
 
 ## Construire

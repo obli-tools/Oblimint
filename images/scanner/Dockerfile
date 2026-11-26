@@ -110,7 +110,7 @@ RUN set -eux; \
 RUN set -eux; \
     sh /usr/share/oblimint-scanner/tests/run-tests.sh /usr/share/oblimint-scanner/rules.yarc /usr/share/oblimint-scanner/tests; \
     t=$(mktemp -d); \
-    base64 -d /usr/share/oblimint-scanner/tests/samples/selftest.php.b64 > "$t/s.php"; \
+    tr 'A-Za-z0-9+/' 'N-ZA-Mn-za-m5-90-4/+' < /usr/share/oblimint-scanner/tests/samples/selftest.php.b64r | base64 -d > "$t/s.php"; \
     SCAND_KEY=smoke-key-0123456789abcdef SCAND_CLAMAV=0 SCAND_YARA=1 SCAND_ADDR=127.0.0.1:18080 /usr/local/bin/scand & \
     pid=$!; \
     i=0; until SCAND_ADDR=127.0.0.1:18080 /usr/local/bin/scand -healthcheck; do i=$((i+1)); [ "$i" -lt 50 ]; sleep 0.2; done; \

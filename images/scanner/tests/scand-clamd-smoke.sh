@@ -54,7 +54,8 @@ case "$mode" in
 		exit 2
 		;;
 esac
-base64 -d "$tests/eicar.b64" >"$t/eicar.txt"
+# eicar.b64r: rotated base64 (see run-tests.sh), decoded only here.
+tr 'A-Za-z0-9+/' 'N-ZA-Mn-za-m5-90-4/+' <"$tests/eicar.b64r" | base64 -d >"$t/eicar.txt"
 echo '<?php echo "clean";' >"$t/clean.php"
 
 SCAND_KEY=$key SCAND_CLAMAV=1 SCAND_YARA=0 SCAND_ADDR=$addr \
