@@ -119,6 +119,7 @@
         "portsNotPublished": "Les ports ne sont jamais publiés sur l’hôte : ils sont exposés aux hôtes proxy et aux liaisons seulement.",
         "privileged": "Les conteneurs privilégiés sont interdits.",
         "readOnlyForced": "Le système de fichiers racine est en lecture seule.",
+        "bindReadOnly": "Ce dossier de la source est monté en lecture seule : utilisez un volume nommé (par ex. data:/data avec volumes: data:) pour des données inscriptibles et persistantes.",
         "registryNotAllowed": "Ce registre n’est pas autorisé.",
         "replicas": "Plusieurs réplicas ne sont pas pris en charge.",
         "resourceCapped": "La limite déclarée est réduite à ce que le plan laisse.",

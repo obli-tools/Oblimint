@@ -175,6 +175,12 @@ test('volumes: docker socket, absolute, outside, symlink, relative RO, named, an
   const ok = run(svc('./conf:/etc/app'));
   assert.equal(ok.result.ok, true);
   assert.deepEqual(ok.resolved!.services[0].volumes, [{ kind: 'bind', source: 'files/conf', target: '/etc/app', readOnly: true }]);
+  // a source bind without :ro is said to be read-only (a warning, the save still passes); with :ro, nothing to say
+  const bindWarn = ok.result.issues.find((i) => i.code === 'bindReadOnly');
+  assert.equal(bindWarn?.severity, 'warning');
+  assert.equal(run(svc('./conf:/etc/app:ro')).result.issues.some((i) => i.code === 'bindReadOnly'), false);
+  assert.equal(run(svc('{type: bind, source: ./conf, target: /c, read_only: true}')).result.issues.some((i) => i.code === 'bindReadOnly'), false);
+  assert.equal(run(svc('data:/data')).result.issues.some((i) => i.code === 'bindReadOnly'), false);
   // writable binds of the stack source are refused (symlink swap → host mount)
   assert.ok(errorOf(svc('./conf:/etc/app:rw'), 'unsupportedKey'));
   assert.ok(errorOf(svc('./:/w:rw'), 'unsupportedKey'));

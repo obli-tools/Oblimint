@@ -197,6 +197,8 @@ export type ComposeIssueCode =
   | 'envFileOutsideStack' | 'secretsFileOutsideStack' | 'configsFileOutsideStack' | 'unknownKey' | 'unsupportedKey'
   | 'interpolation' | 'missingVariable' | 'dependsCycle' | 'dependsUnknown' | 'restartPolicy' | 'loggingIgnored'
   | 'labelReserved' | 'stopGraceCapped' | 'readOnlyForced' | 'userRoot'
+  // A bind of the stack source without :ro: mounted read-only all the same (AP1/R1).
+  | 'bindReadOnly'
   // Migration 032: published host ports (ports: "<host>:<container>") of an account with public ports / a dedicated IP.
   | 'hostPortNotAllocated' | 'hostIpNotAvailable' | 'hostIpv6Unsupported' | 'hostPortReserved' | 'hostPortTaken' | 'hostPortNetworkNone'
   | 'hostPortDuplicate';

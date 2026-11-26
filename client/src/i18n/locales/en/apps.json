@@ -119,6 +119,7 @@
         "portsNotPublished": "Ports are never published on the host: they are exposed to the proxy hosts and links only.",
         "privileged": "Privileged containers are not allowed.",
         "readOnlyForced": "The root file system is read-only.",
+        "bindReadOnly": "This directory of the source is mounted read-only: use a named volume (e.g. data:/data with volumes: data:) for writable, persistent data.",
         "registryNotAllowed": "This registry is not allowed.",
         "replicas": "Several replicas are not supported.",
         "resourceCapped": "The declared limit is reduced to what the plan leaves.",

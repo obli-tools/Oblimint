@@ -789,6 +789,8 @@ export function validateCompose(yamlText: string, ctx: ComposeContext): Validati
           // every container start (and tar-fs while packing a build context).
           // Writable data belongs in named volumes (accounts/<id>/apps/<stackId>/volumes).
           if (m.explicitRw) { c.error('unsupportedKey', name, vp, `Bind mounts of the stack source are always read-only ("${src.slice(0, 120)}"): use a named volume for writable data`, { key: 'rw', source: src.slice(0, 120) }); return; }
+          // Without :ro the author may expect a writable directory: say it is not (data would be lost or refused).
+          if (!m.readOnly) c.warn('bindReadOnly', name, vp, `"${src.slice(0, 120)}" is mounted read-only (bind of the stack source): use a named volume for writable, persistent data`, { source: src.slice(0, 120), target: m.target.slice(0, 120) });
           volumes.push({ kind: 'bind', source: rel, target: m.target, readOnly: true });
           return;
         }

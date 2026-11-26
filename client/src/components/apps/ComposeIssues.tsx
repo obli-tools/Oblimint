@@ -76,6 +76,7 @@ const ISSUES = /* i18n:apps.compose.issues */ {
   labelReserved: 'Reserved labels (oblimint.*, com.docker.*) are removed.',
   stopGraceCapped: 'stop_grace_period is capped at 120 s.',
   readOnlyForced: 'The root file system is read-only.',
+  bindReadOnly: 'This directory of the source is mounted read-only: use a named volume (e.g. data:/data with volumes: data:) for writable, persistent data.',
   userRoot: 'The image runs as root inside the container.',
   // Migration 032: published host ports.
   hostPortNotAllocated: 'Port {{port}}/{{protocol}} is not among the public ports of the account ({{ranges}}).',
