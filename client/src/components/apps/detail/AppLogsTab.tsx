@@ -11,6 +11,7 @@ import { ToggleSwitch } from '@/components/common/ToggleSwitch';
 import { EmptyState, inputCls, selectCls } from '@/components/hosting/hostingUi';
 import { saveText } from '@/utils/download';
 import { cn } from '@/utils/cn';
+import { TERMINAL_BG, TERMINAL_FONT } from '@/components/common/terminalTheme';
 import { appsCodeMessage, appsErrorMessage } from '../appsErrors';
 import { emitQuiet, emitWithAck } from '../appSocket';
 
@@ -149,22 +150,31 @@ export function AppLogsTab({ stack }: { stack: AppStackDetail }) {
       </div>
       {followError && follow && <p className="text-xs text-amber-400">{followError}</p>}
       {truncated && <p className="text-xs text-text-muted">{t('apps.logs.truncated') || 'Older lines are not shown.'}</p>}
+      <div className="overflow-hidden rounded-xl border border-border">
+      <div className="flex items-center gap-2 border-b border-border bg-bg-secondary px-3 py-1.5 text-xs">
+        <span className={cn('h-2 w-2 rounded-full', follow && !followError ? 'bg-status-up' : 'bg-text-muted/50')} />
+        <span className="font-medium text-text-secondary">{t('apps.detail.tabs.logs') || 'Logs'}</span>
+        {service && <span className="font-mono text-text-muted">{service}</span>}
+        {lines !== null && <span className="ml-auto font-mono text-text-muted">{t('apps.logs.lineCount', { count: shown.length, defaultValue: '{{count}} line(s)' })}</span>}
+      </div>
       <div
         ref={boxRef}
         onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}
-        className="h-[60vh] min-h-64 overflow-auto rounded-xl bg-bg-secondary p-3 font-mono text-[12px] leading-relaxed"
+        className="h-[70vh] min-h-64 overflow-auto p-3 text-[12px] leading-relaxed text-[#c9d1d9] select-text"
+        style={{ background: TERMINAL_BG, fontFamily: TERMINAL_FONT }}
         role="log"
         aria-live={follow ? 'polite' : 'off'}
       >
         {lines === null ? <div className="flex justify-center py-6"><LoadingSpinner /></div>
-          : error ? <p className="text-status-down">{error}</p>
-            : shown.length === 0 ? <p className="text-text-muted">{t('apps.logs.empty') || 'No log line.'}</p>
+          : error ? <p className="text-[#ff7b72]">{error}</p>
+            : shown.length === 0 ? <p className="text-[#8b949e]">{t('apps.logs.empty') || 'No log line.'}</p>
               : shown.map((l, i) => (
-                <div key={i} className={cn('whitespace-pre-wrap break-all', l.stream === 'stderr' ? 'text-amber-300/90' : 'text-text-secondary')}>
-                  {timestamps && l.at && <span className="mr-2 text-text-muted">{new Date(l.at).toLocaleTimeString(i18n.language)}</span>}
+                <div key={i} className={cn('whitespace-pre-wrap break-all', l.stream === 'stderr' ? 'text-[#e3b341]' : 'text-[#c9d1d9]')}>
+                  {timestamps && l.at && <span className="mr-2 text-[#6e7681]">{new Date(l.at).toLocaleTimeString(i18n.language)}</span>}
                   {l.text}
                 </div>
               ))}
+      </div>
       </div>
     </div>
   );

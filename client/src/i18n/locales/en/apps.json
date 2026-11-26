@@ -486,6 +486,8 @@
       "statusFilter": "Status"
     },
     "logs": {
+      "lineCount_one": "{{count}} line",
+      "lineCount_other": "{{count}} lines",
       "download": "Download",
       "empty": "No log line.",
       "filter": "Filter…",

@@ -486,6 +486,8 @@
       "statusFilter": "Statut"
     },
     "logs": {
+      "lineCount_one": "{{count}} ligne",
+      "lineCount_other": "{{count}} lignes",
       "download": "Télécharger",
       "empty": "Aucune ligne de journal.",
       "filter": "Filtrer…",

@@ -10,7 +10,7 @@ import { getSocket } from '@/socket/socketClient';
 import { useSocketStore } from '@/store/socketStore';
 import { Button } from '@/components/common/Button';
 import { selectCls } from '@/components/hosting/hostingUi';
-import { useCurrentTheme } from '@/hooks/useCurrentTheme';
+import { TERMINAL_BG, TERMINAL_FONT, TERMINAL_THEME } from '@/components/common/terminalTheme';
 import { cn } from '@/utils/cn';
 import { emitQuiet, emitWithAck } from '../appSocket';
 import { appsCodeMessage } from '../appsErrors';
@@ -29,12 +29,6 @@ function closedMessage(t: TFunction, reason?: string): string {
 
 type ConsoleState = 'idle' | 'opening' | 'open' | 'closed';
 
-/** CSS colour of a theme token ("r g b" triplet) → rgb(). */
-function token(name: string): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v ? `rgb(${v.split(/\s+/).join(', ')})` : '#000';
-}
-
 /**
  * Interactive console (exec sh / bash, TTY) in one service container through
  * Socket.io (apps:console:open|input|resize|close). Shown only when the
@@ -43,7 +37,6 @@ function token(name: string): string {
  */
 export function AppConsoleTab({ stack }: { stack: AppStackDetail }) {
   const { t } = useTranslation();
-  const theme = useCurrentTheme();
   const socketStatus = useSocketStore((s) => s.status);
   const running = stack.services.filter((s) => s.state === 'running');
   const [service, setService] = useState(running[0]?.name ?? '');
@@ -64,16 +57,16 @@ export function AppConsoleTab({ stack }: { stack: AppStackDetail }) {
     if (!names.includes(service)) setService(names[0] ?? '');
   }, [runningKey, service, state]);
 
-  // Terminal instance (recreated with the theme).
+  // Terminal instance: dark terminal palette whatever the panel theme (terminalTheme.ts).
   useEffect(() => {
     const el = hostRef.current;
     if (!el) return;
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      fontFamily: TERMINAL_FONT,
       fontSize: 13,
       scrollback: 5000,
-      theme: { background: token('--c-bg-primary'), foreground: token('--c-text-primary'), cursor: token('--c-accent'), selectionBackground: 'rgba(54, 185, 143, 0.3)' },
+      theme: TERMINAL_THEME,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -97,7 +90,7 @@ export function AppConsoleTab({ stack }: { stack: AppStackDetail }) {
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [theme]);
+  }, []);
 
   // Server → terminal.
   useEffect(() => {
@@ -200,8 +193,15 @@ export function AppConsoleTab({ stack }: { stack: AppStackDetail }) {
         <span className="text-xs text-text-muted">{t('apps.console.hint') || 'Shell of the container, with the user of the image. Closed after 30 min of inactivity. Every opening is logged.'}</span>
       </div>
       {message && <p className="text-xs text-amber-400">{message}</p>}
-      <div className="overflow-hidden rounded-xl bg-bg-primary p-2">
-        <div ref={hostRef} className="h-[60vh] min-h-64 w-full" />
+      <div className="overflow-hidden rounded-xl border border-border">
+        <div className="flex items-center gap-2 border-b border-border bg-bg-secondary px-3 py-1.5 text-xs">
+          <span className={cn('h-2 w-2 rounded-full', state === 'open' ? 'bg-status-up' : 'bg-text-muted/50')} />
+          <span className="font-medium text-text-secondary">{t('apps.detail.tabs.console') || 'Console'}</span>
+          {service && <span className="font-mono text-text-muted">{service}</span>}
+        </div>
+        <div className="p-2" style={{ background: TERMINAL_BG }}>
+          <div ref={hostRef} className="h-[70vh] min-h-64 w-full" />
+        </div>
       </div>
     </div>
   );
